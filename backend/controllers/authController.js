@@ -1,5 +1,6 @@
 const bcrypt = require('bcrypt');
 const db = require('../config/db');
+const jwt = require('jsonwebtoken');
 
 exports.registerClient = async (req, res, next) => {
   const { mobile_number, password, full_name, client_type, terms_accepted } = req.body;
@@ -79,5 +80,89 @@ exports.registerClient = async (req, res, next) => {
     res.status(500).json({ message: "Registration failed." });
   } finally {
     client.release(); // Release connection back to pool
+  }
+};
+
+exports.login = async (req, res) => {
+  const { mobile_number, password } = req.body;
+
+  try {
+    // 1. Find User by Mobile Number
+    const userResult = await db.query(
+      'SELECT user_id, password_hash, is_active FROM users WHERE mobile_number = $1',
+      [mobile_number]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    const user = userResult.rows[0];
+
+    // 2. Security Checks
+    if (!user.is_active) {
+      return res.status(403).json({ message: "Account is deactivated. Contact admin." });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+    if (!isMatch) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    // 3. DUAL ROLE DISCOVERY (The Critical Step)
+    // We check both tables to see what "hats" this user wears.
+    const clientProfilePromise = db.query(
+      'SELECT client_profile_id, full_name, client_type FROM client_profiles WHERE user_id = $1',
+      [user.user_id]
+    );
+    
+    const staffProfilePromise = db.query(
+      'SELECT staff_profile_id, full_name, verification_status FROM staff_profiles WHERE user_id = $1',
+      [user.user_id]
+    );
+
+    // Run queries in parallel for speed
+    const [clientRes, staffRes] = await Promise.all([clientProfilePromise, staffProfilePromise]);
+
+    const clientProfile = clientRes.rows[0] || null;
+    const staffProfile = staffRes.rows[0] || null;
+
+    // 4. Generate JWT Token
+    // We embed the user_id. We do NOT embed profile IDs because they might switch roles.
+    const token = jwt.sign(
+      { id: user.user_id },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN }
+    );
+
+    // 5. Send Response
+    // The Frontend uses 'roles' to decide which screen to show next.
+    res.status(200).json({
+      status: 'success',
+      token,
+      data: {
+        user_id: user.user_id,
+        mobile_number: mobile_number,
+        roles: {
+          is_client: !!clientProfile, // Boolean: true if they have a client profile
+          client_id: clientProfile ? clientProfile.client_profile_id : null,
+          client_info: clientProfile ? { 
+              name: clientProfile.full_name, 
+              type: clientProfile.client_type 
+          } : null,
+          
+          is_staff: !!staffProfile, // Boolean: true if they have a staff profile
+          staff_id: staffProfile ? staffProfile.staff_profile_id : null,
+          staff_info: staffProfile ? {
+              name: staffProfile.full_name,
+              status: staffProfile.verification_status 
+          } : null
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error("Login Error:", error);
+    res.status(500).json({ message: "Server error during login" });
   }
 };
