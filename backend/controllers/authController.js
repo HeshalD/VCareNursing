@@ -2,6 +2,7 @@ const bcrypt = require('bcrypt');
 const db = require('../config/db');
 const jwt = require('jsonwebtoken');
 const sendEmail = require('../utils/email');
+const sendWhatsAppOtp = require('../utils/whatsapp');
 
 exports.registerClient = async (req, res, next) => {
   const { mobile_number, password, full_name, client_type, terms_accepted, email } = req.body;
@@ -84,18 +85,39 @@ exports.registerClient = async (req, res, next) => {
     // COMMIT TRANSACTION
     await client.query('COMMIT');
 
-    // Send OTP email
+    // Send OTP email and WhatsApp
+    let emailSent = false;
+    let whatsappSent = false;
+    
     try {
-      const message = `Your VCare verification code is: ${otp}. It expires in 10 minutes.`;
+      // Try sending email first
+      await sendEmail({ email: email, subject: 'VCare OTP', message: `Your code: ${otp}` });
+      emailSent = true;
+      console.log('Email sent successfully');
+    } catch (emailError) {
+      console.error("Email failed to send:", emailError);
+      console.error("Notification Error:", emailError.message);
+    }
 
-      await sendEmail({
-        email: email,
-        subject: 'VCare Account Verification',
-        message: message
-      });
-    } catch (err) {
-      // If email fails, log it but don't fail the registration
-      console.error("Email failed to send:", err);
+    try {
+      // Try sending WhatsApp
+      await sendWhatsAppOtp(mobile_number, otp);
+      whatsappSent = true;
+      console.log('WhatsApp sent successfully');
+    } catch (whatsappError) {
+      console.error("WhatsApp failed to send:", whatsappError);
+      console.error("WhatsApp Error:", whatsappError.message);
+    }
+
+    // Log overall notification status
+    if (!emailSent && !whatsappSent) {
+      console.error("Both email and WhatsApp failed to send");
+    } else if (!emailSent) {
+      console.warn("Email failed but WhatsApp succeeded");
+    } else if (!whatsappSent) {
+      console.warn("WhatsApp failed but email succeeded");
+    } else {
+      console.log("Both email and WhatsApp sent successfully");
     }
 
     res.status(201).json({

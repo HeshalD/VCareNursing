@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const authRoutes = require('./routes/authRoutes');
+const clientRoutes = require('./routes/clientRoutes')
 require('dotenv').config();
 
 const app = express();
@@ -11,6 +12,8 @@ app.use(express.json()); // Body parser
 
 // Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/client', clientRoutes);
+
 
 // Global Error Handler
 app.use((err, req, res, next) => {
