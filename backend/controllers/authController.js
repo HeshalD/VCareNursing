@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken');
 const sendEmail = require('../utils/email');
 
 exports.registerClient = async (req, res, next) => {
-  const { mobile_number, password, full_name, client_type, terms_accepted,email } = req.body;
+  const { mobile_number, password, full_name, client_type, terms_accepted, email } = req.body;
   const client = await db.pool.connect(); // Get a client for Transaction
 
   try {
@@ -12,7 +12,7 @@ exports.registerClient = async (req, res, next) => {
     if (!terms_accepted) {
       return res.status(400).json({ message: "You must accept the Terms & Conditions." });
     }
-    
+
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res.status(400).json({ message: "Valid email address is required." });
     }
@@ -31,7 +31,7 @@ exports.registerClient = async (req, res, next) => {
     if (userCheck.rows.length > 0) {
       // SCENARIO A: User exists (Maybe a Staff member registering as Client)
       userId = userCheck.rows[0].user_id;
-      
+
       // Update user's email if not already set
       await client.query(
         'UPDATE users SET email = $1 WHERE user_id = $2 AND email IS NULL',
@@ -65,7 +65,7 @@ exports.registerClient = async (req, res, next) => {
     // 3. Generate OTP and create Client Profile (Data Layer)
     const otp = Math.floor(100000 + Math.random() * 900000).toString(); // Generate 6-digit OTP
     const expiresAt = new Date(Date.now() + 10 * 60000); // 10 minutes from now
-    
+
     // Create Client Profile
     // Note: wallet_balance defaults to 0.00 in DB schema
     // Note: is_registration_fee_paid defaults to FALSE in DB schema
@@ -74,7 +74,7 @@ exports.registerClient = async (req, res, next) => {
        VALUES ($1, $2, $3) RETURNING client_profile_id`,
       [userId, full_name, client_type || 'INDIVIDUAL']
     );
-    
+
     // Store OTP in database
     await client.query(
       'INSERT INTO otp_verifications (user_id, otp_code, expires_at) VALUES ($1, $2, $3)',
@@ -83,7 +83,7 @@ exports.registerClient = async (req, res, next) => {
 
     // COMMIT TRANSACTION
     await client.query('COMMIT');
-    
+
     // Send OTP email
     try {
       const message = `Your VCare verification code is: ${otp}. It expires in 10 minutes.`;
@@ -152,7 +152,7 @@ exports.login = async (req, res) => {
   try {
     // 1. Find User by Mobile Number
     const userResult = await db.query(
-      'SELECT user_id, password_hash, is_active FROM users WHERE mobile_number = $1',
+      'SELECT user_id, password_hash, role, is_active FROM users WHERE mobile_number = $1',
       [mobile_number]
     );
 
@@ -193,7 +193,7 @@ exports.login = async (req, res) => {
     // 4. Generate JWT Token
     // We embed the user_id. We do NOT embed profile IDs because they might switch roles.
     const token = jwt.sign(
-      { id: user.user_id },
+      { id: user.user_id, role: user.role }, // Adding role to payload
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN }
     );
@@ -276,11 +276,11 @@ exports.getUnifiedOverview = async (req, res) => {
       ORDER BY u.created_at DESC;
     `;
     const result = await db.query(query);
-    
-    res.status(200).json({ 
-      status: 'success', 
-      count: result.rowCount, 
-      data: result.rows 
+
+    res.status(200).json({
+      status: 'success',
+      count: result.rowCount,
+      data: result.rows
     });
   } catch (error) {
     console.error(error);
