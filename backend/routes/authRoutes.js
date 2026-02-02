@@ -6,6 +6,7 @@ const { protect, restrictTo } = require('../middleware/authMiddleware');
 // Route: POST /api/auth/register
 router.post('/register', authController.registerClient);
 router.post('/login', authController.login);
+router.post('/resend-otp', authController.resendOtp);
 router.post('/verify-otp', authController.verifyOtp);
 
 // Admin routes

@@ -88,7 +88,7 @@ exports.registerClient = async (req, res, next) => {
     // Send OTP email and WhatsApp
     let emailSent = false;
     let whatsappSent = false;
-    
+
     try {
       // Try sending email first
       await sendEmail({ email: email, subject: 'VCare OTP', message: `Your code: ${otp}` });
@@ -138,6 +138,81 @@ exports.registerClient = async (req, res, next) => {
     res.status(500).json({ message: "Registration failed." });
   } finally {
     client.release(); // Release connection back to pool
+  }
+};
+
+exports.resendOtp = async (req, res) => {
+  const { user_id } = req.body;
+
+  try {
+    // 1. Fetch user details
+    const userResult = await db.query(
+      'SELECT email, mobile_number, is_email_verified FROM users WHERE user_id = $1',
+      [user_id]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    const user = userResult.rows[0];
+
+    // 2. Security Check: If already verified, don't send anything
+    if (user.is_email_verified) {
+      return res.status(400).json({ message: "This account is already verified." });
+    }
+
+    // 3. Rate Limiting (Cooldown Check)
+    // Check if an OTP was sent in the last 60 seconds
+    const lastOtp = await db.query(
+      'SELECT created_at FROM otp_verifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [user_id]
+    );
+
+    if (lastOtp.rows.length > 0) {
+      const lastSentTime = new Date(lastOtp.rows[0].created_at);
+      const secondsAgo = (new Date() - lastSentTime) / 1000;
+
+      if (secondsAgo < 60) {
+        return res.status(429).json({
+          message: `Please wait ${Math.round(60 - secondsAgo)} seconds before requesting a new code.`
+        });
+      }
+    }
+
+    // 4. Generate & Refresh OTP
+    const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60000); // 10 mins
+
+    // Clear old codes and insert new one
+    await db.query('DELETE FROM otp_verifications WHERE user_id = $1', [user_id]);
+    await db.query(
+      'INSERT INTO otp_verifications (user_id, otp_code, expires_at) VALUES ($1, $2, $3)',
+      [user_id, newOtp, expiresAt]
+    );
+
+    // 5. Trigger Multi-Channel Send
+    // Use Promise.allSettled so that if one fails, the other can still succeed
+    await Promise.allSettled([
+      sendEmail({
+        email: user.email,
+        subject: 'Your New VCare Verification Code',
+        message: `Your new verification code is: ${newOtp}. It expires in 10 minutes.`
+      }),
+      sendWhatsAppOtp(user.mobile_number, newOtp)
+    ]);
+
+    // Log to terminal for easy testing without checking phone
+    console.log(`[DEV ONLY] New OTP for User ${user_id}: ${newOtp}`);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'A new verification code has been sent to your email and WhatsApp.'
+    });
+
+  } catch (error) {
+    console.error("Resend OTP Error:", error);
+    res.status(500).json({ message: "Internal server error during OTP resend." });
   }
 };
 
