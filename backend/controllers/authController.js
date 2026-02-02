@@ -1,9 +1,10 @@
 const bcrypt = require('bcrypt');
 const db = require('../config/db');
 const jwt = require('jsonwebtoken');
+const sendEmail = require('../utils/email');
 
 exports.registerClient = async (req, res, next) => {
-  const { mobile_number, password, full_name, client_type, terms_accepted } = req.body;
+  const { mobile_number, password, full_name, client_type, terms_accepted,email } = req.body;
   const client = await db.pool.connect(); // Get a client for Transaction
 
   try {
@@ -12,12 +13,16 @@ exports.registerClient = async (req, res, next) => {
       return res.status(400).json({ message: "You must accept the Terms & Conditions." });
     }
     
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ message: "Valid email address is required." });
+    }
+
     // START TRANSACTION
     await client.query('BEGIN');
 
     // 2. Check if Mobile Number already exists in 'users'
     const userCheck = await client.query(
-      'SELECT user_id FROM users WHERE mobile_number = $1', 
+      'SELECT user_id FROM users WHERE mobile_number = $1',
       [mobile_number]
     );
 
@@ -26,10 +31,16 @@ exports.registerClient = async (req, res, next) => {
     if (userCheck.rows.length > 0) {
       // SCENARIO A: User exists (Maybe a Staff member registering as Client)
       userId = userCheck.rows[0].user_id;
+      
+      // Update user's email if not already set
+      await client.query(
+        'UPDATE users SET email = $1 WHERE user_id = $2 AND email IS NULL',
+        [email, userId]
+      );
 
       // Check if they ALREADY have a client profile
       const profileCheck = await client.query(
-        'SELECT client_profile_id FROM client_profiles WHERE user_id = $1', 
+        'SELECT client_profile_id FROM client_profiles WHERE user_id = $1',
         [userId]
       );
 
@@ -44,14 +55,18 @@ exports.registerClient = async (req, res, next) => {
       const hashedPassword = await bcrypt.hash(password, salt);
 
       const newUser = await client.query(
-        `INSERT INTO users (mobile_number, password_hash) 
-         VALUES ($1, $2) RETURNING user_id`,
-        [mobile_number, hashedPassword]
+        `INSERT INTO users (mobile_number, password_hash, email) 
+         VALUES ($1, $2, $3) RETURNING user_id`,
+        [mobile_number, hashedPassword, email]
       );
       userId = newUser.rows[0].user_id;
     }
 
-    // 3. Create Client Profile (Data Layer)
+    // 3. Generate OTP and create Client Profile (Data Layer)
+    const otp = Math.floor(100000 + Math.random() * 900000).toString(); // Generate 6-digit OTP
+    const expiresAt = new Date(Date.now() + 10 * 60000); // 10 minutes from now
+    
+    // Create Client Profile
     // Note: wallet_balance defaults to 0.00 in DB schema
     // Note: is_registration_fee_paid defaults to FALSE in DB schema
     const newProfile = await client.query(
@@ -59,18 +74,39 @@ exports.registerClient = async (req, res, next) => {
        VALUES ($1, $2, $3) RETURNING client_profile_id`,
       [userId, full_name, client_type || 'INDIVIDUAL']
     );
+    
+    // Store OTP in database
+    await client.query(
+      'INSERT INTO otp_verifications (user_id, otp_code, expires_at) VALUES ($1, $2, $3)',
+      [userId, otp, expiresAt]
+    );
 
     // COMMIT TRANSACTION
     await client.query('COMMIT');
+    
+    // Send OTP email
+    try {
+      const message = `Your VCare verification code is: ${otp}. It expires in 10 minutes.`;
+
+      await sendEmail({
+        email: email,
+        subject: 'VCare Account Verification',
+        message: message
+      });
+    } catch (err) {
+      // If email fails, log it but don't fail the registration
+      console.error("Email failed to send:", err);
+    }
 
     res.status(201).json({
       status: 'success',
-      message: 'Registration successful. Please pay registration fee.',
+      message: 'Registration successful. Please verify the OTP sent to your email.',
       data: {
         userId: userId,
         profileId: newProfile.rows[0].client_profile_id,
         payment_required: true,
-        amount_due: 10000.00
+        amount_due: 10000.00,
+        email_sent: true
       }
     });
 
@@ -80,6 +116,33 @@ exports.registerClient = async (req, res, next) => {
     res.status(500).json({ message: "Registration failed." });
   } finally {
     client.release(); // Release connection back to pool
+  }
+};
+
+exports.verifyOtp = async (req, res) => {
+  const { user_id, otp_code } = req.body;
+
+  try {
+    const result = await db.query(
+      `SELECT * FROM otp_verifications 
+       WHERE user_id = $1 AND otp_code = $2 AND expires_at > NOW()`,
+      [user_id, otp_code]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(400).json({ message: "Invalid or expired OTP." });
+    }
+
+    // Mark email as verified
+    await db.query('UPDATE users SET is_email_verified = TRUE WHERE user_id = $1', [user_id]);
+
+    // Delete the OTP so it can't be used again
+    await db.query('DELETE FROM otp_verifications WHERE user_id = $1', [user_id]);
+
+    res.status(200).json({ status: 'success', message: "Email verified successfully." });
+
+  } catch (error) {
+    res.status(500).json({ message: "Verification failed." });
   }
 };
 
@@ -115,7 +178,7 @@ exports.login = async (req, res) => {
       'SELECT client_profile_id, full_name, client_type FROM client_profiles WHERE user_id = $1',
       [user.user_id]
     );
-    
+
     const staffProfilePromise = db.query(
       'SELECT staff_profile_id, full_name, verification_status FROM staff_profiles WHERE user_id = $1',
       [user.user_id]
@@ -146,16 +209,16 @@ exports.login = async (req, res) => {
         roles: {
           is_client: !!clientProfile, // Boolean: true if they have a client profile
           client_id: clientProfile ? clientProfile.client_profile_id : null,
-          client_info: clientProfile ? { 
-              name: clientProfile.full_name, 
-              type: clientProfile.client_type 
+          client_info: clientProfile ? {
+            name: clientProfile.full_name,
+            type: clientProfile.client_type
           } : null,
-          
+
           is_staff: !!staffProfile, // Boolean: true if they have a staff profile
           staff_id: staffProfile ? staffProfile.staff_profile_id : null,
           staff_info: staffProfile ? {
-              name: staffProfile.full_name,
-              status: staffProfile.verification_status 
+            name: staffProfile.full_name,
+            status: staffProfile.verification_status
           } : null
         }
       }
@@ -164,5 +227,63 @@ exports.login = async (req, res) => {
   } catch (error) {
     console.error("Login Error:", error);
     res.status(500).json({ message: "Server error during login" });
+  }
+};
+
+exports.getAllUsers = async (req, res) => {
+  try {
+    const result = await db.query(
+      'SELECT user_id, mobile_number, email, is_email_verified, is_active, created_at FROM users ORDER BY created_at DESC'
+    );
+    res.status(200).json({ status: 'success', count: result.rowCount, data: result.rows });
+  } catch (error) {
+    res.status(500).json({ message: "Error fetching users" });
+  }
+};
+
+exports.getAllClients = async (req, res) => {
+  try {
+    const result = await db.query(
+      'SELECT * FROM client_profiles ORDER BY created_at DESC'
+    );
+    res.status(200).json({ status: 'success', count: result.rowCount, data: result.rows });
+  } catch (error) {
+    res.status(500).json({ message: "Error fetching client profiles" });
+  }
+};
+
+exports.getAllStaff = async (req, res) => {
+  try {
+    const result = await db.query(
+      'SELECT * FROM staff_profiles ORDER BY created_at DESC'
+    );
+    res.status(200).json({ status: 'success', count: result.rowCount, data: result.rows });
+  } catch (error) {
+    res.status(500).json({ message: "Error fetching staff profiles" });
+  }
+};
+
+exports.getUnifiedOverview = async (req, res) => {
+  try {
+    const query = `
+      SELECT 
+        u.user_id, u.mobile_number, u.email, u.is_active,
+        cp.client_profile_id, cp.full_name AS client_name, cp.client_type, cp.wallet_balance,
+        sp.staff_profile_id, sp.full_name AS staff_name, sp.designation, sp.verification_status
+      FROM users u
+      LEFT JOIN client_profiles cp ON u.user_id = cp.user_id
+      LEFT JOIN staff_profiles sp ON u.user_id = sp.user_id
+      ORDER BY u.created_at DESC;
+    `;
+    const result = await db.query(query);
+    
+    res.status(200).json({ 
+      status: 'success', 
+      count: result.rowCount, 
+      data: result.rows 
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error fetching unified overview" });
   }
 };
