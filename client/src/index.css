@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+/* Custom Base Styles */
+:root {
+  --primary: #2563eb;
+  --secondary: #475569;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900;
+}
+
+@keyframes marquee {
+  0% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-marquee {
+  animation: marquee 25s linear infinite;
+}
