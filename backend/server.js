@@ -3,6 +3,7 @@ const cors = require('cors');
 const authRoutes = require('./routes/authRoutes');
 const clientRoutes = require('./routes/clientRoutes')
 const productRoutes = require('./routes/productRoutes')
+const staffRoutes = require('./routes/staffRoutes')
 require('dotenv').config();
 
 const app = express();
@@ -14,7 +15,8 @@ app.use(express.json()); // Body parser
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/client', clientRoutes);
-app.use('/api/products', productRoutes)
+app.use('/api/products', productRoutes);
+app.use('/api/staff', staffRoutes);
 
 
 // Global Error Handler
