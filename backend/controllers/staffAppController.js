@@ -251,3 +251,55 @@ exports.acceptApplication = async (req, res) => {
     client.release();
   }
 };
+
+exports.rejectApplication = async (req, res) => {
+  const { application_id, reason } = req.body;
+
+  // Validate input
+  if (!reason) {
+    return res.status(400).json({ message: "A rejection reason is required." });
+  }
+
+  try {
+    // 1. Check if Application Exists
+    const appResult = await db.query(
+      'SELECT * FROM staff_applications WHERE application_id = $1', 
+      [application_id]
+    );
+
+    if (appResult.rows.length === 0) {
+      return res.status(404).json({ message: "Application not found" });
+    }
+
+    const app = appResult.rows[0];
+
+    // 2. Update Status and Save Reason
+    await db.query(
+      "UPDATE staff_applications SET status = 'REJECTED', rejection_reason = $1 WHERE application_id = $2",
+      [reason, application_id]
+    );
+
+    // 3. Send Notifications (Parallel)
+    const emailSubject = 'Update on your VCare Staff Application';
+    const messageBody = `Dear ${app.full_name},\n\nThank you for your interest in joining VCare. After careful review, we regret to inform you that we cannot proceed with your application at this time.\n\nReason: ${reason}\n\nWe encourage you to apply again in the future if your qualifications change.\n\nBest regards,\nThe VCare Team`;
+
+    Promise.allSettled([
+        sendEmail({ 
+            email: app.email, 
+            subject: emailSubject, 
+            message: messageBody 
+        }),
+        // Note: Ensure your WhatsApp provider supports free-form text or use a pre-approved "Rejection" template
+        sendWhatsAppOtp(app.mobile_number, messageBody) 
+    ]);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Application rejected and applicant notified.'
+    });
+
+  } catch (error) {
+    console.error("Reject Application Error:", error);
+    res.status(500).json({ message: "Internal server error processing rejection." });
+  }
+};

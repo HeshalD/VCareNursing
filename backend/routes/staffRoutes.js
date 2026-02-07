@@ -22,4 +22,12 @@ router.post(
   staffAppController.acceptApplication
 );
 
+// Admin Only: Reject Application
+router.post(
+  '/reject', 
+  protect, 
+  restrictTo('SUPER_ADMIN'), 
+  staffAppController.rejectApplication
+);
+
 module.exports = router;
