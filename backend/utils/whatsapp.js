@@ -57,4 +57,58 @@ const sendWhatsAppOtp = async (mobileNumber, otp) => {
   }
 };
 
-module.exports = sendWhatsAppOtp;
+const sendWhatsAppMessage = async (mobileNumber, content, mediaOptions = null) => {
+  try {
+    let cleanNumber = mobileNumber.replace('whatsapp:', '').replace('+', '');
+    if (cleanNumber.startsWith('0')) cleanNumber = cleanNumber.substring(1);
+    
+    // Ensure Sri Lanka prefix - Adjust if you expand to other countries
+    if (!cleanNumber.startsWith('94')) cleanNumber = '94' + cleanNumber;
+    
+    const formattedNumber = `whatsapp:+${cleanNumber}`;
+
+    const messagePayload = {
+      from: process.env.TWILIO_WHATSAPP_NUMBER,
+      to: formattedNumber,
+    };
+
+    // Handle Media (PDF/Images) vs Text
+    if (mediaOptions && mediaOptions.type === 'document') {
+      messagePayload.body = content; // Caption for the document
+      messagePayload.mediaUrl = [mediaOptions.link]; // Twilio expects an array of URLs
+      console.log('WhatsApp Debug - Sending document:', {
+        link: mediaOptions.link,
+        filename: mediaOptions.filename
+      });
+    } else {
+      messagePayload.body = content;
+    }
+
+    console.log('WhatsApp Debug - Message payload:', JSON.stringify(messagePayload, null, 2));
+
+    const message = await client.messages.create(messagePayload);
+    console.log(`WhatsApp Message sent. SID: ${message.sid}`);
+    console.log('WhatsApp Debug - Message status:', message.status);
+    console.log('WhatsApp Debug - Full response:', JSON.stringify(message, null, 2));
+    return message;
+  } catch (error) {
+    console.error("Twilio WhatsApp Error:", error);
+    throw new Error(`Failed to send WhatsApp: ${error.message}`);
+  }
+};
+
+const checkMessageStatus = async (messageSid) => {
+  try {
+    const message = await client.messages(messageSid).fetch();
+    return {
+      status: message.status,
+      errorCode: message.errorCode,
+      errorMessage: message.errorMessage
+    };
+  } catch (error) {
+    console.error("Error checking message status:", error);
+    throw error;
+  }
+};
+
+module.exports = { sendWhatsAppOtp, sendWhatsAppMessage, checkMessageStatus };

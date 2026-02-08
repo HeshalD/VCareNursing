@@ -4,6 +4,8 @@ const authRoutes = require('./routes/authRoutes');
 const clientRoutes = require('./routes/clientRoutes')
 const productRoutes = require('./routes/productRoutes')
 const staffRoutes = require('./routes/staffRoutes')
+const serviceRequestRoutes = require('./routes/serviceRequestRoutes')
+const quoteRoutes = require('./routes/quoteRoutes')
 require('dotenv').config();
 
 const app = express();
@@ -17,7 +19,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/client', clientRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/staff', staffRoutes);
-
+app.use('/api/service-requests', serviceRequestRoutes);
+app.use('/api/quotes', quoteRoutes);
 
 // Global Error Handler
 app.use((err, req, res, next) => {
