@@ -6,6 +6,7 @@ const productRoutes = require('./routes/productRoutes')
 const staffRoutes = require('./routes/staffRoutes')
 const serviceRequestRoutes = require('./routes/serviceRequestRoutes')
 const quoteRoutes = require('./routes/quoteRoutes')
+const bookingRoutes = require('./routes/bookingRoutes')
 require('dotenv').config();
 
 const app = express();
@@ -21,6 +22,7 @@ app.use('/api/products', productRoutes);
 app.use('/api/staff', staffRoutes);
 app.use('/api/service-requests', serviceRequestRoutes);
 app.use('/api/quotes', quoteRoutes);
+app.use('/api/bookings', bookingRoutes);
 
 // Global Error Handler
 app.use((err, req, res, next) => {
