@@ -1,7 +1,7 @@
 const db = require('../config/db');
 const bcrypt = require('bcryptjs');
 const sendEmail = require('../utils/email');
-const sendWhatsAppOtp = require('../utils/whatsapp');
+const { sendWhatsAppOtp, sendWhatsAppMessage } = require('../utils/whatsapp');
 
 exports.submitApplication = async (req, res) => {
   try {
@@ -302,4 +302,34 @@ exports.rejectApplication = async (req, res) => {
     console.error("Reject Application Error:", error);
     res.status(500).json({ message: "Internal server error processing rejection." });
   }
+};
+
+exports.getAvailableStaffByRole = async (req, res) => {
+    const { role } = req.query; // ?role=CAREGIVER or ?role=NURSE
+
+    try {
+        // We join users table to check the role, and staff_profiles for the status
+        const query = `
+            SELECT 
+                s.staff_profile_id as staff_id, 
+                s.full_name, 
+                u.mobile_number
+            FROM staff_profiles s
+            JOIN users u ON s.user_id = u.user_id
+            WHERE s.current_status = 'AVAILABLE' 
+            AND u.role @> ARRAY[$1]::user_role_enum[] -- Checks if the role array contains the requested role
+        `;
+
+        const result = await db.query(query, [role]);
+
+        res.status(200).json({
+            status: 'success',
+            results: result.rows.length,
+            data: result.rows
+        });
+
+    } catch (error) {
+        console.error("Fetch Staff Error:", error);
+        res.status(500).json({ message: "Error fetching available staff" });
+    }
 };

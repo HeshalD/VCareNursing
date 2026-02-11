@@ -10,24 +10,31 @@ router.post('/apply', upload.array('documents', 5), staffAppController.submitApp
 
 // Admin Only: View all applications
 router.get('/applications', protect, restrictTo('SUPER_ADMIN'), async (req, res) => {
-    const apps = await db.query('SELECT * FROM staff_applications ORDER BY applied_at DESC');
-    res.status(200).json(apps.rows);
+  const apps = await db.query('SELECT * FROM staff_applications ORDER BY applied_at DESC');
+  res.status(200).json(apps.rows);
 });
 
 // Admin Only: Accept Application
 router.post(
-  '/accept', 
-  protect, 
-  restrictTo('SUPER_ADMIN'), 
+  '/accept',
+  protect,
+  restrictTo('SUPER_ADMIN'),
   staffAppController.acceptApplication
 );
 
 // Admin Only: Reject Application
 router.post(
-  '/reject', 
-  protect, 
-  restrictTo('SUPER_ADMIN'), 
+  '/reject',
+  protect,
+  restrictTo('SUPER_ADMIN'),
   staffAppController.rejectApplication
+);
+
+router.get(
+  '/available',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+  staffAppController.getAvailableStaffByRole
 );
 
 module.exports = router;
