@@ -71,7 +71,7 @@ const RegisterPage = () => {
       
       // Redirect to OTP verification page after 2 seconds
       setTimeout(() => {
-        navigate('/verify-otp', { state: { email: formData.email, userId: response.data?.userId } });
+        navigate('/verify-otp-reg', { state: { email: formData.email, userId: response.data?.userId } });
       }, 2000);
       
     } catch (err) {

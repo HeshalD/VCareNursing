@@ -2,7 +2,7 @@ const bcrypt = require('bcrypt');
 const db = require('../config/db');
 const jwt = require('jsonwebtoken');
 const sendEmail = require('../utils/email');
-const sendWhatsAppOtp = require('../utils/whatsapp');
+const { sendWhatsAppOtp } = require('../utils/whatsapp');
 
 exports.registerClient = async (req, res, next) => {
   const { mobile_number, password, full_name, client_type, terms_accepted, email } = req.body;

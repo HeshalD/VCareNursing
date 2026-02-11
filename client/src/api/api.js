@@ -82,10 +82,10 @@ class ApiClient {
     });
   }
 
-  async verifyOtp(email, otp) {
+  async verifyOtp(userId, otp) {
     return this.request('/auth/verify-otp', {
       method: 'POST',
-      body: JSON.stringify({ email, otp }),
+      body: JSON.stringify({ user_id: userId, otp_code: otp }),
     });
   }
 
