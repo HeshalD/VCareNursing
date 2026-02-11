@@ -7,6 +7,7 @@ const staffRoutes = require('./routes/staffRoutes')
 const serviceRequestRoutes = require('./routes/serviceRequestRoutes')
 const quoteRoutes = require('./routes/quoteRoutes')
 const bookingRoutes = require('./routes/bookingRoutes')
+const patientRoutes = require('./routes/patientRoutes')
 require('dotenv').config();
 
 const app = express();
@@ -23,6 +24,7 @@ app.use('/api/staff', staffRoutes);
 app.use('/api/service-requests', serviceRequestRoutes);
 app.use('/api/quotes', quoteRoutes);
 app.use('/api/bookings', bookingRoutes);
+app.use('/api/patients', patientRoutes);
 
 // Global Error Handler
 app.use((err, req, res, next) => {
