@@ -277,7 +277,7 @@ exports.login = async (req, res) => {
     );
 
     const staffProfilePromise = db.query(
-      'SELECT staff_profile_id, full_name, verification_status FROM staff_profiles WHERE user_id = $1',
+      'SELECT staff_profile_id, full_name, verification_status, profile_picture_url FROM staff_profiles WHERE user_id = $1',
       [user.user_id]
     );
 
@@ -366,7 +366,7 @@ exports.getUnifiedOverview = async (req, res) => {
       SELECT 
         u.user_id, u.mobile_number, u.email, u.is_active,
         cp.client_profile_id, cp.full_name AS client_name, cp.client_type, cp.wallet_balance,
-        sp.staff_profile_id, sp.full_name AS staff_name, sp.designation, sp.verification_status
+        sp.staff_profile_id, sp.full_name AS staff_name, sp.designation, sp.verification_status, sp.profile_picture_url
       FROM users u
       LEFT JOIN client_profiles cp ON u.user_id = cp.user_id
       LEFT JOIN staff_profiles sp ON u.user_id = sp.user_id

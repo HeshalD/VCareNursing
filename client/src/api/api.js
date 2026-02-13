@@ -138,6 +138,59 @@ class ApiClient {
       body: formData,
     });
   }
+
+  // Staff endpoints
+  async submitApplication(applicationData, documentFiles) {
+    const formData = new FormData();
+    
+    // Append all application data fields
+    Object.keys(applicationData).forEach(key => {
+      if (key === 'applied_roles' && Array.isArray(applicationData[key])) {
+        formData.append(key, JSON.stringify(applicationData[key]));
+      } else {
+        formData.append(key, applicationData[key]);
+      }
+    });
+    
+    // Append document files if provided
+    if (documentFiles && documentFiles.length > 0) {
+      documentFiles.forEach(file => {
+        formData.append('documents', file);
+      });
+    }
+
+    return this.request('/staff/apply', {
+      method: 'POST',
+      headers: {
+        // Remove Content-Type to let browser set it with boundary for FormData
+        ...(this.token && { Authorization: `Bearer ${this.token}` }),
+      },
+      body: formData,
+    });
+  }
+
+  async getApplications() {
+    return this.request('/staff/applications');
+  }
+
+  async acceptApplication(applicationId) {
+    return this.request('/staff/accept', {
+      method: 'POST',
+      body: JSON.stringify({ application_id: applicationId }),
+    });
+  }
+
+  async rejectApplication(applicationId, reason) {
+    return this.request('/staff/reject', {
+      method: 'POST',
+      body: JSON.stringify({ application_id: applicationId, reason }),
+    });
+  }
+
+  async getAvailableStaffByRole(role) {
+    const queryParams = role ? `?role=${encodeURIComponent(role)}` : '';
+    return this.request(`/staff/available${queryParams}`);
+  }
 }
 
 // Create and export a singleton instance

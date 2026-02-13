@@ -99,7 +99,7 @@ exports.convertToBooking = async (req, res) => {
         await client.query(`INSERT INTO payment_slips (quote_id, slip_url, verified_at) VALUES ($1, $2, NOW())`, [quote_id, slip_url]);
 
         // 8. Fetch Staff Name (For Notification)
-        const staffRes = await client.query('SELECT full_name FROM staff_profiles WHERE staff_profile_id = $1', [assigned_staff_id]);
+        const staffRes = await client.query('SELECT full_name, profile_picture_url FROM staff_profiles WHERE staff_profile_id = $1', [assigned_staff_id]);
         
         if (staffRes.rows.length === 0) {
             throw new Error('Assigned Staff ID not found');

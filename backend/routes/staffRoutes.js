@@ -1,12 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const staffAppController = require('../controllers/staffAppController');
-const upload = require('../config/cloudinaryConfig');
+const { uploadApplicationFiles } = require('../middleware/uploadMiddleware');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const db = require('../config/db');
 
 // Public: Apply to join VCare
-router.post('/apply', upload.array('documents', 5), staffAppController.submitApplication);
+router.post('/apply', uploadApplicationFiles, staffAppController.submitApplication);
 
 // Admin Only: View all applications
 router.get('/applications', protect, restrictTo('SUPER_ADMIN'), async (req, res) => {

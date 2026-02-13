@@ -8,17 +8,35 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-const storage = new CloudinaryStorage({
+// Storage for documents
+const documentStorage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: (req, file) => {
     return {
-      folder: 'vcare_products',
-      allowed_formats: ['jpg', 'png', 'jpeg'],
-      transformation: [{ width: 500, height: 500, crop: 'limit' }]
+      folder: 'vcare_documents',
+      allowed_formats: ['pdf', 'doc', 'docx', 'jpg', 'png', 'jpeg'],
+      transformation: [{ width: 1000, height: 1000, crop: 'limit' }]
     };
   },
 });
 
-const upload = multer({ storage: storage });
+// Storage for profile pictures
+const profilePictureStorage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: (req, file) => {
+    return {
+      folder: 'vcare_profile_pictures',
+      allowed_formats: ['jpg', 'png', 'jpeg'],
+      transformation: [{ width: 300, height: 300, crop: 'fill', gravity: 'face' }]
+    };
+  },
+});
 
-module.exports = upload;
+const upload = multer({ storage: documentStorage });
+const uploadProfilePicture = multer({ storage: profilePictureStorage });
+
+// For applications that need both documents and profile picture
+const uploadDocuments = upload.array('documents', 5);
+const uploadProfilePictureSingle = uploadProfilePicture.single('profile_picture');
+
+module.exports = { upload, uploadProfilePicture, uploadDocuments, uploadProfilePictureSingle };

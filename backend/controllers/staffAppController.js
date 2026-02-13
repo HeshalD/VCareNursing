@@ -28,16 +28,20 @@ exports.submitApplication = async (req, res) => {
     }
     rolesArray = rolesArray.filter(role => role.length > 0);
 
-    const document_urls = req.files ? req.files.map(file => file.path) : [];
+    console.log('Files received:', req.files);
+    const document_urls = req.files && req.files.documents ? req.files.documents.map(file => file.path) : [];
+    const profile_picture_url = req.files && req.files.profile_picture ? req.files.profile_picture[0].path : null;
+    console.log('Document URLs:', document_urls);
+    console.log('Profile picture URL:', profile_picture_url);
 
     const query = `
       INSERT INTO staff_applications 
-      (full_name, email, mobile_number, applied_roles, qualifications, document_urls, home_address, location, gps_coordinates)
+      (full_name, email, mobile_number, applied_roles, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url)
       VALUES ($1, $2, $3, $4::user_role_enum[], $5, $6, $7, $8,
         CASE WHEN $9::float IS NOT NULL AND $10::float IS NOT NULL 
              THEN point($10::float, $9::float) 
              ELSE NULL 
-        END)
+        END, $11)
       RETURNING *;
     `;
 
@@ -52,7 +56,8 @@ exports.submitApplication = async (req, res) => {
       home_address,
       location, 
       (latitude && latitude !== "") ? latitude : null,
-      (longitude && longitude !== "") ? longitude : null
+      (longitude && longitude !== "") ? longitude : null,
+      profile_picture_url
     ]);
 
     res.status(201).json({ status: 'success', data: result.rows[0] });
@@ -196,8 +201,8 @@ exports.acceptApplication = async (req, res) => {
 
     if (staffProfileCheck.rows.length === 0) {
         const profileInsertQuery = `
-          INSERT INTO staff_profiles (user_id, full_name, qualifications, document_urls, home_address, gps_coordinates)
-          VALUES ($1, $2, $3, $4, $5, $6)
+          INSERT INTO staff_profiles (user_id, full_name, qualifications, document_urls, home_address, gps_coordinates, profile_picture_url)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
         `;
         await client.query(profileInsertQuery, [
           userId,
@@ -205,7 +210,8 @@ exports.acceptApplication = async (req, res) => {
           app.qualifications,
           app.document_urls,
           app.home_address,
-          app.gps_coordinates
+          app.gps_coordinates,
+          app.profile_picture_url
         ]);
     } else {
         // Optional: Update existing profile if needed, or just log it
@@ -313,6 +319,7 @@ exports.getAvailableStaffByRole = async (req, res) => {
             SELECT 
                 s.staff_profile_id as staff_id, 
                 s.full_name, 
+                s.profile_picture_url,
                 u.mobile_number
             FROM staff_profiles s
             JOIN users u ON s.user_id = u.user_id
