@@ -8,16 +8,18 @@ import {
 } from 'lucide-react';
 import Navbar from '../../../components/layout/Navbar';
 import Footer from '../../../components/layout/Footer';
+import apiClient from '../../../api/api';
 
 const WorkerRegistrationPage = () => {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState({
-    fullName: '', age: '', dob: '', nic: '', phone: '',
-    province: '', district: '', address: '',
-    serviceType: '', qualifications: '', aboutMe: '',
-    documents: null
+    full_name: '', email: '', mobile_number: '', applied_roles: '', 
+    qualifications: '', home_address: '', location: '', latitude: '', longitude: '',
+    documents: [], profile_picture: null
   });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
 
   const totalSteps = 4;
 
@@ -36,21 +38,43 @@ const WorkerRegistrationPage = () => {
     exit: { opacity: 0, x: -20 }
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    console.log('Worker Application:', formData);
-    // Simulate API call
-    setTimeout(() => {
-      navigate('/services/provider-dashboard');
-    }, 1000);
-  };
+    setIsSubmitting(true);
+    setSubmitError('');
 
-  const services = [
-    { value: 'nursing', label: 'Home Nursing' },
-    { value: 'caretaker', label: 'Elderly Caretaker' },
-    { value: 'nanny', label: 'Nanny / Child Care' },
-    { value: 'hospital', label: 'Hospital Staffing' }
-  ];
+    try {
+      // Prepare application data
+      const applicationData = {
+        full_name: formData.full_name,
+        email: formData.email,
+        mobile_number: formData.mobile_number,
+        applied_roles: formData.applied_roles,
+        qualifications: formData.qualifications,
+        home_address: formData.home_address,
+        location: formData.location,
+        latitude: formData.latitude,
+        longitude: formData.longitude
+      };
+
+      // Submit application with documents and profile picture
+      const response = await apiClient.submitApplication(
+        applicationData,
+        formData.documents,
+        formData.profile_picture
+      );
+
+      console.log('Application submitted successfully:', response);
+      // Navigate to success page or show success message
+      navigate('/application-success');
+      
+    } catch (error) {
+      console.error('Application submission error:', error);
+      setSubmitError(error.message || 'Failed to submit application. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -145,54 +169,48 @@ const WorkerRegistrationPage = () => {
                           <input
                             type="text"
                             className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 placeholder:text-slate-400"
-                            value={formData.fullName}
-                            onChange={e => setFormData({ ...formData, fullName: e.target.value })}
+                            value={formData.full_name}
+                            onChange={e => setFormData({ ...formData, full_name: e.target.value })}
                             placeholder="e.g. Saman Kumara"
                             required
                           />
                         </div>
                         <div>
-                          <label className="text-sm font-semibold text-slate-600 block mb-1">Date of Birth</label>
+                          <label className="text-sm font-semibold text-slate-600 block mb-1">Email Address</label>
                           <input
-                            type="date"
+                            type="email"
                             className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 placeholder:text-slate-400"
-                            value={formData.dob}
-                            onChange={e => setFormData({ ...formData, dob: e.target.value })}
+                            value={formData.email}
+                            onChange={e => setFormData({ ...formData, email: e.target.value })}
+                            placeholder="e.g. saman@example.com"
                             required
                           />
                         </div>
                         <div>
-                          <label className="text-sm font-semibold text-slate-600 block mb-1">Age</label>
-                          <input
-                            type="number"
-                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 placeholder:text-slate-400"
-                            value={formData.age}
-                            onChange={e => setFormData({ ...formData, age: e.target.value })}
-                            placeholder="e.g. 28"
-                            required
-                          />
-                        </div>
-                        <div>
-                          <label className="text-sm font-semibold text-slate-600 block mb-1">NIC Number</label>
-                          <input
-                            type="text"
-                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 placeholder:text-slate-400"
-                            value={formData.nic}
-                            onChange={e => setFormData({ ...formData, nic: e.target.value })}
-                            placeholder="National ID"
-                            required
-                          />
-                        </div>
-                        <div>
-                          <label className="text-sm font-semibold text-slate-600 block mb-1">Phone Number</label>
+                          <label className="text-sm font-semibold text-slate-600 block mb-1">Mobile Number</label>
                           <input
                             type="tel"
                             className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 placeholder:text-slate-400"
-                            value={formData.phone}
-                            onChange={e => setFormData({ ...formData, phone: e.target.value })}
-                            placeholder="077 123 4567"
+                            value={formData.mobile_number}
+                            onChange={e => setFormData({ ...formData, mobile_number: e.target.value })}
+                            placeholder="e.g. 0771234567"
                             required
                           />
+                        </div>
+                        <div>
+                          <label className="text-sm font-semibold text-slate-600 block mb-1">Applied Role</label>
+                          <select
+                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900"
+                            value={formData.applied_roles}
+                            onChange={e => setFormData({ ...formData, applied_roles: e.target.value })}
+                            required
+                          >
+                            <option value="">Select a role</option>
+                            <option value="NURSE">Nurse</option>
+                            <option value="CAREGIVER">Caregiver</option>
+                            <option value="NANNY">Nanny</option>
+                            <option value="COORDINATOR">COORDINATOR</option>
+                          </select>
                         </div>
                       </div>
                     </motion.div>
@@ -225,13 +243,13 @@ const WorkerRegistrationPage = () => {
                             <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                           </div>
                         </div>
-                        <div>
+                          <div>
                           <label className="text-sm font-semibold text-slate-600 block mb-1">District / City</label>
                           <input
                             type="text"
                             className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 placeholder:text-slate-400"
-                            value={formData.district}
-                            onChange={e => setFormData({ ...formData, district: e.target.value })}
+                            value={formData.location}
+                            onChange={e => setFormData({ ...formData, location: e.target.value })}
                             placeholder="e.g. Colombo"
                             required
                           />
@@ -241,8 +259,8 @@ const WorkerRegistrationPage = () => {
                           <textarea
                             rows="3"
                             className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none resize-none text-slate-900 placeholder:text-slate-400"
-                            value={formData.address}
-                            onChange={e => setFormData({ ...formData, address: e.target.value })}
+                            value={formData.home_address}
+                            onChange={e => setFormData({ ...formData, home_address: e.target.value })}
                             placeholder="Street address, Zip code"
                             required
                           />
@@ -262,21 +280,6 @@ const WorkerRegistrationPage = () => {
                       <h2 className="text-2xl font-bold text-slate-800 mb-6 hidden md:block">Professional Profile</h2>
                       <div className="space-y-6">
                         <div>
-                          <label className="text-sm font-semibold text-slate-600 block mb-1">Applying For</label>
-                          <div className="relative">
-                            <select
-                              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none appearance-none text-slate-900"
-                              value={formData.serviceType}
-                              onChange={e => setFormData({ ...formData, serviceType: e.target.value })}
-                              required
-                            >
-                              <option value="">Select Service Type</option>
-                              {services.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-                            </select>
-                            <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-                          </div>
-                        </div>
-                        <div>
                           <label className="text-sm font-semibold text-slate-600 block mb-1">Qualifications</label>
                           <textarea
                             rows="3"
@@ -284,17 +287,6 @@ const WorkerRegistrationPage = () => {
                             value={formData.qualifications}
                             onChange={e => setFormData({ ...formData, qualifications: e.target.value })}
                             placeholder="Degrees, NVQ levels, etc."
-                            required
-                          />
-                        </div>
-                        <div>
-                          <label className="text-sm font-semibold text-slate-600 block mb-1">About Me</label>
-                          <textarea
-                            rows="4"
-                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none resize-none text-slate-900 placeholder:text-slate-400"
-                            value={formData.aboutMe}
-                            onChange={e => setFormData({ ...formData, aboutMe: e.target.value })}
-                            placeholder="Brief introduction..."
                             required
                           />
                         </div>
@@ -307,7 +299,7 @@ const WorkerRegistrationPage = () => {
                               id="doc-upload"
                               className="hidden"
                               multiple
-                              onChange={(e) => setFormData({ ...formData, documents: e.target.files })}
+                              onChange={(e) => setFormData({ ...formData, documents: Array.from(e.target.files) })}
                             />
                             <label
                               htmlFor="doc-upload"
@@ -319,11 +311,42 @@ const WorkerRegistrationPage = () => {
                                 <p className="text-xs text-slate-400 mt-1">PDF, JPG, PNG (Max 5MB)</p>
                               </div>
                             </label>
-                            {formData.documents && (
+                            {formData.documents && formData.documents.length > 0 && (
                               <div className="mt-2 p-3 bg-indigo-50 border border-indigo-100 rounded-lg flex items-center gap-2">
                                 <FileText className="w-4 h-4 text-indigo-600" />
                                 <span className="text-sm text-indigo-900 font-medium">
                                   {formData.documents.length} file(s) selected
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="text-sm font-semibold text-slate-600 block mb-1">Profile Picture</label>
+                          <div className="relative">
+                            <input
+                              type="file"
+                              id="profile-upload"
+                              className="hidden"
+                              accept="image/*"
+                              onChange={(e) => setFormData({ ...formData, profile_picture: e.target.files[0] })}
+                            />
+                            <label
+                              htmlFor="profile-upload"
+                              className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-300 rounded-xl bg-slate-50 hover:bg-slate-100 transition-all cursor-pointer group"
+                            >
+                              <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                                <Upload className="w-8 h-8 text-slate-400 group-hover:text-indigo-500 mb-2 transition-colors" />
+                                <p className="text-sm text-slate-500 font-medium">Click to upload profile picture</p>
+                                <p className="text-xs text-slate-400 mt-1">JPG, PNG (Max 2MB)</p>
+                              </div>
+                            </label>
+                            {formData.profile_picture && (
+                              <div className="mt-2 p-3 bg-indigo-50 border border-indigo-100 rounded-lg flex items-center gap-2">
+                                <FileText className="w-4 h-4 text-indigo-600" />
+                                <span className="text-sm text-indigo-900 font-medium">
+                                  {formData.profile_picture.name}
                                 </span>
                               </div>
                             )}
@@ -349,8 +372,8 @@ const WorkerRegistrationPage = () => {
                             <User className="w-5 h-5 text-slate-600" />
                           </div>
                           <div>
-                            <h3 className="font-bold text-slate-900">{formData.fullName || "Not provided"}</h3>
-                            <p className="text-sm text-slate-500">{formData.phone} • {formData.nic}</p>
+                            <h3 className="font-bold text-slate-900">{formData.full_name || "Not provided"}</h3>
+                            <p className="text-sm text-slate-500">{formData.email} • {formData.mobile_number}</p>
                           </div>
                         </div>
                         <div className="h-px bg-slate-200 w-full" />
@@ -359,8 +382,8 @@ const WorkerRegistrationPage = () => {
                             <MapPin className="w-5 h-5 text-slate-600" />
                           </div>
                           <div>
-                            <h3 className="font-bold text-slate-900">{formData.city || formData.district || "Location"}</h3>
-                            <p className="text-sm text-slate-500">{formData.address || "No address provided"}</p>
+                            <h3 className="font-bold text-slate-900">{formData.location || "Location"}</h3>
+                            <p className="text-sm text-slate-500">{formData.home_address || "No address provided"}</p>
                           </div>
                         </div>
                         <div className="h-px bg-slate-200 w-full" />
@@ -369,11 +392,21 @@ const WorkerRegistrationPage = () => {
                             <Briefcase className="w-5 h-5 text-slate-600" />
                           </div>
                           <div>
-                            <h3 className="font-bold text-slate-900 capitalize">{formData.serviceType || "No Service Selected"}</h3>
+                            <h3 className="font-bold text-slate-900">{formData.applied_roles || "No Role Selected"}</h3>
                             <p className="text-sm text-slate-500 line-clamp-2">{formData.qualifications}</p>
                           </div>
                         </div>
                       </div>
+
+                      {/* Error Display */}
+                      {submitError && (
+                        <div className="flex items-start gap-3 p-4 bg-red-50 rounded-xl border border-red-100 mt-4">
+                          <span className="text-red-600">⚠️</span>
+                          <p className="text-sm text-red-900">
+                            {submitError}
+                          </p>
+                        </div>
+                      )}
 
                       <div className="flex items-start gap-3 p-4 bg-emerald-50 rounded-xl border border-emerald-100 mt-4">
                         <CheckCircle className="w-5 h-5 text-emerald-600 mt-0.5" />
@@ -412,9 +445,10 @@ const WorkerRegistrationPage = () => {
                 ) : (
                   <button
                     type="submit"
-                    className="flex items-center gap-2 px-8 py-3 bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-500/30 hover:bg-emerald-700 transition-all"
+                    disabled={isSubmitting}
+                    className="flex items-center gap-2 px-8 py-3 bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-500/30 hover:bg-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Submit Application <CheckCircle className="w-5 h-5" />
+                    {isSubmitting ? 'Submitting...' : 'Submit Application'} <CheckCircle className="w-5 h-5" />
                   </button>
                 )}
               </div>

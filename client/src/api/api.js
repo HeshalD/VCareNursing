@@ -140,7 +140,7 @@ class ApiClient {
   }
 
   // Staff endpoints
-  async submitApplication(applicationData, documentFiles) {
+  async submitApplication(applicationData, documentFiles, profilePictureFile) {
     const formData = new FormData();
     
     // Append all application data fields
@@ -157,6 +157,11 @@ class ApiClient {
       documentFiles.forEach(file => {
         formData.append('documents', file);
       });
+    }
+
+    // Append profile picture if provided
+    if (profilePictureFile) {
+      formData.append('profile_picture', profilePictureFile);
     }
 
     return this.request('/staff/apply', {
