@@ -21,6 +21,8 @@ import WorkerVerification from './modules/admin/worker_verifications/worker_veri
 import Financials from './modules/admin/financial/financial';
 import Reports from './modules/admin/reports/reports';
 import Settings from './modules/admin/settings/settings';
+import AdminLoginPage from './modules/admin/AdminLoginPage';
+import { AdminAuthProvider } from './context/AdminAuthContext';
 import ScrollToTop from './components/common/ScrollToTop';
 import './App.css';
 
@@ -35,6 +37,11 @@ function App() {
             <Route path="/about" element={<AboutPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
+            <Route path="/admin" element={
+              <AdminAuthProvider>
+                <AdminLoginPage />
+              </AdminAuthProvider>
+            } />
             <Route path="/verify-otp-reg" element={<VerifyOTPReg />} />
             <Route path="/services/home-nursing" element={<HomeNursingPage />} />
             <Route path="/services/hospital-staffing" element={<HospitalStaffingPage />} />
@@ -45,12 +52,36 @@ function App() {
             <Route path="/services/provider-dashboard" element={<WorkerDashboardDemo />} />
             <Route path="/client/dashboard" element={<ClientDashboardDemo />} />
             <Route path="/client/profile" element={<ClientProfileDemo />} />
-            <Route path="/admin/dashboard" element={<AdminDashboard />} />
-            <Route path="/admin/users" element={<UserManagement />} />
-            <Route path="/admin/workers" element={<WorkerVerification />} />
-            <Route path="/admin/financial" element={<Financials />} />
-            <Route path="/admin/reports" element={<Reports />} />
-            <Route path="/admin/settings" element={<Settings />} />
+            <Route path="/admin/dashboard" element={
+              <AdminAuthProvider>
+                <AdminDashboard />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/users" element={
+              <AdminAuthProvider>
+                <UserManagement />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/workers" element={
+              <AdminAuthProvider>
+                <WorkerVerification />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/financial" element={
+              <AdminAuthProvider>
+                <Financials />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/reports" element={
+              <AdminAuthProvider>
+                <Reports />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/settings" element={
+              <AdminAuthProvider>
+                <Settings />
+              </AdminAuthProvider>
+            } />
             <Route path="/services/*" element={<Navigate to="/" replace />} />
             <Route path="/dashboard" element={<Navigate to="/login" replace />} />
 
