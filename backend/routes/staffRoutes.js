@@ -50,4 +50,10 @@ router.get('/:staff_id', protect, staffController.getStaffByID);
 // Get all staff with optional filtering
 router.get('/', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), staffController.getAllStaff);
 
+// Update staff status to unavailable
+router.put('/:staff_profile_id/unavailable', protect, staffController.updateStaffToUnavailable);
+
+// Update staff status (general)
+router.put('/:staff_profile_id/status', protect, staffController.updateStaffStatus);
+
 module.exports = router;

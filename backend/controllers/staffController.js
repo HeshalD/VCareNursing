@@ -149,3 +149,76 @@ exports.getAllStaff = async (req, res) => {
         });
     }
 };
+
+// Update staff member status to unavailable
+exports.updateStaffToUnavailable = async (req, res) => {
+    const { staff_profile_id } = req.params;
+
+    try {
+        const query = `
+            UPDATE staff_profiles 
+            SET current_status = 'UNAVAILABLE'
+            WHERE staff_profile_id = $1
+            RETURNING staff_profile_id, full_name, current_status
+        `;
+
+        const result = await db.query(query, [staff_profile_id]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ 
+                status: 'error',
+                message: 'Staff member not found' 
+            });
+        }
+
+        res.status(200).json({
+            status: 'success',
+            message: 'Staff member status updated to unavailable',
+            data: result.rows[0]
+        });
+
+    } catch (error) {
+        console.error('Update Staff to Unavailable Error:', error);
+        res.status(500).json({ 
+            status: 'error',
+            message: 'Server error while updating staff member status' 
+        });
+    }
+};
+
+// Update staff member status (general method)
+exports.updateStaffStatus = async (req, res) => {
+    const { staff_profile_id } = req.params;
+    const { current_status } = req.body;
+
+    try {
+        const query = `
+            UPDATE staff_profiles 
+            SET current_status = $1
+            WHERE staff_profile_id = $2
+            RETURNING staff_profile_id, full_name, current_status
+        `;
+
+        const result = await db.query(query, [current_status, staff_profile_id]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ 
+                status: 'error',
+                message: 'Staff member not found' 
+            });
+        }
+
+        res.status(200).json({
+            status: 'success',
+            message: `Staff member status updated to ${current_status}`,
+            data: result.rows[0]
+        });
+
+    } catch (error) {
+        console.error('Update Staff Status Error:', error);
+        res.status(500).json({ 
+            status: 'error',
+            message: 'Server error while updating staff member status' 
+        });
+    }
+};
