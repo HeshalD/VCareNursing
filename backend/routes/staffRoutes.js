@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const staffAppController = require('../controllers/staffAppController');
+const staffController = require('../controllers/staffController');
 const { uploadApplicationFiles } = require('../middleware/uploadMiddleware');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const db = require('../config/db');
@@ -42,5 +43,11 @@ router.post('/login', staffAppController.staffLogin);
 
 // Change Password (for staff members)
 router.post('/change-password', protect, staffAppController.changeStaffPassword);
+
+// Get staff by ID
+router.get('/:staff_id', protect, staffController.getStaffByID);
+
+// Get all staff with optional filtering
+router.get('/', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), staffController.getAllStaff);
 
 module.exports = router;
