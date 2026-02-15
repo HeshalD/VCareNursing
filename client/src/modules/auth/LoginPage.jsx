@@ -73,7 +73,15 @@ const LoginPage = () => {
       if (response.token && response.user) {
         login(response.token, response.user);
         console.log('Login successful:', response);
-        navigate('/'); // Redirect to home page
+        
+        // Redirect based on user role
+        if (response.user.staff_info || response.user.is_staff) {
+          // Staff member - redirect to provider dashboard
+          navigate('/services/provider-dashboard');
+        } else {
+          // Client or other user - redirect to home page
+          navigate('/');
+        }
       }
     } catch (err) {
       setError(err.message || 'Login failed. Please try again.');

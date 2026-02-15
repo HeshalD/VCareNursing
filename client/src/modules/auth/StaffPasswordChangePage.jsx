@@ -69,7 +69,7 @@ const StaffPasswordChangePage = () => {
         
         // Redirect to dashboard after 2 seconds
         setTimeout(() => {
-          navigate('/');
+          navigate('/services/provider-dashboard');
         }, 2000);
       }
     } catch (err) {
