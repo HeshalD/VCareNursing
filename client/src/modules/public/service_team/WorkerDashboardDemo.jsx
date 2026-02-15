@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   LayoutDashboard, User, Calendar, MapPin,
   DollarSign, Bell, Settings, LogOut, CheckCircle,
-  Briefcase, Clock, Star, TrendingUp
+  Briefcase, Clock, Star, TrendingUp, Home
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import apiClient from '../../../api/api';
@@ -113,6 +113,13 @@ const WorkerDashboardDemo = () => {
             </div>
 
             <div className="flex items-center gap-4">
+              <Link 
+                to="/"
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+              >
+                <Home className="w-4 h-4" />
+                <span className="hidden sm:inline">Landing Page</span>
+              </Link>
               <button className="relative p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors">
                 <Bell className="w-6 h-6" />
                 <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white"></span>

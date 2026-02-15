@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { ShieldCheck, Menu, X, User, LogOut } from 'lucide-react';
+import { ShieldCheck, Menu, X, User, LogOut, Briefcase } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
 const Navbar = () => {
@@ -34,6 +34,16 @@ const Navbar = () => {
     return user?.mobile_number || 'User';
   };
 
+  const isStaffUser = () => {
+    const staffRoles = ['{CARETAKER}', '{NURSE}', '{NANNY}', '{ACCOUNTS}', '{COORDINATOR}', '{SALES}', '{STORE_MANAGER}'];
+    const userRole = user?.role;
+    
+    if (Array.isArray(userRole)) {
+      return userRole.some(role => staffRoles.includes(role));
+    }
+    return staffRoles.includes(userRole);
+  };
+
   return (
     <nav className="fixed top-0 w-full z-50 bg-white/80 backdrop-blur-lg border-b border-slate-200">
       <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
@@ -56,6 +66,15 @@ const Navbar = () => {
               <div className="w-20 h-8 bg-slate-200 rounded-full animate-pulse"></div>
             ) : isAuthenticated ? (
               <div className="flex items-center gap-3">
+                {isStaffUser() && (
+                  <Link
+                    to="/services/provider-dashboard"
+                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full text-sm font-medium transition-all"
+                  >
+                    <Briefcase className="w-4 h-4" />
+                    <span className="hidden sm:inline">Dashboard</span>
+                  </Link>
+                )}
                 <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 rounded-full">
                   <User className="w-4 h-4 text-blue-600" />
                   <span className="text-sm font-medium text-blue-900">{getUserDisplayName()}</span>
@@ -103,6 +122,15 @@ const Navbar = () => {
               <div className="w-full h-12 bg-slate-200 rounded-xl animate-pulse mt-4"></div>
             ) : isAuthenticated ? (
               <>
+                {isStaffUser() && (
+                  <Link
+                    to="/services/provider-dashboard"
+                    className="flex items-center justify-center gap-2 w-full px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition-all mt-4"
+                  >
+                    <Briefcase className="w-4 h-4" />
+                    Staff Dashboard
+                  </Link>
+                )}
                 <div className="flex items-center gap-2 px-3 py-3 bg-blue-50 rounded-xl mt-4">
                   <User className="w-4 h-4 text-blue-600" />
                   <span className="text-sm font-medium text-blue-900">{getUserDisplayName()}</span>
