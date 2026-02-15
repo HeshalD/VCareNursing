@@ -29,10 +29,45 @@ const LoginPage = () => {
 
     try {
       setIsLoading(true);
-      const response = await apiClient.login({
-        identifier: formData.identifier,
-        password: formData.password,
-      });
+      
+      // Check if the identifier is an email (staff login) or mobile number (client login)
+      const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.identifier);
+      
+      let response;
+      if (isEmail) {
+        // Try staff login first for email identifiers
+        try {
+          response = await apiClient.staffLogin({
+            identifier: formData.identifier,
+            password: formData.password,
+          });
+        } catch (staffError) {
+          // If staff login fails, try regular login
+          console.log('Staff login failed, trying regular login...');
+          response = await apiClient.login({
+            identifier: formData.identifier,
+            password: formData.password,
+          });
+        }
+      } else {
+        // Regular login for mobile numbers
+        response = await apiClient.login({
+          identifier: formData.identifier,
+          password: formData.password,
+        });
+      }
+      
+      // Check if password change is required
+      if (response.requires_password_change) {
+        // Store user data temporarily for password change page
+        localStorage.setItem('tempUserData', JSON.stringify(response.user));
+        
+        // Navigate to password change page
+        navigate('/change-staff-password', { 
+          state: { userData: response.user } 
+        });
+        return;
+      }
       
       // Login successful - use AuthContext
       if (response.token && response.user) {
@@ -107,13 +142,13 @@ const LoginPage = () => {
               {/* Username Input */}
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-700 block">
-                  Mobile Number or Email
+                  Email or Mobile Number
                 </label>
                 <div className="relative group">
                   <input
                     type="text"
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-3.5 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
-                    placeholder="Enter your mobile number or email"
+                    placeholder="Enter your email or mobile number"
                     value={formData.identifier}
                     onChange={(e) => setFormData({ ...formData, identifier: e.target.value })}
                   />

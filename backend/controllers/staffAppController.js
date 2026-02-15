@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const sendEmail = require('../utils/email');
 const { sendWhatsAppOtp, sendWhatsAppMessage } = require('../utils/whatsapp');
 
@@ -338,5 +339,141 @@ exports.getAvailableStaffByRole = async (req, res) => {
     } catch (error) {
         console.error("Fetch Staff Error:", error);
         res.status(500).json({ message: "Error fetching available staff" });
+    }
+};
+
+// Staff login with temporary password handling
+exports.staffLogin = async (req, res) => {
+    const { email, password } = req.body;
+
+    try {
+        // 1. Find User by Email (staff login uses email, not mobile)
+        const userResult = await db.query(
+            'SELECT user_id, password_hash, role, is_active, is_email_verified FROM users WHERE email = $1',
+            [email]
+        );
+
+        if (userResult.rows.length === 0) {
+            return res.status(401).json({ message: "Invalid credentials" });
+        }
+
+        const user = userResult.rows[0];
+
+        // 2. Security Checks
+        if (!user.is_active) {
+            return res.status(403).json({ message: "Account is deactivated. Contact admin." });
+        }
+
+        if (!user.is_email_verified) {
+            return res.status(403).json({ message: "Please verify your email first." });
+        }
+
+        const isMatch = await bcrypt.compare(password, user.password_hash);
+        if (!isMatch) {
+            return res.status(401).json({ message: "Invalid credentials" });
+        }
+
+        // 3. Check if user has staff profile
+        const staffProfileResult = await db.query(
+            'SELECT staff_profile_id, full_name, verification_status FROM staff_profiles WHERE user_id = $1',
+            [user.user_id]
+        );
+
+        if (staffProfileResult.rows.length === 0) {
+            return res.status(403).json({ message: "No staff profile found. Please complete your application first." });
+        }
+
+        // 4. Check if this is a temporary password (we'll use a simple approach)
+        // Since we can't easily detect temp passwords without schema changes,
+        // we'll check if the password matches the pattern we use for temp passwords
+        const isTempPassword = /^[a-z0-9]{8}$/.test(password) && password.length === 8;
+
+        // 5. Generate JWT Token
+        const token = jwt.sign(
+            { id: user.user_id, role: user.role },
+            process.env.JWT_SECRET,
+            { expiresIn: process.env.JWT_EXPIRES_IN }
+        );
+
+        // 6. Send Response
+        res.status(200).json({
+            status: 'success',
+            token,
+            requires_password_change: isTempPassword,
+            data: {
+                user_id: user.user_id,
+                email: email,
+                staff_info: {
+                    staff_id: staffProfileResult.rows[0].staff_profile_id,
+                    name: staffProfileResult.rows[0].full_name,
+                    status: staffProfileResult.rows[0].verification_status
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error("Staff Login Error:", error);
+        res.status(500).json({ message: "Server error during login" });
+    }
+};
+
+// Change password for staff members (first-time or subsequent)
+exports.changeStaffPassword = async (req, res) => {
+    const { current_password, new_password } = req.body;
+    const userId = req.user.user_id; // Get user ID from JWT token
+
+    try {
+        // 1. Validate input
+        if (!current_password || !new_password) {
+            return res.status(400).json({ message: "Current password and new password are required." });
+        }
+
+        if (new_password.length < 6) {
+            return res.status(400).json({ message: "New password must be at least 6 characters long." });
+        }
+
+        // 2. Get current user password
+        const userResult = await db.query(
+            'SELECT password_hash FROM users WHERE user_id = $1',
+            [userId]
+        );
+
+        if (userResult.rows.length === 0) {
+            return res.status(404).json({ message: "User not found." });
+        }
+
+        // 3. Verify current password
+        const isCurrentPasswordValid = await bcrypt.compare(current_password, userResult.rows[0].password_hash);
+        if (!isCurrentPasswordValid) {
+            return res.status(401).json({ message: "Current password is incorrect." });
+        }
+
+        // 4. Hash new password
+        const salt = await bcrypt.genSalt(12);
+        const hashedNewPassword = await bcrypt.hash(new_password, salt);
+
+        // 5. Update password
+        await db.query(
+            'UPDATE users SET password_hash = $1 WHERE user_id = $2',
+            [hashedNewPassword, userId]
+        );
+
+        // 6. Generate new token (optional, but good practice)
+        const token = jwt.sign(
+            { id: userId, role: req.user.role },
+            process.env.JWT_SECRET,
+            { expiresIn: process.env.JWT_EXPIRES_IN }
+        );
+
+        res.status(200).json({
+            status: 'success',
+            message: 'Password changed successfully.',
+            token,
+            requires_password_change: false
+        });
+
+    } catch (error) {
+        console.error("Change Password Error:", error);
+        res.status(500).json({ message: "Server error during password change." });
     }
 };

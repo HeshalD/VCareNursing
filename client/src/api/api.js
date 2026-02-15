@@ -196,6 +196,49 @@ class ApiClient {
     const queryParams = role ? `?role=${encodeURIComponent(role)}` : '';
     return this.request(`/staff/available${queryParams}`);
   }
+
+  async staffLogin(credentials) {
+    const data = await this.request('/staff/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: credentials.identifier,
+        password: credentials.password
+      }),
+    });
+    
+    if (data.token) {
+      this.setToken(data.token);
+      // Return both response data and user info for AuthContext
+      return {
+        ...data,
+        user: {
+          id: data.data?.user_id,
+          role: data.data?.staff_info,
+          email: data.data?.email,
+          requires_password_change: data.requires_password_change,
+          ...data.data?.staff_info
+        }
+      };
+    }
+    
+    return data;
+  }
+
+  async changeStaffPassword(passwordData) {
+    const data = await this.request('/staff/change-password', {
+      method: 'POST',
+      body: JSON.stringify({
+        current_password: passwordData.current_password,
+        new_password: passwordData.new_password
+      }),
+    });
+    
+    if (data.token) {
+      this.setToken(data.token);
+    }
+    
+    return data;
+  }
 }
 
 // Create and export a singleton instance

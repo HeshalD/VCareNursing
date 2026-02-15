@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import LandingPage from './modules/public/LandingPage';
 import LoginPage from './modules/auth/LoginPage';
 import RegisterPage from './modules/auth/RegisterPage';
+import StaffPasswordChangePage from './modules/auth/StaffPasswordChangePage';
 import HomeNursingPage from './modules/public/HomeNursingPage';
 import AboutPage from './modules/public/AboutPage';
 import VerifyOTPReg from './auth/VerifyOTPReg';
@@ -37,6 +38,7 @@ function App() {
             <Route path="/about" element={<AboutPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
+            <Route path="/change-staff-password" element={<StaffPasswordChangePage />} />
             <Route path="/admin" element={
               <AdminAuthProvider>
                 <AdminLoginPage />

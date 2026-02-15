@@ -37,4 +37,10 @@ router.get(
   staffAppController.getAvailableStaffByRole
 );
 
+// Staff Login (for new staff with temporary passwords)
+router.post('/login', staffAppController.staffLogin);
+
+// Change Password (for staff members)
+router.post('/change-password', protect, staffAppController.changeStaffPassword);
+
 module.exports = router;
