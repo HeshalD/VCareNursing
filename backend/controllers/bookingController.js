@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const bcrypt = require('bcrypt');
 const { sendWhatsAppMessage } = require('../utils/whatsapp');
+const sendEmail = require('../utils/email');
 
 exports.convertToBooking = async (req, res) => {
     // assigned_staff_id is required
@@ -98,13 +99,21 @@ exports.convertToBooking = async (req, res) => {
         await client.query(`UPDATE service_requests SET status = 'COMPLETED' WHERE request_id = $1`, [request_id]);
         await client.query(`INSERT INTO payment_slips (quote_id, slip_url, verified_at) VALUES ($1, $2, NOW())`, [quote_id, slip_url]);
 
-        // 8. Fetch Staff Name (For Notification)
-        const staffRes = await client.query('SELECT full_name, profile_picture_url FROM staff_profiles WHERE staff_profile_id = $1', [assigned_staff_id]);
+        // 8. Fetch Staff Details (For Notification)
+        const staffRes = await client.query(
+            'SELECT sp.full_name, sp.profile_picture_url, u.mobile_number, u.email FROM staff_profiles sp JOIN users u ON sp.user_id = u.user_id WHERE sp.staff_profile_id = $1', 
+            [assigned_staff_id]
+        );
         
         if (staffRes.rows.length === 0) {
             throw new Error('Assigned Staff ID not found');
         }
         const staffName = staffRes.rows[0].full_name;
+
+        if (staffRes.rows.length === 0) {
+            throw new Error('Assigned Staff ID not found');
+        }
+        const staffData = staffRes.rows[0];
 
         await client.query('COMMIT');
 
@@ -115,6 +124,28 @@ exports.convertToBooking = async (req, res) => {
             (reqData.tempPassword ? `\n*Login:* ${reqData.payer_mobile}\n*Temp Password:* ${reqData.tempPassword}` : ``);
 
         await sendWhatsAppMessage(reqData.payer_mobile, welcomeMsg);
+
+        // Construct the assignment details
+        const assignmentMsg = 
+            `*New Assignment Alert!* 🚨\n\n` +
+            `*Patient:* ${reqData.patient_name}\n` +
+            `*Location:* ${reqData.location_address}\n` +
+            `*Condition:* ${reqData.patient_condition}\n` +
+            `*Start Date:* ${new Date(reqData.start_date).toDateString()}\n\n` +
+            `Please log in to the App for full details.`;
+
+        // Send WhatsApp to Staff
+        await sendWhatsAppMessage(staffData.mobile_number, assignmentMsg);
+
+        if (staffData.email) {
+            await sendEmail({
+                email: staffData.email,
+                subject: 'New Job Assignment - VCare Nursing',
+                message: `Hello ${staffData.full_name},\n\nYou have been assigned a new patient.\n\n` +
+                `Patient: ${reqData.patient_name}\nAddress: ${reqData.location_address}\nCondition: ${reqData.patient_condition}\n\n` +
+                `Please proceed to the location by ${reqData.start_date}.`
+            });
+        }
 
         res.status(200).json({ status: 'success', message: "Booking confirmed and staff assigned." });
 
