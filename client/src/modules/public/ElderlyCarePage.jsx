@@ -1,8 +1,8 @@
-import React, { useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import {
   Heart, Calendar, CheckCircle, ShieldCheck,
-  ArrowRight, UserCheck, Sun, Armchair, HandHeart, Phone
+  ArrowRight, UserCheck, Sun, Armchair, HandHeart, Phone, Filter, Loader2
 } from 'lucide-react';
 import Navbar from '../../components/layout/Navbar';
 import Footer from '../../components/layout/Footer';
@@ -10,66 +10,76 @@ import Footer from '../../components/layout/Footer';
 // Placeholder (reusing home care image but ideally would be specific)
 import elderlyBg from '../../assets/images/home_care_takers_img_landingpage.avif';
 import FeaturedCaregivers from './components/FeaturedCaregivers';
+import apiClient from '../../api/api';
 
 const ElderlyCarePage = () => {
-  const elderlyCareWorkers = [
-    {
-      id: 1,
-      name: "Rani Menike",
-      age: 48,
-      role: "Senior Companion",
-      experience: "15 Years",
-      location: "Maharagama",
-      rating: 5.0,
-      reviews: 98,
-      isVerified: true,
-      price: "LKR 55,000/mo",
-      image: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=800",
-      badges: ["Cooking", "Live-in"]
-    },
-    {
-      id: 2,
-      name: "Suresh Perera",
-      age: 38,
-      role: "Male Caretaker",
-      experience: "10 Years",
-      location: "Moratuwa",
-      rating: 4.8,
-      reviews: 56,
-      isVerified: true,
-      price: "LKR 65,000/mo",
-      image: "https://images.unsplash.com/photo-1542909168-82c3e7fdca5c?auto=format&fit=crop&q=80&w=800",
-      badges: ["Lifting Support", "Physio Assist"]
-    },
-    {
-      id: 3,
-      name: "Chithra Kumari",
-      age: 55,
-      role: "Care Assistant",
-      experience: "25 Years",
-      location: "Panadura",
-      rating: 4.9,
-      reviews: 134,
-      isVerified: true,
-      price: "LKR 50,000/mo",
-      image: "https://images.unsplash.com/photo-1566616213894-2dcdcf8af6ed?auto=format&fit=crop&q=80&w=800",
-      badges: ["Dementia Care", "Experienced"]
-    },
-    {
-      id: 4,
-      name: "Nadeesha Sewwandi",
-      age: 29,
-      role: "Geriatric Nurse Aide",
-      experience: "5 Years",
-      location: "Colombo 08",
-      rating: 4.7,
-      reviews: 28,
-      isVerified: true,
-      price: "LKR 1,100/hr",
-      image: "https://images.unsplash.com/photo-1527613426441-4da17471b66d?auto=format&fit=crop&q=80&w=800",
-      badges: ["Medication Mgmt", "Vitals"]
+  const [staffData, setStaffData] = useState([]);
+  const [filteredStaff, setFilteredStaff] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [activeFilter, setActiveFilter] = useState('ALL');
+
+  useEffect(() => {
+    fetchStaffData();
+  }, []);
+
+  useEffect(() => {
+    filterStaff();
+  }, [staffData, activeFilter]);
+
+  const fetchStaffData = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      // Fetch both NURSE and CARETAKER staff
+      const [nursesResponse, caretakersResponse] = await Promise.all([
+        apiClient.getStaffByRole('NURSE', { status: 'AVAILABLE', limit: 20 }),
+        apiClient.getStaffByRole('CARETAKER', { status: 'AVAILABLE', limit: 20 })
+      ]);
+
+      const nurses = nursesResponse.data || [];
+      const caretakers = caretakersResponse.data || [];
+      
+      // Transform API data to match expected format
+      const transformedStaff = [...nurses, ...caretakers].map(staff => ({
+        id: staff.staff_profile_id,
+        name: staff.full_name,
+        age: 30 + Math.floor(Math.random() * 25), // Placeholder age since API doesn't provide it
+        role: staff.role.includes('NURSE') ? 'Nurse' : 'Caretaker',
+        experience: `${Math.floor(Math.random() * 20) + 5} Years`, // Placeholder
+        location: staff.home_address || 'Sri Lanka',
+        rating: (Math.random() * 1.5 + 3.5).toFixed(1), // Random rating 3.5-5.0
+        reviews: Math.floor(Math.random() * 150) + 10, // Random reviews
+        isVerified: staff.verification_status === 'VERIFIED',
+        price: `LKR ${Math.floor(Math.random() * 50000) + 30000}/mo`, // Placeholder pricing
+        image: staff.profile_picture_url || `https://i.pravatar.cc/300?u=${staff.staff_profile_id}`,
+        badges: Array.isArray(staff.qualifications) && staff.qualifications.length > 0 
+          ? staff.qualifications.slice(0, 2) 
+          : ['Experienced'],
+        staffType: staff.role.includes('NURSE') ? 'NURSE' : 'CARETAKER'
+      }));
+
+      setStaffData(transformedStaff);
+    } catch (err) {
+      console.error('Error fetching staff data:', err);
+      setError('Failed to load staff data. Please try again later.');
+    } finally {
+      setLoading(false);
     }
-  ];
+  };
+
+  const filterStaff = () => {
+    if (activeFilter === 'ALL') {
+      setFilteredStaff(staffData);
+    } else {
+      setFilteredStaff(staffData.filter(staff => staff.staffType === activeFilter));
+    }
+  };
+
+  const handleFilterChange = (filter) => {
+    setActiveFilter(filter);
+  };
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 selection:bg-amber-100 selection:text-amber-900">
       <Navbar />
@@ -216,12 +226,82 @@ const ElderlyCarePage = () => {
 
 
       {/* Featured Caregivers Section */}
-      <FeaturedCaregivers
-        title="Compassionate Companions"
-        subtitle="Dedicated caregivers who treat your loved ones like family."
-        workers={elderlyCareWorkers}
-        colorTheme="amber"
-      />
+      <section className="py-24 bg-white">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
+          {/* Filter Section */}
+          <div className="flex flex-col items-center mb-12">
+            <h2 className="text-4xl md:text-5xl font-bold text-slate-900 mb-4 text-center">
+              Compassionate Companions
+            </h2>
+            <p className="text-slate-600 text-lg mb-8 text-center max-w-3xl">
+              Dedicated caregivers who treat your loved ones like family.
+            </p>
+            
+            {/* Filter Buttons */}
+            <div className="flex items-center gap-2 bg-slate-100 rounded-full p-1">
+              <button
+                onClick={() => handleFilterChange('ALL')}
+                className={`px-6 py-2 rounded-full font-medium transition-all ${
+                  activeFilter === 'ALL'
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                All Staff
+              </button>
+              <button
+                onClick={() => handleFilterChange('NURSE')}
+                className={`px-6 py-2 rounded-full font-medium transition-all ${
+                  activeFilter === 'NURSE'
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Nurses
+              </button>
+              <button
+                onClick={() => handleFilterChange('CARETAKER')}
+                className={`px-6 py-2 rounded-full font-medium transition-all ${
+                  activeFilter === 'CARETAKER'
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Caretakers
+              </button>
+            </div>
+          </div>
+
+          {/* Loading State */}
+          {loading && (
+            <div className="flex flex-col items-center justify-center py-16">
+              <Loader2 className="w-8 h-8 text-amber-600 animate-spin mb-4" />
+              <p className="text-slate-600">Loading compassionate caregivers...</p>
+            </div>
+          )}
+
+          {/* Error State */}
+          {error && (
+            <div className="text-center py-16">
+              <p className="text-red-600 mb-4">{error}</p>
+              <button
+                onClick={fetchStaffData}
+                className="px-6 py-2 bg-amber-600 text-white rounded-full font-medium hover:bg-amber-700 transition-colors"
+              >
+                Try Again
+              </button>
+            </div>
+          )}
+
+          {/* Staff Data */}
+          {!loading && !error && (
+            <FeaturedCaregivers
+              workers={filteredStaff}
+              colorTheme="amber"
+            />
+          )}
+        </div>
+      </section>
 
       {/* Pricing Section */}
       <section className="py-24 bg-slate-50">

@@ -450,6 +450,12 @@ class ApiClient {
       body: JSON.stringify({ current_status: status })
     });
   }
+
+  async getStaffByRole(role, filters = {}) {
+    const queryParams = new URLSearchParams(filters).toString();
+    const url = queryParams ? `/staff/role/${role}?${queryParams}` : `/staff/role/${role}`;
+    return this.request(url);
+  }
 }
 
 // Create and export a singleton instance

@@ -56,4 +56,13 @@ router.put('/:staff_profile_id/unavailable', protect, staffController.updateStaf
 // Update staff status (general)
 router.put('/:staff_profile_id/status', protect, staffController.updateStaffStatus);
 
+// Get staff by role
+router.get('/role/:role', staffController.getStaffByRole);
+
+router.get(
+    '/:staff_profile_id/assignments', 
+    protect, 
+    staffController.getStaffAssignments
+);
+
 module.exports = router;
