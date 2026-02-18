@@ -130,13 +130,13 @@ const ServiceGrid = () => {
     <section id="services" className="py-24 bg-white relative">
       <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
         <div className="mb-16">
-          <h2 className="text-4xl md:text-5xl font-bold text-slate-900 mb-6">Three Doors.<br />Infinite Care.</h2>
+          <h2 className="text-4xl md:text-5xl font-bold text-slate-900 mb-6">Four Doors.<br />Infinite Care.</h2>
           <p className="text-slate-600 max-w-xl text-lg">
-            We've simplified the complexity of healthcare staffing into three distinct verticals. Choose your path.
+            We've simplified the complexity of healthcare staffing into four distinct verticals. Choose your path.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-6 h-auto md:h-[600px]">
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-6 h-auto md:h-[700px]">
           {/* Large Card - Hospital */}
           <div className="md:col-span-8 min-h-[400px] group relative rounded-[40px] overflow-hidden bg-slate-100 border-4 border-white shadow-xl hover:border-blue-50 transition-colors cursor-pointer">
             <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?ixlib=rb-4.0.3&auto=format&fit=crop&w=2000&q=80')] bg-cover bg-center opacity-90 group-hover:scale-105 transition-transform duration-700" />
@@ -159,20 +159,34 @@ const ServiceGrid = () => {
           {/* Right Column Stack */}
           <div className="md:col-span-4 flex flex-col gap-6">
             {/* Baby Care */}
-            <div className="flex-1 group relative rounded-[40px] overflow-hidden bg-blue-50 border-4 border-white shadow-xl hover:border-blue-100 transition-all cursor-pointer">
-              <div
-                className="absolute inset-0 bg-cover bg-center opacity-90 group-hover:scale-105 transition-transform duration-700"
-                style={{ backgroundImage: `url(${babyCareBg})` }}
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-              <div className="p-8 h-full flex flex-col justify-end relative z-10">
-                <Baby className="w-10 h-10 text-blue-400 mb-4 hidden md:block" />
-                <h3 className="text-2xl font-bold text-white mb-1">Baby Care</h3>
-                <p className="text-sm text-slate-200">Pediatric nurses & nannies.</p>
+            <Link to="/services/child-care" className="block flex-1">
+              <div className="h-full group relative rounded-[40px] overflow-hidden bg-blue-50 border-4 border-white shadow-xl hover:border-blue-100 transition-all cursor-pointer">
+                <div
+                  className="absolute inset-0 bg-cover bg-center opacity-90 group-hover:scale-105 transition-transform duration-700"
+                  style={{ backgroundImage: `url(${babyCareBg})` }}
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+                <div className="p-8 h-full flex flex-col justify-end relative z-10">
+                  <Baby className="w-10 h-10 text-blue-400 mb-4 hidden md:block" />
+                  <h3 className="text-2xl font-bold text-white mb-1">Baby Care</h3>
+                  <p className="text-sm text-slate-200">Pediatric nurses & nannies.</p>
+                </div>
               </div>
-            </div>
+            </Link>
 
-            {/* Home Care */}
+            {/* Elderly Care */}
+            <Link to="/services/elderly-care" className="block flex-1">
+              <div className="h-full group relative rounded-[40px] overflow-hidden bg-purple-50 border-4 border-white shadow-xl hover:border-purple-100 transition-all cursor-pointer">
+                <div className="absolute inset-0 bg-cover bg-center opacity-90 group-hover:scale-105 transition-transform duration-700 bg-[url('https://images.unsplash.com/photo-1576091160550-2173dba999ef?ixlib=rb-4.0.3&auto=format&fit=crop&w=2000&q=80')]"/>
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+                <div className="p-8 h-full flex flex-col justify-end relative z-10">
+                  <ShieldCheck className="w-10 h-10 text-purple-400 mb-4 hidden md:block" />
+                  <h3 className="text-2xl font-bold text-white mb-1">Elderly Care</h3>
+                  <p className="text-sm text-slate-200">Compassionate senior care services.</p>
+                </div>
+              </div>
+            </Link>
+
             {/* Home Care */}
             <Link to="/services/home-nursing" className="block flex-1">
               <div className="h-full group relative rounded-[40px] overflow-hidden bg-emerald-50 border-4 border-white shadow-xl hover:border-emerald-100 transition-all cursor-pointer">
