@@ -16,7 +16,8 @@ exports.submitServiceRequest = async (req, res) => {
             longitude,
             start_date,
             remarks,
-            preferred_gender
+            preferred_gender,
+            preferred_staff_id
         } = req.body;
 
         // 1. Smart Detection: Does this mobile number belong to an existing client?
@@ -53,14 +54,15 @@ exports.submitServiceRequest = async (req, res) => {
                 gps_coordinates, 
                 start_date, 
                 remarks,
-                preferred_gender
+                preferred_gender,
+                preferred_staff_id
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9::service_model_enum, $10, 
                 CASE WHEN $11::float IS NOT NULL AND $12::float IS NOT NULL 
                      THEN point($12::float, $11::float) 
                      ELSE NULL 
                 END, 
-                $13, $14, $15::gender_preference_enum
+                $13, $14, $15::gender_preference_enum, $16
             )
             RETURNING *;
         `;
@@ -80,7 +82,8 @@ exports.submitServiceRequest = async (req, res) => {
             longitude,          // $12
             start_date,         // $13
             remarks,            // $14
-            preferred_gender || 'ANY' // $15 (default to ANY if not provided)
+            preferred_gender || 'ANY', // $15 (default to ANY if not provided)
+            preferred_staff_id || null  // $16 (optional preferred staff)
         ];
 
         const result = await db.query(query, values);

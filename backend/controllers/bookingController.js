@@ -4,7 +4,7 @@ const { sendWhatsAppMessage } = require('../utils/whatsapp');
 const sendEmail = require('../utils/email');
 
 exports.convertToBooking = async (req, res) => {
-    // assigned_staff_id is required
+    // assigned_staff_id is optional - will use preferred_staff_id from request if not provided
     const { request_id, quote_id, slip_url, assigned_staff_id } = req.body;
     const client = await db.pool.connect(); 
 
@@ -22,6 +22,14 @@ exports.convertToBooking = async (req, res) => {
 
         const reqData = requestRes.rows[0];
         const quoteData = quoteRes.rows[0];
+
+        // Determine staff assignment: use provided assigned_staff_id, fallback to preferred_staff_id from request
+        const finalStaffId = assigned_staff_id || reqData.preferred_staff_id;
+        
+        if (!finalStaffId) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ message: 'No staff assigned and no preferred staff found in request' });
+        }
 
         // 2. SMART CHECK: Create User (Payer) if they don't exist
         let userId;
@@ -85,14 +93,14 @@ exports.convertToBooking = async (req, res) => {
         await client.query(
             `INSERT INTO bookings (client_id, patient_id, service_type, service_model, start_date, assigned_staff_id, status, preferred_gender) 
              VALUES ($1, $2, $3, $4::service_model_enum, $5, $6, 'ACTIVE', $7::gender_preference_enum)`,
-            [clientProfileId, patientId, reqData.service_type, reqData.service_model || 'SHIFT_BASED', reqData.start_date, assigned_staff_id, reqData.preferred_gender || 'ANY']
+            [clientProfileId, patientId, reqData.service_type, reqData.service_model || 'SHIFT_BASED', reqData.start_date, finalStaffId, reqData.preferred_gender || 'ANY']
         );
 
         // 6. UPDATE STAFF STATUS (Lock them)
         // Ensure staff_profile_id column name matches your DB (id vs staff_profile_id)
         await client.query(
             `UPDATE staff_profiles SET current_status = 'ASSIGNED' WHERE staff_profile_id = $1`, 
-            [assigned_staff_id]
+            [finalStaffId]
         );
 
         // 7. Finalize Request & Payment
@@ -102,18 +110,15 @@ exports.convertToBooking = async (req, res) => {
         // 8. Fetch Staff Details (For Notification)
         const staffRes = await client.query(
             'SELECT sp.full_name, sp.profile_picture_url, u.mobile_number, u.email FROM staff_profiles sp JOIN users u ON sp.user_id = u.user_id WHERE sp.staff_profile_id = $1', 
-            [assigned_staff_id]
+            [finalStaffId]
         );
         
-        if (staffRes.rows.length === 0) {
-            throw new Error('Assigned Staff ID not found');
-        }
-        const staffName = staffRes.rows[0].full_name;
 
         if (staffRes.rows.length === 0) {
             throw new Error('Assigned Staff ID not found');
         }
         const staffData = staffRes.rows[0];
+        const staffName = staffData.full_name;
 
         await client.query('COMMIT');
 
