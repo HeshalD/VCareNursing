@@ -481,6 +481,12 @@ class ApiClient {
     return this.request(url);
   }
 
+  async getStaffByGender(gender, filters = {}) {
+    const queryParams = new URLSearchParams(filters).toString();
+    const url = queryParams ? `/staff/gender/${gender}?${queryParams}` : `/staff/gender/${gender}`;
+    return this.request(url);
+  }
+
   // Booking endpoints
   async createBooking(bookingData) {
     return this.request('/bookings', {
