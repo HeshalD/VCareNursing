@@ -11,6 +11,8 @@ import { AuthProvider } from './context/AuthContext';
 import HospitalStaffingPage from './modules/public/HospitalStaffingPage';
 import ChildCarePage from './modules/public/ChildCarePage';
 import ElderlyCarePage from './modules/public/ElderlyCarePage';
+import ElderlyCareBookingPage from './modules/public/ElderlyCareBookingPage';
+import BookingSuccessPage from './modules/public/BookingSuccessPage';
 import WorkersTeamPage from './modules/public/service_team/WorkersTeamPage';
 import WorkerRegistrationPage from './modules/public/service_team/WorkerRegistrationPage';
 import WorkerDashboardDemo from './modules/public/service_team/WorkerDashboardDemo';
@@ -49,6 +51,8 @@ function App() {
             <Route path="/services/hospital-staffing" element={<HospitalStaffingPage />} />
             <Route path="/services/child-care" element={<ChildCarePage />} />
             <Route path="/services/elderly-care" element={<ElderlyCarePage />} />
+            <Route path="/services/elderly-care/book" element={<ElderlyCareBookingPage />} />
+            <Route path="/booking-success" element={<BookingSuccessPage />} />
             <Route path="/services/join-team" element={<WorkersTeamPage />} />
             <Route path="/services/apply" element={<WorkerRegistrationPage />} />
             <Route path="/services/provider-dashboard" element={<WorkerDashboardDemo />} />

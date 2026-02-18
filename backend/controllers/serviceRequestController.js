@@ -58,8 +58,8 @@ exports.submitServiceRequest = async (req, res) => {
                 preferred_staff_id
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9::service_model_enum, $10, 
-                CASE WHEN $11::float IS NOT NULL AND $12::float IS NOT NULL 
-                     THEN point($12::float, $11::float) 
+                CASE WHEN $11::double precision IS NOT NULL AND $12::double precision IS NOT NULL 
+                     THEN point($12::double precision, $11::double precision)
                      ELSE NULL 
                 END, 
                 $13, $14, $15::gender_preference_enum, $16
@@ -78,8 +78,8 @@ exports.submitServiceRequest = async (req, res) => {
             service_type,       // $8
             service_model || 'SHIFT_BASED', // $9 (default to SHIFT_BASED if not provided)
             home_address,       // $10
-            latitude,           // $11
-            longitude,          // $12
+            latitude ? parseFloat(latitude) : null,           // $11 - ensure numeric or null
+            longitude ? parseFloat(longitude) : null,          // $12 - ensure numeric or null
             start_date,         // $13
             remarks,            // $14
             preferred_gender || 'ANY', // $15 (default to ANY if not provided)

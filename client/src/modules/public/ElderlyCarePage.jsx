@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   Heart, Calendar, CheckCircle, ShieldCheck,
@@ -13,6 +14,7 @@ import FeaturedCaregivers from './components/FeaturedCaregivers';
 import apiClient from '../../api/api';
 
 const ElderlyCarePage = () => {
+  const navigate = useNavigate();
   const [staffData, setStaffData] = useState([]);
   const [filteredStaff, setFilteredStaff] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -113,8 +115,11 @@ const ElderlyCarePage = () => {
                 </p>
 
                 <div className="flex flex-col sm:flex-row gap-4">
-                  <button className="px-8 py-4 bg-amber-600 text-white rounded-full font-bold text-lg hover:bg-amber-700 transition-all shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2">
-                    Book Consultation <ArrowRight className="w-5 h-5" />
+                  <button 
+                    onClick={() => navigate('/services/elderly-care/book')}
+                    className="px-8 py-4 bg-amber-600 text-white rounded-full font-bold text-lg hover:bg-amber-700 transition-all shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2"
+                  >
+                    Book Care Service <ArrowRight className="w-5 h-5" />
                   </button>
                   <div className="flex items-center gap-4 px-6 py-4 bg-white border border-slate-200 rounded-full shadow-sm">
                     <div className="flex -space-x-3">
@@ -335,7 +340,10 @@ const ElderlyCarePage = () => {
                   </li>
                 ))}
               </ul>
-              <button className="w-full py-4 rounded-xl border-2 border-slate-200 text-slate-700 font-bold hover:border-slate-900 hover:text-slate-900 transition-colors">
+              <button 
+                onClick={() => navigate('/services/elderly-care/book')}
+                className="w-full py-4 rounded-xl border-2 border-slate-200 text-slate-700 font-bold hover:border-slate-900 hover:text-slate-900 transition-colors"
+              >
                 Book a Visit
               </button>
             </div>
@@ -364,7 +372,10 @@ const ElderlyCarePage = () => {
                   </li>
                 ))}
               </ul>
-              <button className="w-full py-4 rounded-xl bg-amber-600 text-white font-bold hover:bg-amber-700 transition-colors shadow-lg shadow-amber-500/30">
+              <button 
+                onClick={() => navigate('/services/elderly-care/book')}
+                className="w-full py-4 rounded-xl bg-amber-600 text-white font-bold hover:bg-amber-700 transition-colors shadow-lg shadow-amber-500/30"
+              >
                 Select Care Plan
               </button>
             </div>

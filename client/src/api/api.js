@@ -284,7 +284,7 @@ class ApiClient {
 
   async submitServiceRequest(requestData) {
 
-    return this.request('/service-request/submit-request', {
+    return this.request('/service-requests/submit-request', {
 
       method: 'POST',
 
@@ -479,6 +479,25 @@ class ApiClient {
     const queryParams = new URLSearchParams(filters).toString();
     const url = queryParams ? `/staff/role/${role}?${queryParams}` : `/staff/role/${role}`;
     return this.request(url);
+  }
+
+  // Booking endpoints
+  async createBooking(bookingData) {
+    return this.request('/bookings', {
+      method: 'POST',
+      body: JSON.stringify(bookingData),
+    });
+  }
+
+  async getMyBookings() {
+    return this.request('/bookings/my-bookings');
+  }
+
+  async updateBookingStatus(bookingId, status) {
+    return this.request(`/bookings/${bookingId}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+    });
   }
 }
 
