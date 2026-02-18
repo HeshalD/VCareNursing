@@ -15,7 +15,8 @@ exports.submitApplication = async (req, res) => {
       home_address,
       location, 
       latitude, 
-      longitude 
+      longitude,
+      gender
     } = req.body;
     
    
@@ -37,12 +38,12 @@ exports.submitApplication = async (req, res) => {
 
     const query = `
       INSERT INTO staff_applications 
-      (full_name, email, mobile_number, applied_roles, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url)
+      (full_name, email, mobile_number, applied_roles, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, gender)
       VALUES ($1, $2, $3, $4::user_role_enum[], $5, $6, $7, $8,
         CASE WHEN $9::float IS NOT NULL AND $10::float IS NOT NULL 
              THEN point($10::float, $9::float) 
              ELSE NULL 
-        END, $11)
+        END, $11, $12::gender_enum)
       RETURNING *;
     `;
 
@@ -58,7 +59,8 @@ exports.submitApplication = async (req, res) => {
       location, 
       (latitude && latitude !== "") ? latitude : null,
       (longitude && longitude !== "") ? longitude : null,
-      profile_picture_url
+      profile_picture_url,
+      gender
     ]);
 
     res.status(201).json({ status: 'success', data: result.rows[0] });
@@ -202,8 +204,8 @@ exports.acceptApplication = async (req, res) => {
 
     if (staffProfileCheck.rows.length === 0) {
         const profileInsertQuery = `
-          INSERT INTO staff_profiles (user_id, full_name, qualifications, document_urls, home_address, gps_coordinates, profile_picture_url)
-          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          INSERT INTO staff_profiles (user_id, full_name, qualifications, document_urls, home_address, gps_coordinates, profile_picture_url, gender, willing_to_live_in)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8::gender_enum, $9)
         `;
         await client.query(profileInsertQuery, [
           userId,
@@ -212,7 +214,9 @@ exports.acceptApplication = async (req, res) => {
           app.document_urls,
           app.home_address,
           app.gps_coordinates,
-          app.profile_picture_url
+          app.profile_picture_url,
+          app.gender,
+          app.willing_to_live_in || false
         ]);
     } else {
         // Optional: Update existing profile if needed, or just log it
@@ -321,6 +325,8 @@ exports.getAvailableStaffByRole = async (req, res) => {
                 s.staff_profile_id as staff_id, 
                 s.full_name, 
                 s.profile_picture_url,
+                s.gender,
+                s.willing_to_live_in,
                 u.mobile_number
             FROM staff_profiles s
             JOIN users u ON s.user_id = u.user_id

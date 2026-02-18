@@ -16,7 +16,7 @@ const WorkerRegistrationPage = () => {
   const [formData, setFormData] = useState({
     full_name: '', email: '', mobile_number: '', applied_roles: '', 
     qualifications: '', home_address: '', location: '', latitude: '', longitude: '',
-    documents: [], profile_picture: null
+    documents: [], profile_picture: null, gender: ''
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
@@ -54,7 +54,8 @@ const WorkerRegistrationPage = () => {
         home_address: formData.home_address,
         location: formData.location,
         latitude: formData.latitude,
-        longitude: formData.longitude
+        longitude: formData.longitude,
+        gender: formData.gender
       };
 
       // Submit application with documents and profile picture
@@ -196,6 +197,20 @@ const WorkerRegistrationPage = () => {
                             placeholder="e.g. 0771234567"
                             required
                           />
+                        </div>
+                        <div>
+                          <label className="text-sm font-semibold text-slate-600 block mb-1">Gender</label>
+                          <select
+                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900"
+                            value={formData.gender}
+                            onChange={e => setFormData({ ...formData, gender: e.target.value })}
+                            required
+                          >
+                            <option value="">Select gender</option>
+                            <option value="MALE">Male</option>
+                            <option value="FEMALE">Female</option>
+                            <option value="OTHER">Other</option>
+                          </select>
                         </div>
                         <div>
                           <label className="text-sm font-semibold text-slate-600 block mb-1">Applied Role</label>

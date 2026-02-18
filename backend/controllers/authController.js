@@ -5,7 +5,7 @@ const sendEmail = require('../utils/email');
 const { sendWhatsAppOtp } = require('../utils/whatsapp');
 
 exports.registerClient = async (req, res, next) => {
-  const { mobile_number, password, full_name, client_type, terms_accepted, email } = req.body;
+  const { mobile_number, password, full_name, client_type, terms_accepted, email, gender } = req.body;
   const client = await db.pool.connect(); // Get a client for Transaction
 
   try {
@@ -71,9 +71,9 @@ exports.registerClient = async (req, res, next) => {
     // Note: wallet_balance defaults to 0.00 in DB schema
     // Note: is_registration_fee_paid defaults to FALSE in DB schema
     const newProfile = await client.query(
-      `INSERT INTO client_profiles (user_id, full_name, client_type) 
-       VALUES ($1, $2, $3) RETURNING client_profile_id`,
-      [userId, full_name, client_type || 'INDIVIDUAL']
+      `INSERT INTO client_profiles (user_id, full_name, client_type, gender) 
+       VALUES ($1, $2, $3, $4::gender_enum) RETURNING client_profile_id`,
+      [userId, full_name, client_type || 'INDIVIDUAL', gender]
     );
 
     // Store OTP in database

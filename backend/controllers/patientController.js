@@ -9,7 +9,8 @@ exports.createPatientProfile = async (req, res) => {
         medical_condition,
         residential_address,    // "Mount Lavinia" (Crucial for Sponsored Booking)
         emergency_contact_name, // "Sunil's Wife"
-        emergency_contact_number 
+        emergency_contact_number,
+        gender                  // New gender field
     } = req.body;
 
     try {
@@ -24,8 +25,9 @@ exports.createPatientProfile = async (req, res) => {
                 residential_address, 
                 emergency_contact_name, 
                 emergency_contact_number,
+                gender,
                 is_registration_fee_paid 
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::gender_enum, false)
             RETURNING *;
         `;
         
@@ -35,7 +37,7 @@ exports.createPatientProfile = async (req, res) => {
         const values = [
             client_id, full_name, age, relationship_to_client, 
             medical_condition, residential_address, 
-            emergency_contact_name, emergency_contact_number
+            emergency_contact_name, emergency_contact_number, gender
         ];
 
         const result = await db.query(query, values);

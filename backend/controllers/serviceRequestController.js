@@ -10,11 +10,13 @@ exports.submitServiceRequest = async (req, res) => {
             relationship, // This maps to relationship_to_client
             patient_condition,
             service_type,
+            service_model, // New field: LIVE_IN, SHIFT_BASED, VISITING
             home_address,
             latitude,
             longitude,
             start_date,
-            remarks
+            remarks,
+            preferred_gender
         } = req.body;
 
         // 1. Smart Detection: Does this mobile number belong to an existing client?
@@ -46,17 +48,19 @@ exports.submitServiceRequest = async (req, res) => {
                 relationship_to_client, 
                 patient_condition, 
                 service_type, 
+                service_model,
                 location_address, 
                 gps_coordinates, 
                 start_date, 
-                remarks
+                remarks,
+                preferred_gender
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, 
-                CASE WHEN $10::float IS NOT NULL AND $11::float IS NOT NULL 
-                     THEN point($11::float, $10::float) 
+                $1, $2, $3, $4, $5, $6, $7, $8, $9::service_model_enum, $10, 
+                CASE WHEN $11::float IS NOT NULL AND $12::float IS NOT NULL 
+                     THEN point($12::float, $11::float) 
                      ELSE NULL 
                 END, 
-                $12, $13
+                $13, $14, $15::gender_preference_enum
             )
             RETURNING *;
         `;
@@ -70,11 +74,13 @@ exports.submitServiceRequest = async (req, res) => {
             relationship,       // $6
             patient_condition,  // $7
             service_type,       // $8
-            home_address,       // $9
-            latitude,           // $10
-            longitude,          // $11
-            start_date,         // $12
-            remarks             // $13
+            service_model || 'SHIFT_BASED', // $9 (default to SHIFT_BASED if not provided)
+            home_address,       // $10
+            latitude,           // $11
+            longitude,          // $12
+            start_date,         // $13
+            remarks,            // $14
+            preferred_gender || 'ANY' // $15 (default to ANY if not provided)
         ];
 
         const result = await db.query(query, values);

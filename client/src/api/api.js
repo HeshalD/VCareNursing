@@ -280,9 +280,25 @@ class ApiClient {
 
 
 
+  // Service Request endpoints
+
+  async submitServiceRequest(requestData) {
+
+    return this.request('/service-request/submit-request', {
+
+      method: 'POST',
+
+      body: JSON.stringify(requestData),
+
+    });
+
+  }
+
+
+
   // Staff endpoints
 
-  async submitApplication(applicationData, documentFiles) {
+  async submitApplication(applicationData, documentFiles, profilePictureFile) {
 
     const formData = new FormData();
 
@@ -315,6 +331,14 @@ class ApiClient {
         formData.append('documents', file);
 
       });
+
+    }
+
+    // Append profile picture if provided
+
+    if (profilePictureFile) {
+
+      formData.append('profile_picture', profilePictureFile);
 
     }
 

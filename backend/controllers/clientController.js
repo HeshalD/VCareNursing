@@ -2,7 +2,7 @@ const db = require('../config/db');
 
 // 1. Update Client Profile
 exports.updateMe = async (req, res) => {
-  const { full_name, latitude, longitude } = req.body;
+  const { full_name, latitude, longitude, gender } = req.body;
   const userId = req.user.user_id;
 
   try {
@@ -14,6 +14,12 @@ exports.updateMe = async (req, res) => {
     if (full_name !== undefined) {
       updates.push(`full_name = $${paramIndex}`);
       values.push(full_name);
+      paramIndex++;
+    }
+
+    if (gender !== undefined) {
+      updates.push(`gender = $${paramIndex}::gender_enum`);
+      values.push(gender);
       paramIndex++;
     }
 

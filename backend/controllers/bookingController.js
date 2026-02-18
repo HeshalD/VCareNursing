@@ -83,9 +83,9 @@ exports.convertToBooking = async (req, res) => {
 
         // 5. Create Final Booking
         await client.query(
-            `INSERT INTO bookings (client_id, patient_id, service_type, start_date, assigned_staff_id, status) 
-             VALUES ($1, $2, $3, $4, $5, 'ACTIVE')`,
-            [clientProfileId, patientId, reqData.service_type, reqData.start_date, assigned_staff_id]
+            `INSERT INTO bookings (client_id, patient_id, service_type, service_model, start_date, assigned_staff_id, status, preferred_gender) 
+             VALUES ($1, $2, $3, $4::service_model_enum, $5, $6, 'ACTIVE', $7::gender_preference_enum)`,
+            [clientProfileId, patientId, reqData.service_type, reqData.service_model || 'SHIFT_BASED', reqData.start_date, assigned_staff_id, reqData.preferred_gender || 'ANY']
         );
 
         // 6. UPDATE STAFF STATUS (Lock them)

@@ -18,7 +18,8 @@ const RegisterPage = () => {
     nic: '',
     password: '',
     client_type: 'INDIVIDUAL',
-    terms_accepted: false
+    terms_accepted: false,
+    gender: ''
   });
 
   const validateForm = () => {
@@ -62,7 +63,8 @@ const RegisterPage = () => {
         mobile_number: formData.phone,
         password: formData.password,
         client_type: formData.client_type,
-        terms_accepted: formData.terms_accepted
+        terms_accepted: formData.terms_accepted,
+        gender: formData.gender
       });
       
       // Registration successful
@@ -202,6 +204,26 @@ const RegisterPage = () => {
                   />
                   <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500">
                     <CreditCard className="w-5 h-5" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Gender Select */}
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-700 block">Gender</label>
+                <div className="relative group">
+                  <select
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all appearance-none"
+                    value={formData.gender}
+                    onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
+                  >
+                    <option value="">Select gender</option>
+                    <option value="MALE">Male</option>
+                    <option value="FEMALE">Female</option>
+                    <option value="OTHER">Other</option>
+                  </select>
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
+                    <User className="w-5 h-5" />
                   </div>
                 </div>
               </div>
