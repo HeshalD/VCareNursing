@@ -65,4 +65,8 @@ router.get(
     staffController.getStaffAssignments
 );
 
+router.get(
+  '/gender/:gender',  
+  staffController.getStaffByGender
+);
 module.exports = router;
