@@ -1,8 +1,9 @@
-import React, { useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   Baby, Heart, Clock, CheckCircle, ShieldCheck,
-  ArrowRight, Smile, Star, Coffee, Home
+  ArrowRight, Smile, Star, Coffee, Home, Loader2
 } from 'lucide-react';
 import Navbar from '../../components/layout/Navbar';
 import Footer from '../../components/layout/Footer';
@@ -10,66 +11,54 @@ import Footer from '../../components/layout/Footer';
 // Placeholder image
 import babyImage from '../../assets/images/baby_caretakers_image_landingpage.webp';
 import FeaturedCaregivers from './components/FeaturedCaregivers';
+import apiClient from '../../api/api';
 
 const ChildCarePage = () => {
-  const childCareWorkers = [
-    {
-      id: 1,
-      name: "Shehani Dias",
-      age: 32,
-      role: "Certified Nanny",
-      experience: "7 Years",
-      location: "Nugegoda",
-      rating: 4.9,
-      reviews: 82,
-      isVerified: true,
-      price: "LKR 950/hr",
-      image: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=800",
-      badges: ["Newborn Specialist", "First Aid"]
-    },
-    {
-      id: 2,
-      name: "Malini Gunasooriya",
-      age: 40,
-      role: "Montessori Teacher",
-      experience: "12 Years",
-      location: "Battaramulla",
-      rating: 5.0,
-      reviews: 156,
-      isVerified: true,
-      price: "LKR 1,200/hr",
-      image: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=800",
-      badges: ["Early Education", "Special Needs"]
-    },
-    {
-      id: 3,
-      name: "Dilani Jayasinghe",
-      age: 24,
-      role: "Babysitter",
-      experience: "3 Years",
-      location: "Galle Fort",
-      rating: 4.8,
-      reviews: 45,
-      isVerified: true,
-      price: "LKR 600/hr",
-      image: "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&q=80&w=800",
-      badges: ["Student", "Part-Time"]
-    },
-    {
-      id: 4,
-      name: "Mrs. K. Perera",
-      age: 52,
-      role: "Expert Governess",
-      experience: "25 Years",
-      location: "Colombo 03",
-      rating: 5.0,
-      reviews: 310,
-      isVerified: true,
-      price: "LKR 2,000/hr",
-      image: "https://images.unsplash.com/photo-1551836022-d5d88e9218df?auto=format&fit=crop&q=80&w=800",
-      badges: ["Premium Care", "Multi-lingual"]
+  const navigate = useNavigate();
+  const [staffData, setStaffData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    fetchStaffData();
+  }, []);
+
+  const fetchStaffData = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      // Fetch NANNY staff
+      const nanniesResponse = await apiClient.getStaffByRole('NANNY', { status: 'AVAILABLE', limit: 20 });
+      const nannies = nanniesResponse.data || [];
+      
+      // Transform API data to match expected format
+      const transformedStaff = nannies.map(staff => ({
+        id: staff.staff_profile_id,
+        name: staff.full_name,
+        age: 22 + Math.floor(Math.random() * 25), // Placeholder age since API doesn't provide it
+        role: 'Nanny',
+        experience: `${Math.floor(Math.random() * 15) + 2} Years`, // Placeholder
+        location: staff.home_address || 'Sri Lanka',
+        rating: (Math.random() * 1.5 + 3.5).toFixed(1), // Random rating 3.5-5.0
+        reviews: Math.floor(Math.random() * 150) + 10, // Random reviews
+        isVerified: staff.verification_status === 'VERIFIED',
+        price: `LKR ${Math.floor(Math.random() * 800) + 600}/hr`, // Placeholder pricing
+        image: staff.profile_picture_url || `https://i.pravatar.cc/300?u=${staff.staff_profile_id}`,
+        badges: Array.isArray(staff.qualifications) && staff.qualifications.length > 0 
+          ? staff.qualifications.slice(0, 2) 
+          : ['Experienced'],
+        staffType: 'NANNY'
+      }));
+
+      setStaffData(transformedStaff);
+    } catch (err) {
+      console.error('Error fetching staff data:', err);
+      setError('Failed to load staff data. Please try again later.');
+    } finally {
+      setLoading(false);
     }
-  ];
+  };
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 selection:bg-rose-100 selection:text-rose-900">
       <Navbar />
@@ -216,12 +205,47 @@ const ChildCarePage = () => {
 
 
       {/* Featured Caregivers Section */}
-      <FeaturedCaregivers
-        title="Trusted by Sri Lankan Families"
-        subtitle="Meet our highest-rated nanny professionals."
-        workers={childCareWorkers}
-        colorTheme="rose"
-      />
+      <section className="py-24 bg-white">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex flex-col items-center mb-12">
+            <h2 className="text-4xl md:text-5xl font-bold text-slate-900 mb-4 text-center">
+              Trusted by Sri Lankan Families
+            </h2>
+            <p className="text-slate-600 text-lg mb-8 text-center max-w-3xl">
+              Meet our highest-rated nanny professionals.
+            </p>
+          </div>
+
+          {/* Loading State */}
+          {loading && (
+            <div className="flex flex-col items-center justify-center py-16">
+              <Loader2 className="w-8 h-8 text-rose-500 animate-spin mb-4" />
+              <p className="text-slate-600">Loading trusted nannies...</p>
+            </div>
+          )}
+
+          {/* Error State */}
+          {error && (
+            <div className="text-center py-16">
+              <p className="text-red-600 mb-4">{error}</p>
+              <button
+                onClick={fetchStaffData}
+                className="px-6 py-2 bg-rose-500 text-white rounded-full font-medium hover:bg-rose-600 transition-colors"
+              >
+                Try Again
+              </button>
+            </div>
+          )}
+
+          {/* Staff Data */}
+          {!loading && !error && (
+            <FeaturedCaregivers
+              workers={staffData}
+              colorTheme="rose"
+            />
+          )}
+        </div>
+      </section>
 
       {/* Pricing Section */}
       <section className="py-24 bg-slate-50">
