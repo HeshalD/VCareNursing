@@ -16,7 +16,8 @@ exports.submitApplication = async (req, res) => {
       location, 
       latitude, 
       longitude,
-      gender
+      gender,
+      date_of_birth
     } = req.body;
     
    
@@ -38,12 +39,12 @@ exports.submitApplication = async (req, res) => {
 
     const query = `
       INSERT INTO staff_applications 
-      (full_name, email, mobile_number, applied_roles, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, gender)
+      (full_name, email, mobile_number, applied_roles, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, gender, date_of_birth)
       VALUES ($1, $2, $3, $4::user_role_enum[], $5, $6, $7, $8,
         CASE WHEN $9::float IS NOT NULL AND $10::float IS NOT NULL 
              THEN point($10::float, $9::float) 
              ELSE NULL 
-        END, $11, $12::gender_enum)
+        END, $11, $12::gender_enum, $13)
       RETURNING *;
     `;
 
@@ -60,7 +61,8 @@ exports.submitApplication = async (req, res) => {
       (latitude && latitude !== "") ? latitude : null,
       (longitude && longitude !== "") ? longitude : null,
       profile_picture_url,
-      gender
+      gender,
+      date_of_birth
     ]);
 
     res.status(201).json({ status: 'success', data: result.rows[0] });
@@ -204,8 +206,8 @@ exports.acceptApplication = async (req, res) => {
 
     if (staffProfileCheck.rows.length === 0) {
         const profileInsertQuery = `
-          INSERT INTO staff_profiles (user_id, full_name, qualifications, document_urls, home_address, gps_coordinates, profile_picture_url, gender, willing_to_live_in)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8::gender_enum, $9)
+          INSERT INTO staff_profiles (user_id, full_name, qualifications, document_urls, home_address, gps_coordinates, profile_picture_url, gender, willing_to_live_in, date_of_birth)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8::gender_enum, $9, $10)
         `;
         await client.query(profileInsertQuery, [
           userId,
@@ -216,7 +218,8 @@ exports.acceptApplication = async (req, res) => {
           app.gps_coordinates,
           app.profile_picture_url,
           app.gender,
-          app.willing_to_live_in || false
+          app.willing_to_live_in || false,
+          app.date_of_birth
         ]);
     } else {
         // Optional: Update existing profile if needed, or just log it

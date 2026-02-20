@@ -33,23 +33,38 @@ const ChildCarePage = () => {
       const nannies = nanniesResponse.data || [];
       
       // Transform API data to match expected format
-      const transformedStaff = nannies.map(staff => ({
-        id: staff.staff_profile_id,
-        name: staff.full_name,
-        age: 22 + Math.floor(Math.random() * 25), // Placeholder age since API doesn't provide it
-        role: 'Nanny',
-        experience: `${Math.floor(Math.random() * 15) + 2} Years`, // Placeholder
-        location: staff.home_address || 'Sri Lanka',
-        rating: (Math.random() * 1.5 + 3.5).toFixed(1), // Random rating 3.5-5.0
-        reviews: Math.floor(Math.random() * 150) + 10, // Random reviews
-        isVerified: staff.verification_status === 'VERIFIED',
-        price: `LKR ${Math.floor(Math.random() * 800) + 600}/hr`, // Placeholder pricing
-        image: staff.profile_picture_url || `https://i.pravatar.cc/300?u=${staff.staff_profile_id}`,
-        badges: Array.isArray(staff.qualifications) && staff.qualifications.length > 0 
-          ? staff.qualifications.slice(0, 2) 
-          : ['Experienced'],
-        staffType: 'NANNY'
-      }));
+      const transformedStaff = nannies.map(staff => {
+        // Calculate age from date_of_birth if available
+        let calculatedAge = 25; // Default fallback age
+        if (staff.date_of_birth) {
+          const birthDate = new Date(staff.date_of_birth);
+          const today = new Date();
+          let age = today.getFullYear() - birthDate.getFullYear();
+          const monthDiff = today.getMonth() - birthDate.getMonth();
+          if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+            age--;
+          }
+          calculatedAge = age;
+        }
+
+        return {
+          id: staff.staff_profile_id,
+          name: staff.full_name,
+          age: calculatedAge,
+          role: 'Nanny',
+          experience: `${Math.floor(Math.random() * 15) + 2} Years`, // Placeholder
+          location: staff.home_address || 'Sri Lanka',
+          rating: (Math.random() * 1.5 + 3.5).toFixed(1), // Random rating 3.5-5.0
+          reviews: Math.floor(Math.random() * 150) + 10, // Random reviews
+          isVerified: staff.verification_status === 'VERIFIED',
+          price: `LKR ${Math.floor(Math.random() * 800) + 600}/hr`, // Placeholder pricing
+          image: staff.profile_picture_url || `https://i.pravatar.cc/300?u=${staff.staff_profile_id}`,
+          badges: Array.isArray(staff.qualifications) && staff.qualifications.length > 0 
+            ? staff.qualifications.slice(0, 2) 
+            : ['Experienced'],
+          staffType: 'NANNY'
+        };
+      });
 
       setStaffData(transformedStaff);
     } catch (err) {

@@ -16,7 +16,7 @@ const WorkerRegistrationPage = () => {
   const [formData, setFormData] = useState({
     full_name: '', email: '', mobile_number: '', applied_roles: '', 
     qualifications: '', home_address: '', location: '', latitude: '', longitude: '',
-    documents: [], profile_picture: null, gender: ''
+    documents: [], profile_picture: null, gender: '', willing_to_live_in: false, date_of_birth: ''
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
@@ -55,7 +55,9 @@ const WorkerRegistrationPage = () => {
         location: formData.location,
         latitude: formData.latitude,
         longitude: formData.longitude,
-        gender: formData.gender
+        gender: formData.gender,
+        willing_to_live_in: formData.willing_to_live_in,
+        date_of_birth: formData.date_of_birth
       };
 
       // Submit application with documents and profile picture
@@ -213,6 +215,16 @@ const WorkerRegistrationPage = () => {
                           </select>
                         </div>
                         <div>
+                          <label className="text-sm font-semibold text-slate-600 block mb-1">Date of Birth</label>
+                          <input
+                            type="date"
+                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900"
+                            value={formData.date_of_birth}
+                            onChange={e => setFormData({ ...formData, date_of_birth: e.target.value })}
+                            required
+                          />
+                        </div>
+                        <div>
                           <label className="text-sm font-semibold text-slate-600 block mb-1">Applied Role</label>
                           <select
                             className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900"
@@ -222,10 +234,21 @@ const WorkerRegistrationPage = () => {
                           >
                             <option value="">Select a role</option>
                             <option value="NURSE">Nurse</option>
-                            <option value="CAREGIVER">Caregiver</option>
+                            <option value="CARETAKER">Caretaker</option>
                             <option value="NANNY">Nanny</option>
                             <option value="COORDINATOR">COORDINATOR</option>
                           </select>
+                        </div>
+                        <div className="md:col-span-2">
+                          <label className="flex items-center gap-3 text-sm font-semibold text-slate-600">
+                            <input
+                              type="checkbox"
+                              className="w-4 h-4 text-indigo-600 bg-slate-50 border-slate-200 rounded focus:ring-indigo-500"
+                              checked={formData.willing_to_live_in}
+                              onChange={e => setFormData({ ...formData, willing_to_live_in: e.target.checked })}
+                            />
+                            Willing to live in with client
+                          </label>
                         </div>
                       </div>
                     </motion.div>
