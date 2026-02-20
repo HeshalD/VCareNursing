@@ -44,20 +44,19 @@ router.post('/login', staffAppController.staffLogin);
 // Change Password (for staff members)
 router.post('/change-password', protect, staffAppController.changeStaffPassword);
 
-// Get staff by ID
-router.get('/:staff_id', protect, staffController.getStaffByID);
-
 // Get all staff with optional filtering
 router.get('/', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), staffController.getAllStaff);
 
-// Update staff status to unavailable
-router.put('/:staff_profile_id/unavailable', protect, staffController.updateStaffToUnavailable);
-
-// Update staff status (general)
-router.put('/:staff_profile_id/status', protect, staffController.updateStaffStatus);
-
 // Get staff by role
 router.get('/role/:role', staffController.getStaffByRole);
+
+// Get staff members who are willing to live in with clients
+router.get('/willing-to-live-in', staffController.getStaffWillingToLiveIn);
+
+router.get(
+  '/gender/:gender',  
+  staffController.getStaffByGender
+);
 
 router.get(
     '/:staff_profile_id/assignments', 
@@ -65,8 +64,13 @@ router.get(
     staffController.getStaffAssignments
 );
 
-router.get(
-  '/gender/:gender',  
-  staffController.getStaffByGender
-);
+// Update staff status to unavailable
+router.put('/:staff_profile_id/unavailable', protect, staffController.updateStaffToUnavailable);
+
+// Update staff status (general)
+router.put('/:staff_profile_id/status', protect, staffController.updateStaffStatus);
+
+// Get staff by ID (must be last as it's a catch-all)
+router.get('/:staff_id', protect, staffController.getStaffByID);
+
 module.exports = router;

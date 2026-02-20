@@ -487,6 +487,12 @@ class ApiClient {
     return this.request(url);
   }
 
+  async getStaffWillingToLiveIn(filters = {}) {
+    const queryParams = new URLSearchParams(filters).toString();
+    const url = queryParams ? `/staff/willing-to-live-in?${queryParams}` : '/staff/willing-to-live-in';
+    return this.request(url);
+  }
+
   // Booking endpoints
   async createBooking(bookingData) {
     return this.request('/bookings', {
