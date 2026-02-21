@@ -28,6 +28,7 @@ import AdminLoginPage from './modules/admin/AdminLoginPage';
 import { AdminAuthProvider } from './context/AdminAuthContext';
 import ScrollToTop from './components/common/ScrollToTop';
 import './App.css';
+import HomeNursingBookingPage from './modules/public/HomeNursingBookingPage';
 import BabyCareBookingPage from './modules/public/BabyCareBookingPage';
 
 function App() {
@@ -49,6 +50,7 @@ function App() {
             } />
             <Route path="/verify-otp-reg" element={<VerifyOTPReg />} />
             <Route path="/services/home-nursing" element={<HomeNursingPage />} />
+            <Route path="/services/home-nursing/book" element={<HomeNursingBookingPage />} />
             <Route path="/services/hospital-staffing" element={<HospitalStaffingPage />} />
             <Route path="/services/child-care" element={<ChildCarePage />} />
             <Route path='/services/child-care/book' element={<BabyCareBookingPage/>}/>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { motion, useScroll, useTransform } from 'framer-motion';
 import {
   Home, Clock, Calendar, CheckCircle, ShieldCheck,
@@ -126,9 +126,9 @@ const HomeNursingPage = () => {
             </p>
 
             <div className="flex flex-wrap gap-6">
-              <button className="px-8 py-4 bg-emerald-500 hover:bg-emerald-400 text-slate-900 rounded-none font-bold text-lg transition-all flex items-center gap-3">
-                Requests Care <ArrowRight className="w-5 h-5" />
-              </button>
+              <Link to="/services/home-nursing/book" className="px-8 py-4 bg-emerald-500 hover:bg-emerald-400 text-slate-900 rounded-none font-bold text-lg transition-all flex items-center gap-3">
+                Request Care <ArrowRight className="w-5 h-5" />
+              </Link>
               <div className="flex items-center gap-4 px-6 py-4 border border-white/10 bg-white/5">
                 <div className="flex -space-x-3">
                   <div className="w-10 h-10 rounded-full bg-slate-700 border-2 border-[#0b1120]" />
