@@ -296,6 +296,14 @@ class ApiClient {
 
 
 
+  async getAllServiceRequests() {
+
+    return this.request('/service-requests/all-leads');
+
+  }
+
+
+
   // Staff endpoints
 
   async submitApplication(applicationData, documentFiles, profilePictureFile) {
