@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   Baby, Heart, Clock, CheckCircle, ShieldCheck,
@@ -107,9 +107,10 @@ const ChildCarePage = () => {
                 </p>
 
                 <div className="flex flex-col sm:flex-row gap-4">
-                  <button className="px-8 py-4 bg-rose-500 text-white rounded-full font-bold text-lg hover:bg-rose-600 transition-all shadow-lg shadow-rose-500/20 flex items-center justify-center gap-2">
+                  <Link to="/services/child-care/book" className="px-8 py-4 bg-rose-500 text-white rounded-full font-bold text-lg hover:bg-rose-600 transition-all shadow-lg shadow-rose-500/20 flex items-center justify-center gap-2">
                     Find a Nanny <ArrowRight className="w-5 h-5" />
-                  </button>
+                  </Link>
+                  
                   <div className="flex items-center gap-4 px-6 py-4 bg-white border border-slate-200 rounded-full shadow-sm">
                     <div className="flex -space-x-3">
                       <img src="https://i.pravatar.cc/100?u=5" alt="Nanny" className="w-8 h-8 rounded-full border-2 border-white" />

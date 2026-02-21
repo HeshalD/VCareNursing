@@ -28,6 +28,7 @@ import AdminLoginPage from './modules/admin/AdminLoginPage';
 import { AdminAuthProvider } from './context/AdminAuthContext';
 import ScrollToTop from './components/common/ScrollToTop';
 import './App.css';
+import BabyCareBookingPage from './modules/public/BabyCareBookingPage';
 
 function App() {
   return (
@@ -50,6 +51,7 @@ function App() {
             <Route path="/services/home-nursing" element={<HomeNursingPage />} />
             <Route path="/services/hospital-staffing" element={<HospitalStaffingPage />} />
             <Route path="/services/child-care" element={<ChildCarePage />} />
+            <Route path='/services/child-care/book' element={<BabyCareBookingPage/>}/>
             <Route path="/services/elderly-care" element={<ElderlyCarePage />} />
             <Route path="/services/elderly-care/book" element={<ElderlyCareBookingPage />} />
             <Route path="/booking-success" element={<BookingSuccessPage />} />
