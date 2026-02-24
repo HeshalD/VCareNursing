@@ -304,6 +304,48 @@ class ApiClient {
 
 
 
+  async getNewLeads() {
+
+    return this.request('/service-requests/new_leads');
+
+  }
+
+
+
+  async getServiceRequestById(requestId) {
+
+    return this.request(`/service-requests/${requestId}`);
+
+  }
+
+
+
+  async createQuotation(quoteData) {
+
+    return this.request('/quotes/create', {
+
+      method: 'POST',
+
+      body: JSON.stringify(quoteData),
+
+    });
+
+  }
+
+
+
+  async sendQuotePDF(quoteId) {
+
+    return this.request(`/quotes/send-pdf/${quoteId}`, {
+
+      method: 'POST',
+
+    });
+
+  }
+
+
+
   // Staff endpoints
 
   async submitApplication(applicationData, documentFiles, profilePictureFile) {

@@ -112,3 +112,36 @@ exports.getAllLeads = async (req, res) => {
         res.status(500).json({ message: "Error fetching leads" });
     }
 };
+
+// Admin Method to get all requests with NEW_LEAD status
+exports.getNewLeads = async (req, res) => {
+    try {
+        const result = await db.query(
+            'SELECT * FROM service_requests WHERE status = $1 ORDER BY created_at DESC',
+            ['NEW_LEAD']
+        );
+        res.status(200).json({ status: 'success', data: result.rows });
+    } catch (error) {
+        res.status(500).json({ message: "Error fetching new leads" });
+    }
+};
+
+// Admin Method to get service request by ID
+exports.getServiceRequestById = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await db.query(
+            'SELECT * FROM service_requests WHERE request_id = $1',
+            [id]
+        );
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: "Service request not found" });
+        }
+        
+        res.status(200).json({ status: 'success', data: result.rows[0] });
+    } catch (error) {
+        console.error("Error fetching service request:", error);
+        res.status(500).json({ message: "Error fetching service request" });
+    }
+};

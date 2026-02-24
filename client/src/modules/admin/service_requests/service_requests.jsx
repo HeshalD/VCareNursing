@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { 
@@ -13,10 +14,12 @@ import {
   Eye,
   CheckCircle,
   XCircle,
-  AlertCircle
+  AlertCircle,
+  Calculator
 } from 'lucide-react';
 
 const ServiceRequests = () => {
+  const navigate = useNavigate();
   const [serviceRequests, setServiceRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -32,10 +35,11 @@ const ServiceRequests = () => {
     try {
       setLoading(true);
       const response = await apiClient.getAllServiceRequests();
+      console.log('Service requests data:', response.data);
       setServiceRequests(response.data || []);
     } catch (err) {
-      setError('Failed to fetch service requests');
-      console.error('Error:', err);
+      console.error('Service Requests fetch error:', err);
+      setError(`Failed to fetch service requests: ${err.message || 'Unknown error'}`);
     } finally {
       setLoading(false);
     }
@@ -43,6 +47,8 @@ const ServiceRequests = () => {
 
   const getStatusColor = (status) => {
     switch (status) {
+      case 'NEW_LEAD':
+        return 'bg-purple-100 text-purple-800 border-purple-200';
       case 'PENDING':
         return 'bg-yellow-100 text-yellow-800 border-yellow-200';
       case 'CONTACTED':
@@ -58,6 +64,8 @@ const ServiceRequests = () => {
 
   const getStatusIcon = (status) => {
     switch (status) {
+      case 'NEW_LEAD':
+        return <AlertCircle className="w-4 h-4" />;
       case 'PENDING':
         return <AlertCircle className="w-4 h-4" />;
       case 'CONTACTED':
@@ -143,11 +151,12 @@ const ServiceRequests = () => {
               onChange={(e) => setStatusFilter(e.target.value)}
               className="px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
-              <option value="all">All Status</option>
-              <option value="PENDING">Pending</option>
-              <option value="CONTACTED">Contacted</option>
-              <option value="CONFIRMED">Confirmed</option>
-              <option value="CANCELLED">Cancelled</option>
+              <option key="all" value="all">All Status</option>
+              <option key="new_lead" value="NEW_LEAD">New Lead</option>
+              <option key="pending" value="PENDING">Pending</option>
+              <option key="contacted" value="CONTACTED">Contacted</option>
+              <option key="confirmed" value="CONFIRMED">Confirmed</option>
+              <option key="cancelled" value="CANCELLED">Cancelled</option>
             </select>
           </div>
         </div>
@@ -190,7 +199,7 @@ const ServiceRequests = () => {
               </thead>
               <tbody className="bg-white divide-y divide-slate-200">
                 {filteredRequests.map((request) => (
-                  <tr key={request.service_request_id} className="hover:bg-slate-50 transition-colors">
+                  <tr key={request.request_id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-6 py-4">
                       <div>
                         <div className="font-medium text-slate-900">{request.payer_name}</div>
@@ -250,12 +259,24 @@ const ServiceRequests = () => {
                       </span>
                     </td>
                     <td className="px-6 py-4">
-                      <button
-                        onClick={() => setSelectedRequest(request)}
-                        className="text-blue-600 hover:text-blue-800 transition-colors"
-                      >
-                        <Eye className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setSelectedRequest(request)}
+                          className="text-blue-600 hover:text-blue-800 transition-colors"
+                          title="View Details"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                        {request.status === 'NEW_LEAD' && (
+                          <button
+                            onClick={() => navigate(`/admin/quote-builder/${request.request_id}`)}
+                            className="text-green-600 hover:text-green-800 transition-colors"
+                            title="Create Quote"
+                          >
+                            <Calculator className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

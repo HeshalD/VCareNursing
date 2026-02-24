@@ -21,6 +21,7 @@ import ClientProfileDemo from './modules/public/ClientProfileDemo';
 import AdminDashboard from './modules/admin/admin_dashboard_main/AdminDashboard';
 import UserManagement from './modules/admin/user_managemnet/user_managemnet';
 import ServiceRequests from './modules/admin/service_requests/service_requests';
+import QuoteBuilder from './modules/admin/service_requests/quote_builder';
 import WorkerVerification from './modules/admin/worker_verifications/worker_verifications';
 import Financials from './modules/admin/financial/financial';
 import Reports from './modules/admin/reports/reports';
@@ -76,6 +77,11 @@ function App() {
             <Route path="/admin/service-requests" element={
               <AdminAuthProvider>
                 <ServiceRequests />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/quote-builder/:requestId?" element={
+              <AdminAuthProvider>
+                <QuoteBuilder />
               </AdminAuthProvider>
             } />
             <Route path="/admin/workers" element={
