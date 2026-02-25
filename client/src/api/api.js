@@ -40,8 +40,6 @@ class ApiClient {
 
       headers: {
 
-        'Content-Type': 'application/json',
-
         ...(this.token && { Authorization: `Bearer ${this.token}` }),
 
         ...options.headers,
@@ -51,6 +49,16 @@ class ApiClient {
       ...options,
 
     };
+
+
+
+    // Only set Content-Type to application/json if body is not FormData
+
+    if (options.body && !(options.body instanceof FormData)) {
+
+      config.headers['Content-Type'] = 'application/json';
+
+    }
 
 
 
@@ -318,10 +326,43 @@ class ApiClient {
 
   }
 
+  async updateServiceRequestStatus(requestId, status) {
+    return this.request(`/service-requests/${requestId}/status`, {
+      method: 'PUT',
+      body: JSON.stringify({ status })
 
+    });
+
+  }
+
+  async getServiceRequestQuotes(requestId) {
+    return this.request(`/quotes/request/${requestId}`);
+  }
+
+  async convertToBooking(bookingData, paymentSlipFile) {
+    const formData = new FormData();
+    
+    // Append all booking data fields
+    Object.keys(bookingData).forEach(key => {
+      formData.append(key, bookingData[key]);
+    });
+    
+    // Append payment slip file if provided
+    if (paymentSlipFile) {
+      formData.append('payment_slip', paymentSlipFile);
+    }
+
+    return this.request('/bookings/convert', {
+      method: 'POST',
+      headers: {
+        // Remove Content-Type to let browser set it with boundary for FormData
+        ...(this.token && { Authorization: `Bearer ${this.token}` }),
+      },
+      body: formData,
+    });
+  }
 
   async createQuotation(quoteData) {
-
     return this.request('/quotes/create', {
 
       method: 'POST',
@@ -331,8 +372,6 @@ class ApiClient {
     });
 
   }
-
-
 
   async sendQuotePDF(quoteId) {
 
@@ -555,6 +594,7 @@ class ApiClient {
     return this.request('/bookings/my-bookings');
   }
 
+// ...
   async updateBookingStatus(bookingId, status) {
     return this.request(`/bookings/${bookingId}/status`, {
       method: 'PUT',

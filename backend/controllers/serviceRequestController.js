@@ -145,3 +145,41 @@ exports.getServiceRequestById = async (req, res) => {
         res.status(500).json({ message: "Error fetching service request" });
     }
 };
+
+exports.getPendingLeads = async (req, res) => {
+    try {
+        const result = await db.query(
+            'SELECT * FROM service_requests WHERE status = $1 ORDER BY created_at DESC',
+            ['PENDING']
+        );
+        res.status(200).json({ status: 'success', data: result.rows });
+    } catch (error) {
+        res.status(500).json({ message: "Error fetching new leads" });
+    }
+};
+
+// Admin Method to update service request status
+exports.updateServiceRequestStatus = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+        
+        const result = await db.query(
+            'UPDATE service_requests SET status = $1 WHERE request_id = $2 RETURNING *',
+            [status, id]
+        );
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: "Service request not found" });
+        }
+        
+        res.status(200).json({ 
+            status: 'success', 
+            message: `Service request status updated to ${status}`,
+            data: result.rows[0] 
+        });
+    } catch (error) {
+        console.error("Error updating service request status:", error);
+        res.status(500).json({ message: "Error updating service request status" });
+    }
+};

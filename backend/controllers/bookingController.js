@@ -2,25 +2,47 @@ const db = require('../config/db');
 const bcrypt = require('bcrypt');
 const { sendWhatsAppMessage } = require('../utils/whatsapp');
 const sendEmail = require('../utils/email');
+const { upload } = require('../config/cloudinaryConfig');
 
-exports.convertToBooking = async (req, res) => {
+// Middleware for handling payment slip upload
+exports.uploadPaymentSlip = upload.single('payment_slip');
+
+// Original convertToBooking function (now internal)
+const convertToBookingInternal = async (req, res) => {
     // assigned_staff_id is optional - will use preferred_staff_id from request if not provided
+    // quote_id is optional - will use active_quote_id from service_requests if not provided
     const { request_id, quote_id, slip_url, assigned_staff_id } = req.body;
     const client = await db.pool.connect(); 
 
     try {
         await client.query('BEGIN');
 
-        // 1. Fetch Request & Quote Details
+        // 1. Fetch Request Details
         const requestRes = await client.query('SELECT * FROM service_requests WHERE request_id = $1', [request_id]);
-        const quoteRes = await client.query('SELECT * FROM quotations WHERE quote_id = $1', [quote_id]);
 
-        if (requestRes.rows.length === 0 || quoteRes.rows.length === 0) {
+        if (requestRes.rows.length === 0) {
             await client.query('ROLLBACK');
-            return res.status(404).json({ message: 'Request or Quote not found' });
+            return res.status(404).json({ message: 'Request not found' });
         }
 
         const reqData = requestRes.rows[0];
+
+        // Use the active_quote_id from service_requests if available, otherwise use the provided quote_id
+        const bookingQuoteId = reqData.active_quote_id || quote_id;
+        
+        if (!bookingQuoteId) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ message: 'No quote ID provided and no active quote found in service request' });
+        }
+
+        // Fetch Quote Details
+        const quoteRes = await client.query('SELECT * FROM quotations WHERE quote_id = $1', [bookingQuoteId]);
+
+        if (quoteRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: 'Quote not found' });
+        }
+
         const quoteData = quoteRes.rows[0];
 
         // Determine staff assignment: use provided assigned_staff_id, fallback to preferred_staff_id from request
@@ -104,8 +126,8 @@ exports.convertToBooking = async (req, res) => {
         );
 
         // 7. Finalize Request & Payment
-        await client.query(`UPDATE service_requests SET status = 'COMPLETED' WHERE request_id = $1`, [request_id]);
-        await client.query(`INSERT INTO payment_slips (quote_id, slip_url, verified_at) VALUES ($1, $2, NOW())`, [quote_id, slip_url]);
+        await client.query(`UPDATE service_requests SET status = 'ACTIVE' WHERE request_id = $1`, [request_id]);
+        await client.query(`INSERT INTO payment_slips (quote_id, slip_url, verified_at) VALUES ($1, $2, NOW())`, [bookingQuoteId, slip_url]);
 
         // 8. Fetch Staff Details (For Notification)
         const staffRes = await client.query(
@@ -160,5 +182,25 @@ exports.convertToBooking = async (req, res) => {
         res.status(500).json({ message: "Failed to convert lead to booking." });
     } finally {
         client.release();
+    }
+};
+
+// Public convertToBooking function with file upload support
+exports.convertToBooking = async (req, res) => {
+    try {
+        // Handle file upload
+        if (req.file) {
+            // File was uploaded, use the Cloudinary URL
+            req.body.slip_url = req.file.path;
+        } else if (!req.body.slip_url) {
+            // No file uploaded and no slip_url provided
+            return res.status(400).json({ message: "Payment slip file or URL is required" });
+        }
+        
+        // Call the internal conversion logic
+        await convertToBookingInternal(req, res);
+    } catch (error) {
+        console.error("File upload error:", error);
+        res.status(500).json({ message: "Failed to process payment slip upload." });
     }
 };

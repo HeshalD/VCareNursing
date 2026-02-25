@@ -32,6 +32,7 @@ import ScrollToTop from './components/common/ScrollToTop';
 import './App.css';
 import HomeNursingBookingPage from './modules/public/HomeNursingBookingPage';
 import BabyCareBookingPage from './modules/public/BabyCareBookingPage';
+import StaffRoster from './modules/admin/service_requests/staff_roster';
 
 function App() {
   return (
@@ -82,6 +83,11 @@ function App() {
             <Route path="/admin/quote-builder/:requestId?" element={
               <AdminAuthProvider>
                 <QuoteBuilder />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/staff-roster" element={
+              <AdminAuthProvider>
+                <StaffRoster />
               </AdminAuthProvider>
             } />
             <Route path="/admin/workers" element={

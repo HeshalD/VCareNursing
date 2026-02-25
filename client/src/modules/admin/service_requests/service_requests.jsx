@@ -15,7 +15,8 @@ import {
   CheckCircle,
   XCircle,
   AlertCircle,
-  Calculator
+  Calculator,
+  Users
 } from 'lucide-react';
 
 const ServiceRequests = () => {
@@ -274,6 +275,15 @@ const ServiceRequests = () => {
                             title="Create Quote"
                           >
                             <Calculator className="w-4 h-4" />
+                          </button>
+                        )}
+                        {request.status === 'PENDING' && (
+                          <button
+                            onClick={() => navigate('/admin/staff-roster', { state: { serviceRequest: request } })}
+                            className="text-purple-600 hover:text-purple-800 transition-colors"
+                            title="Assign Staff"
+                          >
+                            <Users className="w-4 h-4" />
                           </button>
                         )}
                       </div>

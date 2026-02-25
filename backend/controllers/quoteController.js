@@ -135,8 +135,8 @@ exports.generateAndSendPDF = async (req, res) => {
         // 5. Update Status
         await db.query("UPDATE quotations SET status = 'SENT' WHERE quote_id = $1", [quote_id]);
         
-        // 6. Update service request status to PENDING
-        await db.query("UPDATE service_requests SET status = 'PENDING' WHERE request_id = $1", [data.request_id]);
+        // 6. Update service request status to PENDING and set active_quote_id
+        await db.query("UPDATE service_requests SET status = 'PENDING', active_quote_id = $1 WHERE request_id = $2", [quote_id, data.request_id]);
 
         res.status(200).json({
             status: 'success',

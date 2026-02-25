@@ -12,6 +12,7 @@ router.post(
     '/convert', 
     protect, 
     restrictTo('SUPER_ADMIN', 'COORDINATOR'), 
+    bookingController.uploadPaymentSlip,
     bookingController.convertToBooking
 );
 
