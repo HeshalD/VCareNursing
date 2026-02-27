@@ -204,3 +204,22 @@ exports.convertToBooking = async (req, res) => {
         res.status(500).json({ message: "Failed to process payment slip upload." });
     }
 };
+
+// 3. Retrieve all active bookings (status = 'ACTIVE')
+exports.getActiveBookings = async (req, res) => {
+  try {
+    const result = await db.query(
+      'SELECT * FROM bookings WHERE status = $1 ORDER BY created_at DESC',
+      ['ACTIVE']
+    );
+
+    res.status(200).json({
+      status: 'success',
+      results: result.rows.length,
+      data: result.rows
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Error fetching active bookings' });
+  }
+};

@@ -16,4 +16,8 @@ router.post(
     bookingController.convertToBooking
 );
 
+router.get('/active-bookings', protect, 
+    restrictTo('SUPER_ADMIN', 'COORDINATOR'), 
+    bookingController.getActiveBookings);
+
 module.exports = router;
