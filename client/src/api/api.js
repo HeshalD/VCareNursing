@@ -590,6 +590,13 @@ class ApiClient {
     });
   }
 
+  async convertToBooking(bookingData) {
+    return this.request('/bookings/convert', {
+      method: 'POST',
+      body: JSON.stringify(bookingData)
+    });
+  }
+
   async getMyBookings() {
     return this.request('/bookings/my-bookings');
   }
@@ -597,6 +604,11 @@ class ApiClient {
   async getActiveBookings() {
     // used by admin to fetch all active bookings
     return this.request('/bookings/active-bookings');
+  }
+
+  async getActiveBookingByClientID(clientId = '') {
+    const endpoint = clientId ? `/client/active-bookings/${clientId}` : '/client/active-bookings';
+    return this.request(endpoint);
   }
 
 // ...

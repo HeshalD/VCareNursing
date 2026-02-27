@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { ShieldCheck, Menu, X, User, LogOut, Briefcase } from 'lucide-react';
+import { ShieldCheck, Menu, X, User, LogOut, Briefcase, Calendar } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
 const Navbar = () => {
@@ -66,6 +66,13 @@ const Navbar = () => {
               <div className="w-20 h-8 bg-slate-200 rounded-full animate-pulse"></div>
             ) : isAuthenticated ? (
               <div className="flex items-center gap-3">
+                <Link
+                  to="/client/bookings"
+                  className="flex items-center gap-2 px-3 py-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-full text-sm font-medium transition-all"
+                  title="My Bookings"
+                >
+                  <Calendar className="w-4 h-4" />
+                </Link>
                 {isStaffUser() && (
                   <Link
                     to="/services/provider-dashboard"
@@ -122,6 +129,13 @@ const Navbar = () => {
               <div className="w-full h-12 bg-slate-200 rounded-xl animate-pulse mt-4"></div>
             ) : isAuthenticated ? (
               <>
+                <Link
+                  to="/client/bookings"
+                  className="flex items-center justify-center gap-2 w-full px-5 py-3 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-xl font-medium transition-all"
+                >
+                  <Calendar className="w-4 h-4" />
+                  My Bookings
+                </Link>
                 {isStaffUser() && (
                   <Link
                     to="/services/provider-dashboard"

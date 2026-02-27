@@ -12,5 +12,6 @@ router.delete('/delete-me', clientController.deleteMe);
 
 // bookings endpoints
 router.get('/active-bookings/:client_id', clientController.getActiveBookingByClientID);
+router.get('/active-bookings', clientController.getActiveBookingByClientID);
 
 module.exports = router;

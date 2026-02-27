@@ -34,6 +34,7 @@ import HomeNursingBookingPage from './modules/public/HomeNursingBookingPage';
 import BabyCareBookingPage from './modules/public/BabyCareBookingPage';
 import StaffRoster from './modules/admin/service_requests/staff_roster';
 import Bookings from './modules/admin/bookings/Bookings';
+import ClientBookings from './modules/client/ClientBookings';
 
 function App() {
   return (
@@ -66,6 +67,7 @@ function App() {
             <Route path="/services/provider-dashboard" element={<WorkerDashboardDemo />} />
             <Route path="/client/dashboard" element={<ClientDashboardDemo />} />
             <Route path="/client/profile" element={<ClientProfileDemo />} />
+            <Route path="/client/bookings" element={<ClientBookings/>}/>
             <Route path="/admin/dashboard" element={
               <AdminAuthProvider>
                 <AdminDashboard />
