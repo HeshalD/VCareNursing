@@ -33,6 +33,7 @@ import './App.css';
 import HomeNursingBookingPage from './modules/public/HomeNursingBookingPage';
 import BabyCareBookingPage from './modules/public/BabyCareBookingPage';
 import StaffRoster from './modules/admin/service_requests/staff_roster';
+import Bookings from './modules/admin/bookings/Bookings';
 
 function App() {
   return (
@@ -103,6 +104,11 @@ function App() {
             <Route path="/admin/reports" element={
               <AdminAuthProvider>
                 <Reports />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/bookings" element={
+              <AdminAuthProvider>
+                <Bookings />
               </AdminAuthProvider>
             } />
             <Route path="/admin/settings" element={

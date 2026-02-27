@@ -124,7 +124,12 @@ const AdminDashboard = () => {
               </table>
             </div>
             <div className="p-4 border-t border-slate-100 text-center">
-              <button className="text-blue-600 text-sm font-medium hover:underline">View All Bookings</button>
+              <button
+              onClick={() => navigate('/admin/bookings')}
+              className="text-blue-600 text-sm font-medium hover:underline"
+            >
+              View All Bookings
+            </button>
             </div>
           </div>
         </div>

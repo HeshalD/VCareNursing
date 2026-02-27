@@ -594,6 +594,11 @@ class ApiClient {
     return this.request('/bookings/my-bookings');
   }
 
+  async getActiveBookings() {
+    // used by admin to fetch all active bookings
+    return this.request('/bookings/active-bookings');
+  }
+
 // ...
   async updateBookingStatus(bookingId, status) {
     return this.request(`/bookings/${bookingId}/status`, {

@@ -2,7 +2,7 @@ import React from 'react';
 import {
   Users, Calendar, DollarSign, Activity,
   Settings, LogOut, Bell, Search,
-  ShieldCheck, FileText, SendHorizontal , Stethoscope, Baby, Heart
+  ShieldCheck, FileText, SendHorizontal , Stethoscope, Baby, Heart, CalendarDays
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 
@@ -43,6 +43,12 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
             label="Service Requests"
             path="/admin/service-requests"
             active={isActive('/admin/service-requests')}
+          />
+          <SidebarItem
+            icon={CalendarDays}
+            label="Bookings"
+            path="/admin/bookings"
+            active={isActive('/admin/bookings')}
           />
           <SidebarItem
             icon={ShieldCheck}
