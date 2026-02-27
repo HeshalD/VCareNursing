@@ -160,7 +160,7 @@ const ClientBookings = () => {
                   <div className="flex-1">
                     <p className="text-sm text-gray-500">Staff Assigned</p>
                     <p className="font-medium text-gray-900">
-                      {booking.staff_name || booking.assigned_staff_id || 'Not assigned'}
+                      {booking.assigned_staff_id || 'Not assigned'}
                     </p>
                   </div>
                 </div>
