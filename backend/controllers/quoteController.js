@@ -54,6 +54,34 @@ exports.createQuotation = async (req, res) => {
     }
 };
 
+exports.getQuoteByRequest = async (req, res) => {
+    const { requestId } = req.params;
+
+    try {
+        const result = await db.query(`
+            SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type,
+                   s.status as request_status, s.active_quote_id
+            FROM quotations q
+            JOIN service_requests s ON q.request_id = s.request_id
+            WHERE q.request_id = $1
+            ORDER BY q.created_at DESC
+        `, [requestId]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: "No quotes found for this request" });
+        }
+
+        res.status(200).json({
+            status: 'success',
+            data: result.rows[0] // Return the most recent quote
+        });
+
+    } catch (error) {
+        console.error("Get Quote Error:", error);
+        res.status(500).json({ message: "Failed to fetch quote" });
+    }
+};
+
 exports.generateAndSendPDF = async (req, res) => {
     const { quote_id } = req.params;
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Eye, XCircle, Loader2, Calendar, User, Activity, Clock, CheckCircle, AlertCircle, DollarSign,Stethoscope, Baby, Heart } from 'lucide-react';
+import { Eye, XCircle, Loader2, Calendar, User, Activity, Clock, CheckCircle, AlertCircle, DollarSign,Stethoscope, Baby, Heart, ToggleLeft, ToggleRight } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
@@ -10,12 +10,15 @@ const Bookings = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedBooking, setSelectedBooking] = useState(null);
+  const [bookingDetails, setBookingDetails] = useState({});
+  const [showAllBookings, setShowAllBookings] = useState(false);
 
   const getStatusBadge = (status) => {
     const statusConfig = {
       active: { color: 'green', icon: CheckCircle, label: 'Active' },
-      'termination-pending': { color: 'yellow', icon: Clock, label: 'Termination Pending' },
-      terminated: { color: 'blue', icon: CheckCircle, label: 'Terminated' },
+      pending_termination: { color: 'yellow', icon: Clock, label: 'PENDING TERMINATION' },
+      terminated: { color: 'red', icon: CheckCircle, label: 'Terminated' },
+      completed: { color: 'blue', icon: CheckCircle, label: 'Completed' },
       cancelled: { color: 'red', icon: XCircle, label: 'Cancelled' },
     };
     
@@ -43,7 +46,7 @@ const Bookings = () => {
     if (adminToken) {
       fetchBookings();
     }
-  }, [adminToken]);
+  }, [adminToken, showAllBookings]);
 
   const fetchBookings = async () => {
     try {
@@ -54,16 +57,48 @@ const Bookings = () => {
       }
       const orig = apiClient.token;
       apiClient.setToken(adminToken);
-      const response = await apiClient.getActiveBookings();
+      
+      // Use different API based on toggle state
+      const response = showAllBookings 
+        ? await apiClient.getAllBookings()
+        : await apiClient.getActiveBookings();
+        
       apiClient.setToken(orig);
 
+      let bookingsData = [];
       if (Array.isArray(response)) {
-        setBookings(response);
+        bookingsData = response;
       } else if (response.status === 'success') {
-        setBookings(response.data || []);
+        bookingsData = response.data || [];
       } else {
         setError(response.message || 'Failed to load bookings');
+        return;
       }
+
+      setBookings(bookingsData);
+      
+      // Fetch detailed information for each booking
+      const detailsPromises = bookingsData.map(async (booking) => {
+        try {
+          apiClient.setToken(adminToken);
+          const detailResponse = await apiClient.getBookingById(booking.booking_id);
+          apiClient.setToken(orig);
+          return { bookingId: booking.booking_id, details: detailResponse.data };
+        } catch (err) {
+          console.error(`Error fetching details for booking ${booking.booking_id}:`, err);
+          return { bookingId: booking.booking_id, details: null };
+        }
+      });
+
+      const detailsResults = await Promise.all(detailsPromises);
+      const detailsMap = {};
+      detailsResults.forEach(result => {
+        if (result.details) {
+          detailsMap[result.bookingId] = result.details;
+        }
+      });
+      
+      setBookingDetails(detailsMap);
     } catch (err) {
       console.error('Error fetching bookings:', err);
       setError(err.message || 'Unknown error');
@@ -108,9 +143,33 @@ const Bookings = () => {
   }
 
   return (
-    <AdminLayout title="Active Bookings" subtitle={`${bookings.length} bookings found`}>
+    <AdminLayout title={showAllBookings ? "All Bookings" : "Active Bookings"} subtitle={`${bookings.length} bookings found`}>
+      {/* Toggle Button */}
+      <div className="mb-6 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span className="text-xs font-medium text-slate-700">Active Only</span>
+          <button
+            onClick={() => setShowAllBookings(!showAllBookings)}
+            className="relative inline-flex h-5 w-10 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            style={{ backgroundColor: showAllBookings ? '#3b82f6' : '#d1d5db' }}
+          >
+            <span
+              className="inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow-sm"
+              style={{ transform: showAllBookings ? 'translateX(1.3rem)' : 'translateX(0.23rem)' }}
+            />
+          </button>
+          <span className="text-xs font-medium text-slate-700">All Bookings</span>
+        </div>
+        <button 
+          onClick={fetchBookings}
+          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium flex items-center gap-2"
+        >
+          <Calendar className="w-4 h-4" />
+          Refresh
+        </button>
+      </div>
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
         <div className="bg-white rounded-xl border border-slate-200 p-6">
           <div className="flex items-center justify-between">
             <div>
@@ -137,7 +196,7 @@ const Bookings = () => {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-slate-500 mb-1">Termination Pending</p>
-              <p className="text-2xl font-bold text-yellow-600">{bookings.filter(b => b.status === 'TERMINATION-PENDING').length}</p>
+              <p className="text-2xl font-bold text-yellow-600">{bookings.filter(b => b.status === 'PENDING_TERMINATION').length}</p>
             </div>
             <div className="bg-yellow-100 rounded-full p-3">
               <Clock className="w-6 h-6 text-yellow-600" />
@@ -148,10 +207,21 @@ const Bookings = () => {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-slate-500 mb-1">TERMINATED</p>
-              <p className="text-2xl font-bold text-blue-600">{bookings.filter(b => b.status === 'TERMINATED').length}</p>
+              <p className="text-2xl font-bold text-red-600">{bookings.filter(b => b.status === 'TERMINATED').length}</p>
+            </div>
+            <div className="bg-red-100 rounded-full p-3">
+              <Activity className="w-6 h-6 text-red-600" />
+            </div>
+          </div>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-slate-500 mb-1">COMPLETED</p>
+              <p className="text-2xl font-bold text-blue-600">{bookings.filter(b => b.status === 'COMPLETED').length}</p>
             </div>
             <div className="bg-blue-100 rounded-full p-3">
-              <Activity className="w-6 h-6 text-blue-600" />
+              <CheckCircle className="w-6 h-6 text-blue-600" />
             </div>
           </div>
         </div>
@@ -184,6 +254,7 @@ const Bookings = () => {
               <tbody className="divide-y divide-slate-100">
                 {bookings.map((b) => {
                   const ServiceIcon = getServiceTypeIcon(b.service_type);
+                  const details = bookingDetails[b.booking_id];
                   return (
                     <tr key={b.booking_id || b.id} className="hover:bg-slate-50 transition-colors">
                       <td className="px-6 py-4">
@@ -194,11 +265,28 @@ const Bookings = () => {
                           <div className="bg-slate-100 rounded-full w-8 h-8 flex items-center justify-center">
                             <User className="w-4 h-4 text-slate-600" />
                           </div>
-                          <span className="text-sm font-medium text-slate-900">{b.client_id}</span>
+                          <div>
+                            <span className="text-sm font-medium text-slate-900">
+                              {details?.client_name || `Client #${b.client_id}`}
+                            </span>
+                            {details?.client_address && (
+                              <p className="text-xs text-slate-500 mt-1">{details.client_address}</p>
+                            )}
+                          </div>
                         </div>
                       </td>
                       <td className="px-6 py-4">
-                        <span className="text-sm text-slate-600">{b.patient_id}</span>
+                        <div>
+                          <span className="text-sm text-slate-600">
+                            {details?.patient_name || `Patient #${b.patient_id}`}
+                          </span>
+                          {details?.patient_age && (
+                            <p className="text-xs text-slate-500">Age: {details.patient_age}</p>
+                          )}
+                          {details?.medical_condition && (
+                            <p className="text-xs text-slate-500">{details.medical_condition}</p>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2">
@@ -303,17 +391,100 @@ const Bookings = () => {
                   <User className="w-5 h-5 text-blue-600" />
                   Client & Patient Information
                 </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-slate-500 mb-1">Client ID</p>
-                    <p className="font-medium text-slate-900">{selectedBooking.client_id}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-slate-500 mb-1">Patient ID</p>
-                    <p className="font-medium text-slate-900">{selectedBooking.patient_id}</p>
-                  </div>
-                </div>
+                {(() => {
+                  const details = bookingDetails[selectedBooking.booking_id];
+                  if (details) {
+                    return (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {/* Client Information */}
+                        <div>
+                          <h4 className="font-medium text-slate-900 mb-3">Client</h4>
+                          <div className="space-y-2">
+                            <div>
+                              <p className="text-sm text-slate-500">Name</p>
+                              <p className="font-medium text-slate-900">{details.client_name || 'N/A'}</p>
+                            </div>
+                            <div>
+                              <p className="text-sm text-slate-500">Address</p>
+                              <p className="font-medium text-slate-900">{details.client_address || 'N/A'}</p>
+                            </div>
+                            <div>
+                              <p className="text-sm text-slate-500">Mobile</p>
+                              <p className="font-medium text-slate-900">{details.client_mobile || 'N/A'}</p>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        {/* Patient Information */}
+                        <div>
+                          <h4 className="font-medium text-slate-900 mb-3">Patient</h4>
+                          <div className="space-y-2">
+                            <div>
+                              <p className="text-sm text-slate-500">Name</p>
+                              <p className="font-medium text-slate-900">{details.patient_name || 'N/A'}</p>
+                            </div>
+                            <div>
+                              <p className="text-sm text-slate-500">Age</p>
+                              <p className="font-medium text-slate-900">{details.patient_age || 'N/A'}</p>
+                            </div>
+                            <div>
+                              <p className="text-sm text-slate-500">Relationship</p>
+                              <p className="font-medium text-slate-900">{details.relationship_to_client || 'N/A'}</p>
+                            </div>
+                            <div>
+                              <p className="text-sm text-slate-500">Medical Condition</p>
+                              <p className="font-medium text-slate-900">{details.medical_condition || 'N/A'}</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  } else {
+                    return (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-sm text-slate-500 mb-1">Client ID</p>
+                          <p className="font-medium text-slate-900">{selectedBooking.client_id}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-slate-500 mb-1">Patient ID</p>
+                          <p className="font-medium text-slate-900">{selectedBooking.patient_id}</p>
+                        </div>
+                      </div>
+                    );
+                  }
+                })()}
               </div>
+
+              {/* Staff Information */}
+              {(() => {
+                const details = bookingDetails[selectedBooking.booking_id];
+                if (details && details.staff_name) {
+                  return (
+                    <div className="bg-slate-50 rounded-xl p-6">
+                      <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
+                        <Activity className="w-5 h-5 text-blue-600" />
+                        Assigned Staff
+                      </h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-sm text-slate-500 mb-1">Staff Name</p>
+                          <p className="font-medium text-slate-900">{details.staff_name}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-slate-500 mb-1">Mobile</p>
+                          <p className="font-medium text-slate-900">{details.staff_mobile || 'N/A'}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-slate-500 mb-1">Email</p>
+                          <p className="font-medium text-slate-900">{details.staff_email || 'N/A'}</p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
 
               {/* Raw Data */}
               <div className="bg-slate-50 rounded-xl p-6">
@@ -323,7 +494,7 @@ const Bookings = () => {
                 </h3>
                 <div className="bg-slate-900 rounded-lg p-4 overflow-x-auto">
                   <pre className="text-xs text-green-400 font-mono">
-                    {JSON.stringify(selectedBooking, null, 2)}
+                    {JSON.stringify({ ...selectedBooking, details: bookingDetails[selectedBooking.booking_id] }, null, 2)}
                   </pre>
                 </div>
               </div>

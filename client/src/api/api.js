@@ -590,13 +590,6 @@ class ApiClient {
     });
   }
 
-  async convertToBooking(bookingData) {
-    return this.request('/bookings/convert', {
-      method: 'POST',
-      body: JSON.stringify(bookingData)
-    });
-  }
-
   async getMyBookings() {
     return this.request('/bookings/my-bookings');
   }
@@ -604,6 +597,15 @@ class ApiClient {
   async getActiveBookings() {
     // used by admin to fetch all active bookings
     return this.request('/bookings/active-bookings');
+  }
+
+  async getAllBookings() {
+    // used by admin to fetch all bookings (active, terminated, etc.)
+    return this.request('/bookings');
+  }
+
+  async getBookingById(bookingId) {
+    return this.request(`/bookings/${bookingId}`);
   }
 
   async getActiveBookingByClientID(clientId = '') {

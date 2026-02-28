@@ -16,6 +16,18 @@ router.post(
 );
 
 /**
+ * @route   GET /api/quotes/request/:requestId
+ * @desc    Get quote by request ID
+ * @access  Private (Admin/Coordinator)
+ */
+router.get(
+    '/request/:requestId', 
+    protect, 
+    restrictTo('SUPER_ADMIN', 'COORDINATOR'), 
+    quoteController.getQuoteByRequest
+);
+
+/**
  * @route   POST /api/quotes/send-pdf/:quote_id
  * @desc    Phase 2: Generate PDF, upload to Cloudinary, and send via WhatsApp
  * @access  Private (Admin/Coordinator)

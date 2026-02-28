@@ -5,14 +5,24 @@ const sendEmail = require('../utils/email');
 const { upload } = require('../config/cloudinaryConfig');
 
 // Middleware for handling payment slip upload
-exports.uploadPaymentSlip = upload.single('payment_slip');
+exports.uploadPaymentSlip = (req, res, next) => {
+    console.log('Upload middleware called');
+    upload.single('payment_slip')(req, res, (err) => {
+        if (err) {
+            console.error('Multer error:', err);
+            return res.status(400).json({ message: 'File upload error: ' + err.message });
+        }
+        console.log('File upload middleware completed');
+        next();
+    });
+};
 
 // Original convertToBooking function (now internal)
 const convertToBookingInternal = async (req, res) => {
     // assigned_staff_id is optional - will use preferred_staff_id from request if not provided
     // quote_id is optional - will use active_quote_id from service_requests if not provided
     const { request_id, quote_id, slip_url, assigned_staff_id } = req.body;
-    const client = await db.pool.connect(); 
+    const client = await db.pool.connect();
 
     try {
         await client.query('BEGIN');
@@ -29,7 +39,7 @@ const convertToBookingInternal = async (req, res) => {
 
         // Use the active_quote_id from service_requests if available, otherwise use the provided quote_id
         const bookingQuoteId = reqData.active_quote_id || quote_id;
-        
+
         if (!bookingQuoteId) {
             await client.query('ROLLBACK');
             return res.status(400).json({ message: 'No quote ID provided and no active quote found in service request' });
@@ -47,7 +57,7 @@ const convertToBookingInternal = async (req, res) => {
 
         // Determine staff assignment: use provided assigned_staff_id, fallback to preferred_staff_id from request
         const finalStaffId = assigned_staff_id || reqData.preferred_staff_id;
-        
+
         if (!finalStaffId) {
             await client.query('ROLLBACK');
             return res.status(400).json({ message: 'No staff assigned and no preferred staff found in request' });
@@ -58,7 +68,7 @@ const convertToBookingInternal = async (req, res) => {
         const userCheck = await client.query('SELECT user_id FROM users WHERE mobile_number = $1', [reqData.payer_mobile]);
 
         if (userCheck.rows.length === 0) {
-            const tempPassword = Math.random().toString(36).slice(-8); 
+            const tempPassword = Math.random().toString(36).slice(-8);
             const hashedPassword = await bcrypt.hash(tempPassword, 12);
 
             const newUser = await client.query(
@@ -121,7 +131,7 @@ const convertToBookingInternal = async (req, res) => {
         // 6. UPDATE STAFF STATUS (Lock them)
         // Ensure staff_profile_id column name matches your DB (id vs staff_profile_id)
         await client.query(
-            `UPDATE staff_profiles SET current_status = 'ASSIGNED' WHERE staff_profile_id = $1`, 
+            `UPDATE staff_profiles SET current_status = 'ASSIGNED' WHERE staff_profile_id = $1`,
             [finalStaffId]
         );
 
@@ -131,10 +141,10 @@ const convertToBookingInternal = async (req, res) => {
 
         // 8. Fetch Staff Details (For Notification)
         const staffRes = await client.query(
-            'SELECT sp.full_name, sp.profile_picture_url, u.mobile_number, u.email FROM staff_profiles sp JOIN users u ON sp.user_id = u.user_id WHERE sp.staff_profile_id = $1', 
+            'SELECT sp.full_name, sp.profile_picture_url, u.mobile_number, u.email FROM staff_profiles sp JOIN users u ON sp.user_id = u.user_id WHERE sp.staff_profile_id = $1',
             [finalStaffId]
         );
-        
+
 
         if (staffRes.rows.length === 0) {
             throw new Error('Assigned Staff ID not found');
@@ -153,7 +163,7 @@ const convertToBookingInternal = async (req, res) => {
         await sendWhatsAppMessage(reqData.payer_mobile, welcomeMsg);
 
         // Construct the assignment details
-        const assignmentMsg = 
+        const assignmentMsg =
             `*New Assignment Alert!* 🚨\n\n` +
             `*Patient:* ${reqData.patient_name}\n` +
             `*Location:* ${reqData.location_address}\n` +
@@ -169,8 +179,8 @@ const convertToBookingInternal = async (req, res) => {
                 email: staffData.email,
                 subject: 'New Job Assignment - VCare Nursing',
                 message: `Hello ${staffData.full_name},\n\nYou have been assigned a new patient.\n\n` +
-                `Patient: ${reqData.patient_name}\nAddress: ${reqData.location_address}\nCondition: ${reqData.patient_condition}\n\n` +
-                `Please proceed to the location by ${reqData.start_date}.`
+                    `Patient: ${reqData.patient_name}\nAddress: ${reqData.location_address}\nCondition: ${reqData.patient_condition}\n\n` +
+                    `Please proceed to the location by ${reqData.start_date}.`
             });
         }
 
@@ -191,12 +201,14 @@ exports.convertToBooking = async (req, res) => {
         // Handle file upload
         if (req.file) {
             // File was uploaded, use the Cloudinary URL
-            req.body.slip_url = req.file.path;
+            console.log('Uploaded file:', req.file); // Debug log
+            req.body.slip_url = req.file.secure_url || req.file.path;
         } else if (!req.body.slip_url) {
             // No file uploaded and no slip_url provided
+            console.log('No file and no slip_url found. Request body:', req.body); // Debug log
             return res.status(400).json({ message: "Payment slip file or URL is required" });
         }
-        
+
         // Call the internal conversion logic
         await convertToBookingInternal(req, res);
     } catch (error) {
@@ -205,29 +217,89 @@ exports.convertToBooking = async (req, res) => {
     }
 };
 
+exports.getByBookingID = async (req, res) => {
+    const { booking_id } = req.params;
+
+    try {
+        // Simplified query first to test basic functionality
+        const query = `
+            SELECT 
+                b.booking_id,
+                b.service_type,
+                b.service_model,
+                b.start_date,
+                b.status,
+                b.preferred_gender,
+                b.created_at,
+                c.client_profile_id,
+                c.full_name as client_name,
+                c.primary_address as client_address,
+                uc.mobile_number as client_mobile,
+                p.patient_id,
+                p.full_name as patient_name,
+                p.age as patient_age,
+                p.relationship_to_client,
+                p.medical_condition,
+                s.staff_profile_id,
+                s.full_name as staff_name,
+                us.mobile_number as staff_mobile,
+                s.profile_picture_url,
+                us.email as staff_email
+            FROM bookings b
+            LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
+            LEFT JOIN users uc ON c.user_id = uc.user_id
+            LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+            LEFT JOIN staff_profiles s ON b.assigned_staff_id = s.staff_profile_id
+            LEFT JOIN users us ON s.user_id = us.user_id
+            WHERE b.booking_id = $1
+        `;
+
+        console.log('Executing query for booking_id:', booking_id);
+        const result = await db.query(query, [booking_id]);
+        console.log('Query result:', result.rows);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ 
+                status: 'error',
+                message: 'Booking not found' 
+            });
+        }
+
+        res.status(200).json({
+            status: 'success',
+            data: result.rows[0]
+        });
+
+    } catch (error) {
+        console.error("Get Booking by ID Error:", error);
+        console.error("Error details:", error.message);
+        res.status(500).json({ message: 'Failed to fetch booking details' });
+    }
+};
+
 // 3. Retrieve all active bookings (status = 'ACTIVE')
 exports.getActiveBookings = async (req, res) => {
-  try {
-    const result = await db.query(
-      'SELECT * FROM bookings WHERE status = $1 ORDER BY created_at DESC',
-      ['ACTIVE']
-    );
+    try {
+        const result = await db.query(
+            'SELECT * FROM bookings WHERE status = $1 ORDER BY created_at DESC',
+            ['ACTIVE']
+        );
 
-    res.status(200).json({
-      status: 'success',
-      results: result.rows.length,
-      data: result.rows
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Error fetching active bookings' });
-  }
+        res.status(200).json({
+            status: 'success',
+            results: result.rows.length,
+            data: result.rows
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Error fetching active bookings' });
+    }
 };
 
 exports.requestTermination = async (req, res) => {
     const { booking_id } = req.params;
     const { urgency, requested_end_date, reason } = req.body;
-    
+
     // Validate urgency input
     const validUrgencies = ['TODAY', 'FUTURE', 'IMMEDIATE'];
     if (!validUrgencies.includes(urgency)) {
@@ -245,7 +317,7 @@ exports.requestTermination = async (req, res) => {
 
         // 1. Verify the booking exists and is currently ACTIVE
         const bookingRes = await client.query(
-            `SELECT status, client_id FROM bookings WHERE booking_id = $1 FOR UPDATE`, 
+            `SELECT status, client_id FROM bookings WHERE booking_id = $1 FOR UPDATE`,
             [booking_id]
         );
 
@@ -258,8 +330,8 @@ exports.requestTermination = async (req, res) => {
 
         if (booking.status !== 'ACTIVE') {
             await client.query('ROLLBACK');
-            return res.status(400).json({ 
-                message: `Cannot request termination. Booking is currently in '${booking.status}' status.` 
+            return res.status(400).json({
+                message: `Cannot request termination. Booking is currently in '${booking.status}' status.`
             });
         }
 
@@ -375,7 +447,7 @@ exports.approveTerminationRequest = async (req, res) => {
             `SELECT st.*, b.assigned_staff_id, b.client_id, b.start_date 
              FROM service_terminations st
              JOIN bookings b ON st.booking_id = b.booking_id
-             WHERE st.termination_id = $1 FOR UPDATE`, 
+             WHERE st.termination_id = $1 FOR UPDATE`,
             [termination_id]
         );
 
@@ -419,33 +491,69 @@ exports.approveTerminationRequest = async (req, res) => {
         // =========================================================
         // 5. FINANCIAL SETTLEMENT ENGINE (Wallet Logic)
         // =========================================================
-        
-        // *NOTE: You will need to replace the placeholders below with your actual 
-        // pricing columns from the quotations/bookings table. 
-        // Example logic for a Pre-paid scenario:*
-        
-        /*
-        const dailyRate = 5000; // Get this from DB
-        const daysPaid = 30;    // Get this from DB
-        
-        // Calculate days worked
-        const diffTime = Math.abs(officialEndDate - new Date(request.start_date));
-        const daysWorked = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
-        const unusedDays = daysPaid - daysWorked;
 
-        if (unusedDays > 0) {
-            const refundAmount = unusedDays * dailyRate;
-            
-            // Add to Client's Wallet
-            await client.query(
-                `UPDATE client_profiles 
-                 SET wallet_balance = wallet_balance + $1 
-                 WHERE client_profile_id = $2`,
-                [refundAmount, request.client_id]
-            );
-            console.log(`Credited Rs. ${refundAmount} to client ${request.client_id}`);
+        // =========================================================
+        // 5. FINANCIAL SETTLEMENT ENGINE
+        // =========================================================
+
+        // A. Fetch the Financial Contract (The Quote)
+        const financeRes = await client.query(
+            `SELECT b.start_date, b.client_id, q.daily_rate, q.qty_days, q.registration_fee 
+     FROM bookings b
+     JOIN quotations q ON b.quote_id = q.quote_id
+     WHERE b.booking_id = $1`,
+            [booking_id] // or request.booking_id depending on which controller you are in
+        );
+
+        if (financeRes.rows.length > 0) {
+            const financeData = financeRes.rows[0];
+            const { start_date, client_id, daily_rate, qty_days } = financeData;
+
+            // B. Calculate Days Worked
+            // We calculate the difference in milliseconds, convert to days, and round up.
+            // (e.g., if they worked 2.1 days, it counts as 3 billable days for the nurse's sake)
+            const diffTime = officialEndDate.getTime() - new Date(start_date).getTime();
+            let daysWorked = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+            // Edge Case: If they cancel before the nurse even arrives (same day or future)
+            if (daysWorked < 0) daysWorked = 0;
+            // Edge Case: Minimum 1 day charge if they cancel a few hours after the nurse arrives
+            if (daysWorked === 0 && diffTime > 0) daysWorked = 1;
+
+            // C. Calculate Unused Days
+            const unusedDays = qty_days - daysWorked;
+
+            // D. Process the Wallet Refund
+            if (unusedDays > 0) {
+                // They paid for more days than they used!
+                const refundAmount = unusedDays * daily_rate;
+
+                // Add the exact refund amount to the Client's Wallet
+                await client.query(
+                    `UPDATE client_profiles 
+             SET wallet_balance = wallet_balance + $1 
+             WHERE client_profile_id = $2`,
+                    [refundAmount, client_id]
+                );
+
+                console.log(`SETTLEMENT: Credited Rs. ${refundAmount} for ${unusedDays} unused days to Client ${client_id}`);
+
+                // Optional: You can insert a record into a `wallet_transactions` table here 
+                // to keep a history of "Why" they got this money.
+
+            } else if (unusedDays < 0) {
+                // SCENARIO: They overstayed their prepaid quote! 
+                // e.g., Paid for 14 days, stopped on day 16.
+                const amountOwed = Math.abs(unusedDays) * daily_rate;
+                console.log(`SETTLEMENT ALERT: Client ${client_id} overstayed by ${Math.abs(unusedDays)} days and owes Rs. ${amountOwed}`);
+
+                // Here, instead of a refund, you would trigger an alert for your accountant 
+                // to send a final Post-Paid Invoice to the client for the extra days.
+            } else {
+                console.log(`SETTLEMENT: Perfect match. 0 unused days. No wallet changes.`);
+            }
         }
-        */
+        // =========================================================
 
         await client.query('COMMIT');
 
@@ -471,7 +579,7 @@ exports.forceStopBooking = async (req, res) => {
     const { booking_id } = req.params;
     // Admin can specify an exact date/time, or default to right now. 
     // They can also type in the reason the client gave over the phone.
-    const { target_end_date, reason } = req.body || {}; 
+    const { target_end_date, reason } = req.body || {};
 
     const client = await db.pool.connect();
 
@@ -482,7 +590,7 @@ exports.forceStopBooking = async (req, res) => {
         const bookingRes = await client.query(
             `SELECT status, assigned_staff_id, client_id, start_date 
              FROM bookings 
-             WHERE booking_id = $1 FOR UPDATE`, 
+             WHERE booking_id = $1 FOR UPDATE`,
             [booking_id]
         );
 
@@ -548,8 +656,68 @@ exports.forceStopBooking = async (req, res) => {
 
         // =========================================================
         // 5. FINANCIAL SETTLEMENT ENGINE GOES HERE
-        // (Just like in the approve method, you calculate Wallet 
-        // refunds or generate the final invoice here)
+        /// =========================================================
+        // 5. FINANCIAL SETTLEMENT ENGINE
+        // =========================================================
+
+        // A. Fetch the Financial Contract (The Quote)
+        const financeRes = await client.query(
+            `SELECT b.start_date, b.client_id, q.daily_rate, q.qty_days, q.registration_fee 
+     FROM bookings b
+     JOIN quotations q ON b.quote_id = q.quote_id
+     WHERE b.booking_id = $1`,
+            [booking_id] // or request.booking_id depending on which controller you are in
+        );
+
+        if (financeRes.rows.length > 0) {
+            const financeData = financeRes.rows[0];
+            const { start_date, client_id, daily_rate, qty_days } = financeData;
+
+            // B. Calculate Days Worked
+            // We calculate the difference in milliseconds, convert to days, and round up.
+            // (e.g., if they worked 2.1 days, it counts as 3 billable days for the nurse's sake)
+            const diffTime = officialEndDate.getTime() - new Date(start_date).getTime();
+            let daysWorked = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+            // Edge Case: If they cancel before the nurse even arrives (same day or future)
+            if (daysWorked < 0) daysWorked = 0;
+            // Edge Case: Minimum 1 day charge if they cancel a few hours after the nurse arrives
+            if (daysWorked === 0 && diffTime > 0) daysWorked = 1;
+
+            // C. Calculate Unused Days
+            const unusedDays = qty_days - daysWorked;
+
+            // D. Process the Wallet Refund
+            if (unusedDays > 0) {
+                // They paid for more days than they used!
+                const refundAmount = unusedDays * daily_rate;
+
+                // Add the exact refund amount to the Client's Wallet
+                await client.query(
+                    `UPDATE client_profiles 
+             SET wallet_balance = wallet_balance + $1 
+             WHERE client_profile_id = $2`,
+                    [refundAmount, client_id]
+                );
+
+                console.log(`SETTLEMENT: Credited Rs. ${refundAmount} for ${unusedDays} unused days to Client ${client_id}`);
+
+                // Optional: You can insert a record into a `wallet_transactions` table here 
+                // to keep a history of "Why" they got this money.
+
+            } else if (unusedDays < 0) {
+                // SCENARIO: They overstayed their prepaid quote! 
+                // e.g., Paid for 14 days, stopped on day 16.
+                const amountOwed = Math.abs(unusedDays) * daily_rate;
+                console.log(`SETTLEMENT ALERT: Client ${client_id} overstayed by ${Math.abs(unusedDays)} days and owes Rs. ${amountOwed}`);
+
+                // Here, instead of a refund, you would trigger an alert for your accountant 
+                // to send a final Post-Paid Invoice to the client for the extra days.
+            } else {
+                console.log(`SETTLEMENT: Perfect match. 0 unused days. No wallet changes.`);
+            }
+        }
+
         // =========================================================
 
         await client.query('COMMIT');
@@ -557,9 +725,9 @@ exports.forceStopBooking = async (req, res) => {
         res.status(200).json({
             status: 'success',
             message: "Service forcefully stopped. Staff member is now available.",
-            data: { 
-                booking_id, 
-                end_date: officialEndDate 
+            data: {
+                booking_id,
+                end_date: officialEndDate
             }
         });
 
@@ -571,3 +739,52 @@ exports.forceStopBooking = async (req, res) => {
         client.release();
     }
 };
+
+exports.getAllBookings = async (req, res) => {
+    try {
+        const query = `
+            SELECT 
+                b.booking_id,
+                b.service_type,
+                b.service_model,
+                b.start_date,
+                b.status,
+                b.preferred_gender,
+                b.created_at,
+                c.client_profile_id,
+                c.full_name as client_name,
+                c.primary_address as client_address,
+                uc.mobile_number as client_mobile,
+                p.patient_id,
+                p.full_name as patient_name,
+                p.age as patient_age,
+                p.relationship_to_client,
+                p.medical_condition,
+                s.staff_profile_id,
+                s.full_name as staff_name,
+                us.mobile_number as staff_mobile,
+                s.profile_picture_url,
+                us.email as staff_email
+            FROM bookings b
+            LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
+            LEFT JOIN users uc ON c.user_id = uc.user_id
+            LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+            LEFT JOIN staff_profiles s ON b.assigned_staff_id = s.staff_profile_id
+            LEFT JOIN users us ON s.user_id = us.user_id
+            ORDER BY b.created_at DESC
+        `;
+
+        const result = await db.query(query);
+
+        res.status(200).json({
+            status: 'success',
+            count: result.rowCount,
+            data: result.rows
+        });
+
+    } catch (error) {
+        console.error("Get All Bookings Error:", error);
+        res.status(500).json({ message: 'Failed to fetch all bookings' });
+    }
+};
+

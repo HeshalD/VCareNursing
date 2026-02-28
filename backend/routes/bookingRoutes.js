@@ -16,9 +16,17 @@ router.post(
     bookingController.convertToBooking
 );
 
+router.get('/',protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+    bookingController.getAllBookings
+);
+
 router.get('/active-bookings', protect, 
     restrictTo('SUPER_ADMIN', 'COORDINATOR'), 
     bookingController.getActiveBookings);
+
+router.get('/:booking_id', protect,  
+    bookingController.getByBookingID);
 
 router.post(
     '/terminate/:booking_id', 
