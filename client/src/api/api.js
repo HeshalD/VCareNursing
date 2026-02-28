@@ -618,17 +618,33 @@ class ApiClient {
     return this.request(endpoint);
   }
 
-// ...
   async updateBookingStatus(bookingId, status) {
     return this.request(`/bookings/${bookingId}/status`, {
       method: 'PUT',
       body: JSON.stringify({ status }),
     });
   }
+
+  async requestBookingTermination(bookingId, terminationData) {
+    return this.request(`/bookings/terminate/${bookingId}`, {
+      method: 'POST',
+      body: JSON.stringify(terminationData),
+    });
+  }
+
+  async getPendingTerminationRequests() {
+    return this.request('/bookings/terminations/pending');
+  }
+
+  async approveTerminationRequest(terminationId, finalEndDate) {
+    return this.request(`/bookings/terminations/approve/${terminationId}`, {
+      method: 'POST',
+      body: JSON.stringify({ final_end_date: finalEndDate }),
+    });
+  }
 }
 
 // Create and export a singleton instance
 const apiClient = new ApiClient();
-
 export default apiClient;
 export { ApiClient };

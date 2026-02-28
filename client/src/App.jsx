@@ -35,6 +35,7 @@ import BabyCareBookingPage from './modules/public/BabyCareBookingPage';
 import StaffRoster from './modules/admin/service_requests/staff_roster';
 import Bookings from './modules/admin/bookings/Bookings';
 import ClientBookings from './modules/client/ClientBookings';
+import TerminationRequests from './modules/admin/termination_requests/termination_requests';
 
 function App() {
   return (
@@ -81,6 +82,11 @@ function App() {
             <Route path="/admin/service-requests" element={
               <AdminAuthProvider>
                 <ServiceRequests />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/termination-requests" element={
+              <AdminAuthProvider>
+                <TerminationRequests />
               </AdminAuthProvider>
             } />
             <Route path="/admin/quote-builder/:requestId?" element={

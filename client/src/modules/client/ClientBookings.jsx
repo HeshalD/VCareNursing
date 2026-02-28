@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Eye, XCircle, Loader2, Calendar, User, Activity, Clock, CheckCircle, AlertCircle, DollarSign, Stethoscope, Baby, Heart, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Eye, XCircle, Loader2, Calendar, User, Activity, Clock, CheckCircle, AlertCircle, DollarSign, Stethoscope, Baby, Heart, ToggleLeft, ToggleRight, AlertTriangle } from 'lucide-react';
 import apiClient from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 
@@ -11,6 +11,14 @@ const ClientBookings = () => {
   const [selectedBooking, setSelectedBooking] = useState(null);
   const [bookingDetails, setBookingDetails] = useState({});
   const [showAllBookings, setShowAllBookings] = useState(false);
+  const [showTerminationForm, setShowTerminationForm] = useState(false);
+  const [terminationBooking, setTerminationBooking] = useState(null);
+  const [terminationForm, setTerminationForm] = useState({
+    urgency: '',
+    requested_end_date: '',
+    reason: ''
+  });
+  const [terminationLoading, setTerminationLoading] = useState(false);
 
   const getStatusBadge = (status) => {
     const statusConfig = {
@@ -98,6 +106,47 @@ const ClientBookings = () => {
       setError(err.message || 'Unknown error');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleTerminationRequest = async (booking) => {
+    setTerminationBooking(booking);
+    setShowTerminationForm(true);
+    setTerminationForm({
+      urgency: '',
+      requested_end_date: '',
+      reason: ''
+    });
+  };
+
+  const submitTerminationRequest = async () => {
+    if (!terminationForm.urgency || !terminationForm.requested_end_date || !terminationForm.reason) {
+      setError('Please fill in all termination form fields');
+      return;
+    }
+
+    try {
+      setTerminationLoading(true);
+      await apiClient.requestBookingTermination(
+        terminationBooking.booking_id,
+        terminationForm
+      );
+      
+      setShowTerminationForm(false);
+      setTerminationBooking(null);
+      setTerminationForm({
+        urgency: '',
+        requested_end_date: '',
+        reason: ''
+      });
+      
+      // Refresh bookings to show updated status
+      fetchBookings();
+    } catch (err) {
+      console.error('Error requesting termination:', err);
+      setError(err.message || 'Failed to request termination');
+    } finally {
+      setTerminationLoading(false);
     }
   };
 
@@ -302,14 +351,26 @@ const ClientBookings = () => {
                           {getStatusBadge(b.status)}
                         </td>
                         <td className="px-6 py-4 text-right">
-                          <button
-                            onClick={() => setSelectedBooking(b)}
-                            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-all"
-                            title="View details"
-                          >
-                            <Eye className="w-4 h-4" />
-                            View
-                          </button>
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => setSelectedBooking(b)}
+                              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-all"
+                              title="View details"
+                            >
+                              <Eye className="w-4 h-4" />
+                              View
+                            </button>
+                            {b.status === 'ACTIVE' && (
+                              <button
+                                onClick={() => handleTerminationRequest(b)}
+                                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-all"
+                                title="Request termination"
+                              >
+                                <AlertTriangle className="w-4 h-4" />
+                                Terminate
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -423,6 +484,113 @@ const ClientBookings = () => {
                       {JSON.stringify({ ...selectedBooking, details: bookingDetails[selectedBooking.booking_id] }, null, 2)}
                     </pre>
                   </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Termination Form Modal */}
+        {showTerminationForm && terminationBooking && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl">
+              <div className="bg-white border-b border-slate-200 p-6 rounded-t-2xl">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-2xl font-bold text-slate-900">Request Termination</h2>
+                    <p className="text-slate-500 text-sm mt-1">Booking ID: #{terminationBooking.booking_id || terminationBooking.id}</p>
+                  </div>
+                  <button
+                    onClick={() => setShowTerminationForm(false)}
+                    className="text-slate-400 hover:text-slate-600 transition-colors"
+                  >
+                    <XCircle className="w-6 h-6" />
+                  </button>
+                </div>
+              </div>
+              
+              <div className="p-6 space-y-6">
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5" />
+                    <div>
+                      <h4 className="font-semibold text-amber-800">Termination Request</h4>
+                      <p className="text-amber-700 text-sm mt-1">
+                        Submitting this request will initiate the termination process for your booking. 
+                        The admin team will review your request and process it accordingly.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      Urgency Level <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={terminationForm.urgency}
+                      onChange={(e) => setTerminationForm({...terminationForm, urgency: e.target.value})}
+                      className="w-full px-3 py-2 text-slate-700 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      required
+                    >
+                      <option value="">Select urgency level</option>
+                      <option value="FUTURE">Low - Can wait</option>
+                      <option value="TODAY">Medium - Soon</option>
+                      <option value="IMMEDIATE">High - Urgent</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      Requested End Date <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="date"
+                      value={terminationForm.requested_end_date}
+                      onChange={(e) => setTerminationForm({...terminationForm, requested_end_date: e.target.value})}
+                      className="w-full px-3 py-2 text-slate-700 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      min={new Date().toISOString().split('T')[0]}
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      Reason for Termination <span className="text-red-500">*</span>
+                    </label>
+                    <textarea
+                      value={terminationForm.reason}
+                      onChange={(e) => setTerminationForm({...terminationForm, reason: e.target.value})}
+                      className="w-full px-3 py-2 text-slate-700 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      rows={4}
+                      placeholder="Please explain why you need to terminate this booking..."
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-4">
+                  <button
+                    onClick={() => setShowTerminationForm(false)}
+                    className="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors font-medium"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={submitTerminationRequest}
+                    disabled={terminationLoading}
+                    className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {terminationLoading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Submitting...
+                      </>
+                    ) : (
+                      'Submit Request'
+                    )}
+                  </button>
                 </div>
               </div>
             </div>
