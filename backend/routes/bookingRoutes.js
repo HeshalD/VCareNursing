@@ -32,4 +32,12 @@ router.get('/terminations/pending', protect, restrictTo('SUPER_ADMIN', 'ADMIN'),
 // POST /api/admin/terminations/:termination_id/approve
 router.post('/terminations/approve/:termination_id', protect, restrictTo('SUPER_ADMIN', 'ADMIN'), bookingController.approveTerminationRequest);
 
+// POST /api/admin/terminations/:booking_id/force-stop
+router.post(
+    '/terminations/force-stop/:booking_id', 
+    protect, 
+    restrictTo('SUPER_ADMIN', 'ADMIN'), 
+    bookingController.forceStopBooking
+);
+
 module.exports = router;

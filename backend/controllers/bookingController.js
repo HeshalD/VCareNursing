@@ -466,3 +466,108 @@ exports.approveTerminationRequest = async (req, res) => {
         client.release();
     }
 };
+
+exports.forceStopBooking = async (req, res) => {
+    const { booking_id } = req.params;
+    // Admin can specify an exact date/time, or default to right now. 
+    // They can also type in the reason the client gave over the phone.
+    const { target_end_date, reason } = req.body || {}; 
+
+    const client = await db.pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        // 1. Fetch the Booking to ensure it exists and get the staff ID
+        const bookingRes = await client.query(
+            `SELECT status, assigned_staff_id, client_id, start_date 
+             FROM bookings 
+             WHERE booking_id = $1 FOR UPDATE`, 
+            [booking_id]
+        );
+
+        if (bookingRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: "Booking not found." });
+        }
+
+        const booking = bookingRes.rows[0];
+
+        // If it's already terminated, stop here.
+        if (booking.status === 'TERMINATED') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ message: "This booking is already terminated." });
+        }
+
+        // Determine the official cut-off time
+        const officialEndDate = target_end_date ? new Date(target_end_date) : new Date();
+
+        // 2. Handle the Paper Trail (service_terminations)
+        // Let's check if the client already had a 'PENDING' request that the admin is just force-clearing
+        const pendingTermRes = await client.query(
+            `SELECT termination_id FROM service_terminations 
+             WHERE booking_id = $1 AND status = 'PENDING' FOR UPDATE`,
+            [booking_id]
+        );
+
+        if (pendingTermRes.rows.length > 0) {
+            // Client requested it earlier, Admin is approving it now via Force Stop
+            await client.query(
+                `UPDATE service_terminations 
+                 SET status = 'APPROVED', end_date = $1, reason = COALESCE($2, reason)
+                 WHERE termination_id = $3`,
+                [officialEndDate, reason, pendingTermRes.rows[0].termination_id]
+            );
+        } else {
+            // Admin is doing this entirely manually over the phone, so we create the log
+            await client.query(
+                `INSERT INTO service_terminations (
+                    booking_id, requested_by, urgency, requested_end_date, end_date, reason, status
+                ) VALUES ($1, 'ADMIN', 'IMMEDIATE', $2, $3, $4, 'APPROVED')`,
+                [booking_id, officialEndDate, officialEndDate, reason || 'Admin forced stop via phone request']
+            );
+        }
+
+        // 3. Terminate the Booking
+        await client.query(
+            `UPDATE bookings 
+             SET status = 'TERMINATED'
+             WHERE booking_id = $1`,
+            [booking_id]
+        );
+
+        // 4. Free up the Staff Member!
+        if (booking.assigned_staff_id) {
+            await client.query(
+                `UPDATE staff_profiles 
+                 SET current_status = 'AVAILABLE' 
+                 WHERE staff_profile_id = $1`,
+                [booking.assigned_staff_id]
+            );
+        }
+
+        // =========================================================
+        // 5. FINANCIAL SETTLEMENT ENGINE GOES HERE
+        // (Just like in the approve method, you calculate Wallet 
+        // refunds or generate the final invoice here)
+        // =========================================================
+
+        await client.query('COMMIT');
+
+        res.status(200).json({
+            status: 'success',
+            message: "Service forcefully stopped. Staff member is now available.",
+            data: { 
+                booking_id, 
+                end_date: officialEndDate 
+            }
+        });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error("Force Stop Error:", error);
+        res.status(500).json({ message: "Failed to force stop the service." });
+    } finally {
+        client.release();
+    }
+};
