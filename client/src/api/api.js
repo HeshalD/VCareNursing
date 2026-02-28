@@ -613,6 +613,11 @@ class ApiClient {
     return this.request(endpoint);
   }
 
+  async getAllBookingsForClient(clientId = '') {
+    const endpoint = clientId ? `/client/all-bookings/${clientId}` : '/client/all-bookings';
+    return this.request(endpoint);
+  }
+
 // ...
   async updateBookingStatus(bookingId, status) {
     return this.request(`/bookings/${bookingId}/status`, {
