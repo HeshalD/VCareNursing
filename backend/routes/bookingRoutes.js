@@ -20,4 +20,16 @@ router.get('/active-bookings', protect,
     restrictTo('SUPER_ADMIN', 'COORDINATOR'), 
     bookingController.getActiveBookings);
 
+router.post(
+    '/terminate/:booking_id', 
+    protect,
+    bookingController.requestTermination
+);
+
+// GET /api/admin/terminations/pending
+router.get('/terminations/pending', protect, restrictTo('SUPER_ADMIN', 'ADMIN'), bookingController.getPendingTerminationRequests);
+
+// POST /api/admin/terminations/:termination_id/approve
+router.post('/terminations/approve/:termination_id', protect, restrictTo('SUPER_ADMIN', 'ADMIN'), bookingController.approveTerminationRequest);
+
 module.exports = router;

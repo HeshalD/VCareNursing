@@ -223,3 +223,246 @@ exports.getActiveBookings = async (req, res) => {
     res.status(500).json({ message: 'Error fetching active bookings' });
   }
 };
+
+exports.requestTermination = async (req, res) => {
+    const { booking_id } = req.params;
+    const { urgency, requested_end_date, reason } = req.body;
+    
+    // Validate urgency input
+    const validUrgencies = ['TODAY', 'FUTURE', 'IMMEDIATE'];
+    if (!validUrgencies.includes(urgency)) {
+        return res.status(400).json({ message: "Invalid urgency level. Must be TODAY, FUTURE, or IMMEDIATE." });
+    }
+
+    if (urgency === 'FUTURE' && !requested_end_date) {
+        return res.status(400).json({ message: "A requested_end_date is required for FUTURE terminations." });
+    }
+
+    const client = await db.pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        // 1. Verify the booking exists and is currently ACTIVE
+        const bookingRes = await client.query(
+            `SELECT status, client_id FROM bookings WHERE booking_id = $1 FOR UPDATE`, 
+            [booking_id]
+        );
+
+        if (bookingRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: "Booking not found." });
+        }
+
+        const booking = bookingRes.rows[0];
+
+        if (booking.status !== 'ACTIVE') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ 
+                message: `Cannot request termination. Booking is currently in '${booking.status}' status.` 
+            });
+        }
+
+        // 2. Determine the exact requested timestamp
+        let targetEndDate;
+        if (urgency === 'IMMEDIATE') {
+            targetEndDate = new Date(); // Right now
+        } else if (urgency === 'TODAY') {
+            // Set to 11:59:59 PM of today
+            targetEndDate = new Date();
+            targetEndDate.setHours(23, 59, 59, 999);
+        } else {
+            targetEndDate = new Date(requested_end_date);
+        }
+
+        // 3. Insert the Termination Request
+        const insertReqQuery = `
+            INSERT INTO service_terminations (
+                booking_id, requested_by, urgency, requested_end_date, reason, status
+            ) VALUES ($1, 'CLIENT', $2, $3, $4, 'PENDING')
+            RETURNING termination_id;
+        `;
+        const termRes = await client.query(insertReqQuery, [
+            booking_id, urgency, targetEndDate, reason
+        ]);
+
+        // 4. Update the Booking Status to PENDING_TERMINATION
+        await client.query(
+            `UPDATE bookings SET status = 'PENDING_TERMINATION' WHERE booking_id = $1`,
+            [booking_id]
+        );
+
+        await client.query('COMMIT');
+
+        // 5. Alert the Admin Dashboard (High Priority Task)
+        // This is where you'd trigger a WebSocket event, Email, or WhatsApp to your coordinators.
+        console.log(`🚨 HIGH PRIORITY: Client requested termination for Booking ${booking_id}. Urgency: ${urgency}`);
+        // await sendAdminAlert(`Termination requested for booking ${booking_id}. Urgency: ${urgency}. Reason: ${reason}`);
+
+        res.status(201).json({
+            status: 'success',
+            message: "Termination request submitted successfully. Our team will review and confirm shortly.",
+            data: {
+                termination_id: termRes.rows[0].termination_id,
+                target_end_date: targetEndDate
+            }
+        });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error("Termination Request Error:", error);
+        res.status(500).json({ message: "Failed to process termination request." });
+    } finally {
+        client.release();
+    }
+};
+
+exports.getPendingTerminationRequests = async (req, res) => {
+    try {
+        const query = `
+            SELECT 
+                st.termination_id,
+                st.urgency,
+                st.requested_end_date,
+                st.reason,
+                st.created_at as request_date,
+                b.booking_id,
+                b.start_date,
+                b.service_type,
+                c.full_name as client_name,
+                c.primary_address as location,
+                p.full_name as patient_name,
+                s.staff_profile_id,
+                s.full_name as staff_name
+            FROM service_terminations st
+            JOIN bookings b ON st.booking_id = b.booking_id
+            JOIN client_profiles c ON b.client_id = c.client_profile_id
+            JOIN patient_profiles p ON b.patient_id = p.patient_id
+            JOIN staff_profiles s ON b.assigned_staff_id = s.staff_profile_id
+            WHERE st.status = 'PENDING'
+            ORDER BY 
+                CASE WHEN st.urgency = 'IMMEDIATE' THEN 1
+                     WHEN st.urgency = 'TODAY' THEN 2
+                     ELSE 3 END, 
+                st.created_at ASC;
+        `;
+
+        const result = await db.query(query);
+
+        res.status(200).json({
+            status: 'success',
+            count: result.rowCount,
+            data: result.rows
+        });
+
+    } catch (error) {
+        console.error("Get Pending Terminations Error:", error);
+        res.status(500).json({ message: "Failed to fetch termination requests." });
+    }
+};
+
+exports.approveTerminationRequest = async (req, res) => {
+    const { termination_id } = req.params;
+    const { final_end_date } = req.body; // Admin can optionally override the exact stop time
+
+    const client = await db.pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        // 1. Fetch the Termination and Booking Data
+        const termRes = await client.query(
+            `SELECT st.*, b.assigned_staff_id, b.client_id, b.start_date 
+             FROM service_terminations st
+             JOIN bookings b ON st.booking_id = b.booking_id
+             WHERE st.termination_id = $1 FOR UPDATE`, 
+            [termination_id]
+        );
+
+        if (termRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ message: "Termination request not found." });
+        }
+
+        const request = termRes.rows[0];
+
+        if (request.status !== 'PENDING') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ message: `Request is already ${request.status}.` });
+        }
+
+        // Determine the official end time (Admin override or the requested date)
+        const officialEndDate = final_end_date ? new Date(final_end_date) : new Date(request.requested_end_date);
+
+        // 2. Update Termination Request Status
+        await client.query(
+            `UPDATE service_terminations SET status = 'APPROVED', end_date = $1 WHERE termination_id = $2`,
+            [officialEndDate, termination_id]
+        );
+
+        // 3. Terminate the Booking
+        await client.query(
+            `UPDATE bookings 
+             SET status = 'COMPLETED'
+             WHERE booking_id = $1`,
+            [request.booking_id]
+        );
+
+        // 4. Free up the Staff Member! (Crucial for availability)
+        await client.query(
+            `UPDATE staff_profiles 
+             SET current_status = 'AVAILABLE' 
+             WHERE staff_profile_id = $1`,
+            [request.assigned_staff_id]
+        );
+
+        // =========================================================
+        // 5. FINANCIAL SETTLEMENT ENGINE (Wallet Logic)
+        // =========================================================
+        
+        // *NOTE: You will need to replace the placeholders below with your actual 
+        // pricing columns from the quotations/bookings table. 
+        // Example logic for a Pre-paid scenario:*
+        
+        /*
+        const dailyRate = 5000; // Get this from DB
+        const daysPaid = 30;    // Get this from DB
+        
+        // Calculate days worked
+        const diffTime = Math.abs(officialEndDate - new Date(request.start_date));
+        const daysWorked = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+        const unusedDays = daysPaid - daysWorked;
+
+        if (unusedDays > 0) {
+            const refundAmount = unusedDays * dailyRate;
+            
+            // Add to Client's Wallet
+            await client.query(
+                `UPDATE client_profiles 
+                 SET wallet_balance = wallet_balance + $1 
+                 WHERE client_profile_id = $2`,
+                [refundAmount, request.client_id]
+            );
+            console.log(`Credited Rs. ${refundAmount} to client ${request.client_id}`);
+        }
+        */
+
+        await client.query('COMMIT');
+
+        // 6. Notifications (WhatsApp/SMS)
+        // -> Message Staff: "Your assignment has ended. You are now available for new bookings."
+        // -> Message Client: "Your service termination is confirmed. Any refunds have been added to your VCare Wallet."
+
+        res.status(200).json({
+            status: 'success',
+            message: "Termination approved. Staff is now available and billing is finalized."
+        });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error("Approve Termination Error:", error);
+        res.status(500).json({ message: "Failed to approve termination request." });
+    } finally {
+        client.release();
+    }
+};
