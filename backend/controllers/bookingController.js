@@ -18,7 +18,6 @@ exports.uploadPaymentSlip = (req, res, next) => {
 };
 
 // Original convertToBooking function (now internal)
-// Original convertToBooking function (now internal)
 const convertToBookingInternal = async (req, res) => {
     // assigned_staff_id is optional - will use preferred_staff_id from request if not provided
     // quote_id is optional - will use active_quote_id from service_requests if not provided
@@ -154,9 +153,10 @@ const convertToBookingInternal = async (req, res) => {
         // Change quoteData.total_amount if your column is named differently.
         await client.query(
             `INSERT INTO transactions (
-                client_id, booking_id, quote_id, category, amount, 
-                payment_method, receipt_url, verified_by, status, notes
-            ) VALUES ($1, $2, $3, 'CLIENT_PAYMENT', $4, $5, $6, $7, 'COMPLETED', 'Initial payment for quote conversion')`,
+                client_id, booking_id, quote_id, 
+                category, transaction_type, -- <--- ADDED HERE
+                amount, payment_method, receipt_url, verified_by, status, notes
+            ) VALUES ($1, $2, $3, 'CLIENT_PAYMENT', 'CREDIT', $4, $5, $6, $7, 'COMPLETED', 'Initial payment for quote conversion')`,
             [
                 clientProfileId, 
                 bookingId, 

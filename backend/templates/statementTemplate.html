@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 12px; color: #333; margin: 0; padding: 20px; }
+        .header { display: flex; justify-content: space-between; margin-bottom: 30px; }
+        .company-info h1 { margin: 0; color: #2c3e50; }
+        .company-info p { margin: 2px 0; color: #7f8c8d; }
+        .statement-info { text-align: right; }
+        .statement-info h2 { margin: 0; color: #2980b9; }
+        
+        table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background-color: #f8f9fa; font-weight: bold; color: #2c3e50; }
+        tr { page-break-inside: avoid; } /* Prevents rows from cutting in half across pages */
+        
+        .summary-table { width: 50%; margin-bottom: 40px; border: 1px solid #ddd; }
+        .summary-table th, .summary-table td { border: none; padding: 8px 10px; }
+        .summary-table tr:nth-child(even) { background-color: #f9f9f9; }
+        
+        .footer { margin-top: 40px; padding-top: 20px; border-top: 2px solid #2980b9; font-size: 11px; }
+        .footer h4 { margin: 0 0 10px 0; }
+        .text-right { text-align: right; }
+        .amount { font-family: monospace; font-size: 13px; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div class="company-info">
+            <h1>VCare Nursing</h1>
+            <p>No: 293/17B, Hospital Rd</p>
+            <p>Sri Jayewardenepura, Sri Lanka</p>
+        </div>
+        <div class="statement-info">
+            <h2>Statement of Accounts</h2>
+            <p><strong>To:</strong> {{clientName}}</p>
+            <p>{{periodStart}} To {{periodEnd}}</p>
+        </div>
+    </div>
+
+    <table class="summary-table">
+        <tr><th>Account Summary</th><th></th></tr>
+        <tr><td>Opening Balance</td><td class="text-right amount">LKR {{summary.openingBalance}}</td></tr>
+        <tr><td>Invoiced Amount</td><td class="text-right amount">LKR {{summary.invoicedAmount}}</td></tr>
+        <tr><td>Amount Paid</td><td class="text-right amount">LKR {{summary.amountPaid}}</td></tr>
+        <tr><td><strong>Balance Due</strong></td><td class="text-right amount"><strong>LKR {{summary.balanceDue}}</strong></td></tr>
+    </table>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Transactions</th>
+                <th>Details</th>
+                <th class="text-right">Amount</th>
+                <th class="text-right">Payments</th>
+                <th class="text-right">Balance</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{#each ledger}}
+            <tr>
+                <td>{{this.date}}</td>
+                <td>{{this.transactions}}</td>
+                <td>{{this.details}}</td>
+                <td class="text-right amount">{{this.amount}}</td>
+                <td class="text-right amount">{{this.payments}}</td>
+                <td class="text-right amount">{{this.balance}}</td>
+            </tr>
+            {{/each}}
+        </tbody>
+    </table>
+
+    <div class="footer">
+        <h4>Note:</h4>
+        <p>Please use the below bank account details for the payments, And you will receive a payment receipt after you done the payment.</p>
+        <p>
+            <strong>Account Name:</strong> VCare<br>
+            <strong>Account Number:</strong> 100654589154<br>
+            <strong>Bank:</strong> Sampath Bank<br>
+            <strong>Branch:</strong> Maharagama<br>
+            <strong>Description:</strong> Vcare Home Nursing
+        </p>
+    </div>
+
+</body>
+</html>
