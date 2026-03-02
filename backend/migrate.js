@@ -98,7 +98,7 @@ async function migrate() {
         last_login TIMESTAMP WITH TIME ZONE,
         email VARCHAR(255) UNIQUE,
         is_email_verified BOOLEAN DEFAULT false,
-        role user_role_enum[] DEFAULT ARRAY['CLIENT']
+        role user_role_enum[] DEFAULT ARRAY['CLIENT'::user_role_enum]
       );
     `);
 
