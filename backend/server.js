@@ -10,10 +10,25 @@ const bookingRoutes = require('./routes/bookingRoutes')
 const patientRoutes = require('./routes/patientRoutes')
 const statementRoutes = require('./routes/statementRoutes')
 const paymentRoutes = require('./routes/paymentRoutes')
+const migrateRoutes = require('./routes/migrateRoutes');
 
 const startDailyInvoicing = require('./cron/dailyInvoicing');
 
 require('dotenv').config();
+
+// Auto-run database migration in production
+if (process.env.NODE_ENV === 'production') {
+  console.log('Running database migration...');
+  const migrate = require('./migrate');
+  migrate()
+    .then(() => {
+      console.log('Database migration completed successfully');
+    })
+    .catch((error) => {
+      console.error('Database migration failed:', error);
+      // Don't exit the process, let the server continue
+    });
+}
 
 const app = express();
 
@@ -35,6 +50,7 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/patients', patientRoutes);
 app.use('/api/statement', statementRoutes);
 app.use('/api/payment', paymentRoutes);
+app.use('/api/migrate', migrateRoutes);
 
 // Global Error Handler
 app.use((err, req, res, next) => {
