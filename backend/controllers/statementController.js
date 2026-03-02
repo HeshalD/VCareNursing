@@ -82,7 +82,18 @@ exports.downloadClientStatement = async (req, res) => {
     const { client_id } = req.params;
     const { start_date, end_date } = req.body;
 
+    // Set a timeout for the entire request
+    const requestTimeout = setTimeout(() => {
+        console.error("❌ Request timeout after 60 seconds");
+        if (!res.headersSent) {
+            res.status(408).json({ message: "Request timeout - PDF generation took too long" });
+        }
+    }, 60000); // 60 seconds
+
     try {
+        console.log("🚀 Starting PDF generation for client:", client_id);
+        console.time("database-queries");
+        
         // 1. Get Opening Balance (All records before start_date)
         const openingBalRes = await db.query(`
             SELECT 
@@ -108,6 +119,8 @@ exports.downloadClientStatement = async (req, res) => {
         `, [client_id, start_date, end_date]);
 
         const transactions = periodTransRes.rows;
+        console.timeEnd("database-queries");
+        console.log("📊 Found", transactions.length, "transactions");
 
         // 3. Process the Running Balance
         let currentBalance = openingBalance || 0;
@@ -138,13 +151,17 @@ exports.downloadClientStatement = async (req, res) => {
             };
         });
         
+        console.time("client-query");
         // 1. Fetch Client Name
         const clientRes = await db.query('SELECT full_name FROM client_profiles WHERE client_profile_id = $1', [client_id]);
         if (!clientRes.rows.length) {
+            clearTimeout(requestTimeout);
             return res.status(404).json({ message: "Client not found." });
         }
         const clientName = clientRes.rows[0].full_name;
+        console.timeEnd("client-query");
 
+        console.time("data-formatting");
         // 2. Format the data perfectly for Handlebars
         const pdfData = {
             clientName: clientName,
@@ -165,10 +182,21 @@ exports.downloadClientStatement = async (req, res) => {
                 balance: parseFloat(line.balance).toFixed(2)
             }))
         };
+        console.timeEnd("data-formatting");
 
+        console.time("pdf-generation");
+        console.log("📄 Starting PDF generation...");
+        
         // 3. Generate the PDF
         const pdfBuffer = await generateStatementPDF(pdfData);
+        
+        console.timeEnd("pdf-generation");
+        console.log("✅ PDF generated, size:", pdfBuffer.length, "bytes");
 
+        // Clear the timeout since we succeeded
+        clearTimeout(requestTimeout);
+
+        console.time("response-send");
         // 4. Send it to the client as a downloadable file
         res.set({
             'Content-Type': 'application/pdf',
@@ -177,9 +205,19 @@ exports.downloadClientStatement = async (req, res) => {
         });
 
         res.status(200).send(pdfBuffer);
+        console.timeEnd("response-send");
+        console.log("🎉 PDF sent successfully!");
 
     } catch (error) {
-        console.error("PDF Generation Error:", error);
-        res.status(500).json({ message: "Failed to generate statement PDF." });
+        clearTimeout(requestTimeout);
+        console.error("❌ PDF Generation Error:", error);
+        
+        if (!res.headersSent) {
+            if (error.message === 'PDF generation timeout') {
+                res.status(408).json({ message: "PDF generation timed out. Please try again." });
+            } else {
+                res.status(500).json({ message: "Failed to generate statement PDF." });
+            }
+        }
     }
 };
