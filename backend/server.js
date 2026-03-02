@@ -9,9 +9,15 @@ const quoteRoutes = require('./routes/quoteRoutes')
 const bookingRoutes = require('./routes/bookingRoutes')
 const patientRoutes = require('./routes/patientRoutes')
 const statementRoutes = require('./routes/statementRoutes')
+
+const startDailyInvoicing = require('./cron/dailyInvoicing');
+
 require('dotenv').config();
 
 const app = express();
+
+// Start the daily invoicing cron job
+startDailyInvoicing();
 
 // Middleware
 app.use(cors());
