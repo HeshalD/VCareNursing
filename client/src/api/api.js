@@ -642,6 +642,42 @@ class ApiClient {
       body: JSON.stringify({ final_end_date: finalEndDate }),
     });
   }
+
+  // Statement endpoints
+  async getClientStatement(clientId, dateRange) {
+    return this.request(`/statement/${clientId}`, {
+      method: 'POST',
+      body: JSON.stringify(dateRange),
+    });
+  }
+
+  async downloadClientStatement(clientId, dateRange) {
+    const url = `${this.baseURL}/statement/download/${clientId}`;
+    
+    const config = {
+      method: 'POST',
+      headers: {
+        ...(this.token && { Authorization: `Bearer ${this.token}` }),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(dateRange),
+    };
+
+    try {
+      const response = await fetch(url, config);
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'PDF download failed');
+      }
+
+      // Return the PDF blob directly
+      return await response.blob();
+    } catch (error) {
+      console.error('PDF Download Error:', error);
+      throw error;
+    }
+  }
 }
 
 // Create and export a singleton instance

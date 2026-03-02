@@ -36,6 +36,7 @@ import StaffRoster from './modules/admin/service_requests/staff_roster';
 import Bookings from './modules/admin/bookings/Bookings';
 import ClientBookings from './modules/client/ClientBookings';
 import TerminationRequests from './modules/admin/termination_requests/termination_requests';
+import Statements from './modules/admin/statements/statements';
 
 function App() {
   return (
@@ -117,6 +118,11 @@ function App() {
             <Route path="/admin/bookings" element={
               <AdminAuthProvider>
                 <Bookings />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/statements" element={
+              <AdminAuthProvider>
+                <Statements />
               </AdminAuthProvider>
             } />
             <Route path="/admin/settings" element={

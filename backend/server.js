@@ -9,6 +9,7 @@ const quoteRoutes = require('./routes/quoteRoutes')
 const bookingRoutes = require('./routes/bookingRoutes')
 const patientRoutes = require('./routes/patientRoutes')
 const statementRoutes = require('./routes/statementRoutes')
+const paymentRoutes = require('./routes/paymentRoutes')
 
 const startDailyInvoicing = require('./cron/dailyInvoicing');
 
@@ -33,6 +34,7 @@ app.use('/api/quotes', quoteRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/patients', patientRoutes);
 app.use('/api/statement', statementRoutes);
+app.use('/api/payment', paymentRoutes);
 
 // Global Error Handler
 app.use((err, req, res, next) => {

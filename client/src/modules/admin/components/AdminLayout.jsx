@@ -57,6 +57,12 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
             active={isActive('/admin/bookings')}
           />
           <SidebarItem
+            icon={FileText}
+            label="Statements"
+            path="/admin/statements"
+            active={isActive('/admin/statements')}
+          />
+          <SidebarItem
             icon={ShieldCheck}
             label="Worker Verification"
             path="/admin/workers"
