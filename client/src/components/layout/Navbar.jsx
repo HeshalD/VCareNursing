@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { ShieldCheck, Menu, X, User, LogOut, Briefcase, Calendar } from 'lucide-react';
+import { Menu, X, User, LogOut, Briefcase, Calendar } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-
+import logoUrl from '../../assets/Logo/VCareLogo.png';  
 const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
   const { user, isAuthenticated, logout, loading } = useAuth();
@@ -50,10 +50,7 @@ const Navbar = () => {
         <div className="flex justify-between items-center h-16">
           {/* Logo */}
           <Link to="/" className="flex-shrink-0 flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-blue-500 to-indigo-600 flex items-center justify-center">
-              <ShieldCheck className="w-5 h-5 text-white" />
-            </div>
-            <span className="font-bold text-xl tracking-tight text-slate-900">VCare<span className="text-blue-500">.</span></span>
+            <img src={logoUrl} alt="VCare Nursing" className="h-10 w-auto object-contain" />
           </Link>
 
           {/* Desktop Links */}

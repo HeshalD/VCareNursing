@@ -144,3 +144,21 @@ exports.getAllBookingsForClient = async (req, res) => {
     res.status(500).json({ message: 'Error fetching active bookings for client' });
   }
 };
+
+// 5. Get all clients
+exports.getAllClients = async (req, res) => {
+  try {
+    const clientsRes = await db.query(
+      'SELECT cp.*, u.email, u.created_at as user_created_at FROM client_profiles cp JOIN users u ON cp.user_id = u.user_id ORDER BY cp.created_at DESC'
+    );
+
+    res.status(200).json({
+      status: 'success',
+      results: clientsRes.rows.length,
+      data: clientsRes.rows
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Error fetching clients' });
+  }
+};

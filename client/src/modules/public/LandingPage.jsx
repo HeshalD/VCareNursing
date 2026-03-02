@@ -4,11 +4,12 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   Heart, Baby, Home, ArrowRight, ShieldCheck,
   Activity, Star, Globe, Clock, CheckCircle2,
-  Stethoscope, Smile, TrendingUp, ChevronRight
+  Stethoscope, Smile, TrendingUp, ChevronRight, DollarSign
 } from 'lucide-react';
 import Navbar from '../../components/layout/Navbar';
 import Footer from '../../components/layout/Footer';
-
+import ReviewSection from './components/ReviewSection';
+ 
 // Reusing the background image from Login for consistency, but using it differently
 import heroBg from '../../assets/images/Gemini_Generated_Image_5nmpua5nmpua5nmp.png';
 import babyCareBg from '../../assets/images/baby_caretakers_image_landingpage.webp';
@@ -250,6 +251,73 @@ const Marquee = () => {
   );
 };
 
+const JoinTeamBanner = () => {
+  return (
+    <section className="py-20 px-4">
+      <div className="max-w-[1600px] mx-auto">
+        <div className="relative rounded-[40px] overflow-hidden bg-indigo-900 shadow-2xl">
+          {/* Background Gradient & Effects */}
+          <div className="absolute inset-0 bg-gradient-to-r from-indigo-900 via-indigo-800 to-indigo-900 border-4 border-white/10" />
+          <div className="absolute -top-24 -right-24 w-96 h-96 bg-blue-500/20 rounded-full blur-[100px]" />
+          <div className="absolute -bottom-24 -left-24 w-96 h-96 bg-purple-500/20 rounded-full blur-[100px]" />
+
+          <div className="relative z-10 grid lg:grid-cols-2 gap-12 items-center p-12 md:p-20">
+            <div>
+              <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/10 text-white rounded-full text-xs font-bold uppercase tracking-wider mb-6 border border-white/10 backdrop-blur-sm">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                Hiring Now
+              </div>
+              <h2 className="text-4xl md:text-5xl font-bold text-white mb-6">
+                Join Our <br /> Expert Team
+              </h2>
+              <p className="text-indigo-100 text-lg md:text-xl leading-relaxed mb-10 max-w-xl">
+                Are you a skilled nurse, nanny, or caregiver? Connect with families who need your expertise. High pay, flexible hours, and total respect.
+              </p>
+
+              <div className="flex flex-col sm:flex-row gap-4">
+                <Link
+                  to="/services/join-team"
+                  className="px-8 py-4 bg-white text-indigo-900 rounded-full font-bold text-lg hover:bg-slate-50 transition-all shadow-lg shadow-black/20 flex items-center justify-center gap-2"
+                >
+                  Join the Team <ArrowRight className="w-5 h-5" />
+                </Link>
+                <div className="flex items-center gap-4 px-6 py-4 bg-white/5 border border-white/10 rounded-full backdrop-blur-sm">
+                  <div className="flex -space-x-3">
+                    {[1, 2, 3].map(i => (
+                      <div key={i} className="w-8 h-8 rounded-full bg-indigo-800 border-2 border-indigo-900 flex items-center justify-center text-[10px] text-white font-bold">
+                        <Stethoscope className="w-4 h-4" />
+                      </div>
+                    ))}
+                  </div>
+                  <span className="text-sm font-medium text-indigo-200">20+ joined today</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Visual Stats */}
+            <div className="hidden lg:grid grid-cols-2 gap-4">
+              <div className="bg-white/5 backdrop-blur-md p-6 rounded-3xl border border-white/10 transform translate-y-8">
+                <div className="w-12 h-12 bg-emerald-500/20 rounded-2xl flex items-center justify-center text-emerald-400 mb-4">
+                  <DollarSign className="w-6 h-6" />
+                </div>
+                <div className="text-3xl font-bold text-white mb-1">Top Pay</div>
+                <div className="text-sm text-indigo-200">Above market rates</div>
+              </div>
+              <div className="bg-white/5 backdrop-blur-md p-6 rounded-3xl border border-white/10 transform -translate-y-8">
+                <div className="w-12 h-12 bg-blue-500/20 rounded-2xl flex items-center justify-center text-blue-400 mb-4">
+                  <Clock className="w-6 h-6" />
+                </div>
+                <div className="text-3xl font-bold text-white mb-1">Flexible</div>
+                <div className="text-sm text-indigo-200">Choose your hours</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
 
 
 const LandingPage = () => {
@@ -259,7 +327,8 @@ const LandingPage = () => {
       <HeroSection />
       <Marquee />
       <ServiceGrid />
-
+      <JoinTeamBanner />
+      <ReviewSection />
       <Footer />
     </div>
   );

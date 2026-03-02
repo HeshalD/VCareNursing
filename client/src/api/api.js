@@ -232,6 +232,14 @@ class ApiClient {
 
 
 
+  async getAllClients() {
+
+    return this.request('/client');
+
+  }
+
+
+
   // Product endpoints
 
   async getAllProducts() {
