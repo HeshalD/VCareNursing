@@ -1,0 +1,68 @@
+services:
+  # Backend Service
+  - type: web
+    name: vcarenursing-backend
+    env: docker
+    repo: https://github.com/HeshalD/VCareNursing.git
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    region: oregon
+    healthCheckPath: /api/auth
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DB_HOST
+        fromDatabase:
+          name: vcarenursing-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: vcarenursing-db
+          property: port
+      - key: DB_NAME
+        fromDatabase:
+          name: vcarenursing-db
+          property: database
+      - key: DB_USER
+        fromDatabase:
+          name: vcarenursing-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: vcarenursing-db
+          property: password
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: EMAIL_HOST
+        sync: false
+      - key: EMAIL_PORT
+        sync: false
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASS
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_PHONE_NUMBER
+        sync: false
+
+databases:
+  # PostgreSQL Database
+  - name: vcarenursing-db
+    databaseName: vcarenursing
+    user: vcareuser
+    plan: free
+    region: oregon
+    ipAllowList: []

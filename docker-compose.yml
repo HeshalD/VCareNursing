@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15
+    container_name: vcarenursing-db
+    environment:
+      POSTGRES_DB: vcarenursing
+      POSTGRES_USER: vcareuser
+      POSTGRES_PASSWORD: vcarepass123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - vcarenursing-network
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vcarenursing-backend
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: vcarenursing
+      DB_USER: vcareuser
+      DB_PASSWORD: vcarepass123
+      # Add your other environment variables here
+      # JWT_SECRET: your-jwt-secret
+      # CLOUDINARY_CLOUD_NAME: your-cloud-name
+      # CLOUDINARY_API_KEY: your-api-key
+      # CLOUDINARY_API_SECRET: your-api-secret
+      # EMAIL_HOST: smtp.gmail.com
+      # EMAIL_PORT: 587
+      # EMAIL_USER: your-email@gmail.com
+      # EMAIL_PASS: your-app-password
+      # TWILIO_ACCOUNT_SID: your-twilio-sid
+      # TWILIO_AUTH_TOKEN: your-twilio-token
+      # TWILIO_PHONE_NUMBER: your-twilio-phone
+    ports:
+      - "5000:5000"
+    depends_on:
+      - postgres
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    networks:
+      - vcarenursing-network
+
+  # Frontend
+  frontend:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: vcarenursing-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - vcarenursing-network
+
+volumes:
+  postgres_data:
+
+networks:
+  vcarenursing-network:
+    driver: bridge
