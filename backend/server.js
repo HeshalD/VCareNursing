@@ -52,6 +52,15 @@ app.use('/api/statement', statementRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/migrate', migrateRoutes);
 
+// Health check endpoint for Render
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
+
 // Global Error Handler
 app.use((err, req, res, next) => {
   console.error(err.stack);
