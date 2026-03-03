@@ -243,7 +243,9 @@ exports.acceptApplication = async (req, res) => {
     }
 
     Promise.allSettled([
-        sendEmail({ email: app.email, subject: 'VCare Staff Application Accepted', message: messageBody }),
+        // email notification temporarily disabled
+        /* sendEmail({ email: app.email, subject: 'VCare Staff Application Accepted', message: messageBody }), */
+        // use WhatsApp for acceptance message
         sendWhatsAppOtp(app.mobile_number, messageBody)
     ]);
 
@@ -298,11 +300,13 @@ exports.rejectApplication = async (req, res) => {
     const messageBody = `Dear ${app.full_name},\n\nThank you for your interest in joining VCare. After careful review, we regret to inform you that we cannot proceed with your application at this time.\n\nReason: ${reason}\n\nWe encourage you to apply again in the future if your qualifications change.\n\nBest regards,\nThe VCare Team`;
 
     Promise.allSettled([
-        sendEmail({ 
+        // email notification temporarily disabled
+        /* sendEmail({ 
             email: app.email, 
             subject: emailSubject, 
             message: messageBody 
-        }),
+        }), */
+        // use WhatsApp for rejection message
         // Note: Ensure your WhatsApp provider supports free-form text or use a pre-approved "Rejection" template
         sendWhatsAppOtp(app.mobile_number, messageBody) 
     ]);

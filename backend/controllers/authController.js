@@ -89,6 +89,8 @@ exports.registerClient = async (req, res, next) => {
     let emailSent = false;
     let whatsappSent = false;
 
+    // Email sending temporarily disabled
+    /*
     // Try sending email first
     const emailResult = await sendEmail({ email: email, subject: 'VCare OTP', message: `Your code: ${otp}` });
     if (!emailResult.skipped) {
@@ -97,6 +99,7 @@ exports.registerClient = async (req, res, next) => {
     } else {
       console.log('Email skipped:', emailResult.reason);
     }
+    */
 
     try {
       // Try sending WhatsApp
@@ -194,11 +197,12 @@ exports.resendOtp = async (req, res) => {
     // 5. Trigger Multi-Channel Send
     // Use Promise.allSettled so that if one fails, the other can still succeed
     await Promise.allSettled([
-      sendEmail({
+      // email sending temporarily disabled
+      /* sendEmail({
         email: user.email,
         subject: 'Your New VCare Verification Code',
         message: `Your new verification code is: ${newOtp}. It expires in 10 minutes.`
-      }),
+      }), */
       sendWhatsAppOtp(user.mobile_number, newOtp)
     ]);
 
