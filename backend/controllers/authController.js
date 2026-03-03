@@ -89,14 +89,13 @@ exports.registerClient = async (req, res, next) => {
     let emailSent = false;
     let whatsappSent = false;
 
-    try {
-      // Try sending email first
-      await sendEmail({ email: email, subject: 'VCare OTP', message: `Your code: ${otp}` });
+    // Try sending email first
+    const emailResult = await sendEmail({ email: email, subject: 'VCare OTP', message: `Your code: ${otp}` });
+    if (!emailResult.skipped) {
       emailSent = true;
       console.log('Email sent successfully');
-    } catch (emailError) {
-      console.error("Email failed to send:", emailError);
-      console.error("Notification Error:", emailError.message);
+    } else {
+      console.log('Email skipped:', emailResult.reason);
     }
 
     try {
@@ -122,13 +121,14 @@ exports.registerClient = async (req, res, next) => {
 
     res.status(201).json({
       status: 'success',
-      message: 'Registration successful. Please verify the OTP sent to your email.',
+      message: 'Registration successful. Please verify the OTP sent to your email and WhatsApp.',
       data: {
         userId: userId,
         profileId: newProfile.rows[0].client_profile_id,
         payment_required: true,
         amount_due: 10000.00,
-        email_sent: true
+        email_sent: emailSent,
+        whatsapp_sent: whatsappSent
       }
     });
 

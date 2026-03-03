@@ -3,8 +3,8 @@ const nodemailer = require('nodemailer');
 const sendEmail = async (options) => {
   // Check if email credentials are configured
   if (!process.env.EMAIL_HOST || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    console.error('Email credentials not configured. Please set EMAIL_HOST, EMAIL_USER, and EMAIL_PASS in environment variables.');
-    throw new Error('Email service not configured');
+    console.warn('Email credentials not configured. Skipping email notification.');
+    return { skipped: true, reason: 'Email service not configured' };
   }
 
   console.log('Email Details:');
@@ -21,9 +21,6 @@ const sendEmail = async (options) => {
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS, // Use 'pass' instead of 'password' for Gmail
-    },
-    tls: {
-      rejectUnauthorized: false // Allow self-signed certificates
     }
   });
 
@@ -33,7 +30,8 @@ const sendEmail = async (options) => {
     console.log('Email transporter verified successfully');
   } catch (verifyError) {
     console.error('Transporter verification failed:', verifyError);
-    throw new Error('Email transporter configuration failed');
+    console.warn('Email service unavailable, skipping email notification');
+    return { skipped: true, reason: 'Email transporter configuration failed' };
   }
 
   // 2. Define email options
@@ -52,7 +50,8 @@ const sendEmail = async (options) => {
     return info;
   } catch (sendError) {
     console.error('Failed to send email:', sendError);
-    throw sendError;
+    console.warn('Email delivery failed, but continuing with other notifications');
+    return { skipped: true, reason: 'Email delivery failed', error: sendError.message };
   }
 };
 
