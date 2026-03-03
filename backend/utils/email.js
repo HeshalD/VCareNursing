@@ -1,8 +1,19 @@
 const nodemailer = require('nodemailer');
 const sendResendEmail = require('./resendEmail');
+const sendSendGridEmail = require('./sendGridEmail');
 
 const sendEmail = async (options) => {
-  // Try Resend first (more reliable on cloud platforms)
+  // Try SendGrid first (most reliable on cloud platforms)
+  if (process.env.SENDGRID_API_KEY) {
+    console.log('Attempting to send email via SendGrid...');
+    const sendGridResult = await sendSendGridEmail(options);
+    if (!sendGridResult.skipped) {
+      return sendGridResult;
+    }
+    console.log('SendGrid failed, trying Resend as fallback...');
+  }
+
+  // Try Resend second
   if (process.env.RESEND_API_KEY) {
     console.log('Attempting to send email via Resend...');
     const resendResult = await sendResendEmail(options);
