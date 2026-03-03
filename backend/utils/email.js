@@ -1,7 +1,18 @@
 const nodemailer = require('nodemailer');
+const sendResendEmail = require('./resendEmail');
 
 const sendEmail = async (options) => {
-  // Check if email credentials are configured
+  // Try Resend first (more reliable on cloud platforms)
+  if (process.env.RESEND_API_KEY) {
+    console.log('Attempting to send email via Resend...');
+    const resendResult = await sendResendEmail(options);
+    if (!resendResult.skipped) {
+      return resendResult;
+    }
+    console.log('Resend failed, trying Gmail SMTP as fallback...');
+  }
+
+  // Check if Gmail credentials are configured
   if (!process.env.EMAIL_HOST || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
     console.warn('Email credentials not configured. Skipping email notification.');
     return { skipped: true, reason: 'Email service not configured' };
