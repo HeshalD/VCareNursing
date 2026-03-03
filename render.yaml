@@ -9,7 +9,7 @@ services:
     dockerContext: .
     plan: free
     region: oregon
-    healthCheckPath: /api/auth
+    healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
