@@ -16,8 +16,8 @@ const startDailyInvoicing = require('./cron/dailyInvoicing');
 
 require('dotenv').config();
 
-// Auto-run database migration in production
-if (process.env.NODE_ENV === 'production') {
+// Auto-run database migration in production (only if not already migrated)
+if (process.env.NODE_ENV === 'production' && process.env.AUTO_MIGRATE !== 'false') {
   console.log('Running database migration...');
   const migrate = require('./migrate');
   migrate()

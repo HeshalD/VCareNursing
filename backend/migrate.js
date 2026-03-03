@@ -4,6 +4,20 @@ async function migrate() {
   try {
     console.log('Starting database migration...');
 
+    // Check if migration is needed by checking if users table exists
+    const tableCheck = await db.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'users'
+      );
+    `);
+
+    if (tableCheck.rows[0].exists) {
+      console.log('Database already migrated. Skipping...');
+      return;
+    }
+
     // Create Enums
     await db.query(`
       DO $$ BEGIN
