@@ -36,10 +36,26 @@ const app = express();
 startDailyInvoicing();
 
 // Middleware
-app.use(cors({
-  origin: ['https://vcarenursing.vercel.app/'],
-  credentials: true
-}));
+// CORS setup – only permit origins configured via env or development host
+const allowedOrigins = [
+  process.env.CLIENT_URL,
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+].filter(Boolean);
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // allow requests with no origin (e.g., mobile apps, Postman)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    callback(new Error(`Origin not allowed by CORS: ${origin}`));
+  },
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
 app.use(express.json()); // Body parser
 
 // Routes
