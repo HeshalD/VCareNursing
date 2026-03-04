@@ -93,10 +93,12 @@ exports.acceptApplication = async (req, res) => {
     }
     const app = appResult.rows[0];
 
-    // 2. Check if User Already Exists (by Email)
+    // 2. Check if User Already Exists (by Email OR Mobile)
+    // This lets an existing client (matched by email or mobile) be linked
+    // to a staff profile instead of creating a duplicate user.
     const existingUserResult = await client.query(
-      'SELECT * FROM users WHERE email = $1',
-      [app.email]
+      'SELECT * FROM users WHERE email = $1 OR mobile_number = $2',
+      [app.email, app.mobile_number]
     );
 
     let userId;
@@ -105,9 +107,21 @@ exports.acceptApplication = async (req, res) => {
 
     if (existingUserResult.rows.length > 0) {
       // --- SCENARIO A: EXISTING USER (Client applying for Staff) ---
-      const existingUser = existingUserResult.rows[0];
+        const existingUser = existingUserResult.rows[0];
       userId = existingUser.user_id;
       isNewUser = false;
+
+        // If the existing user record lacks an email but the application provides one,
+        // update the user's email so future logins use the provided email.
+        if ((!existingUser.email || existingUser.email.trim() === '') && app.email) {
+          try {
+            await client.query('UPDATE users SET email = $1 WHERE user_id = $2', [app.email, userId]);
+          } catch (err) {
+            // Ignore update errors here — if the email conflicts with another record
+            // the unique constraint will be handled by the outer transaction catch.
+            console.warn('Could not update user email while accepting application:', err.message);
+          }
+        }
 
       // Merge new roles with existing roles (avoiding duplicates)
       // We use a Set in JS to ensure uniqueness, then convert back to array
