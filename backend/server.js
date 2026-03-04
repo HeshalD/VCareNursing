@@ -37,7 +37,7 @@ startDailyInvoicing();
 
 // Middleware
 app.use(cors({
-  origin: ['https://vcarenursing.vercel.app/', 'http://localhost:3000'],
+  origin: ['https://vcarenursing.vercel.app/'],
   credentials: true
 }));
 app.use(express.json()); // Body parser
