@@ -36,7 +36,7 @@ const app = express();
 startDailyInvoicing();
 
 // Middleware
-app.use(corscors({
+app.use(cors({
   origin: ['https://vcarenursing.vercel.app/', 'http://localhost:3000'],
   credentials: true
 }));
