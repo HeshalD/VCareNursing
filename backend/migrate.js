@@ -101,6 +101,26 @@ async function migrate() {
       END $$;
     `);
 
+    await db.query(`
+      DO $$ BEGIN
+        CREATE TYPE wallet_transaction_type AS ENUM (
+          'CREDIT', 'DEBIT'
+        );
+      EXCEPTION
+        WHEN duplicate_object THEN null;
+      END $$;
+    `);
+
+    await db.query(`
+      DO $$ BEGIN
+        CREATE TYPE advance_status AS ENUM (
+          'PENDING', 'APPROVED', 'REJECTED'
+        );
+      EXCEPTION
+        WHEN duplicate_object THEN null;
+      END $$;
+    `);
+
     // Create Tables
     await db.query(`
       CREATE TABLE IF NOT EXISTS users (
@@ -329,6 +349,39 @@ async function migrate() {
         otp_code VARCHAR(6) NOT NULL,
         expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS staff_wallet (
+        wallet_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        staff_profile_id UUID NOT NULL UNIQUE REFERENCES staff_profiles(staff_profile_id) ON DELETE CASCADE,
+        balance DECIMAL(12, 2) NOT NULL DEFAULT 0,
+        updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS staff_wallet_transactions (
+        transaction_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        staff_profile_id UUID NOT NULL REFERENCES staff_profiles(staff_profile_id) ON DELETE CASCADE,
+        type wallet_transaction_type NOT NULL,
+        amount DECIMAL(12, 2) NOT NULL CHECK (amount > 0),
+        reason VARCHAR(100) NOT NULL,
+        reference_id UUID,
+        created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS staff_advances (
+        advance_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        staff_profile_id UUID NOT NULL REFERENCES staff_profiles(staff_profile_id) ON DELETE CASCADE,
+        amount_requested DECIMAL(12, 2) NOT NULL CHECK (amount_requested > 0),
+        status advance_status NOT NULL DEFAULT 'PENDING',
+        requested_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+        approved_at TIMESTAMP WITH TIME ZONE,
+        rejected_reason VARCHAR(255)
       );
     `);
 

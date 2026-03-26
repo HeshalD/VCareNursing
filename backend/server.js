@@ -11,6 +11,7 @@ const patientRoutes = require('./routes/patientRoutes')
 const statementRoutes = require('./routes/statementRoutes')
 const paymentRoutes = require('./routes/paymentRoutes')
 const migrateRoutes = require('./routes/migrateRoutes');
+const staffWalletRoutes = require('./routes/staffWalletRoutes');
 
 const startDailyInvoicing = require('./cron/dailyInvoicing');
 
@@ -69,7 +70,8 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/patients', patientRoutes);
 app.use('/api/statement', statementRoutes);
 app.use('/api/payment', paymentRoutes);
-app.use('/api/migrate', migrateRoutes);
+app.use('/api/migrate', migrateRoutes); 
+app.use('/api/staff-wallet', staffWalletRoutes);
 
 // Health check endpoint for Render
 app.get('/health', (req, res) => {

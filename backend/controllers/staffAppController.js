@@ -222,8 +222,9 @@ exports.acceptApplication = async (req, res) => {
         const profileInsertQuery = `
           INSERT INTO staff_profiles (user_id, full_name, qualifications, document_urls, home_address, gps_coordinates, profile_picture_url, gender, willing_to_live_in, date_of_birth)
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::gender_enum, $9, $10)
+          RETURNING staff_profile_id
         `;
-        await client.query(profileInsertQuery, [
+        const profileResult = await client.query(profileInsertQuery, [
           userId,
           app.full_name,
           app.qualifications,
@@ -235,9 +236,27 @@ exports.acceptApplication = async (req, res) => {
           app.willing_to_live_in || false,
           app.date_of_birth
         ]);
+
+        // Auto-create staff wallet on approval
+        const staff_profile_id = profileResult.rows[0].staff_profile_id;
+        await client.query(
+          `INSERT INTO staff_wallet (staff_profile_id, balance, updated_at)
+           VALUES ($1, 0, NOW())
+           ON CONFLICT (staff_profile_id) DO NOTHING`,
+          [staff_profile_id]
+        );
     } else {
         // Optional: Update existing profile if needed, or just log it
         console.log(`Staff profile already exists for User ${userId}. Skipping creation.`);
+        
+        // Ensure wallet exists for existing staff profile
+        const existingProfile = staffProfileCheck.rows[0];
+        await client.query(
+          `INSERT INTO staff_wallet (staff_profile_id, balance, updated_at)
+           VALUES ($1, 0, NOW())
+           ON CONFLICT (staff_profile_id) DO NOTHING`,
+          [existingProfile.staff_profile_id]
+        );
     }
 
     // 4. Update Application Status

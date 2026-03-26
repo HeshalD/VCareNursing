@@ -73,4 +73,6 @@ router.put('/:staff_profile_id/status', protect, staffController.updateStaffStat
 // Get staff by ID (must be last as it's a catch-all)
 router.get('/:staff_id', protect, staffController.getStaffByID);
 
+router.delete('/:staff_profile_id', protect, staffController.deleteStaffProfile);
+
 module.exports = router;

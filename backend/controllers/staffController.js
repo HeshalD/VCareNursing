@@ -580,3 +580,77 @@ exports.getStaffAssignments = async (req, res) => {
         });
     }
 };
+
+// Delete a staff profile
+exports.deleteStaffProfile = async (req, res) => {
+    const { staff_profile_id } = req.params;
+
+    try {
+        // First check if staff member exists
+        const checkQuery = `
+            SELECT staff_profile_id, full_name, user_id
+            FROM staff_profiles 
+            WHERE staff_profile_id = $1
+        `;
+
+        const checkResult = await db.query(checkQuery, [staff_profile_id]);
+
+        if (checkResult.rows.length === 0) {
+            return res.status(404).json({ 
+                status: 'error',
+                message: 'Staff member not found' 
+            });
+        }
+
+        const staffMember = checkResult.rows[0];
+
+        // Check if staff member has active bookings
+        const activeBookingsQuery = `
+            SELECT COUNT(*) as active_bookings
+            FROM bookings 
+            WHERE assigned_staff_id = $1 AND status IN ('ACTIVE', 'PENDING')
+        `;
+
+        const activeBookingsResult = await db.query(activeBookingsQuery, [staff_profile_id]);
+        const activeBookingsCount = parseInt(activeBookingsResult.rows[0].active_bookings);
+
+        if (activeBookingsCount > 0) {
+            return res.status(400).json({ 
+                status: 'error',
+                message: 'Cannot delete staff member with active bookings' 
+            });
+        }
+
+        // Delete staff profile (this will cascade delete related records if properly set up)
+        const deleteQuery = `
+            DELETE FROM staff_profiles 
+            WHERE staff_profile_id = $1
+            RETURNING staff_profile_id, full_name
+        `;
+
+        const deleteResult = await db.query(deleteQuery, [staff_profile_id]);
+
+        // Optionally, you might want to delete or deactivate the associated user account
+        // This depends on your business requirements
+        const deactivateUserQuery = `
+            UPDATE users 
+            SET is_active = false 
+            WHERE user_id = $1
+        `;
+
+        await db.query(deactivateUserQuery, [staffMember.user_id]);
+
+        res.status(200).json({
+            status: 'success',
+            message: 'Staff profile deleted successfully',
+            data: deleteResult.rows[0]
+        });
+
+    } catch (error) {
+        console.error('Delete Staff Profile Error:', error);
+        res.status(500).json({ 
+            status: 'error',
+            message: 'Server error while deleting staff profile' 
+        });
+    }
+};
