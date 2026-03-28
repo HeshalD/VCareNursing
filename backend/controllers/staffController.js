@@ -55,6 +55,61 @@ exports.getStaffByID = async (req, res) => {
     }
 };
 
+// Get staff member by user_id
+exports.getStaffByUserID = async (req, res) => {
+    const { user_id } = req.params;
+
+    try {
+        const query = `
+            SELECT 
+                sp.staff_profile_id,
+                sp.full_name,
+                sp.qualifications,
+                sp.document_urls,
+                sp.home_address,
+                sp.gps_coordinates,
+                sp.profile_picture_url,
+                sp.current_status,
+                sp.verification_status,
+                sp.gender,
+                sp.willing_to_live_in,
+                sp.date_of_birth,
+                sp.created_at,
+                u.user_id,
+                u.email,
+                u.mobile_number,
+                u.role,
+                u.is_active,
+                u.is_email_verified,
+                u.created_at as user_created_at
+            FROM staff_profiles sp
+            JOIN users u ON sp.user_id = u.user_id
+            WHERE sp.user_id = $1
+        `;
+
+        const result = await db.query(query, [user_id]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ 
+                status: 'error',
+                message: 'Staff member not found' 
+            });
+        }
+
+        res.status(200).json({
+            status: 'success',
+            data: result.rows[0]
+        });
+
+    } catch (error) {
+        console.error('Get Staff by User ID Error:', error);
+        res.status(500).json({ 
+            status: 'error',
+            message: 'Server error while fetching staff member' 
+        });
+    }
+};
+
 // Get all staff members with optional filtering
 exports.getAllStaff = async (req, res) => {
     try {

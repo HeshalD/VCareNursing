@@ -522,6 +522,7 @@ class ApiClient {
         ...data,
         user: {
           id: data.data?.user_id,
+          staff_id: data.data?.staff_info?.staff_id,
           role: data.data?.staff_info,
           email: data.data?.email,
           requires_password_change: data.requires_password_change,
@@ -551,6 +552,10 @@ class ApiClient {
 
   async getStaffByID(staffId) {
     return this.request(`/staff/${staffId}`);
+  }
+
+  async getStaffByUserID(userId) {
+    return this.request(`/staff/user/${userId}`);
   }
 
   async getAllStaff(filters = {}) {
@@ -685,6 +690,46 @@ class ApiClient {
       console.error('PDF Download Error:', error);
       throw error;
     }
+  }
+
+  // Staff Wallet endpoints
+  async getMyWallet() {
+    return this.request('/staff-wallet/my-wallet');
+  }
+
+  async requestAdvance(advanceData) {
+    return this.request('/staff-wallet/request-advance', {
+      method: 'POST',
+      body: JSON.stringify(advanceData),
+    });
+  }
+
+  async getAllAdvances() {
+    return this.request('/staff-wallet/advances');
+  }
+
+  async approveAdvance(advanceId) {
+    return this.request(`/staff-wallet/approve-advance/${advanceId}`, {
+      method: 'POST',
+    });
+  }
+
+  async rejectAdvance(advanceId, reason) {
+    return this.request(`/staff-wallet/reject-advance/${advanceId}`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  async updateAdvanceThreshold(staffProfileId, thresholdData) {
+    return this.request(`/staff-wallet/threshold/${staffProfileId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(thresholdData),
+    });
+  }
+
+  async getPendingAdvances() {
+    return this.request('/staff-wallet/advances/pending');
   }
 }
 

@@ -37,6 +37,8 @@ import Bookings from './modules/admin/bookings/Bookings';
 import ClientBookings from './modules/client/ClientBookings';
 import TerminationRequests from './modules/admin/termination_requests/termination_requests';
 import Statements from './modules/admin/statements/statements';
+import Earnings from './modules/public/service_team/Earnings';
+import AdvanceRequests from './modules/admin/advance_requests/advance_requests';
 
 function App() {
   return (
@@ -67,6 +69,7 @@ function App() {
             <Route path="/services/join-team" element={<WorkersTeamPage />} />
             <Route path="/services/apply" element={<WorkerRegistrationPage />} />
             <Route path="/services/provider-dashboard" element={<WorkerDashboardDemo />} />
+            <Route path="/services/earnings" element={<Earnings />} />
             <Route path="/client/dashboard" element={<ClientDashboardDemo />} />
             <Route path="/client/profile" element={<ClientProfileDemo />} />
             <Route path="/client/bookings" element={<ClientBookings/>}/>
@@ -123,6 +126,11 @@ function App() {
             <Route path="/admin/statements" element={
               <AdminAuthProvider>
                 <Statements />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/advance-requests" element={
+              <AdminAuthProvider>
+                <AdvanceRequests />
               </AdminAuthProvider>
             } />
             <Route path="/admin/settings" element={

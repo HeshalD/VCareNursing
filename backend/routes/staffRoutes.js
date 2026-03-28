@@ -70,6 +70,9 @@ router.put('/:staff_profile_id/unavailable', protect, staffController.updateStaf
 // Update staff status (general)
 router.put('/:staff_profile_id/status', protect, staffController.updateStaffStatus);
 
+// Get staff by user_id (must be before catch-all)
+router.get('/user/:user_id', protect, staffController.getStaffByUserID);
+
 // Get staff by ID (must be last as it's a catch-all)
 router.get('/:staff_id', protect, staffController.getStaffByID);
 
