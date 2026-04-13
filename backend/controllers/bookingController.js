@@ -907,3 +907,231 @@ exports.extendBooking = async (req, res) => {
     client.release();
   }
 };
+
+exports.swapStaff = async (req, res) => {
+    const { booking_id } = req.params;
+    const {
+        new_staff_id,
+        swap_reason,
+        arrival_time,
+        // Optional overrides
+        new_daily_rate,
+        new_ot_rate,
+        new_scheduled_end_time
+    } = req.body;
+
+    if (!new_staff_id) {
+        return res.status(400).json({ status: 'error', message: 'new_staff_id is required' });
+    }
+
+    const client = await db.pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        // 1. Fetch the current booking
+        const bookingRes = await client.query(
+            `SELECT b.*, 
+                    sp.full_name as old_staff_name,
+                    u.mobile_number as old_staff_mobile,
+                    cp.full_name as client_name,
+                    uc.mobile_number as client_mobile,
+                    p.full_name as patient_name
+             FROM bookings b
+             JOIN staff_profiles sp ON b.assigned_staff_id = sp.staff_profile_id
+             JOIN users u ON sp.user_id = u.user_id
+             JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+             JOIN users uc ON cp.user_id = uc.user_id
+             JOIN patient_profiles p ON b.patient_id = p.patient_id
+             WHERE b.booking_id = $1 FOR UPDATE`,
+            [booking_id]
+        );
+
+        if (!bookingRes.rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Booking not found' });
+        }
+
+        const booking = bookingRes.rows[0];
+
+        if (!['ACTIVE', 'OVERDUE'].includes(booking.status)) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                status: 'error',
+                message: `Cannot swap staff on a booking with status ${booking.status}`
+            });
+        }
+
+        // 2. Verify new staff exists and is available
+        const newStaffRes = await client.query(
+            `SELECT sp.staff_profile_id, sp.full_name, sp.current_status,
+                    u.mobile_number as staff_mobile
+             FROM staff_profiles sp
+             JOIN users u ON sp.user_id = u.user_id
+             WHERE sp.staff_profile_id = $1`,
+            [new_staff_id]
+        );
+
+        if (!newStaffRes.rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'New staff member not found' });
+        }
+
+        const newStaff = newStaffRes.rows[0];
+
+        if (newStaff.current_status !== 'AVAILABLE') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                status: 'error',
+                message: `${newStaff.full_name} is not available for assignment (status: ${newStaff.current_status})`
+            });
+        }
+
+        // 3. Determine billing gap
+        // If arrival_time provided and it's within 4 hours of now — no billing gap
+        let billingGap = false;
+        if (arrival_time) {
+            const arrivalDate = new Date(arrival_time);
+            const now = new Date();
+            const diffHours = (arrivalDate - now) / (1000 * 60 * 60);
+            billingGap = diffHours > 4;
+        }
+
+        const oldStaffId = booking.assigned_staff_id;
+
+        // 4. Log the swap
+        await client.query(
+            `INSERT INTO staff_swaps 
+                (booking_id, old_staff_id, new_staff_id, swap_reason, swapped_at, swapped_by, arrival_time, billing_gap)
+             VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7)`,
+            [
+                booking_id,
+                oldStaffId,
+                new_staff_id,
+                swap_reason || null,
+                req.user.user_id,
+                arrival_time ? new Date(arrival_time) : null,
+                billingGap
+            ]
+        );
+
+        // 5. Build the booking update dynamically
+        // Only override fields the admin explicitly passed in
+        let updateFields = [`assigned_staff_id = $1`];
+        let updateValues = [new_staff_id];
+        let paramCount = 2;
+
+        if (new_daily_rate !== undefined) {
+            updateFields.push(`daily_rate = $${paramCount}`);
+            updateValues.push(new_daily_rate);
+            paramCount++;
+        }
+
+        if (new_ot_rate !== undefined) {
+            updateFields.push(`ot_rate = $${paramCount}`);
+            updateValues.push(new_ot_rate);
+            paramCount++;
+        }
+
+        if (new_scheduled_end_time !== undefined) {
+            updateFields.push(`scheduled_end_time = $${paramCount}`);
+            updateValues.push(new Date(new_scheduled_end_time));
+            paramCount++;
+        }
+
+        updateValues.push(booking_id);
+
+        await client.query(
+            `UPDATE bookings SET ${updateFields.join(', ')} WHERE booking_id = $${paramCount}`,
+            updateValues
+        );
+
+        // 6. Free old staff member
+        await client.query(
+            `UPDATE staff_profiles SET current_status = 'AVAILABLE' WHERE staff_profile_id = $1`,
+            [oldStaffId]
+        );
+
+        // 7. Lock new staff member
+        await client.query(
+            `UPDATE staff_profiles SET current_status = 'ASSIGNED' WHERE staff_profile_id = $1`,
+            [new_staff_id]
+        );
+
+        await client.query('COMMIT');
+
+        // 8. Notifications — stubbed out, ready for WhatsApp go-live
+        // await sendBookingConfirmation(
+        //     booking.client_mobile,
+        //     booking.client_name,
+        //     newStaff.full_name,
+        //     booking.patient_name,
+        //     new Date().toDateString()
+        // );
+        // await sendWhatsAppMessage(
+        //     booking.old_staff_mobile,
+        //     `Your assignment for patient ${booking.patient_name} has ended. You are now available for new bookings.`
+        // );
+        // await sendWhatsAppMessage(
+        //     newStaff.staff_mobile,
+        //     `New Assignment: You have been assigned to care for ${booking.patient_name} at ${booking.client_name}'s address. Please log in to the app for full details.`
+        // );
+
+        res.status(200).json({
+            status: 'success',
+            message: `Staff swapped successfully. ${booking.old_staff_name} replaced by ${newStaff.full_name}.`,
+            data: {
+                booking_id,
+                old_staff: booking.old_staff_name,
+                new_staff: newStaff.full_name,
+                billing_gap: billingGap,
+                billing_note: billingGap
+                    ? 'Gap exceeds 4 hours — billing gap recorded. Manual review may be needed.'
+                    : 'Replacement within 4 hours — billing continues uninterrupted.'
+            }
+        });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('swapStaff error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to swap staff member' });
+    } finally {
+        client.release();
+    }
+};
+
+// GET /api/bookings/:booking_id/swap-history
+exports.getSwapHistory = async (req, res) => {
+    const { booking_id } = req.params;
+
+    try {
+        const result = await db.query(
+            `SELECT 
+                ss.swap_id,
+                ss.swapped_at,
+                ss.swap_reason,
+                ss.arrival_time,
+                ss.billing_gap,
+                old_sp.full_name as old_staff_name,
+                new_sp.full_name as new_staff_name,
+                u.mobile_number as swapped_by_mobile
+             FROM staff_swaps ss
+             JOIN staff_profiles old_sp ON ss.old_staff_id = old_sp.staff_profile_id
+             JOIN staff_profiles new_sp ON ss.new_staff_id = new_sp.staff_profile_id
+             JOIN users u ON ss.swapped_by = u.user_id
+             WHERE ss.booking_id = $1
+             ORDER BY ss.swapped_at DESC`,
+            [booking_id]
+        );
+
+        res.status(200).json({
+            status: 'success',
+            count: result.rowCount,
+            data: result.rows
+        });
+
+    } catch (error) {
+        console.error('getSwapHistory error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to fetch swap history' });
+    }
+};
