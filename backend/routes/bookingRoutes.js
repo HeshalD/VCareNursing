@@ -48,4 +48,6 @@ router.post(
     bookingController.forceStopBooking
 );
 
+router.patch('/:booking_id/extend', protect, restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'), bookingController.extendBooking);
+
 module.exports = router;

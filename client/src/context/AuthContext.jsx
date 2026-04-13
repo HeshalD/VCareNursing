@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { getUserFromToken, isAuthenticated } from '../utils/auth';
+import apiClient from '../api/api';
 
 const AuthContext = createContext();
 
@@ -17,11 +18,24 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     // Check authentication status on component mount
-    const checkAuth = () => {
+    const checkAuth = async () => {
       try {
         if (isAuthenticated()) {
-          const userData = getUserFromToken();
-          setUser(userData);
+          const decodedUser = getUserFromToken();
+
+          // If token payload doesn't include email, try fetching enriched user data
+          if (decodedUser && !decodedUser.email) {
+            try {
+              const full = await apiClient.getUnifiedOverview();
+              // prefer API response shape if available, otherwise fallback to decoded token
+              setUser(full?.data || full || decodedUser);
+            } catch (err) {
+              console.error('Failed to fetch full user profile:', err);
+              setUser(decodedUser);
+            }
+          } else {
+            setUser(decodedUser);
+          }
         } else {
           // Clear invalid token
           localStorage.removeItem('token');

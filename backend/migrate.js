@@ -271,7 +271,12 @@ async function migrate() {
         assigned_staff_id UUID REFERENCES staff_profiles(staff_profile_id),
         service_model service_model_enum DEFAULT 'SHIFT_BASED',
         preferred_gender gender_preference_enum DEFAULT 'ANY',
-        request_id UUID REFERENCES service_requests(request_id)
+        request_id UUID REFERENCES service_requests(request_id),
+        service_mode VARCHAR(20),
+        scheduled_end_time TIMESTAMP,
+        actual_end_time TIMESTAMP,
+        ot_rate DECIMAL(10,2) DEFAULT 500.00,
+        daily_rate DECIMAL(10,2)
       );
     `);
 

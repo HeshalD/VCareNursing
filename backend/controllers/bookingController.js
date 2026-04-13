@@ -55,6 +55,10 @@ const convertToBookingInternal = async (req, res) => {
         }
 
         const quoteData = quoteRes.rows[0];
+        // Calculate scheduled end time from start date + qty_days
+        const startDate = new Date(reqData.start_date);
+        const scheduledEndTime = new Date(startDate);
+        scheduledEndTime.setDate(scheduledEndTime.getDate() + parseInt(quoteData.qty_days));
 
         // Determine staff assignment: use provided assigned_staff_id, fallback to preferred_staff_id from request
         const finalStaffId = assigned_staff_id || reqData.preferred_staff_id;
@@ -123,12 +127,12 @@ const convertToBookingInternal = async (req, res) => {
 
         // 5. Create Final Booking (UPDATED: Added RETURNING booking_id)
         const newBooking = await client.query(
-            `INSERT INTO bookings (client_id, patient_id, service_type, service_model, start_date, assigned_staff_id, status, preferred_gender, request_id) 
-             VALUES ($1, $2, $3, $4::service_model_enum, $5, $6, 'ACTIVE', $7::gender_preference_enum, $8)
+            `INSERT INTO bookings (client_id, patient_id, service_type, service_model, start_date, assigned_staff_id, status, preferred_gender, request_id, service_mode, scheduled_end_time, actual_end_time, ot_rate, daily_rate) 
+             VALUES ($1, $2, $3, $4::service_model_enum, $5, $6, 'ACTIVE', $7::gender_preference_enum, $8, $9, $10, $11, $12, $13)
              RETURNING booking_id`,
-            [clientProfileId, patientId, reqData.service_type, reqData.service_model || 'SHIFT_BASED', reqData.start_date, finalStaffId, reqData.preferred_gender || 'ANY', request_id]
+            [clientProfileId, patientId, reqData.service_type, reqData.service_model || 'SHIFT_BASED', reqData.start_date, finalStaffId, reqData.preferred_gender || 'ANY', request_id, null, scheduledEndTime, null, 500.00, quoteData.daily_rate]
         );
-        
+
         const bookingId = newBooking.rows[0].booking_id;
 
         // 6. UPDATE STAFF STATUS (Lock them)
@@ -144,11 +148,11 @@ const convertToBookingInternal = async (req, res) => {
         // =========================================================
         // 7.5 CREATE THE FINANCIAL TRANSACTION RECORD (NEW!)
         // =========================================================
-        
+
         // Note: Assuming your admin's ID is available in req.user.user_id from your auth middleware.
         // If not, you can leave verified_by as NULL for now.
-        const adminId = req.user ? req.user.user_id : null; 
-        
+        const adminId = req.user ? req.user.user_id : null;
+
         // Note: Assuming your quotations table has a 'total_amount' column. 
         // Change quoteData.total_amount if your column is named differently.
         await client.query(
@@ -158,12 +162,12 @@ const convertToBookingInternal = async (req, res) => {
                 amount, payment_method, receipt_url, verified_by, status, notes
             ) VALUES ($1, $2, $3, 'CLIENT_PAYMENT', 'CREDIT', $4, $5, $6, $7, 'COMPLETED', 'Initial payment for quote conversion')`,
             [
-                clientProfileId, 
-                bookingId, 
-                bookingQuoteId, 
-                quoteData.total_amount, 
-                payment_method, 
-                slip_url, 
+                clientProfileId,
+                bookingId,
+                bookingQuoteId,
+                quoteData.total_amount,
+                payment_method,
+                slip_url,
                 adminId
             ]
         );
@@ -250,6 +254,11 @@ exports.getByBookingID = async (req, res) => {
                 b.status,
                 b.preferred_gender,
                 b.created_at,
+                b.service_mode,
+                b.scheduled_end_time,
+                b.actual_end_time,
+                b.ot_rate,
+                b.daily_rate,
                 c.client_profile_id,
                 c.full_name as client_name,
                 c.primary_address as client_address,
@@ -278,9 +287,9 @@ exports.getByBookingID = async (req, res) => {
         console.log('Query result:', result.rows);
 
         if (result.rows.length === 0) {
-            return res.status(404).json({ 
+            return res.status(404).json({
                 status: 'error',
-                message: 'Booking not found' 
+                message: 'Booking not found'
             });
         }
 
@@ -494,9 +503,9 @@ exports.approveTerminationRequest = async (req, res) => {
         // 3. Terminate the Booking
         await client.query(
             `UPDATE bookings 
-             SET status = 'COMPLETED'
-             WHERE booking_id = $1`,
-            [request.booking_id]
+     SET status = 'COMPLETED', actual_end_time = $2
+     WHERE booking_id = $1`,
+            [request.booking_id, officialEndDate]
         );
 
         // 4. Free up the Staff Member! (Crucial for availability)
@@ -659,11 +668,10 @@ exports.forceStopBooking = async (req, res) => {
         // 3. Terminate the Booking
         await client.query(
             `UPDATE bookings 
-             SET status = 'TERMINATED'
-             WHERE booking_id = $1`,
-            [booking_id]
+     SET status = 'TERMINATED', actual_end_time = $2
+     WHERE booking_id = $1`,
+            [booking_id, officialEndDate]
         );
-
         // 4. Free up the Staff Member!
         if (booking.assigned_staff_id) {
             await client.query(
@@ -772,6 +780,11 @@ exports.getAllBookings = async (req, res) => {
                 b.status,
                 b.preferred_gender,
                 b.created_at,
+                b.service_mode,
+                b.scheduled_end_time,
+                b.actual_end_time,
+                b.ot_rate,
+                b.daily_rate,
                 c.client_profile_id,
                 c.full_name as client_name,
                 c.primary_address as client_address,
@@ -809,3 +822,88 @@ exports.getAllBookings = async (req, res) => {
     }
 };
 
+exports.extendBooking = async (req, res) => {
+  const { booking_id } = req.params;
+  const { additional_days, payment_amount, payment_method, notes } = req.body;
+
+  if (!additional_days || additional_days <= 0) {
+    return res.status(400).json({ status: 'error', message: 'Invalid additional_days value' });
+  }
+
+  const client = await db.pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // Fetch the booking
+    const bookingRes = await client.query(
+      `SELECT * FROM bookings WHERE booking_id = $1 FOR UPDATE`,
+      [booking_id]
+    );
+
+    if (!bookingRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ status: 'error', message: 'Booking not found' });
+    }
+
+    const booking = bookingRes.rows[0];
+
+    if (!['ACTIVE', 'OVERDUE'].includes(booking.status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        status: 'error',
+        message: `Cannot extend a booking with status ${booking.status}`
+      });
+    }
+
+    // Calculate new scheduled_end_time
+    // If overdue, extend from NOW rather than the old expired scheduled_end_time
+    const baseDate = booking.status === 'OVERDUE' ? new Date() : new Date(booking.scheduled_end_time);
+    const newScheduledEndTime = new Date(baseDate);
+    newScheduledEndTime.setDate(newScheduledEndTime.getDate() + parseInt(additional_days));
+
+    // Update the booking
+    await client.query(
+      `UPDATE bookings 
+       SET scheduled_end_time = $1, status = 'ACTIVE'
+       WHERE booking_id = $2`,
+      [newScheduledEndTime, booking_id]
+    );
+
+    // Record the payment transaction if amount provided
+    if (payment_amount && payment_amount > 0) {
+      await client.query(
+        `INSERT INTO transactions (
+          client_id, booking_id, category, transaction_type,
+          amount, payment_method, status, notes
+        ) VALUES ($1, $2, 'CLIENT_PAYMENT', 'CREDIT', $3, $4, 'COMPLETED', $5)`,
+        [
+          booking.client_id,
+          booking_id,
+          payment_amount,
+          payment_method || 'BANK_TRANSFER',
+          notes || `Booking extended by ${additional_days} days`
+        ]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    res.status(200).json({
+      status: 'success',
+      message: `Booking extended by ${additional_days} days.`,
+      data: {
+        booking_id,
+        new_scheduled_end_time: newScheduledEndTime,
+        status: 'ACTIVE'
+      }
+    });
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('extendBooking error:', error);
+    res.status(500).json({ status: 'error', message: 'Failed to extend booking' });
+  } finally {
+    client.release();
+  }
+};

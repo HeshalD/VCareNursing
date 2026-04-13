@@ -253,7 +253,7 @@ exports.login = async (req, res) => {
   try {
     // 1. Find User by Mobile Number
     const userResult = await db.query(
-      'SELECT user_id, password_hash, role, is_active FROM users WHERE mobile_number = $1',
+      'SELECT user_id, password_hash, role, is_active, email FROM users WHERE mobile_number = $1',
       [mobile_number]
     );
 
@@ -307,6 +307,7 @@ exports.login = async (req, res) => {
       data: {
         user_id: user.user_id,
         mobile_number: mobile_number,
+        email: user.email || null,
         roles: {
           is_client: !!clientProfile, // Boolean: true if they have a client profile
           client_id: clientProfile ? clientProfile.client_profile_id : null,
