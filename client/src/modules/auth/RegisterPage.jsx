@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { User, Lock, Eye, EyeOff, Mail, Phone, CreditCard } from 'lucide-react';
+import { User, Lock, Eye, EyeOff, Mail, Phone, CreditCard, MapPin } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import loginBg from '../../assets/images/Gemini_Generated_Image_5nmpua5nmpua5nmp.png';
 import apiClient from '../../api/api';
@@ -19,30 +19,155 @@ const RegisterPage = () => {
     password: '',
     client_type: 'INDIVIDUAL',
     terms_accepted: false,
-    gender: ''
+    gender: '',
+    primary_address: ''
   });
 
+  const [fieldErrors, setFieldErrors] = useState({
+    fullName: '',
+    email: '',
+    phone: '',
+    nic: '',
+    password: '',
+    gender: '',
+    primary_address: ''
+  });
+
+  const [passwordStrength, setPasswordStrength] = useState({
+    score: 0,
+    message: '',
+    color: 'text-gray-500'
+  });
+
+  const validateField = (name, value) => {
+    let error = '';
+    
+    switch (name) {
+      case 'fullName':
+        if (!value.trim()) {
+          error = 'Full name is required';
+        } else if (value.length < 5 || value.length > 30) {
+          error = 'Full name must be 5 to 30 characters';
+        } else if (!/^[a-zA-Z\s]+$/.test(value)) {
+          error = 'Full name should contain only letters';
+        }
+        break;
+      case 'email':
+        if (!value.trim()) {
+          error = 'Email address is required';
+        } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+          error = 'Valid email address is required';
+        }
+        break;
+      case 'phone':
+        if (!value.trim()) {
+          error = 'Mobile number is required';
+        } else if (!/^07[0-9]{8}$/.test(value.replace(/\s/g, ''))) {
+          error = 'Mobile number must be 10 digits starting with 07';
+        }
+        break;
+      case 'nic':
+        if (!value.trim()) {
+          error = 'NIC is required';
+        }
+        break;
+      case 'password':
+        if (!value.trim()) {
+          error = 'Password is required';
+        } else if (value.length < 6) {
+          error = 'Password must be at least 6 characters long';
+        } else {
+          const hasNumber = /\d/.test(value);
+          const hasSpecial = /[!@#$%^&*(),.?":{}|<>]/.test(value);
+          const hasUpper = /[A-Z]/.test(value);
+          const hasLower = /[a-z]/.test(value);
+          
+          if (!((hasNumber && hasSpecial) || (hasUpper && hasLower))) {
+            error = 'Password must include a number and special character OR uppercase and lowercase letters';
+          }
+        }
+        break;
+      case 'gender':
+        if (!value) {
+          error = 'Gender is required';
+        }
+        break;
+      case 'primary_address':
+        if (!value.trim()) {
+          error = 'Primary address is required';
+        } else if (value.length < 5 || value.length > 150) {
+          error = 'Primary address must be 5 to 150 characters';
+        }
+        break;
+    }
+    
+    return error;
+  };
+
+  const calculatePasswordStrength = (password) => {
+    if (!password) {
+      return { score: 0, message: '', color: 'text-gray-500' };
+    }
+    
+    let score = 0;
+    const checks = {
+      length: password.length >= 6,
+      hasNumber: /\d/.test(password),
+      hasSpecial: /[!@#$%^&*(),.?":{}|<>]/.test(password),
+      hasUpper: /[A-Z]/.test(password),
+      hasLower: /[a-z]/.test(password),
+      hasGoodLength: password.length >= 8
+    };
+    
+    Object.values(checks).forEach(passed => {
+      if (passed) score++;
+    });
+    
+    if (score <= 2) {
+      return { score, message: 'Weak', color: 'text-red-500' };
+    } else if (score <= 4) {
+      return { score, message: 'Fair', color: 'text-yellow-500' };
+    } else {
+      return { score, message: 'Strong', color: 'text-green-500' };
+    }
+  };
+
+  const handleInputChange = (name, value) => {
+    setFormData({ ...formData, [name]: value });
+    
+    // Real-time validation
+    const error = validateField(name, value);
+    setFieldErrors({ ...fieldErrors, [name]: error });
+    
+    // Password strength indicator
+    if (name === 'password') {
+      setPasswordStrength(calculatePasswordStrength(value));
+    }
+  };
+
   const validateForm = () => {
-    if (!formData.fullName.trim()) {
-      setError('Full name is required');
-      return false;
-    }
-    if (!formData.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-      setError('Valid email address is required');
-      return false;
-    }
-    if (!formData.phone.trim()) {
-      setError('Mobile number is required');
-      return false;
-    }
-    if (!formData.password.trim() || formData.password.length < 6) {
-      setError('Password must be at least 6 characters long');
-      return false;
-    }
+    const errors = {};
+    
+    // Validate all fields
+    Object.keys(formData).forEach(key => {
+      if (key !== 'client_type' && key !== 'terms_accepted') {
+        const error = validateField(key, formData[key]);
+        if (error) errors[key] = error;
+      }
+    });
+    
+    setFieldErrors(errors);
+    
     if (!formData.terms_accepted) {
       setError('You must accept the Terms & Conditions');
       return false;
     }
+    
+    if (Object.keys(errors).length > 0) {
+      setError('Please fix all validation errors');
+      return false;
+    }
+    
     return true;
   };
 
@@ -64,7 +189,8 @@ const RegisterPage = () => {
         password: formData.password,
         client_type: formData.client_type,
         terms_accepted: formData.terms_accepted,
-        gender: formData.gender
+        gender: formData.gender,
+        primary_address: formData.primary_address
       });
       
       // Registration successful
@@ -146,15 +272,22 @@ const RegisterPage = () => {
                 <div className="relative group">
                   <input
                     type="text"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                    className={`w-full bg-slate-50 border rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none transition-all ${
+                      fieldErrors.fullName 
+                        ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500' 
+                        : 'border-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500'
+                    }`}
                     placeholder="Enter your full name"
                     value={formData.fullName}
-                    onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
+                    onChange={(e) => handleInputChange('fullName', e.target.value)}
                   />
                   <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500">
                     <User className="w-5 h-5" />
                   </div>
                 </div>
+                {fieldErrors.fullName && (
+                  <p className="text-xs text-red-500 mt-1">{fieldErrors.fullName}</p>
+                )}
               </div>
 
               {/* Email Input */}
@@ -163,15 +296,22 @@ const RegisterPage = () => {
                 <div className="relative group">
                   <input
                     type="email"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                    className={`w-full bg-slate-50 border rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none transition-all ${
+                      fieldErrors.email 
+                        ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500' 
+                        : 'border-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500'
+                    }`}
                     placeholder="name@example.com"
                     value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    onChange={(e) => handleInputChange('email', e.target.value)}
                   />
                   <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500">
                     <Mail className="w-5 h-5" />
                   </div>
                 </div>
+                {fieldErrors.email && (
+                  <p className="text-xs text-red-500 mt-1">{fieldErrors.email}</p>
+                )}
               </div>
 
               {/* Mobile Input */}
@@ -180,15 +320,22 @@ const RegisterPage = () => {
                 <div className="relative group">
                   <input
                     type="tel"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
-                    placeholder="+91 98765 43210"
+                    className={`w-full bg-slate-50 border rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none transition-all ${
+                      fieldErrors.phone 
+                        ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500' 
+                        : 'border-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500'
+                    }`}
+                    placeholder="07XXXXXXXX"
                     value={formData.phone}
-                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                    onChange={(e) => handleInputChange('phone', e.target.value)}
                   />
                   <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500">
                     <Phone className="w-5 h-5" />
                   </div>
                 </div>
+                {fieldErrors.phone && (
+                  <p className="text-xs text-red-500 mt-1">{fieldErrors.phone}</p>
+                )}
               </div>
 
               {/* NIC Input */}
@@ -197,35 +344,78 @@ const RegisterPage = () => {
                 <div className="relative group">
                   <input
                     type="text"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                    placeholder="National identity card number"
+                    className={`w-full bg-slate-50 border rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none transition-all ${
+                      fieldErrors.nic 
+                        ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500' 
+                        : 'border-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500'
+                    }`}
+                    placeholder="Enter your NIC number"
                     value={formData.nic}
-                    onChange={(e) => setFormData({ ...formData, nic: e.target.value })}
+                    onChange={(e) => handleInputChange('nic', e.target.value)}
                   />
                   <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500">
                     <CreditCard className="w-5 h-5" />
                   </div>
                 </div>
+                {fieldErrors.nic && (
+                  <p className="text-xs text-red-500 mt-1">{fieldErrors.nic}</p>
+                )}
               </div>
 
-              {/* Gender Select */}
+              {/* Gender Selection */}
               <div className="space-y-1">
                 <label className="text-sm font-medium text-slate-700 block">Gender</label>
-                <div className="relative group">
-                  <select
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all appearance-none"
-                    value={formData.gender}
-                    onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleInputChange('gender', 'MALE')}
+                    className={`px-4 py-3 rounded-lg border-2 transition-all font-medium ${
+                      formData.gender === 'MALE'
+                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                    }`}
                   >
-                    <option value="">Select gender</option>
-                    <option value="MALE">Male</option>
-                    <option value="FEMALE">Female</option>
-                    <option value="OTHER">Other</option>
-                  </select>
-                  <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none">
-                    <User className="w-5 h-5" />
+                    Male
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleInputChange('gender', 'FEMALE')}
+                    className={`px-4 py-3 rounded-lg border-2 transition-all font-medium ${
+                      formData.gender === 'FEMALE'
+                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    Female
+                  </button>
+                </div>
+                {fieldErrors.gender && (
+                  <p className="text-xs text-red-500 mt-1">{fieldErrors.gender}</p>
+                )}
+              </div>
+
+              {/* Primary Address Input */}
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-700 block">Primary Address</label>
+                <div className="relative group">
+                  <input
+                    type="text"
+                    className={`w-full bg-slate-50 border rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none transition-all ${
+                      fieldErrors.primary_address 
+                        ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500' 
+                        : 'border-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500'
+                    }`}
+                    placeholder="Enter your primary address"
+                    value={formData.primary_address}
+                    onChange={(e) => handleInputChange('primary_address', e.target.value)}
+                  />
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500">
+                    <MapPin className="w-5 h-5" />
                   </div>
                 </div>
+                {fieldErrors.primary_address && (
+                  <p className="text-xs text-red-500 mt-1">{fieldErrors.primary_address}</p>
+                )}
               </div>
 
               {/* Password Input */}
@@ -233,20 +423,47 @@ const RegisterPage = () => {
                 <label className="text-sm font-medium text-slate-700 block">Password</label>
                 <div className="relative group">
                   <input
-                    type={showPassword ? "text" : "password"}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
-                    placeholder="Create a password (min 6 characters)"
+                    type={showPassword ? 'text' : 'password'}
+                    className={`w-full bg-slate-50 border rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none transition-all ${
+                      fieldErrors.password 
+                        ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500' 
+                        : 'border-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500'
+                    }`}
+                    placeholder="Create a strong password"
                     value={formData.password}
-                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    onChange={(e) => handleInputChange('password', e.target.value)}
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 transition-colors"
                   >
                     {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                   </button>
                 </div>
+                {fieldErrors.password && (
+                  <p className="text-xs text-red-500 mt-1">{fieldErrors.password}</p>
+                )}
+                {/* Password Strength Indicator */}
+                {formData.password && (
+                  <div className="mt-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-slate-600">Password Strength:</span>
+                      <span className={`text-xs font-medium ${passwordStrength.color}`}>
+                        {passwordStrength.message}
+                      </span>
+                    </div>
+                    <div className="w-full bg-slate-200 rounded-full h-2">
+                      <div 
+                        className={`h-2 rounded-full transition-all duration-300 ${
+                          passwordStrength.score <= 2 ? 'bg-red-500' :
+                          passwordStrength.score <= 4 ? 'bg-yellow-500' : 'bg-green-500'
+                        }`}
+                        style={{ width: `${(passwordStrength.score / 6) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Terms and Conditions */}

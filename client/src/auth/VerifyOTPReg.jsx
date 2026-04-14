@@ -209,7 +209,7 @@ const VerifyOTPReg = () => {
                       id={`otp-${index}`}
                       type="text"
                       maxLength="1"
-                      className="w-12 h-12 text-center text-lg font-semibold bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                      className="w-12 h-12 text-center text-lg font-semibold text-black bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
                       value={digit}
                       onChange={(e) => handleOtpChange(index, e.target.value)}
                       onKeyDown={(e) => handleKeyDown(index, e)}
