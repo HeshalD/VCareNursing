@@ -25,6 +25,11 @@ const Navbar = () => {
   };
 
   const getUserDisplayName = () => {
+    // Use full_name from AuthContext (from JWT payload)
+    if (user?.full_name) {
+      return user.full_name;
+    }
+    // Fallback to nested info objects for backward compatibility
     if (user?.client_info?.name) {
       return user.client_info.name;
     }

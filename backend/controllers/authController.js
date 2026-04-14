@@ -282,7 +282,7 @@ exports.login = async (req, res) => {
     // 3. DUAL ROLE DISCOVERY (The Critical Step)
     // We check both tables to see what "hats" this user wears.
     const clientProfilePromise = db.query(
-      'SELECT client_profile_id, full_name, client_type FROM client_profiles WHERE user_id = $1',
+      'SELECT client_profile_id, full_name, client_type, gender, primary_address FROM client_profiles WHERE user_id = $1',
       [user.user_id]
     );
 
@@ -298,9 +298,23 @@ exports.login = async (req, res) => {
     const staffProfile = staffRes.rows[0] || null;
 
     // 4. Generate JWT Token
-    // We embed the user_id. We do NOT embed profile IDs because they might switch roles.
+    // We embed the user_id, full_name, mobile_number, gender, and primary_address in the JWT payload
+    // Priority: client profile full_name > staff profile full_name > fallback
+    const fullName = clientProfile?.full_name || staffProfile?.full_name || null;
+    
+    const tokenPayload = { 
+      id: user.user_id, 
+      role: user.role,
+      full_name: fullName,
+      mobile_number: mobile_number,
+      gender: clientProfile?.gender || null,
+      primary_address: clientProfile?.primary_address || null
+    };
+    
+    console.log('JWT Payload:', tokenPayload); // Debug log
+    
     const token = jwt.sign(
-      { id: user.user_id, role: user.role }, // Adding role to payload
+      tokenPayload,
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN }
     );

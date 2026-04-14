@@ -43,7 +43,6 @@ const LoginPage = () => {
           });
         } catch (staffError) {
           // If staff login fails, try regular login
-          console.log('Staff login failed, trying regular login...');
           response = await apiClient.login({
             identifier: formData.identifier,
             password: formData.password,
@@ -60,22 +59,29 @@ const LoginPage = () => {
       // Check if password change is required
       if (response.requires_password_change) {
         // Store user data temporarily for password change page
-        localStorage.setItem('tempUserData', JSON.stringify(response.user));
+        localStorage.setItem('tempUserData', JSON.stringify(response.data));
         
         // Navigate to password change page
         navigate('/change-staff-password', { 
-          state: { userData: response.user } 
+          state: { userData: response.data } 
         });
         return;
       }
       
       // Login successful - use AuthContext
-      if (response.token && response.user) {
-        login(response.token, response.user);
-        console.log('Login successful:', response);
+      if (response.token && response.data) {
+        login(response.token, response.data);
+        
+        // Show JWT payload contents
+        try {
+          const jwtPayload = JSON.parse(atob(response.token.split('.')[1]));
+          console.log('JWT Payload:', jwtPayload);
+        } catch (error) {
+          console.log('Could not decode JWT payload');
+        }
         
         // Redirect based on user role
-        if (response.user.staff_info || response.user.is_staff) {
+        if (response.data.staff_info || response.data.is_staff) {
           // Staff member - redirect to provider dashboard
           navigate('/services/provider-dashboard');
         } else {
@@ -85,7 +91,6 @@ const LoginPage = () => {
       }
     } catch (err) {
       setError(err.message || 'Login failed. Please try again.');
-      console.error('Login error:', err);
     } finally {
       setIsLoading(false);
     }

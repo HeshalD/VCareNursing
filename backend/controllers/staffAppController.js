@@ -22,14 +22,33 @@ exports.submitApplication = async (req, res) => {
     
    
     let rolesArray = [];
+    console.log('Raw applied_roles:', applied_roles);
+    console.log('Type of applied_roles:', typeof applied_roles);
+    
     if (applied_roles) {
         if (Array.isArray(applied_roles)) {
+            // If it's already an array, clean each element
             rolesArray = applied_roles.map(r => r.replace(/\{|\}/g, '').trim());
+        } else if (typeof applied_roles === 'string') {
+            // If it's a string, try to parse it as JSON first
+            try {
+                const parsed = JSON.parse(applied_roles);
+                if (Array.isArray(parsed)) {
+                    rolesArray = parsed.map(r => r.replace(/\{|\}/g, '').trim());
+                } else {
+                    rolesArray = [applied_roles.replace(/\{|\}/g, '').trim()];
+                }
+            } catch (e) {
+                // If JSON parsing fails, treat as single role
+                rolesArray = [applied_roles.replace(/\{|\}/g, '').trim()];
+            }
         } else {
+            // Handle other types
             rolesArray = [applied_roles.replace(/\{|\}/g, '').trim()];
         }
     }
     rolesArray = rolesArray.filter(role => role.length > 0);
+    console.log('Processed rolesArray:', rolesArray);
 
     console.log('Files received:', req.files);
     const document_urls = req.files && req.files.documents ? req.files.documents.map(file => file.path) : [];
@@ -435,8 +454,14 @@ exports.staffLogin = async (req, res) => {
         const isTempPassword = /^[a-z0-9]{8}$/.test(password) && password.length === 8;
 
         // 5. Generate JWT Token
+        const staffProfile = staffProfileResult.rows[0];
         const token = jwt.sign(
-            { id: user.user_id, role: user.role },
+            { 
+                id: user.user_id, 
+                role: user.role,
+                full_name: staffProfile.full_name,
+                mobile_number: null // Staff login uses email, so mobile_number is not available here
+            },
             process.env.JWT_SECRET,
             { expiresIn: process.env.JWT_EXPIRES_IN }
         );
@@ -505,8 +530,27 @@ exports.changeStaffPassword = async (req, res) => {
         );
 
         // 6. Generate new token (optional, but good practice)
+        // Get user details for token payload
+        const userDetailsResult = await db.query(
+            'SELECT mobile_number FROM users WHERE user_id = $1',
+            [userId]
+        );
+        
+        const staffProfileResult = await db.query(
+            'SELECT full_name FROM staff_profiles WHERE user_id = $1',
+            [userId]
+        );
+        
+        const userMobile = userDetailsResult.rows[0]?.mobile_number || null;
+        const userFullName = staffProfileResult.rows[0]?.full_name || null;
+        
         const token = jwt.sign(
-            { id: userId, role: req.user.role },
+            { 
+                id: userId, 
+                role: req.user.role,
+                full_name: userFullName,
+                mobile_number: userMobile
+            },
             process.env.JWT_SECRET,
             { expiresIn: process.env.JWT_EXPIRES_IN }
         );

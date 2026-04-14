@@ -30,7 +30,6 @@ export const AuthProvider = ({ children }) => {
               // prefer API response shape if available, otherwise fallback to decoded token
               setUser(full?.data || full || decodedUser);
             } catch (err) {
-              console.error('Failed to fetch full user profile:', err);
               setUser(decodedUser);
             }
           } else {
@@ -42,7 +41,6 @@ export const AuthProvider = ({ children }) => {
           setUser(null);
         }
       } catch (error) {
-        console.error('Auth check error:', error);
         localStorage.removeItem('token');
         setUser(null);
       } finally {
@@ -55,7 +53,21 @@ export const AuthProvider = ({ children }) => {
 
   const login = (token, userData) => {
     localStorage.setItem('token', token);
-    setUser(userData);
+    
+    // Extract user data from JWT payload to get full_name and other JWT fields
+    try {
+      const jwtPayload = JSON.parse(atob(token.split('.')[1]));
+      // Merge JWT payload with API response data, giving priority to JWT fields
+      const mergedUserData = {
+        ...userData,
+        ...jwtPayload
+      };
+      console.log('AuthContext - User data stored:', mergedUserData);
+      setUser(mergedUserData);
+    } catch (error) {
+      // Fallback to original userData if JWT parsing fails
+      setUser(userData);
+    }
   };
 
   const logout = () => {
