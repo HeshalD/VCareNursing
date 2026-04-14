@@ -395,3 +395,201 @@ exports.getUnifiedOverview = async (req, res) => {
     res.status(500).json({ message: "Error fetching unified overview" });
   }
 };
+
+// ============================================
+// FORGOT PASSWORD FLOW
+// ============================================
+
+/**
+ * Step 1: Request OTP for Password Reset
+ * User enters phone number, system checks if it exists and sends OTP
+ */
+exports.requestForgotPasswordOtp = async (req, res) => {
+  const { mobile_number } = req.body;
+
+  try {
+    // 1. Validation
+    if (!mobile_number) {
+      return res.status(400).json({ message: "Mobile number is required." });
+    }
+
+    // 2. Check if user exists
+    const userResult = await db.query(
+      'SELECT user_id, email FROM users WHERE mobile_number = $1',
+      [mobile_number]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ message: "Phone number not found in the system." });
+    }
+
+    const user = userResult.rows[0];
+
+    // 3. Rate limiting check (prevent OTP spam)
+    const lastOtp = await db.query(
+      'SELECT created_at FROM password_reset_otps WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [user.user_id]
+    );
+
+    if (lastOtp.rows.length > 0) {
+      const lastSentTime = new Date(lastOtp.rows[0].created_at);
+      const secondsAgo = (new Date() - lastSentTime) / 1000;
+
+      if (secondsAgo < 60) {
+        return res.status(429).json({
+          message: `Please wait ${Math.round(60 - secondsAgo)} seconds before requesting a new code.`
+        });
+      }
+    }
+
+    // 4. Generate OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60000); // 10 minutes
+
+    // 5. Store OTP in a separate table for password resets
+    // Delete any old OTPs first to keep table clean
+    await db.query(
+      'DELETE FROM password_reset_otps WHERE user_id = $1',
+      [user.user_id]
+    );
+
+    await db.query(
+      'INSERT INTO password_reset_otps (user_id, otp_code, expires_at) VALUES ($1, $2, $3)',
+      [user.user_id, otp, expiresAt]
+    );
+
+    // 6. Send OTP via WhatsApp (and email if enabled)
+    try {
+      await sendWhatsAppOtp(mobile_number, otp);
+      console.log('Password reset OTP sent via WhatsApp');
+    } catch (whatsappError) {
+      console.error("WhatsApp failed to send password reset OTP:", whatsappError.message);
+    }
+
+    // Log OTP for development/testing
+    console.log(`[DEV ONLY] Password reset OTP for User ${user.user_id}: ${otp}`);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'OTP has been sent to your registered phone number.',
+      data: {
+        user_id: user.user_id,
+        mobile_number: mobile_number
+      }
+    });
+
+  } catch (error) {
+    console.error("Request Forgot Password OTP Error:", error);
+    res.status(500).json({ message: "Internal server error while sending OTP." });
+  }
+};
+
+/**
+ * Step 2: Verify OTP for Password Reset
+ * User enters the OTP they received
+ */
+exports.verifyForgotPasswordOtp = async (req, res) => {
+  const { user_id, otp_code } = req.body;
+
+  try {
+    // 1. Validation
+    if (!user_id || !otp_code) {
+      return res.status(400).json({ message: "User ID and OTP code are required." });
+    }
+
+    // 2. Verify OTP exists and is not expired
+    const otpResult = await db.query(
+      `SELECT * FROM password_reset_otps 
+       WHERE user_id = $1 AND otp_code = $2 AND expires_at > NOW()`,
+      [user_id, otp_code]
+    );
+
+    if (otpResult.rows.length === 0) {
+      return res.status(400).json({ message: "Invalid or expired OTP." });
+    }
+
+    // 3. OTP is valid - don't delete yet, let resetPassword handle cleanup
+    // This allows frontend to proceed to password entry screen
+    res.status(200).json({
+      status: 'success',
+      message: "OTP verified successfully. You can now set a new password.",
+      data: {
+        user_id: user_id,
+        otp_verified: true
+      }
+    });
+
+  } catch (error) {
+    console.error("Verify Forgot Password OTP Error:", error);
+    res.status(500).json({ message: "Error verifying OTP." });
+  }
+};
+
+/**
+ * Step 3: Reset Password
+ * After OTP verification, user sets their new password
+ */
+exports.resetPassword = async (req, res) => {
+  const { user_id, otp_code, new_password, confirm_password } = req.body;
+
+  try {
+    // 1. Validation
+    if (!user_id || !otp_code || !new_password || !confirm_password) {
+      return res.status(400).json({ message: "All fields are required." });
+    }
+
+    if (new_password !== confirm_password) {
+      return res.status(400).json({ message: "Passwords do not match." });
+    }
+
+    if (new_password.length < 6) {
+      return res.status(400).json({ message: "Password must be at least 6 characters long." });
+    }
+
+    // 2. Verify OTP is still valid
+    const otpResult = await db.query(
+      `SELECT * FROM password_reset_otps 
+       WHERE user_id = $1 AND otp_code = $2 AND expires_at > NOW()`,
+      [user_id, otp_code]
+    );
+
+    if (otpResult.rows.length === 0) {
+      return res.status(400).json({ message: "Invalid or expired OTP. Please request a new one." });
+    }
+
+    // 3. Check if user exists
+    const userResult = await db.query(
+      'SELECT user_id FROM users WHERE user_id = $1',
+      [user_id]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    // 4. Hash new password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(new_password, salt);
+
+    // 5. Update password in database
+    await db.query(
+      'UPDATE users SET password_hash = $1 WHERE user_id = $2',
+      [hashedPassword, user_id]
+    );
+
+    // 6. Delete the used OTP to prevent reuse
+    await db.query(
+      'DELETE FROM password_reset_otps WHERE user_id = $1',
+      [user_id]
+    );
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Password has been reset successfully. You can now log in with your new password.'
+    });
+
+  } catch (error) {
+    console.error("Reset Password Error:", error);
+    res.status(500).json({ message: "Error resetting password." });
+  }
+};

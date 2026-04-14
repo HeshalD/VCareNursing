@@ -39,6 +39,9 @@ import TerminationRequests from './modules/admin/termination_requests/terminatio
 import Statements from './modules/admin/statements/statements';
 import Earnings from './modules/public/service_team/Earnings';
 import AdvanceRequests from './modules/admin/advance_requests/advance_requests';
+import ForgotPasswordPage from './modules/auth/ForgotPasswordPage';
+import VerifyForgotPasswordOtp from './modules/auth/VerifyForgotPasswordOtp';
+import ResetPasswordPage from './modules/auth/ResetPasswordPage';
 
 function App() {
   return (
@@ -51,6 +54,9 @@ function App() {
             <Route path="/about" element={<AboutPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/forgot-password/verify-otp" element={<VerifyForgotPasswordOtp />} />
+            <Route path="/forgot-password/reset" element={<ResetPasswordPage />} />
             <Route path="/change-staff-password" element={<StaffPasswordChangePage />} />
             <Route path="/admin" element={
               <AdminAuthProvider>

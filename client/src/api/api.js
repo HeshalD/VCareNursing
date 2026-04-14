@@ -186,6 +186,33 @@ class ApiClient {
 
   }
 
+  // Forgot password endpoints
+  async requestForgotPasswordOtp(mobileNumber) {
+    return this.request('/auth/forgot-password/request-otp', {
+      method: 'POST',
+      body: JSON.stringify({ mobile_number: mobileNumber }),
+    });
+  }
+
+  async verifyForgotPasswordOtp(userId, otp) {
+    return this.request('/auth/forgot-password/verify-otp', {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId, otp_code: otp }),
+    });
+  }
+
+  async resetPassword(userId, otp, newPassword, confirmPassword) {
+    return this.request('/auth/forgot-password/reset', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        user_id: userId, 
+        otp_code: otp, 
+        new_password: newPassword, 
+        confirm_password: confirmPassword 
+      }),
+    });
+  }
+
 
 
   async getUnifiedOverview() {

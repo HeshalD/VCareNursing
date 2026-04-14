@@ -190,7 +190,7 @@ const LoginPage = () => {
               </div>
 
               {/* Remember Me */}
-              <div className="flex items-center">
+              <div className="flex items-center justify-between">
                 <button
                   type="button"
                   onClick={() => setRememberMe(!rememberMe)}
@@ -203,6 +203,12 @@ const LoginPage = () => {
                   )}
                   Remember me
                 </button>
+                <Link
+                  to="/forgot-password"
+                  className="text-sm text-blue-600 hover:text-blue-700 transition-colors"
+                >
+                  Forgot Password?
+                </Link>
               </div>
             </motion.div>
 
