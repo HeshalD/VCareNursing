@@ -194,7 +194,15 @@ const startDailyInvoicing = () => {
 
       await client.query('COMMIT');
       console.log(`✅ Invoiced ${successCount}/${activeBookings.length} active bookings.`);
+
+      // Step 3 — Run credit monitor in its own transaction
+      await client.query('BEGIN');
+      const alertsCount = await runCreditMonitor(client);
+      await client.query('COMMIT');
+      console.log(`✅ Credit monitor: ${alertsCount} alert(s) sent.`);
       console.log('─── Daily Invoicing Cron Finished ───');
+
+
 
     } catch (error) {
       await client.query('ROLLBACK');
@@ -204,4 +212,104 @@ const startDailyInvoicing = () => {
     }
   });
 };
+
+// ─── Credit Monitor ────────────────────────────────────────────────────────────
+
+const runCreditMonitor = async (client) => {
+  // Get all active bookings with their payment vs invoice totals
+  const result = await client.query(
+    `SELECT 
+        b.booking_id,
+        b.client_id,
+        b.daily_rate,
+        cp.full_name as client_name,
+        uc.mobile_number as client_mobile,
+        COALESCE(SUM(CASE WHEN t.category = 'CLIENT_PAYMENT' THEN t.amount ELSE 0 END), 0) as total_paid,
+        COALESCE(SUM(CASE WHEN t.category = 'SERVICE_INVOICE' THEN t.amount ELSE 0 END), 0) as total_invoiced
+     FROM bookings b
+     JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+     JOIN users uc ON cp.user_id = uc.user_id
+     LEFT JOIN transactions t ON b.booking_id = t.booking_id
+     WHERE b.status = 'ACTIVE'
+       AND b.daily_rate IS NOT NULL
+       AND b.daily_rate > 0
+     GROUP BY 
+        b.booking_id, b.client_id, b.daily_rate, 
+        cp.full_name, uc.mobile_number`
+  );
+
+  let alertsSent = 0;
+
+  for (const booking of result.rows) {
+    const totalPaid = parseFloat(booking.total_paid);
+    const totalInvoiced = parseFloat(booking.total_invoiced);
+    const dailyRate = parseFloat(booking.daily_rate);
+
+    const remainingBalance = totalPaid - totalInvoiced;
+    const remainingDays = remainingBalance / dailyRate;
+
+    // Check if we already sent an alert today to avoid duplicates
+    const alertCheck = await client.query(
+      `SELECT alert_id FROM client_alerts
+       WHERE booking_id = $1
+         AND alert_type = $2
+         AND DATE(sent_at) = CURRENT_DATE`,
+      [booking.booking_id, remainingDays <= 0 ? 'NEGATIVE_BALANCE' : 'EXPIRING_SOON']
+    );
+
+    if (alertCheck.rows.length > 0) continue; // Already alerted today
+
+    if (remainingDays <= 0) {
+      // Day +1 — balance has gone negative
+      console.log(`🔴 NEGATIVE BALANCE: Booking ${booking.booking_id} — Client ${booking.client_name} owes Rs.${Math.abs(remainingBalance).toFixed(2)}`);
+
+      // Log the alert
+      await client.query(
+        `INSERT INTO client_alerts (booking_id, client_id, alert_type, message, sent_at)
+         VALUES ($1, $2, 'NEGATIVE_BALANCE', $3, NOW())`,
+        [
+          booking.booking_id,
+          booking.client_id,
+          `Balance negative by Rs.${Math.abs(remainingBalance).toFixed(2)}. Payment required.`
+        ]
+      );
+
+      // TODO: Uncomment when WhatsApp is live
+      // await sendCreditAlert(
+      //   booking.client_mobile,
+      //   booking.client_name,
+      //   'our office number here'
+      // );
+
+      alertsSent++;
+
+    } else if (remainingDays <= 1) {
+      // Day -1 — balance runs out tomorrow
+      console.log(`🟡 EXPIRING SOON: Booking ${booking.booking_id} — Client ${booking.client_name} has ~${remainingDays.toFixed(1)} days left (Rs.${remainingBalance.toFixed(2)})`);
+
+      // Log the alert
+      await client.query(
+        `INSERT INTO client_alerts (booking_id, client_id, alert_type, message, sent_at)
+         VALUES ($1, $2, 'EXPIRING_SOON', $3, NOW())`,
+        [
+          booking.booking_id,
+          booking.client_id,
+          `Balance expiring soon. Approximately ${remainingDays.toFixed(1)} days remaining (Rs.${remainingBalance.toFixed(2)}).`
+        ]
+      );
+
+      // TODO: Uncomment when WhatsApp is live
+      // await sendCreditAlert(
+      //   booking.client_mobile,
+      //   booking.client_name,
+      //   'our office number here'
+      // );
+
+      alertsSent++;
+    }
+  }
+
+  return alertsSent;
+};
+
 module.exports = startDailyInvoicing;
