@@ -150,13 +150,13 @@ const LoginPage = () => {
               {/* Username Input */}
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-700 block">
-                  Email or Mobile Number
+                  Mobile Number
                 </label>
                 <div className="relative group">
                   <input
                     type="text"
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-3.5 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
-                    placeholder="Enter your email or mobile number"
+                    placeholder="Enter your mobile number"
                     value={formData.identifier}
                     onChange={(e) => setFormData({ ...formData, identifier: e.target.value })}
                   />

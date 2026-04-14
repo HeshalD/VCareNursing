@@ -273,6 +273,12 @@ exports.login = async (req, res) => {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
+    // Update last_login timestamp
+    await db.query(
+      'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE user_id = $1',
+      [user.user_id]
+    );
+
     // 3. DUAL ROLE DISCOVERY (The Critical Step)
     // We check both tables to see what "hats" this user wears.
     const clientProfilePromise = db.query(
