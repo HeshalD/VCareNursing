@@ -156,8 +156,8 @@ const WorkerRegistrationSuccessPage = () => {
                 },
                 {
                   icon: Phone,
-                  title: "Interview Call",
-                  description: "We'll contact you for an interview within 3-5 business days"
+                  title: "Confirmation",
+                  description: "We'll contact you with a confirmation or rejection based on your application"
                 },
                 {
                   icon: Briefcase,
