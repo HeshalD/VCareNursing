@@ -716,3 +716,427 @@ exports.deleteStaffProfile = async (req, res) => {
         });
     }
 };
+
+// Update staff profile (Admin only)
+exports.updateStaffProfile = async (req, res) => {
+    const { staff_profile_id } = req.params;
+    const {
+        full_name,
+        designation,
+        qualifications,
+        home_address,
+        location,
+        gender,
+        willing_to_live_in,
+        date_of_birth,
+        email,
+        mobile_number,
+        role
+    } = req.body;
+
+    // Extract file URLs from multer/Cloudinary
+    const uploadedDocuments = req.files && req.files.documents ? req.files.documents.map(file => file.path) : [];
+    const uploadedProfilePicture = req.files && req.files.profile_picture ? req.files.profile_picture[0].path : null;
+
+    try {
+        // Validate staff exists
+        const existingQuery = `
+            SELECT staff_profile_id, user_id, profile_picture_url, document_urls
+            FROM staff_profiles 
+            WHERE staff_profile_id = $1
+        `;
+
+        const existingResult = await db.query(existingQuery, [staff_profile_id]);
+
+        if (existingResult.rows.length === 0) {
+            return res.status(404).json({
+                status: 'error',
+                message: 'Staff member not found'
+            });
+        }
+
+        const existingStaff = existingResult.rows[0];
+
+        // Validate required fields if provided
+        if (full_name === '' || designation === '' || gender === '' || date_of_birth === '') {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Required fields cannot be empty'
+            });
+        }
+
+        // Validate and set role if provided
+        if (role) {
+            const userRole = role.toUpperCase();
+            const validRoles = ['NURSE', 'NANNY', 'CARETAKER', 'COORDINATOR'];
+            
+            if (!validRoles.includes(userRole)) {
+                return res.status(400).json({
+                    status: 'error',
+                    message: 'Invalid role. Must be one of: NURSE, NANNY, CARETAKER, COORDINATOR'
+                });
+            }
+
+            // Update user role if provided
+            const updateUserRoleQuery = `
+                UPDATE users 
+                SET role = $1::user_role_enum[]
+                WHERE user_id = $2
+            `;
+            await db.query(updateUserRoleQuery, [[userRole], existingStaff.user_id]);
+        }
+
+        // Validate date format if provided
+        if (date_of_birth) {
+            const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+            if (!dateRegex.test(date_of_birth)) {
+                return res.status(400).json({
+                    status: 'error',
+                    message: 'Invalid date format. Use YYYY-MM-DD'
+                });
+            }
+        }
+
+        // Validate gender if provided
+        if (gender) {
+            const validGenders = ['MALE', 'FEMALE', 'OTHER'];
+            if (!validGenders.includes(gender.toUpperCase())) {
+                return res.status(400).json({
+                    status: 'error',
+                    message: 'Invalid gender. Must be MALE, FEMALE, or OTHER'
+                });
+            }
+        }
+
+        // Prepare document URLs - keep existing if no new ones uploaded
+        const finalDocumentUrls = uploadedDocuments.length > 0 ? uploadedDocuments : existingStaff.document_urls;
+
+        // Prepare profile picture - use new one if uploaded, otherwise keep existing
+        const finalProfilePicture = uploadedProfilePicture || existingStaff.profile_picture_url;
+
+        // Update staff profile
+        const updateQuery = `
+            UPDATE staff_profiles 
+            SET 
+                full_name = COALESCE($2, full_name),
+                designation = COALESCE($3, designation),
+                qualifications = COALESCE($4, qualifications),
+                document_urls = COALESCE($5, document_urls),
+                home_address = COALESCE($6, home_address),
+                location = COALESCE($7, location),
+                profile_picture_url = COALESCE($8, profile_picture_url),
+                gender = COALESCE($9, gender),
+                willing_to_live_in = COALESCE($10, willing_to_live_in),
+                date_of_birth = COALESCE($11, date_of_birth),
+                updated_at = NOW()
+            WHERE staff_profile_id = $1
+            RETURNING 
+                staff_profile_id,
+                user_id,
+                full_name,
+                designation,
+                qualifications,
+                document_urls,
+                home_address,
+                location,
+                profile_picture_url,
+                gender,
+                willing_to_live_in,
+                date_of_birth,
+                current_status,
+                verification_status,
+                created_at,
+                updated_at
+        `;
+
+        const updateValues = [
+            staff_profile_id,
+            full_name || null,
+            designation || null,
+            qualifications || null,
+            finalDocumentUrls || null,
+            home_address || null,
+            location || null,
+            finalProfilePicture || null,
+            gender ? gender.toUpperCase() : null,
+            willing_to_live_in !== undefined ? willing_to_live_in : null,
+            date_of_birth || null
+        ];
+
+        const result = await db.query(updateQuery, updateValues);
+
+        // Get updated user info
+        const userQuery = `
+            SELECT user_id, email, mobile_number, role
+            FROM users 
+            WHERE user_id = $1
+        `;
+
+        const userResult = await db.query(userQuery, [existingStaff.user_id]);
+        const user = userResult.rows[0];
+
+        res.status(200).json({
+            status: 'success',
+            message: 'Staff profile updated successfully',
+            data: {
+                ...result.rows[0],
+                user_info: {
+                    user_id: user.user_id,
+                    email: user.email,
+                    mobile_number: user.mobile_number,
+                    role: user.role
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error('Update Staff Profile Error:', error);
+        res.status(500).json({
+            status: 'error',
+            message: 'Server error while updating staff profile'
+        });
+    }
+};
+
+// Create staff profile manually (Admin only)
+exports.createStaffProfile = async (req, res) => {
+    const {
+        user_id,
+        full_name,
+        designation,
+        qualifications,
+        document_urls,
+        home_address,
+        location,
+        gps_coordinates,
+        gender,
+        willing_to_live_in,
+        date_of_birth,
+        email,
+        mobile_number,
+        role
+    } = req.body;
+
+    // Extract file URLs from multer/Cloudinary
+    const uploadedDocuments = req.files && req.files.documents ? req.files.documents.map(file => file.path) : [];
+    const uploadedProfilePicture = req.files && req.files.profile_picture ? req.files.profile_picture[0].path : null;
+
+    try {
+        // Validate required fields
+        if (!full_name || !designation || !gender || !date_of_birth) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Missing required fields: full_name, designation, gender, date_of_birth'
+            });
+        }
+
+        // Validate and set role (default to NURSE if not provided)
+        const userRole = role ? [role.toUpperCase()] : ['NURSE'];
+        const validRoles = ['NURSE', 'NANNY', 'CARETAKER', 'COORDINATOR'];
+        
+        if (!validRoles.includes(userRole[0])) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Invalid role. Must be one of: NURSE, NANNY, CARETAKER, COORDINATOR'
+            });
+        }
+
+        let finalUserId = user_id;
+        let user = null;
+
+        // If user_id is provided, check if user exists
+        if (user_id) {
+            const userCheckQuery = `
+                SELECT user_id, email, mobile_number, role, is_active
+                FROM users 
+                WHERE user_id = $1
+            `;
+
+            const userResult = await db.query(userCheckQuery, [user_id]);
+
+            if (userResult.rows.length === 0) {
+                return res.status(404).json({
+                    status: 'error',
+                    message: 'User not found'
+                });
+            }
+
+            user = userResult.rows[0];
+
+            if (!user.is_active) {
+                return res.status(400).json({
+                    status: 'error',
+                    message: 'User account is not active'
+                });
+            }
+        } else {
+            // Auto-create new user if user_id is not provided
+            if (!email || !mobile_number) {
+                return res.status(400).json({
+                    status: 'error',
+                    message: 'Email and mobile number are required when creating a new user'
+                });
+            }
+
+            // Check if user already exists by email or mobile
+            const existingUserQuery = `
+                SELECT user_id, email, mobile_number
+                FROM users 
+                WHERE email = $1 OR mobile_number = $2
+            `;
+
+            const existingResult = await db.query(existingUserQuery, [email, mobile_number]);
+
+            if (existingResult.rows.length > 0) {
+                return res.status(400).json({
+                    status: 'error',
+                    message: 'User with this email or mobile number already exists'
+                });
+            }
+
+            // Generate temporary password
+            const tempPassword = Math.random().toString(36).slice(-8);
+            const bcrypt = require('bcryptjs');
+            const hashedPassword = await bcrypt.hash(tempPassword, 12);
+
+            // Create new user
+            const createUserQuery = `
+                INSERT INTO users (email, password_hash, mobile_number, role, is_email_verified)
+                VALUES ($1, $2, $3, $4::user_role_enum[], true)
+                RETURNING user_id, email, mobile_number, role
+            `;
+
+            const userResult = await db.query(createUserQuery, [email, hashedPassword, mobile_number, userRole]);
+            user = userResult.rows[0];
+            finalUserId = user.user_id;
+        }
+
+        // Check if staff profile already exists for this user
+        const existingProfileQuery = `
+            SELECT staff_profile_id
+            FROM staff_profiles 
+            WHERE user_id = $1
+        `;
+
+        const existingResult = await db.query(existingProfileQuery, [finalUserId]);
+
+        if (existingResult.rows.length > 0) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Staff profile already exists for this user'
+            });
+        }
+
+        // Validate date format
+        const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+        if (!dateRegex.test(date_of_birth)) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Invalid date format. Use YYYY-MM-DD'
+            });
+        }
+
+        // Validate gender
+        const validGenders = ['MALE', 'FEMALE', 'OTHER'];
+        if (!validGenders.includes(gender.toUpperCase())) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Invalid gender. Must be MALE, FEMALE, or OTHER'
+            });
+        }
+
+        // Use uploaded documents if available, otherwise use empty array
+        const finalDocumentUrls = uploadedDocuments.length > 0 ? uploadedDocuments : [];
+
+        // Insert new staff profile
+        const insertQuery = `
+            INSERT INTO staff_profiles (
+                user_id,
+                full_name,
+                designation,
+                qualifications,
+                document_urls,
+                home_address,
+                location,
+                profile_picture_url,
+                gender,
+                willing_to_live_in,
+                date_of_birth,
+                current_status,
+                verification_status,
+                created_at
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'AVAILABLE', 'VERIFIED', NOW()
+            )
+            RETURNING 
+                staff_profile_id,
+                user_id,
+                full_name,
+                designation,
+                qualifications,
+                document_urls,
+                home_address,
+                location,
+                profile_picture_url,
+                gender,
+                willing_to_live_in,
+                date_of_birth,
+                current_status,
+                verification_status,
+                created_at
+        `;
+
+        const insertValues = [
+            finalUserId,
+            full_name,
+            designation,
+            qualifications || null,
+            finalDocumentUrls.length > 0 ? finalDocumentUrls : null,
+            home_address || null,
+            location || null,
+            uploadedProfilePicture || null,
+            gender.toUpperCase(),
+            willing_to_live_in || false,
+            date_of_birth
+        ];
+
+        const result = await db.query(insertQuery, insertValues);
+
+        res.status(201).json({
+            status: 'success',
+            message: 'Staff profile created successfully',
+            data: {
+                ...result.rows[0],
+                user_info: {
+                    user_id: user.user_id,
+                    email: user.email,
+                    mobile_number: user.mobile_number,
+                    role: user.role
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error('Create Staff Profile Error:', error);
+        
+        // Handle specific database errors
+        if (error.code === '23503') {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Foreign key violation: user_id does not exist'
+            });
+        }
+
+        if (error.code === '23505') {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Duplicate entry: staff profile already exists for this user'
+            });
+        }
+
+        res.status(500).json({
+            status: 'error',
+            message: 'Server error while creating staff profile'
+        });
+    }
+};

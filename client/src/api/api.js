@@ -719,6 +719,27 @@ class ApiClient {
     }
   }
 
+  // Admin Staff Management endpoints
+  async createStaffProfile(staffData) {
+    return this.request('/staff/proxy-create', {
+      method: 'POST',
+      body: staffData, // Pass FormData directly without JSON.stringify
+    });
+  }
+
+  async updateStaffProfile(staffProfileId, staffData) {
+    return this.request(`/staff/${staffProfileId}`, {
+      method: 'PUT',
+      body: staffData, // Pass FormData directly without JSON.stringify
+    });
+  }
+
+  async deleteStaffProfile(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}`, {
+      method: 'DELETE',
+    });
+  }
+
   // Staff Wallet endpoints
   async getMyWallet() {
     return this.request('/staff-wallet/my-wallet');

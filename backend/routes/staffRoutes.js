@@ -58,6 +58,9 @@ router.get(
   staffController.getStaffByGender
 );
 
+// Create staff profile with file upload support
+router.post('/proxy-create', uploadApplicationFiles, protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), staffController.createStaffProfile);
+
 router.get(
     '/:staff_profile_id/assignments', 
     protect, 
@@ -73,9 +76,13 @@ router.put('/:staff_profile_id/status', protect, staffController.updateStaffStat
 // Get staff by user_id (must be before catch-all)
 router.get('/user/:user_id', protect, staffController.getStaffByUserID);
 
+// Update staff profile (handle file uploads from proxy management)
+router.put('/:staff_profile_id', uploadApplicationFiles, protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), staffController.updateStaffProfile);
+
+// Delete staff profile
+router.delete('/:staff_profile_id', protect, staffController.deleteStaffProfile);
+
 // Get staff by ID (must be last as it's a catch-all)
 router.get('/:staff_id', protect, staffController.getStaffByID);
-
-router.delete('/:staff_profile_id', protect, staffController.deleteStaffProfile);
 
 module.exports = router;

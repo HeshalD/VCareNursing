@@ -21,6 +21,7 @@ import ClientDashboardDemo from './modules/public/ClientDashboardDemo';
 import ClientProfileDemo from './modules/public/ClientProfileDemo';
 import AdminDashboard from './modules/admin/admin_dashboard_main/AdminDashboard';
 import UserManagement from './modules/admin/user_managemnet/user_managemnet';
+import ProxyUserManagement from './modules/admin/user_managemnet/proxy_user_management';
 import ServiceRequests from './modules/admin/service_requests/service_requests';
 import QuoteBuilder from './modules/admin/service_requests/quote_builder';
 import WorkerVerification from './modules/admin/worker_verifications/worker_verifications';
@@ -89,6 +90,11 @@ function App() {
             <Route path="/admin/users" element={
               <AdminAuthProvider>
                 <UserManagement />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/proxy-user-management" element={
+              <AdminAuthProvider>
+                <ProxyUserManagement />
               </AdminAuthProvider>
             } />
             <Route path="/admin/service-requests" element={

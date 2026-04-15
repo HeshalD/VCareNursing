@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Filter, MoreHorizontal, User, Mail, Phone, MapPin, CheckCircle, XCircle, DollarSign, ChevronDown, ChevronUp, FileText, Calendar, Home, Briefcase, UserCircle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Search, Filter, MoreHorizontal, User, Mail, Phone, MapPin, CheckCircle, XCircle, DollarSign, ChevronDown, ChevronUp, FileText, Calendar, Home, Briefcase, UserCircle, Shield, ShieldOff } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 
 const UserManagement = () => {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('clients');
   const [clients, setClients] = useState([]);
   const [workers, setWorkers] = useState([]);
@@ -14,10 +16,17 @@ const UserManagement = () => {
   const [thresholdAmount, setThresholdAmount] = useState('');
   const [thresholdLoading, setThresholdLoading] = useState(false);
   const [expandedRows, setExpandedRows] = useState(new Set());
+  const [isProxyMode, setIsProxyMode] = useState(false);
 
   useEffect(() => {
     fetchData();
   }, [activeTab]);
+
+  useEffect(() => {
+    if (isProxyMode) {
+      navigate('/admin/proxy-user-management');
+    }
+  }, [isProxyMode, navigate]);
 
   const fetchData = async () => {
     try {
@@ -154,7 +163,31 @@ const UserManagement = () => {
             </button>
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            {/* Proxy Mode Toggle */}
+            <div className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-lg">
+              {isProxyMode ? (
+                <Shield className="w-4 h-4 text-emerald-600" />
+              ) : (
+                <ShieldOff className="w-4 h-4 text-slate-400" />
+              )}
+              <span className={`text-sm font-medium ${isProxyMode ? 'text-emerald-600' : 'text-slate-500'}`}>
+                Proxy Mode
+              </span>
+              <button
+                onClick={() => setIsProxyMode(!isProxyMode)}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                  isProxyMode ? 'bg-emerald-600' : 'bg-slate-300'
+                }`}
+              >
+                <span
+                  className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                    isProxyMode ? 'translate-x-5' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+            
             <div className="relative">
               <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
               <input
