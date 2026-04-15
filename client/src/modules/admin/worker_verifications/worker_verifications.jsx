@@ -213,6 +213,9 @@ const WorkerVerification = () => {
                   <th className="text-left px-6 py-4 text-sm font-semibold text-slate-700">Applicant</th>
                   <th className="text-left px-6 py-4 text-sm font-semibold text-slate-700">Contact</th>
                   <th className="text-left px-6 py-4 text-sm font-semibold text-slate-700">Roles</th>
+                  <th className="text-left px-6 py-4 text-sm font-semibold text-slate-700">Address</th>
+                  <th className="text-left px-6 py-4 text-sm font-semibold text-slate-700">Gender</th>
+                  <th className="text-left px-6 py-4 text-sm font-semibold text-slate-700">Date of Birth</th>
                   <th className="text-left px-6 py-4 text-sm font-semibold text-slate-700">Status</th>
                   <th className="text-left px-6 py-4 text-sm font-semibold text-slate-700">Rejection Reason</th>
                   <th className="text-left px-6 py-4 text-sm font-semibold text-slate-700">Documents</th>
@@ -253,6 +256,21 @@ const WorkerVerification = () => {
                           {application.applied_roles.replace(/[{}]/g, '')}
                         </span>
                       )}
+                    </td>
+                    <td className="px-6 py-4">
+                      <p className="text-sm text-slate-700 max-w-xs truncate" title={application.home_address || 'N/A'}>
+                        {application.home_address || 'N/A'}
+                      </p>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded capitalize">
+                        {application.gender || 'N/A'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <p className="text-sm text-slate-700">
+                        {application.date_of_birth ? new Date(application.date_of_birth).toLocaleDateString() : 'N/A'}
+                      </p>
                     </td>
                     <td className="px-6 py-4">
                       <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${
@@ -376,6 +394,25 @@ const WorkerVerification = () => {
                   <div className="p-3 bg-slate-50 rounded-lg">
                     <p className="text-sm font-medium text-slate-700 mb-1">Qualifications</p>
                     <p className="text-xs text-slate-500">{application.qualifications || 'N/A'}</p>
+                  </div>
+
+                  <div className="p-3 bg-slate-50 rounded-lg">
+                    <p className="text-sm font-medium text-slate-700 mb-1">Home Address</p>
+                    <p className="text-xs text-slate-500" title={application.home_address || 'N/A'}>
+                      {application.home_address || 'N/A'}
+                    </p>
+                  </div>
+
+                  <div className="p-3 bg-slate-50 rounded-lg">
+                    <p className="text-sm font-medium text-slate-700 mb-1">Personal Details</p>
+                    <div className="space-y-1">
+                      <p className="text-xs text-slate-500">
+                        <span className="font-medium">Gender:</span> <span className="capitalize">{application.gender || 'N/A'}</span>
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        <span className="font-medium">DOB:</span> {application.date_of_birth ? new Date(application.date_of_birth).toLocaleDateString() : 'N/A'}
+                      </p>
+                    </div>
                   </div>
 
                   {application.document_urls && application.document_urls.length > 0 && (

@@ -9,9 +9,11 @@ exports.getStaffByID = async (req, res) => {
             SELECT 
                 sp.staff_profile_id,
                 sp.full_name,
+                sp.designation,
                 sp.qualifications,
                 sp.document_urls,
                 sp.home_address,
+                sp.location,
                 sp.gps_coordinates,
                 sp.profile_picture_url,
                 sp.current_status,
@@ -155,9 +157,11 @@ exports.getAllStaff = async (req, res) => {
             SELECT 
                 sp.staff_profile_id,
                 sp.full_name,
+                sp.designation,
                 sp.qualifications,
                 sp.document_urls,
                 sp.home_address,
+                sp.location,
                 sp.gps_coordinates,
                 sp.profile_picture_url,
                 sp.current_status,

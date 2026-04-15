@@ -238,17 +238,35 @@ exports.acceptApplication = async (req, res) => {
     );
 
     if (staffProfileCheck.rows.length === 0) {
+        // Process applied_roles to create designation string
+        let designation = '';
+        if (app.applied_roles) {
+            let rolesToProcess = app.applied_roles;
+            if (typeof app.applied_roles === 'string') {
+                // Remove outer braces and split by comma for PostgreSQL array format
+                rolesToProcess = app.applied_roles.replace(/^\{|\}$/g, '').split(',');
+            }
+            
+            if (Array.isArray(rolesToProcess)) {
+                designation = rolesToProcess.map(r => r.replace(/\{|\}/g, '').trim()).filter(role => role.length > 0).join(', ');
+            } else {
+                designation = rolesToProcess.replace(/\{|\}/g, '').trim();
+            }
+        }
+
         const profileInsertQuery = `
-          INSERT INTO staff_profiles (user_id, full_name, qualifications, document_urls, home_address, gps_coordinates, profile_picture_url, gender, willing_to_live_in, date_of_birth)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8::gender_enum, $9, $10)
+          INSERT INTO staff_profiles (user_id, full_name, designation, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, gender, willing_to_live_in, date_of_birth)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::gender_enum, $11, $12)
           RETURNING staff_profile_id
         `;
         const profileResult = await client.query(profileInsertQuery, [
           userId,
           app.full_name,
+          designation,
           app.qualifications,
           app.document_urls,
           app.home_address,
+          app.location,
           app.gps_coordinates,
           app.profile_picture_url,
           app.gender,

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Filter, MoreHorizontal, User, Mail, Phone, MapPin, CheckCircle, XCircle, DollarSign } from 'lucide-react';
+import { Search, Filter, MoreHorizontal, User, Mail, Phone, MapPin, CheckCircle, XCircle, DollarSign, ChevronDown, ChevronUp, FileText, Calendar, Home, Briefcase, UserCircle } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 
@@ -13,6 +13,7 @@ const UserManagement = () => {
   const [selectedWorker, setSelectedWorker] = useState(null);
   const [thresholdAmount, setThresholdAmount] = useState('');
   const [thresholdLoading, setThresholdLoading] = useState(false);
+  const [expandedRows, setExpandedRows] = useState(new Set());
 
   useEffect(() => {
     fetchData();
@@ -96,12 +97,31 @@ const UserManagement = () => {
     location: staff.home_address || 'Not set',
     status: staff.current_status || 'Unknown',
     type: staff.role || 'Staff',
-    advance_threshold_amount: staff.advance_threshold_amount || 0
+    advance_threshold_amount: staff.advance_threshold_amount || 0,
+    // Additional staff profile fields
+    designation: staff.designation || 'N/A',
+    qualifications: staff.qualifications || 'N/A',
+    document_urls: staff.document_urls || [],
+    profile_picture_url: staff.profile_picture_url || null,
+    gender: staff.gender || 'N/A',
+    willing_to_live_in: staff.willing_to_live_in || false,
+    date_of_birth: staff.date_of_birth || null,
+    location_city: staff.location || 'N/A'
   });
 
   const displayData = activeTab === 'clients' 
     ? clients.map(formatClientData)
     : workers.map(formatStaffData);
+
+  const toggleRowExpansion = (userId) => {
+    const newExpanded = new Set(expandedRows);
+    if (newExpanded.has(userId)) {
+      newExpanded.delete(userId);
+    } else {
+      newExpanded.add(userId);
+    }
+    setExpandedRows(newExpanded);
+  };
 
   return (
     <AdminLayout
@@ -159,7 +179,10 @@ const UserManagement = () => {
                 <th className="px-6 py-4">Location</th>
                 <th className="px-6 py-4">Status</th>
                 {activeTab === 'workers' && (
-                  <th className="px-6 py-4">Advance Threshold</th>
+                  <>
+                    <th className="px-6 py-4">Designation</th>
+                    <th className="px-6 py-4">Advance Threshold</th>
+                  </>
                 )}
                 <th className="px-6 py-4 text-right">Actions</th>
               </tr>
@@ -167,36 +190,45 @@ const UserManagement = () => {
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan={activeTab === 'workers' ? "6" : "5"} className="px-6 py-8 text-center text-slate-500">
+                  <td colSpan={activeTab === 'workers' ? "7" : "5"} className="px-6 py-8 text-center text-slate-500">
                     Loading...
                   </td>
                 </tr>
               ) : error ? (
                 <tr>
-                  <td colSpan={activeTab === 'workers' ? "6" : "5"} className="px-6 py-8 text-center text-red-500">
+                  <td colSpan={activeTab === 'workers' ? "7" : "5"} className="px-6 py-8 text-center text-red-500">
                     {error}
                   </td>
                 </tr>
               ) : displayData.length === 0 ? (
                 <tr>
-                  <td colSpan={activeTab === 'workers' ? "6" : "5"} className="px-6 py-8 text-center text-slate-500">
+                  <td colSpan={activeTab === 'workers' ? "7" : "5"} className="px-6 py-8 text-center text-slate-500">
                     No {activeTab} found
                   </td>
                 </tr>
               ) : (
                 displayData.map((user) => (
-                  <tr key={user.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-500 font-bold">
-                          {user.name.charAt(0)}
+                  <React.Fragment key={user.id}>
+                    <tr className="hover:bg-slate-50 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          {user.profile_picture_url ? (
+                            <img
+                              src={user.profile_picture_url}
+                              alt={user.name}
+                              className="w-10 h-10 rounded-full object-cover"
+                            />
+                          ) : (
+                            <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-500 font-bold">
+                              {user.name.charAt(0)}
+                            </div>
+                          )}
+                          <div>
+                            <p className="font-medium text-slate-900">{user.name}</p>
+                            <p className="text-xs text-slate-500">{user.type}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="font-medium text-slate-900">{user.name}</p>
-                          <p className="text-xs text-slate-500">{user.type}</p>
-                        </div>
-                      </div>
-                    </td>
+                      </td>
                     <td className="px-6 py-4">
                       <div className="space-y-1">
                         <div className="flex items-center gap-2 text-slate-500">
@@ -225,6 +257,13 @@ const UserManagement = () => {
                     </td>
                     {activeTab === 'workers' && (
                       <td className="px-6 py-4">
+                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                          {user.designation}
+                        </span>
+                      </td>
+                    )}
+                    {activeTab === 'workers' && (
+                      <td className="px-6 py-4">
                         <span className="font-medium text-slate-900">
                           Rs. {user.advance_threshold_amount?.toLocaleString('en-IN') || '0'}
                         </span>
@@ -241,12 +280,96 @@ const UserManagement = () => {
                             <DollarSign className="w-4 h-4" />
                           </button>
                         )}
+                        <button
+                          onClick={() => toggleRowExpansion(user.id)}
+                          className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors"
+                          title="View Details"
+                        >
+                          {expandedRows.has(user.id) ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                        </button>
                         <button className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors">
                           <MoreHorizontal className="w-5 h-5" />
                         </button>
                       </div>
                     </td>
                   </tr>
+                  
+                  {/* Collapsible Details Row */}
+                  {activeTab === 'workers' && expandedRows.has(user.id) && (
+                    <tr className="bg-slate-50">
+                      <td colSpan={activeTab === 'workers' ? "7" : "5"} className="px-6 py-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                          {/* Qualifications */}
+                          <div className="bg-white p-3 rounded-lg border border-slate-200">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Briefcase className="w-4 h-4 text-blue-600" />
+                              <h4 className="text-sm font-semibold text-slate-700">Qualifications</h4>
+                            </div>
+                            <p className="text-xs text-slate-600">{user.qualifications}</p>
+                          </div>
+                          
+                          {/* Personal Details */}
+                          <div className="bg-white p-3 rounded-lg border border-slate-200">
+                            <div className="flex items-center gap-2 mb-2">
+                              <UserCircle className="w-4 h-4 text-purple-600" />
+                              <h4 className="text-sm font-semibold text-slate-700">Personal Details</h4>
+                            </div>
+                            <div className="space-y-1">
+                              <p className="text-xs text-slate-600">
+                                <span className="font-medium">Gender:</span> <span className="capitalize">{user.gender}</span>
+                              </p>
+                              <p className="text-xs text-slate-600">
+                                <span className="font-medium">DOB:</span> {user.date_of_birth ? new Date(user.date_of_birth).toLocaleDateString() : 'N/A'}
+                              </p>
+                              <p className="text-xs text-slate-600">
+                                <span className="font-medium">Willing to Live In:</span> {user.willing_to_live_in ? 'Yes' : 'No'}
+                              </p>
+                            </div>
+                          </div>
+                          
+                          {/* Location Details */}
+                          <div className="bg-white p-3 rounded-lg border border-slate-200">
+                            <div className="flex items-center gap-2 mb-2">
+                              <MapPin className="w-4 h-4 text-green-600" />
+                              <h4 className="text-sm font-semibold text-slate-700">Location Details</h4>
+                            </div>
+                            <div className="space-y-1">
+                              <p className="text-xs text-slate-600">
+                                <span className="font-medium">Home:</span> {user.location}
+                              </p>
+                              <p className="text-xs text-slate-600">
+                                <span className="font-medium">City:</span> {user.location_city}
+                              </p>
+                            </div>
+                          </div>
+                          
+                          {/* Documents */}
+                          {user.document_urls && user.document_urls.length > 0 && (
+                            <div className="bg-white p-3 rounded-lg border border-slate-200">
+                              <div className="flex items-center gap-2 mb-2">
+                                <FileText className="w-4 h-4 text-orange-600" />
+                                <h4 className="text-sm font-semibold text-slate-700">Documents</h4>
+                              </div>
+                              <div className="space-y-1">
+                                {user.document_urls.map((docUrl, index) => (
+                                  <a
+                                    key={index}
+                                    href={docUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                                  >
+                                    <FileText className="w-3 h-3" /> Document {index + 1}
+                                  </a>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 ))
               )}
             </tbody>
