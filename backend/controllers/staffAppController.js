@@ -307,16 +307,16 @@ exports.acceptApplication = async (req, res) => {
     // 5. Send Appropriate Notification
     let messageBody = '';
     if (isNewUser) {
-        messageBody = `Welcome to VCare Staff! Your application is accepted. \nLogin with: \nEmail: ${app.email} \nPassword: ${tempPassword}`;
+        messageBody = ` Congratulations ${app.full_name}! Welcome to the VCare Family! \n\nYour staff application has been approved! Here's what you need to do:\n\nSTEP 1: Go to the VCare website\nSTEP 2: Click "Login" \nSTEP 3: Enter your EMAIL: ${app.email}\nSTEP 4: Enter your temporary password: ${tempPassword}\nSTEP 5: You'll be automatically prompted to set your own permanent password\n\nIMPORTANT: Use your EMAIL address (not phone number) to login the first time!\n\nWe're excited to have you join our team of dedicated healthcare professionals!\n\nWith love,\nThe VCare Team `;
     } else {
-        messageBody = `Congratulations! Your application to join VCare Staff has been accepted. Your existing account has been upgraded. Please log in with your current password to access the Staff Dashboard.`;
+        messageBody = ` Congratulations ${app.full_name}! Welcome to the VCare Staff Team! \n\nGreat news! Your staff application has been approved and your account has been upgraded with staff privileges.\n\nYou can now log in with your existing credentials and access the Staff Dashboard to manage your schedule and services.\n\nIf you normally login with your phone number, try using your email address: ${app.email}\n\nWe're thrilled to have you as part of our healthcare team!\n\nWith love,\nThe VCare Team `;
     }
 
     Promise.allSettled([
         // email notification temporarily disabled
         /* sendEmail({ email: app.email, subject: 'VCare Staff Application Accepted', message: messageBody }), */
         // use WhatsApp for acceptance message
-        sendWhatsAppOtp(app.mobile_number, messageBody)
+        sendWhatsAppMessage(app.mobile_number, messageBody)
     ]);
 
     res.status(200).json({
@@ -367,7 +367,7 @@ exports.rejectApplication = async (req, res) => {
 
     // 3. Send Notifications (Parallel)
     const emailSubject = 'Update on your VCare Staff Application';
-    const messageBody = `Dear ${app.full_name},\n\nThank you for your interest in joining VCare. After careful review, we regret to inform you that we cannot proceed with your application at this time.\n\nReason: ${reason}\n\nWe encourage you to apply again in the future if your qualifications change.\n\nBest regards,\nThe VCare Team`;
+    const messageBody = `Dear ${app.full_name},\n\nThank you so much for your interest in joining the VCare family! We truly appreciate the time and effort you put into your application.\n\nAfter careful consideration, we regret to inform you that we cannot proceed with your application at this time.\n\nReason: ${reason}\n\nPlease don't be discouraged! We encourage you to apply again in the future when your qualifications or experience may better match our current needs.\n\nWe wish you the very best in your healthcare career journey.\n\nWith warm regards,\nThe VCare Team`;
 
     Promise.allSettled([
         // email notification temporarily disabled
@@ -466,11 +466,15 @@ exports.staffLogin = async (req, res) => {
             return res.status(403).json({ message: "No staff profile found. Please complete your application first." });
         }
 
-        // 4. Check if this is a temporary password (we'll use a simple approach)
-        // Since we can't easily detect temp passwords without schema changes,
-        // we'll check if the password matches the pattern we use for temp passwords
-        const isTempPassword = /^[a-z0-9]{8}$/.test(password) && password.length === 8;
-
+        // 4. Check if this is a temporary password
+        // We use a more robust approach to detect temp passwords:
+        // 1. Check if the password matches our temp password pattern (8 chars, lowercase letters and numbers only)
+        // 2. Temp passwords are only generated for new users during application acceptance
+        const isTempPassword = /^[a-z0-9]{8}$/.test(password) && 
+                               password.length === 8 && 
+                               !/[A-Z]/.test(password) && // No uppercase letters
+                               !/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password); // No special characters
+        
         // 5. Generate JWT Token
         const staffProfile = staffProfileResult.rows[0];
         const token = jwt.sign(
