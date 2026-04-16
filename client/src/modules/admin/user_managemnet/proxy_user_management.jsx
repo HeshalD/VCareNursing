@@ -14,6 +14,11 @@ const ProxyUserManagement = () => {
   const [selectedWorker, setSelectedWorker] = useState(null);
   const [expandedRows, setExpandedRows] = useState(new Set());
   const [isProxyMode, setIsProxyMode] = useState(true);
+  
+  // Filter states
+  const [sortField, setSortField] = useState('name');
+  const [sortOrder, setSortOrder] = useState('asc');
+  const [searchTerm, setSearchTerm] = useState('');
 
   // Form states for adding/editing staff
   const [formData, setFormData] = useState({
@@ -359,7 +364,53 @@ const ProxyUserManagement = () => {
     user_id: staff.user_id
   });
 
-  const displayData = workers.map(formatStaffData);
+  // Apply filters and sorting
+  const getFilteredAndSortedData = () => {
+    let filtered = workers.map(formatStaffData);
+    
+    // Apply search filter
+    if (searchTerm) {
+      filtered = filtered.filter(worker => 
+        worker.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        worker.designation.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        worker.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        worker.phone.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+    
+    // Apply sorting
+    filtered.sort((a, b) => {
+      let aValue, bValue;
+      
+      switch (sortField) {
+        case 'name':
+          aValue = a.name.toLowerCase();
+          bValue = b.name.toLowerCase();
+          break;
+        case 'designation':
+          aValue = a.designation.toLowerCase();
+          bValue = b.designation.toLowerCase();
+          break;
+        case 'status':
+          aValue = a.status.toLowerCase();
+          bValue = b.status.toLowerCase();
+          break;
+        default:
+          aValue = a.name.toLowerCase();
+          bValue = b.name.toLowerCase();
+      }
+      
+      if (sortOrder === 'asc') {
+        return aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
+      } else {
+        return aValue > bValue ? -1 : aValue < bValue ? 1 : 0;
+      }
+    });
+    
+    return filtered;
+  };
+
+  const displayData = getFilteredAndSortedData();
 
   return (
     <AdminLayout
@@ -403,11 +454,34 @@ const ProxyUserManagement = () => {
               <input
                 type="text"
                 placeholder="Search staff..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100 transition-all w-64"
               />
             </div>
-            <button className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition-colors">
-              <Filter className="w-4 h-4" />
+            
+            {/* Sort by dropdown */}
+            <div className="relative">
+              <select
+                value={sortField}
+                onChange={(e) => setSortField(e.target.value)}
+                className="appearance-none bg-white border border-slate-200 rounded-lg px-3 py-2 pr-8 text-sm outline-none focus:ring-2 focus:ring-blue-100 transition-all cursor-pointer hover:bg-slate-50"
+              >
+                <option value="name">Sort by Name</option>
+                <option value="designation">Sort by Designation</option>
+                <option value="status">Sort by Status</option>
+              </select>
+              <ChevronDown className="absolute right-2 top-2.5 w-4 h-4 text-slate-400 pointer-events-none" />
+            </div>
+            
+            {/* Sort order toggle */}
+            <button
+              onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+              className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition-colors"
+              title={`Sort order: ${sortOrder === 'asc' ? 'Ascending' : 'Descending'}`}
+            >
+              {sortOrder === 'asc' ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              <span className="text-sm">{sortOrder === 'asc' ? 'A-Z' : 'Z-A'}</span>
             </button>
           </div>
         </div>

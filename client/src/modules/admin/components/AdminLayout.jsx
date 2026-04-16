@@ -44,7 +44,7 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
             icon={Users}
             label="User Management"
             path="/admin/users"
-            active={isActive('/admin/users')}
+            active={isActive('/admin/users') || isActive('/admin/proxy-user-management')}
           />
           <SidebarItem
             icon={SendHorizontal}

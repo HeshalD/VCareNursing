@@ -318,6 +318,124 @@ const JoinTeamBanner = () => {
   )
 }
 
+const BrowseStaffSection = () => {
+  const navigate = useNavigate();
+  const [activeFilter, setActiveFilter] = React.useState('All');
+
+  const filters = ['All', 'Baby care', 'Elderly care', 'Home nursing'];
+
+  const staff = [
+    { initials: 'SJ', name: 'Sarah Jenkins', role: 'ICU Specialist Nurse', status: 'Available', specialty: 'Hospital', rating: 4.9, shifts: 42 },
+    { initials: 'PN', name: 'Priya Nair', role: 'Pediatric Nurse', status: 'Available', specialty: 'Baby care', rating: 4.8, shifts: 28 },
+    { initials: 'KF', name: 'Kamila Fernando', role: 'Home Care Nurse', status: 'On shift', specialty: 'Home nursing', rating: 5.0, shifts: 61 },
+    { initials: 'RM', name: 'Roshan Mendis', role: 'Elder Care Specialist', status: 'Available', specialty: 'Elderly care', rating: 4.7, shifts: 35 },
+  ];
+
+  const avatarColors = ['bg-blue-100 text-blue-800', 'bg-green-100 text-green-800', 'bg-purple-100 text-purple-800', 'bg-amber-100 text-amber-800'];
+
+  const filtered = activeFilter === 'All' ? staff : staff.filter(s => s.specialty === activeFilter);
+
+  return (
+    <section className="py-24 bg-slate-50">
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Header */}
+        <div className="flex justify-between items-end mb-12 flex-wrap gap-4">
+          <div>
+            <h2 className="text-4xl md:text-5xl font-bold text-slate-900 mb-3">
+              Meet our staff.
+            </h2>
+            <p className="text-slate-600 text-lg">
+              Vetted professionals ready to be deployed today.
+            </p>
+          </div>
+          <button
+            onClick={() => navigate('/staff')}
+            className="px-6 py-3 border border-slate-300 bg-white rounded-full text-slate-700 text-sm font-medium hover:bg-slate-50 transition-colors flex items-center gap-2"
+          >
+            View all staff <ArrowRight className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Filter Pills */}
+        <div className="flex gap-3 flex-wrap mb-8">
+          {filters.map(f => (
+            <button
+              key={f}
+              onClick={() => setActiveFilter(f)}
+              className={`px-5 py-2 rounded-full text-sm font-medium border transition-colors ${
+                activeFilter === f
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+              }`}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+
+        {/* Staff Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+          {filtered.map((member, i) => (
+            <div
+              key={member.name}
+              className="bg-white border border-slate-200 rounded-[24px] p-6 flex flex-col gap-4 hover:border-slate-300 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <div className={`w-11 h-11 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${avatarColors[i % avatarColors.length]}`}>
+                  {member.initials}
+                </div>
+                <div>
+                  <p className="font-semibold text-slate-900 text-sm">{member.name}</p>
+                  <p className="text-xs text-slate-500">{member.role}</p>
+                </div>
+              </div>
+
+              <div className="flex gap-2 flex-wrap">
+                <span className={`text-xs px-3 py-1 rounded-md font-medium ${
+                  member.status === 'Available'
+                    ? 'bg-green-100 text-green-800'
+                    : 'bg-amber-100 text-amber-800'
+                }`}>
+                  {member.status}
+                </span>
+                <span className="text-xs px-3 py-1 rounded-md bg-blue-50 text-blue-700 font-medium">
+                  {member.specialty}
+                </span>
+              </div>
+
+              <div className="flex justify-between items-center border-t border-slate-100 pt-4 mt-auto">
+                <span className="text-sm text-slate-500">
+                  ★ <span className="text-slate-800 font-semibold">{member.rating}</span>
+                  <span className="text-xs ml-1">({member.shifts} shifts)</span>
+                </span>
+                <button
+                  onClick={() => navigate('/staff')}
+                  className="text-xs text-blue-600 border border-blue-200 px-3 py-1.5 rounded-full hover:bg-blue-50 transition-colors"
+                >
+                  View profile
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* CTA Strip */}
+        <div className="mt-10 flex flex-col sm:flex-row items-center justify-between gap-5 bg-white border border-slate-200 rounded-[28px] p-8">
+          <p className="text-slate-600 text-base">
+            Browse <span className="font-semibold text-slate-900">200+ verified caregivers</span> and book instantly.
+          </p>
+          <button
+            onClick={() => navigate('/staff')}
+            className="flex items-center gap-2 px-8 py-4 bg-blue-600 text-white rounded-full font-bold text-base hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
+          >
+            Browse all staff <ArrowRight className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+};
+
 
 
 const LandingPage = () => {
@@ -327,6 +445,7 @@ const LandingPage = () => {
       <HeroSection />
       <Marquee />
       <ServiceGrid />
+      <BrowseStaffSection />
       <JoinTeamBanner />
       <ReviewSection />
       <Footer />
