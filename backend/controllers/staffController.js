@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { sendWhatsAppMessage } = require('../utils/whatsapp');
 
 // Get staff member by ID
 exports.getStaffByID = async (req, res) => {
@@ -692,19 +693,17 @@ exports.deleteStaffProfile = async (req, res) => {
 
         const deleteResult = await db.query(deleteQuery, [staff_profile_id]);
 
-        // Optionally, you might want to delete or deactivate the associated user account
-        // This depends on your business requirements
-        const deactivateUserQuery = `
-            UPDATE users 
-            SET is_active = false 
+        // Delete the associated user account entirely
+        const deleteUserQuery = `
+            DELETE FROM users 
             WHERE user_id = $1
         `;
 
-        await db.query(deactivateUserQuery, [staffMember.user_id]);
+        await db.query(deleteUserQuery, [staffMember.user_id]);
 
         res.status(200).json({
             status: 'success',
-            message: 'Staff profile deleted successfully',
+            message: 'Staff profile and associated user account deleted successfully',
             data: deleteResult.rows[0]
         });
 
@@ -941,75 +940,45 @@ exports.createStaffProfile = async (req, res) => {
             });
         }
 
-        let finalUserId = user_id;
-        let user = null;
-
-        // If user_id is provided, check if user exists
-        if (user_id) {
-            const userCheckQuery = `
-                SELECT user_id, email, mobile_number, role, is_active
-                FROM users 
-                WHERE user_id = $1
-            `;
-
-            const userResult = await db.query(userCheckQuery, [user_id]);
-
-            if (userResult.rows.length === 0) {
-                return res.status(404).json({
-                    status: 'error',
-                    message: 'User not found'
-                });
-            }
-
-            user = userResult.rows[0];
-
-            if (!user.is_active) {
-                return res.status(400).json({
-                    status: 'error',
-                    message: 'User account is not active'
-                });
-            }
-        } else {
-            // Auto-create new user if user_id is not provided
-            if (!email || !mobile_number) {
-                return res.status(400).json({
-                    status: 'error',
-                    message: 'Email and mobile number are required when creating a new user'
-                });
-            }
-
-            // Check if user already exists by email or mobile
-            const existingUserQuery = `
-                SELECT user_id, email, mobile_number
-                FROM users 
-                WHERE email = $1 OR mobile_number = $2
-            `;
-
-            const existingResult = await db.query(existingUserQuery, [email, mobile_number]);
-
-            if (existingResult.rows.length > 0) {
-                return res.status(400).json({
-                    status: 'error',
-                    message: 'User with this email or mobile number already exists'
-                });
-            }
-
-            // Generate temporary password
-            const tempPassword = Math.random().toString(36).slice(-8);
-            const bcrypt = require('bcryptjs');
-            const hashedPassword = await bcrypt.hash(tempPassword, 12);
-
-            // Create new user
-            const createUserQuery = `
-                INSERT INTO users (email, password_hash, mobile_number, role, is_email_verified)
-                VALUES ($1, $2, $3, $4::user_role_enum[], true)
-                RETURNING user_id, email, mobile_number, role
-            `;
-
-            const userResult = await db.query(createUserQuery, [email, hashedPassword, mobile_number, userRole]);
-            user = userResult.rows[0];
-            finalUserId = user.user_id;
+        // Always create new user for staff profile creation (Admin only)
+        if (!email || !mobile_number) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Email and mobile number are required for staff profile creation'
+            });
         }
+
+        // Check if user already exists by email or mobile
+        const existingUserQuery = `
+            SELECT user_id, email, mobile_number
+            FROM users 
+            WHERE email = $1 OR mobile_number = $2
+        `;
+
+        const userCheckResult = await db.query(existingUserQuery, [email, mobile_number]);
+
+        if (userCheckResult.rows.length > 0) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'User with this email or mobile number already exists'
+            });
+        }
+
+        // Generate temporary password
+        const tempPassword = Math.random().toString(36).slice(-8);
+        const bcrypt = require('bcryptjs');
+        const hashedPassword = await bcrypt.hash(tempPassword, 12);
+
+        // Create new user
+        const createUserQuery = `
+            INSERT INTO users (email, password_hash, mobile_number, role, is_email_verified)
+            VALUES ($1, $2, $3, $4::user_role_enum[], true)
+            RETURNING user_id, email, mobile_number, role
+        `;
+
+        const userResult = await db.query(createUserQuery, [email, hashedPassword, mobile_number, userRole]);
+        const user = userResult.rows[0];
+        const finalUserId = user.user_id;
 
         // Check if staff profile already exists for this user
         const existingProfileQuery = `
@@ -1101,6 +1070,33 @@ exports.createStaffProfile = async (req, res) => {
         ];
 
         const result = await db.query(insertQuery, insertValues);
+
+        // Send WhatsApp notification with temporary password and email
+        const messageBody = `Hello ${full_name}!
+
+Great news! Your staff account has been created by the administrator!
+
+Here are your login details:
+
+EMAIL: ${email}
+TEMPORARY PASSWORD: ${tempPassword}
+
+STEP 1: Go to VCare website
+STEP 2: Click "Login" 
+STEP 3: Enter your EMAIL: ${email}
+STEP 4: Enter your temporary password: ${tempPassword}
+STEP 5: You'll be automatically prompted to set your own permanent password
+
+IMPORTANT: Use your EMAIL address (not phone number) to login the first time!
+
+We're excited to have you join our team of dedicated healthcare professionals!
+
+With love,
+The VCare Team`;
+
+        Promise.allSettled([
+            sendWhatsAppMessage(mobile_number, messageBody)
+        ]);
 
         res.status(201).json({
             status: 'success',

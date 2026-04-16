@@ -255,14 +255,15 @@ exports.acceptApplication = async (req, res) => {
         }
 
         const profileInsertQuery = `
-          INSERT INTO staff_profiles (user_id, full_name, designation, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, gender, willing_to_live_in, date_of_birth)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::gender_enum, $11, $12)
+          INSERT INTO staff_profiles (user_id, full_name, designation,verification_status, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, gender, willing_to_live_in, date_of_birth)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::gender_enum, $12, $13)
           RETURNING staff_profile_id
         `;
         const profileResult = await client.query(profileInsertQuery, [
           userId,
           app.full_name,
           designation,
+          'VERIFIED', // verification_status
           app.qualifications,
           app.document_urls,
           app.home_address,

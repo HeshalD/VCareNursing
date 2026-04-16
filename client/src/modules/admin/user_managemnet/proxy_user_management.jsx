@@ -36,6 +36,10 @@ const ProxyUserManagement = () => {
   const [profilePicturePreview, setProfilePicturePreview] = useState('');
   const [documentPreviews, setDocumentPreviews] = useState([]);
   const [formLoading, setFormLoading] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deletePasswordError, setDeletePasswordError] = useState('');
+  const [deleteConfirmWorker, setDeleteConfirmWorker] = useState(null);
 
   useEffect(() => {
     setIsProxyMode(true);
@@ -153,17 +157,38 @@ const ProxyUserManagement = () => {
   };
 
   const handleDeleteStaff = async (workerId) => {
-    if (!window.confirm('Are you sure you want to delete this staff member?')) {
+    setDeleteConfirmWorker(workerId);
+    setDeletePassword('');
+    setDeletePasswordError('');
+    setShowDeleteConfirm(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    // Verify password
+    if (deletePassword !== 'admin@vcare') {
+      setDeletePasswordError('Incorrect admin password');
       return;
     }
 
     try {
-      await apiClient.deleteStaffProfile(workerId);
+      await apiClient.deleteStaffProfile(deleteConfirmWorker);
+      setShowDeleteConfirm(false);
+      setDeletePassword('');
+      setDeletePasswordError('');
+      setDeleteConfirmWorker(null);
       fetchWorkers(); // Refresh the list
     } catch (err) {
       console.error('Error deleting staff:', err);
       setError('Failed to delete staff member');
+      setShowDeleteConfirm(false);
     }
+  };
+
+  const handleCancelDelete = () => {
+    setShowDeleteConfirm(false);
+    setDeletePassword('');
+    setDeletePasswordError('');
+    setDeleteConfirmWorker(null);
   };
 
   const handleSubmitAdd = async (e) => {
@@ -238,7 +263,16 @@ const ProxyUserManagement = () => {
 
       // Create FormData for file uploads
       const submitData = new FormData();
-      submitData.append('user_id', formData.user_id);
+      console.log('DEBUG Frontend: formData.user_id =', JSON.stringify(formData.user_id));
+      console.log('DEBUG Frontend: user_id type =', typeof formData.user_id);
+      console.log('DEBUG Frontend: user_id trimmed =', formData.user_id ? formData.user_id.trim() : 'null');
+      
+      if (formData.user_id && formData.user_id.trim() !== '') {
+        submitData.append('user_id', formData.user_id);
+        console.log('DEBUG Frontend: Adding user_id to FormData');
+      } else {
+        console.log('DEBUG Frontend: NOT adding user_id to FormData (empty/null)');
+      }
       submitData.append('full_name', formData.full_name);
       submitData.append('email', formData.email);
       submitData.append('mobile_number', formData.mobile_number);
@@ -853,6 +887,66 @@ const ProxyUserManagement = () => {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-lg border border-slate-200 max-w-md w-full">
+            {/* Modal Header */}
+            <div className="p-6 border-b border-slate-200 bg-red-50">
+              <h2 className="text-lg font-semibold text-red-900">Confirm Staff Deletion</h2>
+              <p className="text-sm text-red-700 mt-1">This action cannot be undone</p>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-4">
+              <p className="text-slate-700">
+                To delete this staff profile, please enter your admin password:
+              </p>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Admin Password</label>
+                <input
+                  type="password"
+                  value={deletePassword}
+                  onChange={(e) => {
+                    setDeletePassword(e.target.value);
+                    setDeletePasswordError('');
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      handleConfirmDelete();
+                    }
+                  }}
+                  placeholder="Enter admin password"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+                  autoFocus
+                />
+                {deletePasswordError && (
+                  <p className="text-sm text-red-600 mt-2">{deletePasswordError}</p>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-6 border-t border-slate-200 flex gap-3 justify-end">
+              <button
+                onClick={handleCancelDelete}
+                className="px-4 py-2 text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium flex items-center gap-2"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete Staff
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </AdminLayout>
