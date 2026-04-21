@@ -44,6 +44,8 @@ import AdvanceRequests from './modules/admin/advance_requests/advance_requests';
 import ForgotPasswordPage from './modules/auth/ForgotPasswordPage';
 import VerifyForgotPasswordOtp from './modules/auth/VerifyForgotPasswordOtp';
 import ResetPasswordPage from './modules/auth/ResetPasswordPage';
+import ViewStaffPage from './modules/public/ViewStaffPage';
+import StaffProfile from './modules/public/StaffProfile';
 
 function App() {
   return (
@@ -73,6 +75,8 @@ function App() {
             <Route path='/services/child-care/book' element={<BabyCareBookingPage/>}/>
             <Route path="/services/elderly-care" element={<ElderlyCarePage />} />
             <Route path="/services/elderly-care/book" element={<ElderlyCareBookingPage />} />
+            <Route path="/services/view-staff" element={<ViewStaffPage />} />
+            <Route path="/services/staff-profile/:id" element={<StaffProfile/>}/>
             <Route path="/booking-success" element={<BookingSuccessPage />} />
             <Route path="/services/join-team" element={<WorkersTeamPage />} />
             <Route path="/services/apply" element={<WorkerRegistrationPage />} />

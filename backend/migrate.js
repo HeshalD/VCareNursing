@@ -180,7 +180,9 @@ async function migrate() {
         profile_picture_url TEXT,
         gender gender_enum,
         willing_to_live_in BOOLEAN DEFAULT false,
-        date_of_birth DATE
+        date_of_birth DATE,
+        average_rating DECIMAL(3,2) DEFAULT 0.00,
+        total_reviews INTEGER DEFAULT 0
       );
     `);
 

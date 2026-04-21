@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { motion, useScroll, useTransform } from 'framer-motion';
 import { Link, useNavigate } from 'react-router-dom';
 import {
@@ -320,20 +320,59 @@ const JoinTeamBanner = () => {
 
 const BrowseStaffSection = () => {
   const navigate = useNavigate();
-  const [activeFilter, setActiveFilter] = React.useState('All');
+  const [activeFilter, setActiveFilter] = useState('All');
+  const [staff, setStaff] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   const filters = ['All', 'Baby care', 'Elderly care', 'Home nursing'];
-
-  const staff = [
-    { initials: 'SJ', name: 'Sarah Jenkins', role: 'ICU Specialist Nurse', status: 'Available', specialty: 'Hospital', rating: 4.9, shifts: 42 },
-    { initials: 'PN', name: 'Priya Nair', role: 'Pediatric Nurse', status: 'Available', specialty: 'Baby care', rating: 4.8, shifts: 28 },
-    { initials: 'KF', name: 'Kamila Fernando', role: 'Home Care Nurse', status: 'On shift', specialty: 'Home nursing', rating: 5.0, shifts: 61 },
-    { initials: 'RM', name: 'Roshan Mendis', role: 'Elder Care Specialist', status: 'Available', specialty: 'Elderly care', rating: 4.7, shifts: 35 },
-  ];
-
   const avatarColors = ['bg-blue-100 text-blue-800', 'bg-green-100 text-green-800', 'bg-purple-100 text-purple-800', 'bg-amber-100 text-amber-800'];
 
-  const filtered = activeFilter === 'All' ? staff : staff.filter(s => s.specialty === activeFilter);
+  // Fetch staff data with ratings
+  useEffect(() => {
+    const fetchStaff = async () => {
+      try {
+        setLoading(true);
+        
+        // Fetch staff profiles
+        const staffResponse = await fetch('/api/staff/top-rated');
+        if (!staffResponse.ok) throw new Error('Failed to fetch staff');
+        const staffData = await staffResponse.json();
+        
+        // Sort by average rating and limit to top 8 for landing page
+        const topRatedStaff = staffData.data
+          .sort((a, b) => b.average_rating - a.average_rating)
+          .slice(0, 8);
+        
+        setStaff(topRatedStaff);
+      } catch (err) {
+        console.error('Error fetching staff:', err);
+        setError('Failed to load staff profiles');
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchStaff();
+  }, []);
+
+  const filtered = activeFilter === 'All' ? staff : staff.filter(s => {
+    // Map filter options to specific role types
+    const roleMap = {
+      'Baby care': ['NANNY'],
+      'Elderly care': ['CAREGIVER'], 
+      'Home nursing': ['NURSE']
+    };
+    
+    const targetRole = roleMap[activeFilter];
+    
+    // Check if role array contains the target role
+    const roleMatch = s.role && Array.isArray(s.role) 
+      ? s.role.includes(targetRole)
+      : s.role === targetRole;
+    
+    return roleMatch;
+  });
 
   return (
     <section className="py-24 bg-slate-50">
@@ -349,7 +388,7 @@ const BrowseStaffSection = () => {
             </p>
           </div>
           <button
-            onClick={() => navigate('/staff')}
+            onClick={() => navigate('/services/view-staff')}
             className="px-6 py-3 border border-slate-300 bg-white rounded-full text-slate-700 text-sm font-medium hover:bg-slate-50 transition-colors flex items-center gap-2"
           >
             View all staff <ArrowRight className="w-4 h-4" />
@@ -374,50 +413,106 @@ const BrowseStaffSection = () => {
         </div>
 
         {/* Staff Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-          {filtered.map((member, i) => (
-            <div
-              key={member.name}
-              className="bg-white border border-slate-200 rounded-[24px] p-6 flex flex-col gap-4 hover:border-slate-300 transition-colors"
+        {loading ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            {[...Array(8)].map((_, i) => (
+              <div key={i} className="bg-white border border-slate-200 rounded-[24px] p-6 flex flex-col gap-4 animate-pulse">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-full bg-slate-200"></div>
+                  <div className="flex-1">
+                    <div className="h-4 bg-slate-200 rounded mb-2 w-3/4"></div>
+                    <div className="h-3 bg-slate-200 rounded w-1/2"></div>
+                  </div>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  <div className="h-6 bg-slate-200 rounded-md px-3 py-1 w-20"></div>
+                  <div className="h-6 bg-slate-200 rounded-md px-3 py-1 w-24"></div>
+                </div>
+                <div className="flex justify-between items-center border-t border-slate-100 pt-4 mt-auto">
+                  <div className="h-4 bg-slate-200 rounded w-16"></div>
+                  <div className="h-6 bg-slate-200 rounded-full px-3 py-1.5 w-20"></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : error ? (
+          <div className="text-center py-12">
+            <p className="text-slate-600">{error}</p>
+            <button 
+              onClick={() => window.location.reload()}
+              className="mt-4 text-blue-600 hover:text-blue-700"
             >
-              <div className="flex items-center gap-3">
-                <div className={`w-11 h-11 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${avatarColors[i % avatarColors.length]}`}>
-                  {member.initials}
+              Try again
+            </button>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="text-center py-12">
+            <p className="text-slate-600">No staff found for this filter.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            {filtered.map((member, i) => (
+              <div
+                key={member.staff_profile_id}
+                className="bg-white border border-slate-200 rounded-[24px] p-6 flex flex-col gap-4 hover:border-slate-300 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  {member.profile_picture_url ? (
+                    <img 
+                      src={member.profile_picture_url} 
+                      alt={member.full_name}
+                      className="w-11 h-11 rounded-full object-cover flex-shrink-0"
+                    />
+                  ) : (
+                    <div className={`w-11 h-11 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${avatarColors[i % avatarColors.length]}`}>
+                      {member.full_name?.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'ST'}
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-slate-900 text-sm truncate">{member.full_name || 'Unknown'}</p>
+                    <p className="text-xs text-slate-500 truncate">{member.designation || member.role || 'Staff Member'}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="font-semibold text-slate-900 text-sm">{member.name}</p>
-                  <p className="text-xs text-slate-500">{member.role}</p>
+
+                <div className="flex gap-2 flex-wrap">
+                  <span className={`text-xs px-3 py-1 rounded-md font-medium ${
+                    member.current_status === 'available'
+                      ? 'bg-green-100 text-green-800'
+                      : member.current_status === 'on_shift'
+                      ? 'bg-amber-100 text-amber-800'
+                      : 'bg-slate-100 text-slate-800'
+                  }`}>
+                    {member.current_status?.replace('_', ' ') || 'Unknown'}
+                  </span>
+                  {member.specialization && (
+                    <span className="text-xs px-3 py-1 rounded-md bg-blue-50 text-blue-700 font-medium">
+                      {member.specialization}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex justify-between items-center border-t border-slate-100 pt-4 mt-auto">
+                  <span className="text-sm text-slate-500">
+                    {member.average_rating > 0 ? (
+                      <>
+                        ★ <span className="text-slate-800 font-semibold">{member.average_rating.toFixed(1)}</span>
+                        <span className="text-xs ml-1">({member.total_reviews} reviews)</span>
+                      </>
+                    ) : (
+                      <span className="text-xs text-slate-400">No ratings yet</span>
+                    )}
+                  </span>
+                  <button
+                    onClick={() => navigate(`services/staff-profile/${member.staff_profile_id}`)}
+                    className="text-xs text-blue-600 border border-blue-200 px-3 py-1.5 rounded-full hover:bg-blue-50 transition-colors"
+                  >
+                    View profile
+                  </button>
                 </div>
               </div>
-
-              <div className="flex gap-2 flex-wrap">
-                <span className={`text-xs px-3 py-1 rounded-md font-medium ${
-                  member.status === 'Available'
-                    ? 'bg-green-100 text-green-800'
-                    : 'bg-amber-100 text-amber-800'
-                }`}>
-                  {member.status}
-                </span>
-                <span className="text-xs px-3 py-1 rounded-md bg-blue-50 text-blue-700 font-medium">
-                  {member.specialty}
-                </span>
-              </div>
-
-              <div className="flex justify-between items-center border-t border-slate-100 pt-4 mt-auto">
-                <span className="text-sm text-slate-500">
-                  ★ <span className="text-slate-800 font-semibold">{member.rating}</span>
-                  <span className="text-xs ml-1">({member.shifts} shifts)</span>
-                </span>
-                <button
-                  onClick={() => navigate('/staff')}
-                  className="text-xs text-blue-600 border border-blue-200 px-3 py-1.5 rounded-full hover:bg-blue-50 transition-colors"
-                >
-                  View profile
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
 
         {/* CTA Strip */}
         <div className="mt-10 flex flex-col sm:flex-row items-center justify-between gap-5 bg-white border border-slate-200 rounded-[28px] p-8">
@@ -425,7 +520,7 @@ const BrowseStaffSection = () => {
             Browse <span className="font-semibold text-slate-900">200+ verified caregivers</span> and book instantly.
           </p>
           <button
-            onClick={() => navigate('/staff')}
+            onClick={() => navigate('/services/view-staff')}
             className="flex items-center gap-2 px-8 py-4 bg-blue-600 text-white rounded-full font-bold text-base hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
           >
             Browse all staff <ArrowRight className="w-5 h-5" />

@@ -24,6 +24,8 @@ exports.getStaffByID = async (req, res) => {
                 sp.date_of_birth,
                 sp.created_at,
                 sp.advance_threshold_amount,
+                CAST(sp.average_rating AS FLOAT) as average_rating,
+                sp.total_reviews,
                 u.user_id,
                 u.email,
                 u.mobile_number,
@@ -172,6 +174,7 @@ exports.getAllStaff = async (req, res) => {
                 sp.date_of_birth,
                 sp.created_at,
                 sp.advance_threshold_amount,
+                CAST(sp.average_rating AS FLOAT) as average_rating,
                 u.user_id,
                 u.email,
                 u.mobile_number,
@@ -194,6 +197,8 @@ exports.getAllStaff = async (req, res) => {
             db.query(query, queryParams)
         ]);
 
+        console.log('All fields returned:', Object.keys(dataResult.rows[0] || {}));
+        console.log('Average rating present:', 'average_rating' in (dataResult.rows[0] || {}));
         const totalCount = parseInt(countResult.rows[0].total_count);
         const totalPages = Math.ceil(totalCount / limit);
 
@@ -215,6 +220,58 @@ exports.getAllStaff = async (req, res) => {
         res.status(500).json({ 
             status: 'error',
             message: 'Server error while fetching staff members' 
+        });
+    }
+};
+
+// Get all staff members with current_status as 'available'
+exports.getAvailableStaff = async (req, res) => {
+    try {
+        const query = `
+            SELECT 
+                sp.staff_profile_id,
+                sp.full_name,
+                sp.designation,
+                sp.qualifications,
+                sp.document_urls,
+                sp.home_address,
+                sp.location,
+                sp.gps_coordinates,
+                sp.profile_picture_url,
+                sp.current_status,
+                sp.verification_status,
+                sp.gender,
+                sp.willing_to_live_in,
+                sp.date_of_birth,
+                sp.created_at,
+                sp.advance_threshold_amount,
+                CAST(sp.average_rating AS FLOAT) as average_rating,
+                u.user_id,
+                u.email,
+                u.mobile_number,
+                u.role,
+                u.is_active,
+                u.is_email_verified,
+                u.created_at as user_created_at
+            FROM staff_profiles sp
+            JOIN users u ON sp.user_id = u.user_id
+            WHERE sp.current_status = 'AVAILABLE'
+            ORDER BY sp.created_at DESC
+        `;
+
+        const result = await db.query(query);
+
+        res.status(200).json({
+            status: 'success',
+            data: result.rows,
+            count: result.rows.length
+        });
+
+    } catch (error) {
+        console.error('Get Available Staff Error:', error);
+        res.status(500).json({
+            status: 'error',
+            message: 'Server error while fetching available staff members'
         });
     }
 };
@@ -362,6 +419,8 @@ exports.getStaffByRole = async (req, res) => {
             db.query(query, queryParams)
         ]);
 
+        console.log('All fields returned:', Object.keys(dataResult.rows[0] || {}));
+        console.log('Average rating present:', 'average_rating' in (dataResult.rows[0] || {}));
         const totalCount = parseInt(countResult.rows[0].total_count);
         const totalPages = Math.ceil(totalCount / limit);
 
@@ -457,6 +516,8 @@ exports.getStaffByGender = async (req, res) => {
             db.query(query, queryParams)
         ]);
 
+        console.log('All fields returned:', Object.keys(dataResult.rows[0] || {}));
+        console.log('Average rating present:', 'average_rating' in (dataResult.rows[0] || {}));
         const totalCount = parseInt(countResult.rows[0].total_count);
         const totalPages = Math.ceil(totalCount / limit);
 
@@ -557,6 +618,8 @@ exports.getStaffWillingToLiveIn = async (req, res) => {
             db.query(query, queryParams)
         ]);
 
+        console.log('All fields returned:', Object.keys(dataResult.rows[0] || {}));
+        console.log('Average rating present:', 'average_rating' in (dataResult.rows[0] || {}));
         const totalCount = parseInt(countResult.rows[0].total_count);
         const totalPages = Math.ceil(totalCount / limit);
 
@@ -1136,3 +1199,57 @@ The VCare Team`;
         });
     }
 };
+
+// Get top 5 staff members by highest average ratings
+exports.getTopRatedStaff = async (req, res) => {
+    try {
+        const query = `
+            SELECT 
+                sp.staff_profile_id,
+                sp.full_name,
+                sp.designation,
+                sp.qualifications,
+                sp.document_urls,
+                sp.home_address,
+                sp.location,
+                sp.gps_coordinates,
+                sp.profile_picture_url,
+                sp.current_status,
+                sp.verification_status,
+                sp.gender,
+                sp.willing_to_live_in,
+                sp.date_of_birth,
+                sp.created_at,
+                sp.advance_threshold_amount,
+                CAST(sp.average_rating AS FLOAT) as average_rating,
+                u.user_id,
+                u.email,
+                u.mobile_number,
+                u.role,
+                u.is_active,
+                u.is_email_verified,
+                u.created_at as user_created_at
+            FROM staff_profiles sp
+            JOIN users u ON sp.user_id = u.user_id
+            WHERE sp.average_rating IS NOT NULL AND sp.average_rating > 0
+            ORDER BY sp.average_rating DESC
+            LIMIT 5
+        `;
+
+        const result = await db.query(query);
+
+        res.status(200).json({
+            status: 'success',
+            data: result.rows,
+            count: result.rows.length
+        });
+
+    } catch (error) {
+        console.error('Get Top Rated Staff Error:', error);
+        res.status(500).json({ 
+            status: 'error',
+            message: 'Server error while fetching top rated staff members' 
+        });
+    }
+};
+

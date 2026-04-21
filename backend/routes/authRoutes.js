@@ -16,7 +16,7 @@ router.post('/forgot-password/reset', authController.resetPassword);
 
 // Admin routes
 router.use(protect);
-router.get('/unified-overview', restrictTo('SUPER_ADMIN', 'ACCOUNTS'), authController.getUnifiedOverview);
+router.get('/unified-overview', authController.getUnifiedOverview);
 router.get('/users', restrictTo('SUPER_ADMIN'), authController.getAllUsers);
 
 module.exports = router;

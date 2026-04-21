@@ -33,8 +33,6 @@ router.post(
 
 router.get(
   '/available',
-  protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR'),
   staffAppController.getAvailableStaffByRole
 );
 
@@ -44,8 +42,14 @@ router.post('/login', staffAppController.staffLogin);
 // Change Password (for staff members)
 router.post('/change-password', protect, staffAppController.changeStaffPassword);
 
-// Get all staff with optional filtering
-router.get('/', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), staffController.getAllStaff);
+// Public: Get all staff with optional filtering (for landing page)
+router.get('/', staffController.getAllStaff);
+
+// Public: Get top 5 staff members by highest average ratings
+router.get('/top-rated', staffController.getTopRatedStaff);
+
+// Public: Get all staff members with current_status as 'available'
+router.get('/available-staff', staffController.getAvailableStaff);
 
 // Get staff by role
 router.get('/role/:role', staffController.getStaffByRole);
@@ -82,7 +86,7 @@ router.put('/:staff_profile_id', uploadApplicationFiles, protect, restrictTo('SU
 // Delete staff profile
 router.delete('/:staff_profile_id', protect, staffController.deleteStaffProfile);
 
-// Get staff by ID (must be last as it's a catch-all)
-router.get('/:staff_id', protect, staffController.getStaffByID);
+// Public: Get staff by ID (for landing page profiles)
+router.get('/:staff_id', staffController.getStaffByID);
 
 module.exports = router;
