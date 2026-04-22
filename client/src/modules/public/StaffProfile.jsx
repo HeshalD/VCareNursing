@@ -1,6 +1,162 @@
 import { useState, useEffect } from "react";
-import { ArrowLeft, MapPin, Clock, Star, Shield, Award, ChevronRight, Calendar, Heart, CheckCircle, Quote, Phone, MessageSquare } from "lucide-react";
+import { ArrowLeft, MapPin, Clock, Star, Shield, Award, ChevronRight, Calendar, Heart, CheckCircle, Quote, Phone, MessageSquare, Plus, X } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { useAuth } from "../../context/AuthContext";
+import apiClient from "../../api/api";
+
+const statusStyle = {
+  "Available": { dot: "#22c55e", bg: "#f0fdf4", text: "#166534" },
+  "On Shift":  { dot: "#f59e0b", bg: "#fffbeb", text: "#92400e" },
+  "Off Duty":  { dot: "#94a3b8", bg: "#f8fafc", text: "#475569" },
+};
+
+// StaffCard component from ViewStaffPage
+function StaffCard({ member, index }) {
+  const navigate = useNavigate();
+  const avatarColors = ["#2563eb", "#0891b2", "#7c3aed", "#059669", "#dc2626", "#d97706", "#be185d", "#0d9488", "#4f46e5", "#7c3aed"];
+  const color = avatarColors[index % avatarColors.length];
+  const statusText = member.current_status?.replace('_', ' ') || 'Unknown';
+  const st = statusStyle[statusText] || statusStyle["Available"];
+
+  return (
+    <div
+      style={{
+        background: "#fff",
+        border: "1px solid #e9ecef",
+        borderRadius: 20,
+        padding: "1.5rem",
+        display: "flex",
+        flexDirection: "column",
+        gap: 16,
+        cursor: "pointer",
+        transition: "transform 0.18s, box-shadow 0.18s, border-color 0.18s",
+        animation: `fadeUp 0.35s ease both`,
+        animationDelay: `${index * 40}ms`,
+      }}
+      onMouseEnter={e => {
+        e.currentTarget.style.transform = "translateY(-4px)";
+        e.currentTarget.style.boxShadow = "0 12px 32px rgba(0,0,0,0.08)";
+        e.currentTarget.style.borderColor = "#c7d9ff";
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.transform = "translateY(0)";
+        e.currentTarget.style.boxShadow = "none";
+        e.currentTarget.style.borderColor = "#e9ecef";
+      }}
+    >
+      <style>{`
+        @keyframes fadeUp {
+          from { opacity: 0; transform: translateY(16px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+
+      {/* Top: Avatar + Status */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        {member.profile_picture_url ? (
+          <img 
+            src={member.profile_picture_url} 
+            alt={member.full_name}
+            style={{
+              width: 52, height: 52, borderRadius: 16,
+              objectFit: "cover"
+            }}
+          />
+        ) : (
+          <div style={{
+            width: 52, height: 52, borderRadius: 16,
+            background: color + "18",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 16, fontWeight: 600,
+            color: color,
+            letterSpacing: "0.5px",
+          }}>
+            {member.full_name?.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'ST'}
+          </div>
+        )}
+        <span style={{
+          display: "flex", alignItems: "center", gap: 5,
+          background: st.bg, color: st.text,
+          fontSize: 11, fontWeight: 600,
+          padding: "4px 10px", borderRadius: 999,
+          letterSpacing: "0.02em",
+        }}>
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: st.dot }} />
+          {statusText}
+        </span>
+      </div>
+
+      {/* Name + Role */}
+      <div>
+        <p style={{ margin: "0 0 3px", fontSize: 15, fontWeight: 600, color: "#0f172a", lineHeight: 1.3 }}>
+          {member.full_name || 'Unknown'}
+        </p>
+        <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>
+          {member.designation || (member.role && Array.isArray(member.role) ? member.role.join(', ') : member.role) || 'Staff Member'}
+        </p>
+      </div>
+
+      {/* Meta */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#64748b" }}>
+          <MapPin size={12} color="#94a3b8" />
+          {member.location || 'Location not specified'}
+        </div>
+        {member.specialization && (
+          <div style={{
+            display: "inline-flex", alignItems: "center",
+            background: color + "12",
+            color: color,
+            fontSize: 11, fontWeight: 600,
+            padding: "3px 10px", borderRadius: 999,
+            alignSelf: "flex-start",
+            letterSpacing: "0.02em",
+          }}>
+            {member.specialization}
+          </div>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div style={{
+        borderTop: "1px solid #f1f5f9",
+        paddingTop: 14,
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <Star size={13} color="#f59e0b" fill="#f59e0b" />
+          {member.average_rating > 0 ? (
+            <>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "#0f172a" }}>{member.average_rating.toFixed(1)}</span>
+              <span style={{ fontSize: 12, color: "#94a3b8" }}>({member.total_reviews || 0} reviews)</span>
+            </>
+          ) : (
+            <span style={{ fontSize: 12, color: "#94a3b8" }}>No ratings yet</span>
+          )}
+        </div>
+        <button 
+          onClick={() => navigate(`/services/staff-profile/${member.staff_profile_id}`)}
+          style={{
+            padding: "7px 16px",
+            background: "#2563eb",
+            color: "#fff",
+            border: "none",
+            borderRadius: 999,
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: "pointer",
+            transition: "background 0.15s",
+            letterSpacing: "0.01em",
+          }}
+          onMouseEnter={e => e.currentTarget.style.background = "#1d4ed8"}
+          onMouseLeave={e => e.currentTarget.style.background = "#2563eb"}
+        >
+          View Profile
+        </button>
+      </div>
+    </div>
+  );
+}
 
 const API_URL = import.meta.env.VITE_API_URL;
 const STATUS_STYLE = {
@@ -44,15 +200,48 @@ function RatingBar({ stars, count, total }) {
   );
 }
 
+function StarSelector({ rating, setRating, size = 24 }) {
+  return (
+    <div style={{ display: "flex", gap: 4, cursor: "pointer" }}>
+      {[1, 2, 3, 4, 5].map(star => (
+        <svg
+          key={star}
+          width={size}
+          height={size}
+          viewBox="0 0 24 24"
+          fill={star <= rating ? "#f59e0b" : "#e2e8f0"}
+          stroke={star <= rating ? "#f59e0b" : "#e2e8f0"}
+          strokeWidth="1"
+          style={{ transition: "all 0.2s ease" }}
+          onMouseEnter={() => setRating(star)}
+          onMouseLeave={() => setRating(rating)}
+          onClick={() => setRating(star)}
+        >
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+        </svg>
+      ))}
+    </div>
+  );
+}
+
 // ─── Main Page ───────────────────────────────────────────────────────────────
 export default function StaffProfile() {
   const { id: staffId } = useParams();
   const navigate = useNavigate();
+  const { user, isAuthenticated } = useAuth();
   const [staff, setStaff] = useState(null);
   const [reviews, setReviews] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [bookClicked, setBookClicked] = useState(false);
+  const [showReviewForm, setShowReviewForm] = useState(false);
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewText, setReviewText] = useState('');
+  const [submittingReview, setSubmittingReview] = useState(false);
+  const [reviewError, setReviewError] = useState(null);
+  const [reviewSuccess, setReviewSuccess] = useState(false);
+  const [relatedStaff, setRelatedStaff] = useState([]);
+  const [relatedLoading, setRelatedLoading] = useState(false);
 
   // Fetch staff data and reviews
   useEffect(() => {
@@ -85,6 +274,82 @@ export default function StaffProfile() {
       fetchData();
     }
   }, [staffId]);
+
+  // Fetch related staff by role
+  useEffect(() => {
+    const fetchRelatedStaff = async () => {
+      if (!staff || !staff.role) return;
+      
+      try {
+        setRelatedLoading(true);
+        
+        // Get the primary role from the staff member and clean it
+        let primaryRole = Array.isArray(staff.role) ? staff.role[0] : staff.role;
+        if (!primaryRole) return;
+        
+        // Remove curly braces if present
+        primaryRole = primaryRole.replace(/[{}]/g, '');
+        
+        console.log('Fetching related staff for role:', primaryRole);
+        
+        // Fetch staff by role (limit to 4 related staff, excluding current staff)
+        const response = await fetch(`${API_URL}/staff/role/${primaryRole}?limit=5`);
+        if (response.ok) {
+          const data = await response.json();
+          // Filter out the current staff member and take first 4
+          const filtered = data.data?.filter(s => s.staff_profile_id !== parseInt(staffId)).slice(0, 4) || [];
+          setRelatedStaff(filtered);
+        }
+      } catch (err) {
+        console.error('Error fetching related staff:', err);
+      } finally {
+        setRelatedLoading(false);
+      }
+    };
+
+    if (staff) {
+      fetchRelatedStaff();
+    }
+  }, [staff, staffId]);
+
+  // Handle review submission
+  const handleReviewSubmit = async (e) => {
+    e.preventDefault();
+    setSubmittingReview(true);
+    setReviewError(null);
+    setReviewSuccess(false);
+
+    try {
+      const reviewData = {
+        staff_profile_id: staffId,
+        rating: reviewRating,
+        review_text: reviewText.trim()
+      };
+
+      const response = await apiClient.createStaffReview(reviewData);
+      
+      // Refresh reviews to show the new one
+      const reviewsUrl = `${API_URL}/staff-reviews/staff/${staffId}`;
+      const reviewsResponse = await fetch(reviewsUrl);
+      const reviewsData = reviewsResponse.ok ? await reviewsResponse.json() : { reviews: [] };
+      setReviews(reviewsData.reviews || []);
+
+      // Reset form
+      setReviewText('');
+      setReviewRating(5);
+      setShowReviewForm(false);
+      setReviewSuccess(true);
+      
+      // Hide success message after 3 seconds
+      setTimeout(() => setReviewSuccess(false), 3000);
+      
+    } catch (error) {
+      console.error('Error submitting review:', error);
+      setReviewError(error.message || 'Failed to submit review. Please try again.');
+    } finally {
+      setSubmittingReview(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -151,7 +416,7 @@ export default function StaffProfile() {
 
       {/* ── Topbar ── */}
       <div style={{ background: "#fff", borderBottom: "1px solid #e9ecef", padding: "0 2rem", height: 60, display: "flex", alignItems: "center", gap: 14, position: "sticky", top: 0, zIndex: 50 }}>
-        <button onClick={() => navigate("/staff")} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: "#64748b", fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+        <button onClick={() => navigate("/services/view-staff")} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: "#64748b", fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
           <ArrowLeft size={15} /> Our Team
         </button>
         <div style={{ width: 1, height: 18, background: "#e2e8f0" }} />
@@ -401,9 +666,9 @@ export default function StaffProfile() {
               </div>
             </div>
 
-            {/* Review Cards */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              {reviews.map((r, i) => (
+            {/* Review Cards - Show only 3 */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: "1.5rem" }}>
+              {reviews.slice(0, 3).map((r, i) => (
                 <div key={r.review_id || i} style={{
                   background: "#fff",
                   border: "1px solid #e9ecef",
@@ -429,6 +694,160 @@ export default function StaffProfile() {
                 </div>
               ))}
             </div>
+
+            {/* Show more reviews indicator if there are more than 3 */}
+            {reviews.length > 3 && (
+              <div style={{ 
+                textAlign: "center", 
+                padding: "1rem", 
+                color: "#64748b", 
+                fontSize: 13,
+                fontStyle: "italic",
+                marginBottom: "1.5rem"
+              }}>
+                Showing 3 of {reviews.length} reviews
+              </div>
+            )}
+
+            {/* Add Review Button - Only show for authenticated users */}
+            {isAuthenticated && (
+              <div>
+                <button
+                  onClick={() => setShowReviewForm(!showReviewForm)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "12px 20px",
+                    background: showReviewForm ? "#f1f5f9" : s.color,
+                    color: showReviewForm ? "#334155" : "#fff",
+                    border: showReviewForm ? "1px solid #e2e8f0" : "none",
+                    borderRadius: 12,
+                    fontSize: 14,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    transition: "all 0.2s ease",
+                  }}
+                >
+                  {showReviewForm ? <X size={16} /> : <Plus size={16} />}
+                  {showReviewForm ? "Cancel Review" : "Add Review"}
+                </button>
+
+                {/* Success Message */}
+                {reviewSuccess && (
+                  <div style={{
+                    marginTop: "12px",
+                    padding: "12px 16px",
+                    background: "#f0fdf4",
+                    border: "1px solid #bbf7d0",
+                    borderRadius: 8,
+                    color: "#166534",
+                    fontSize: 13,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}>
+                    <CheckCircle size={16} />
+                    Review submitted successfully!
+                  </div>
+                )}
+
+                {/* Review Form - Collapsible */}
+                {showReviewForm && (
+                  <form onSubmit={handleReviewSubmit} style={{
+                    marginTop: "1rem",
+                    padding: "1.5rem",
+                    background: "#fff",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 12,
+                  }}>
+                    {/* Star Rating Selector */}
+                    <div style={{ marginBottom: "1.5rem" }}>
+                      <label style={{ display: "block", fontSize: 14, fontWeight: 600, color: "#334155", marginBottom: "8px" }}>
+                        Your Rating
+                      </label>
+                      <StarSelector rating={reviewRating} setRating={setReviewRating} size={32} />
+                      <div style={{ fontSize: 12, color: "#64748b", marginTop: "4px" }}>
+                        {reviewRating === 5 ? "Excellent" : 
+                         reviewRating === 4 ? "Very Good" :
+                         reviewRating === 3 ? "Good" :
+                         reviewRating === 2 ? "Fair" : "Poor"}
+                      </div>
+                    </div>
+
+                    {/* Review Text */}
+                    <div style={{ marginBottom: "1.5rem" }}>
+                      <label style={{ display: "block", fontSize: 14, fontWeight: 600, color: "#334155", marginBottom: "8px" }}>
+                        Your Review
+                      </label>
+                      <textarea
+                        value={reviewText}
+                        onChange={(e) => setReviewText(e.target.value)}
+                        placeholder="Share your experience with this staff member..."
+                        required
+                        minLength={10}
+                        maxLength={500}
+                        style={{
+                          width: "100%",
+                          minHeight: "100px",
+                          padding: "12px",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: 8,
+                          fontSize: 14,
+                          color: "#000000",
+                          fontFamily: "inherit",
+                          resize: "vertical",
+                          outline: "none",
+                          transition: "border-color 0.2s ease",
+                        }}
+                        onFocus={(e) => e.target.style.borderColor = s.color}
+                        onBlur={(e) => e.target.style.borderColor = "#e2e8f0"}
+                      />
+                      <div style={{ fontSize: 12, color: "#64748b", marginTop: "4px", textAlign: "right" }}>
+                        {reviewText.length}/500 characters
+                      </div>
+                    </div>
+
+                    {/* Error Message */}
+                    {reviewError && (
+                      <div style={{
+                        marginBottom: "1rem",
+                        padding: "12px 16px",
+                        background: "#fef2f2",
+                        border: "1px solid #fecaca",
+                        borderRadius: 8,
+                        color: "#dc2626",
+                        fontSize: 13,
+                      }}>
+                        {reviewError}
+                      </div>
+                    )}
+
+                    {/* Submit Button */}
+                    <button
+                      type="submit"
+                      disabled={submittingReview || !reviewText.trim() || reviewText.trim().length < 10}
+                      style={{
+                        width: "100%",
+                        padding: "12px 20px",
+                        background: submittingReview ? "#94a3b8" : s.color,
+                        color: "#fff",
+                        border: "none",
+                        borderRadius: 8,
+                        fontSize: 14,
+                        fontWeight: 600,
+                        cursor: submittingReview || !reviewText.trim() || reviewText.trim().length < 10 ? "not-allowed" : "pointer",
+                        fontFamily: "inherit",
+                        transition: "background-color 0.2s ease",
+                      }}
+                    >
+                      {submittingReview ? "Submitting..." : "Submit Review"}
+                    </button>
+                  </form>
+                )}
+              </div>
+            )}
           </Section>
         </div>
 
@@ -519,43 +938,48 @@ export default function StaffProfile() {
         </div>
       </div>
 
-      {/* ── Other Staff ── */}
-      <div style={{ borderTop: "1px solid #e9ecef", background: "#fff", padding: "3rem 2rem" }}>
-        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "1.5rem" }}>
-            <h2 style={{ fontFamily: "'Instrument Serif', serif", fontSize: "1.6rem", color: "#0f172a", margin: 0 }}>Other Top Staff</h2>
-            <Link to="/staff" style={{ fontSize: 13, color: "#2563eb", textDecoration: "none", display: "flex", alignItems: "center", gap: 4 }}>
-              View all <ChevronRight size={14} />
-            </Link>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
-            {/* This would need to fetch other staff data, for now showing placeholder */}
-            <div style={{
-              border: "1px solid #e9ecef",
-              borderRadius: 18,
-              padding: "1.25rem",
-              textAlign: "center",
-              color: "#94a3b8",
-              background: "#fff",
-            }}>
-              <div style={{ fontSize: 14, marginBottom: 8 }}>More staff profiles coming soon...</div>
-              <Link to="/staff" style={{
-                display: "inline-block",
-                marginTop: 12,
-                padding: "8px 16px",
-                background: "#2563eb",
-                color: "#fff",
-                borderRadius: 8,
-                textDecoration: "none",
-                fontSize: 13,
-                fontWeight: 500,
-              }}>
-                Browse All Staff
+      {/* ── Related Staff ── */}
+      {relatedStaff.length > 0 && (
+        <div style={{ borderTop: "1px solid #e9ecef", background: "#fff", padding: "3rem 2rem" }}>
+          <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "1.5rem" }}>
+              <h2 style={{ fontFamily: "'Instrument Serif', serif", fontSize: 32, color: "#0f172a", margin: 0, letterSpacing: "-0.5px" }}>Other Top Staff</h2>
+              <Link to="/services/view-staff" style={{ color: s.color, textDecoration: "none", fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                View all <ChevronRight size={16} />
               </Link>
             </div>
+            {relatedLoading ? (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 20 }}>
+                {[...Array(4)].map((_, i) => (
+                  <div key={i} style={{
+                    background: "#fff", 
+                    border: "1px solid #e2e8f0", 
+                    borderRadius: 16,
+                    padding: "1.5rem", 
+                    animation: "pulse 2s infinite"
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: "1rem" }}>
+                      <div style={{ width: 48, height: 48, borderRadius: "50%", background: "#e2e8f0" }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ height: 16, background: "#e2e8f0", borderRadius: 4, marginBottom: 8, width: "80%" }} />
+                        <div style={{ height: 12, background: "#e2e8f0", borderRadius: 4, width: "60%" }} />
+                      </div>
+                    </div>
+                    <div style={{ height: 12, background: "#e2e8f0", borderRadius: 4, marginBottom: 8, width: "40%" }} />
+                    <div style={{ height: 12, background: "#e2e8f0", borderRadius: 4, width: "60%" }} />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 20 }}>
+                {relatedStaff.map((member, index) => (
+                  <StaffCard key={member.staff_profile_id} member={member} index={index} />
+                ))}
+              </div>
+            )}
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

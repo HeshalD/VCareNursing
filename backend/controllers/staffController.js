@@ -397,6 +397,7 @@ exports.getStaffByRole = async (req, res) => {
                 sp.willing_to_live_in,
                 sp.date_of_birth,
                 sp.created_at,
+                CAST(sp.average_rating AS FLOAT) as average_rating,
                 u.user_id,
                 u.email,
                 u.mobile_number,

@@ -779,6 +779,14 @@ class ApiClient {
   async getPendingAdvances() {
     return this.request('/staff-wallet/advances/pending');
   }
+
+  // Staff Review endpoints
+  async createStaffReview(reviewData) {
+    return this.request('/staff-reviews', {
+      method: 'POST',
+      body: JSON.stringify(reviewData),
+    });
+  }
 }
 
 // Create and export a singleton instance
