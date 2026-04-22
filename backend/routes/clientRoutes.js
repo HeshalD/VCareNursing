@@ -7,6 +7,7 @@ const { protect, restrictTo } = require('../middleware/authMiddleware');
 router.use(protect);
 
 // client profile endpoints
+router.get('/profile/user/:user_id', clientController.getClientProfileByUserId);
 router.patch('/update-me', clientController.updateMe);
 router.delete('/delete-me', clientController.deleteMe);
 

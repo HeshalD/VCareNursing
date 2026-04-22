@@ -242,6 +242,8 @@ export default function StaffProfile() {
   const [reviewSuccess, setReviewSuccess] = useState(false);
   const [relatedStaff, setRelatedStaff] = useState([]);
   const [relatedLoading, setRelatedLoading] = useState(false);
+  const [isOwnProfile, setIsOwnProfile] = useState(false);
+  const [checkingOwnership, setCheckingOwnership] = useState(false);
 
   // Fetch staff data and reviews
   useEffect(() => {
@@ -311,6 +313,77 @@ export default function StaffProfile() {
       fetchRelatedStaff();
     }
   }, [staff, staffId]);
+
+  // Check if current user is trying to review their own profile
+  useEffect(() => {
+    const checkProfileOwnership = async () => {
+      if (!isAuthenticated || !user) {
+        setIsOwnProfile(false);
+        return;
+      }
+
+      // Try different possible user ID field names
+      const userId = user.user_id || user.id || user.userId || user.sub;
+
+      if (!userId) {
+        setIsOwnProfile(false);
+        return;
+      }
+
+      try {
+        setCheckingOwnership(true);
+        
+        // First get client profile ID for the current user
+        const clientProfileResponse = await fetch(`${API_URL}/client/profile/user/${userId}`, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        });
+        
+        if (!clientProfileResponse.ok) {
+          // User doesn't have a client profile, so they can't be reviewing their own staff profile
+          setIsOwnProfile(false);
+          return;
+        }
+        
+        const clientProfileData = await clientProfileResponse.json();
+        const clientProfileId = clientProfileData.data?.client_profile_id;
+        
+        if (!clientProfileId) {
+          setIsOwnProfile(false);
+          return;
+        }
+        
+        // Now check if this client profile is associated with staff profile being viewed
+        const staffByClientResponse = await fetch(`${API_URL}/staff/by-client/${clientProfileId}`, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        });
+        
+        if (staffByClientResponse.ok) {
+          const staffByClientData = await staffByClientResponse.json();
+          
+          // If the staff profile ID matches, user is trying to review their own profile
+          if (staffByClientData.data?.staff_profile_id === staffId) {
+            setIsOwnProfile(true);
+          } else {
+            setIsOwnProfile(false);
+          }
+        } else {
+          setIsOwnProfile(false);
+        }
+        
+      } catch (error) {
+        console.error('Error checking profile ownership:', error);
+        setIsOwnProfile(false);
+      } finally {
+        setCheckingOwnership(false);
+      }
+    };
+
+    checkProfileOwnership();
+  }, [isAuthenticated, user, staffId]);
 
   // Handle review submission
   const handleReviewSubmit = async (e) => {
@@ -712,27 +785,58 @@ export default function StaffProfile() {
             {/* Add Review Button - Only show for authenticated users */}
             {isAuthenticated && (
               <div>
-                <button
-                  onClick={() => setShowReviewForm(!showReviewForm)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
+                {checkingOwnership ? (
+                  <div style={{
                     padding: "12px 20px",
-                    background: showReviewForm ? "#f1f5f9" : s.color,
-                    color: showReviewForm ? "#334155" : "#fff",
-                    border: showReviewForm ? "1px solid #e2e8f0" : "none",
+                    background: "#f8fafc",
+                    border: "1px solid #e2e8f0",
                     borderRadius: 12,
                     fontSize: 14,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                    transition: "all 0.2s ease",
-                  }}
-                >
-                  {showReviewForm ? <X size={16} /> : <Plus size={16} />}
-                  {showReviewForm ? "Cancel Review" : "Add Review"}
-                </button>
+                    color: "#64748b",
+                    textAlign: "center",
+                  }}>
+                    Checking permissions...
+                  </div>
+                ) : isOwnProfile ? (
+                  <div style={{
+                    padding: "12px 20px",
+                    background: "#fef2f2",
+                    border: "1px solid #fecaca",
+                    borderRadius: 12,
+                    fontSize: 14,
+                    color: "#991b1b",
+                    textAlign: "center",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                  }}>
+                    <span style={{ fontSize: 16 }}>⚠️</span>
+                    You cannot review your own profile
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setShowReviewForm(!showReviewForm)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "12px 20px",
+                      background: showReviewForm ? "#f1f5f9" : s.color,
+                      color: showReviewForm ? "#334155" : "#fff",
+                      border: showReviewForm ? "1px solid #e2e8f0" : "none",
+                      borderRadius: 12,
+                      fontSize: 14,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                      transition: "all 0.2s ease",
+                    }}
+                  >
+                    {showReviewForm ? <X size={16} /> : <Plus size={16} />}
+                    {showReviewForm ? "Cancel Review" : "Add Review"}
+                  </button>
+                )}
 
                 {/* Success Message */}
                 {reviewSuccess && (

@@ -1,5 +1,24 @@
 const db = require('../config/db');
 
+// Helper function to find staff profile associated with a client profile
+async function getStaffProfileByClientProfileId(client_profile_id) {
+  try {
+    const query = `
+      SELECT sp.staff_profile_id, sp.full_name
+      FROM staff_profiles sp
+      JOIN users u ON sp.user_id = u.user_id
+      JOIN client_profiles cp ON u.user_id = cp.user_id
+      WHERE cp.client_profile_id = $1
+    `;
+    
+    const result = await db.pool.query(query, [client_profile_id]);
+    return result.rows.length > 0 ? result.rows[0] : null;
+  } catch (error) {
+    console.error("Error finding staff profile for client:", error);
+    throw error;
+  }
+}
+
 // Create a new staff review
 exports.createReview = async (req, res) => {
   const { staff_profile_id, rating, review_text } = req.body;
@@ -43,17 +62,14 @@ exports.createReview = async (req, res) => {
     if (staffCheck.rows.length === 0) {
       return res.status(404).json({ message: "Staff profile not found" });
     }
-    {/*
-    // Check if client has already reviewed this staff (optional: prevent duplicate reviews)
-    const existingReview = await db.pool.query(
-      'SELECT review_id FROM staff_reviews WHERE client_profile_id = $1 AND staff_profile_id = $2',
-      [client_profile_id, staff_profile_id]
-    );
 
-    if (existingReview.rows.length > 0) {
-      return res.status(400).json({ message: "You have already reviewed this staff member" });
+    // Check if the client is also a staff member trying to review their own profile
+    const associatedStaff = await getStaffProfileByClientProfileId(client_profile_id);
+    if (associatedStaff && associatedStaff.staff_profile_id === parseInt(staff_profile_id)) {
+      return res.status(403).json({ 
+        message: "You cannot review your own staff profile" 
+      });
     }
-      */}
 
     // Create the review
     const result = await db.pool.query(

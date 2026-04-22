@@ -86,6 +86,38 @@ router.put('/:staff_profile_id', uploadApplicationFiles, protect, restrictTo('SU
 // Delete staff profile
 router.delete('/:staff_profile_id', protect, staffController.deleteStaffProfile);
 
+// Get staff profile associated with a client profile (helper for testing connections)
+router.get('/by-client/:client_profile_id', protect, async (req, res) => {
+  const { client_profile_id } = req.params;
+  
+  try {
+    const query = `
+      SELECT sp.staff_profile_id, sp.full_name, cp.full_name as client_name
+      FROM staff_profiles sp
+      JOIN users u ON sp.user_id = u.user_id
+      JOIN client_profiles cp ON u.user_id = cp.user_id
+      WHERE cp.client_profile_id = $1
+    `;
+    
+    const result = await db.query(query, [client_profile_id]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ 
+        message: "No staff profile found associated with this client profile" 
+      });
+    }
+    
+    res.json({
+      message: "Staff profile found associated with client profile",
+      data: result.rows[0]
+    });
+    
+  } catch (error) {
+    console.error("Error finding staff profile for client:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
 // Public: Get staff by ID (for landing page profiles)
 router.get('/:staff_id', staffController.getStaffByID);
 
