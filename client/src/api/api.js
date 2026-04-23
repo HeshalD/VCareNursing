@@ -740,9 +740,12 @@ class ApiClient {
     });
   }
 
-  // Staff Wallet endpoints
-  async getMyWallet() {
-    return this.request('/staff-wallet/my-wallet');
+  // Admin Service Request Management endpoints
+  async createProxyServiceRequest(requestData) {
+    return this.request('/service-requests/proxy-service-request', {
+      method: 'POST',
+      body: JSON.stringify(requestData),
+    });
   }
 
   async requestAdvance(advanceData) {

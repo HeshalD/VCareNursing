@@ -16,7 +16,9 @@ import {
   XCircle,
   AlertCircle,
   Calculator,
-  Users
+  Users,
+  Shield,
+  ShieldOff
 } from 'lucide-react';
 
 const ServiceRequests = () => {
@@ -27,10 +29,21 @@ const ServiceRequests = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [selectedRequest, setSelectedRequest] = useState(null);
+  const [isProxyMode, setIsProxyMode] = useState(false);
 
   useEffect(() => {
     fetchServiceRequests();
   }, []);
+
+  useEffect(() => {
+    console.log('Proxy mode changed:', isProxyMode);
+    if (isProxyMode) {
+      console.log('Proxy mode activated, navigating to proxy-service-requests');
+      navigate('/admin/proxy-service-requests');
+    } else {
+      console.log('Proxy mode deactivated');
+    }
+  }, [isProxyMode, navigate]);
 
   const fetchServiceRequests = async () => {
     try {
@@ -159,6 +172,33 @@ const ServiceRequests = () => {
               <option key="confirmed" value="CONFIRMED">Confirmed</option>
               <option key="cancelled" value="CANCELLED">Cancelled</option>
             </select>
+          </div>
+          
+          {/* Proxy Mode Toggle */}
+          <div className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-lg">
+            {isProxyMode ? (
+              <Shield className="w-4 h-4 text-emerald-600" />
+            ) : (
+              <ShieldOff className="w-4 h-4 text-slate-400" />
+            )}
+            <span className={`text-sm font-medium ${isProxyMode ? 'text-emerald-600' : 'text-slate-500'}`}>
+              Proxy Mode
+            </span>
+            <button
+              onClick={() => {
+                console.log('Toggle button clicked, current state:', isProxyMode);
+                setIsProxyMode(!isProxyMode);
+              }}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                isProxyMode ? 'bg-emerald-600' : 'bg-slate-300'
+              }`}
+            >
+              <span
+                className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                  isProxyMode ? 'translate-x-5' : 'translate-x-1'
+                }`}
+              />
+            </button>
           </div>
         </div>
       </div>

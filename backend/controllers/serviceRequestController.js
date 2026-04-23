@@ -183,3 +183,203 @@ exports.updateServiceRequestStatus = async (req, res) => {
         res.status(500).json({ message: "Error updating service request status" });
     }
 };
+
+// Admin Method to manually create a service request
+exports.createServiceRequest = async (req, res) => {
+    const {
+        client_id,
+        payer_name,
+        payer_mobile,
+        patient_name,
+        patient_age,
+        relationship_to_client,
+        patient_condition,
+        service_type,
+        service_model,
+        location_address,
+        latitude,
+        longitude,
+        start_date,
+        remarks,
+        preferred_gender,
+        preferred_staff_id,
+        status
+    } = req.body;
+
+    try {
+        // Validate required fields
+        if (!payer_name || !payer_mobile || !patient_name || !patient_age || !service_type) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Missing required fields: payer_name, payer_mobile, patient_name, patient_age, service_type'
+            });
+        }
+
+        // Validate service_model
+        const validServiceModels = ['LIVE_IN', 'SHIFT_BASED', 'VISITING'];
+        const finalServiceModel = service_model || 'SHIFT_BASED';
+        
+        if (!validServiceModels.includes(finalServiceModel)) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Invalid service model. Must be one of: LIVE_IN, SHIFT_BASED, VISITING'
+            });
+        }
+
+        // Validate preferred_gender
+        const validGenders = ['MALE', 'FEMALE', 'ANY'];
+        const finalPreferredGender = preferred_gender || 'ANY';
+        
+        if (!validGenders.includes(finalPreferredGender.toUpperCase())) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Invalid preferred gender. Must be MALE, FEMALE, or ANY'
+            });
+        }
+
+        // Validate status
+        const validStatuses = ['NEW_LEAD', 'PENDING', 'CONFIRMED', 'ASSIGNED', 'COMPLETED', 'CANCELLED'];
+        const finalStatus = status || 'NEW_LEAD';
+        
+        if (!validStatuses.includes(finalStatus)) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Invalid status. Must be one of: NEW_LEAD, PENDING, CONFIRMED, ASSIGNED, COMPLETED, CANCELLED'
+            });
+        }
+
+        // Validate patient age
+        if (isNaN(patient_age) || patient_age <= 0) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Patient age must be a positive number'
+            });
+        }
+
+        // Validate coordinates if provided
+        let finalLatitude = null;
+        let finalLongitude = null;
+        
+        if (latitude && longitude) {
+            finalLatitude = parseFloat(latitude);
+            finalLongitude = parseFloat(longitude);
+            
+            if (isNaN(finalLatitude) || isNaN(finalLongitude)) {
+                return res.status(400).json({
+                    status: 'error',
+                    message: 'Latitude and longitude must be valid numbers'
+                });
+            }
+        }
+
+        // Insert new service request
+        const insertQuery = `
+            INSERT INTO service_requests (
+                client_id,
+                payer_name,
+                payer_mobile,
+                patient_name,
+                patient_age,
+                relationship_to_client,
+                patient_condition,
+                service_type,
+                service_model,
+                location_address,
+                gps_coordinates,
+                start_date,
+                remarks,
+                preferred_gender,
+                preferred_staff_id,
+                status,
+                created_at
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9::service_model_enum, $10,
+                CASE WHEN $11::double precision IS NOT NULL AND $12::double precision IS NOT NULL 
+                     THEN point($12::double precision, $11::double precision)
+                     ELSE NULL 
+                END,
+                $13, $14, $15::gender_preference_enum, $16, $17, NOW()
+            )
+            RETURNING 
+                request_id,
+                client_id,
+                payer_name,
+                payer_mobile,
+                patient_name,
+                patient_age,
+                relationship_to_client,
+                patient_condition,
+                service_type,
+                service_model,
+                location_address,
+                gps_coordinates,
+                start_date,
+                remarks,
+                preferred_gender,
+                preferred_staff_id,
+                status,
+                created_at
+        `;
+
+        const insertValues = [
+            client_id || null,
+            payer_name,
+            payer_mobile,
+            patient_name,
+            parseInt(patient_age),
+            relationship_to_client || null,
+            patient_condition || null,
+            service_type,
+            finalServiceModel,
+            location_address || null,
+            finalLatitude,
+            finalLongitude,
+            start_date || null,
+            remarks || null,
+            finalPreferredGender.toUpperCase(),
+            preferred_staff_id || null,
+            finalStatus
+        ];
+
+        const result = await db.query(insertQuery, insertValues);
+
+        // Send notification (optional - similar to staff creation)
+        console.log(`Service request created: ${result.rows[0].request_id} for ${payer_name}`);
+
+        res.status(201).json({
+            status: 'success',
+            message: 'Service request created successfully',
+            data: result.rows[0]
+        });
+
+    } catch (error) {
+        console.error('Create Service Request Error:', error);
+        
+        // Handle specific database errors
+        if (error.code === '23503') {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Foreign key violation: client_id or preferred_staff_id does not exist'
+            });
+        }
+
+        if (error.code === '23505') {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Duplicate entry: service request already exists'
+            });
+        }
+
+        if (error.code === '23514') {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Check constraint violation: Invalid value for enum field'
+            });
+        }
+
+        res.status(500).json({
+            status: 'error',
+            message: 'Server error while creating service request'
+        });
+    }
+};

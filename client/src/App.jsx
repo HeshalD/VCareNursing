@@ -23,6 +23,7 @@ import AdminDashboard from './modules/admin/admin_dashboard_main/AdminDashboard'
 import UserManagement from './modules/admin/user_managemnet/user_managemnet';
 import ProxyUserManagement from './modules/admin/user_managemnet/proxy_user_management';
 import ServiceRequests from './modules/admin/service_requests/service_requests';
+import ProxyServiceRequest from './modules/admin/service_requests/proxy_service_request';
 import QuoteBuilder from './modules/admin/service_requests/quote_builder';
 import WorkerVerification from './modules/admin/worker_verifications/worker_verifications';
 import Financials from './modules/admin/financial/financial';
@@ -104,6 +105,11 @@ function App() {
             <Route path="/admin/service-requests" element={
               <AdminAuthProvider>
                 <ServiceRequests />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/proxy-service-requests" element={
+              <AdminAuthProvider>
+                <ProxyServiceRequest />
               </AdminAuthProvider>
             } />
             <Route path="/admin/termination-requests" element={
