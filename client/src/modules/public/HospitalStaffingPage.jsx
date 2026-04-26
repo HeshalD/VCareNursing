@@ -131,12 +131,7 @@ const HospitalStaffingPage = () => {
                 className="relative rounded-[40px] overflow-hidden shadow-2xl border-4 border-white aspect-[4/5] object-cover bg-blue-50 w-full max-w-md lg:max-w-full lg:h-[80vh] lg:w-auto"
               >
                 {/* Abstract pattern or placeholder if image reused */}
-                <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-indigo-500/10 z-0" />
-                <img
-                  src={hospitalBg}
-                  alt="Hospital Staffing"
-                  className="w-full h-full object-cover mix-blend-overlay opacity-80 grayscale-[30%]"
-                />
+
                 <div className="absolute inset-0 bg-gradient-to-t from-slate-900/40 to-transparent" />
 
                 {/* Floating Card */}
