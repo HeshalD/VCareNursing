@@ -17,7 +17,8 @@ import {
   CheckCircle,
   XCircle,
   AlertCircle,
-  FileText
+  FileText,
+  Mail
 } from 'lucide-react';
 
 const StaffRoster = () => {
@@ -588,7 +589,7 @@ const StaffRoster = () => {
 
       {/* Staff Details Modal */}
       {selectedStaff && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 backdrop-blur-sm bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-slate-200">
               <div className="flex items-center justify-between">
@@ -886,29 +887,58 @@ const StaffRoster = () => {
 
                   <div>
                     <h3 className="font-semibold text-slate-900 mb-4">Upload Payment Slip</h3>
-                    <div className="border-2 border-dashed border-slate-300 rounded-lg p-6 text-center">
-                      <FileText className="w-12 h-12 text-slate-400 mx-auto mb-4" />
-                      <label className="block cursor-pointer hover:bg-slate-50 rounded-lg p-4 -m-4 transition-colors">
-                        <span className="text-slate-700 font-medium">Click to upload or drag and drop</span>
+                    {!paymentSlipFile ? (
+                      <div className="border-2 border-dashed border-slate-300 rounded-lg p-6 text-center">
+                        <FileText className="w-12 h-12 text-slate-400 mx-auto mb-4" />
+                        <label className="block cursor-pointer hover:bg-slate-50 rounded-lg p-4 -m-4 transition-colors">
+                          <span className="text-slate-700 font-medium">Click to upload or drag and drop</span>
+                          <input
+                            type="file"
+                            accept="image/*,.pdf"
+                            onChange={(e) => setPaymentSlipFile(e.target.files[0])}
+                            className="hidden"
+                          />
+                        </label>
+                        <p className="text-sm text-slate-500 mt-2">
+                          PNG, JPG, PDF up to 5MB
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <p className="text-sm font-medium text-blue-900 mb-1">Selected file:</p>
+                              <p className="text-sm text-blue-800 mb-1">{paymentSlipFile.name}</p>
+                              <p className="text-xs text-blue-600">
+                                Size: {(paymentSlipFile.size / 1024 / 1024).toFixed(2)} MB
+                              </p>
+                            </div>
+                            <div className="flex gap-2 ml-4">
+                              <button
+                                type="button"
+                                onClick={() => document.getElementById('payment-slip-input').click()}
+                                className="px-3 py-1 text-xs font-medium text-blue-600 bg-blue-100 hover:bg-blue-200 rounded transition-colors"
+                              >
+                                Replace
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPaymentSlipFile(null)}
+                                className="px-3 py-1 text-xs font-medium text-red-600 bg-red-100 hover:bg-red-200 rounded transition-colors"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        </div>
                         <input
+                          id="payment-slip-input"
                           type="file"
                           accept="image/*,.pdf"
                           onChange={(e) => setPaymentSlipFile(e.target.files[0])}
                           className="hidden"
                         />
-                      </label>
-                      <p className="text-sm text-slate-500 mt-2">
-                        PNG, JPG, PDF up to 5MB
-                      </p>
-                    </div>
-                    
-                    {paymentSlipFile && (
-                      <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                        <p className="text-sm font-medium text-blue-900">Selected file:</p>
-                        <p className="text-sm text-blue-800">{paymentSlipFile.name}</p>
-                        <p className="text-xs text-blue-600">
-                          Size: {(paymentSlipFile.size / 1024 / 1024).toFixed(2)} MB
-                        </p>
                       </div>
                     )}
                   </div>
@@ -918,43 +948,118 @@ const StaffRoster = () => {
               {/* Step 3: Confirm Payment */}
               {assignmentStep === 3 && (
                 <div className="space-y-6">
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                    <h3 className="font-semibold text-blue-900 mb-4">Assignment Summary</h3>
+                  {/* Assignment Summary Card */}
+                  <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-xl overflow-hidden">
+                    {/* Header */}
+                    <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-4">
+                      <h3 className="font-semibold text-white flex items-center gap-2">
+                        <div className="w-8 h-8 bg-white/20 rounded-full flex items-center justify-center">
+                          <span className="text-sm font-bold">3</span>
+                        </div>
+                        Assignment Summary
+                      </h3>
+                    </div>
                     
-                    <div className="space-y-4">
-                      <div>
-                        <h4 className="text-sm font-medium text-blue-800 mb-2">Service Request</h4>
-                        <div className="space-y-1 text-sm text-blue-700">
-                          <p>Patient: {serviceRequest.patient_name}</p>
-                          <p>Location: {serviceRequest.location_address}</p>
-                          <p>Service: {serviceRequest.service_type}</p>
-                          <p>Start Date: {new Date(serviceRequest.start_date).toLocaleDateString()}</p>
+                    {/* Content */}
+                    <div className="p-6 space-y-6">
+                      {/* Service Request Section */}
+                      <div className="bg-white rounded-lg p-4 border border-blue-100">
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center">
+                            <User className="w-3 h-3 text-blue-600" />
+                          </div>
+                          <h4 className="text-sm font-semibold text-blue-900">Service Request</h4>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-500">Patient:</span>
+                            <span className="text-sm font-medium text-slate-900">{serviceRequest.patient_name}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-500">Service:</span>
+                            <span className="text-sm font-medium text-slate-900">{serviceRequest.service_type}</span>
+                          </div>
+                          <div className="flex items-center gap-2 md:col-span-2">
+                            <MapPin className="w-3 h-3 text-slate-400" />
+                            <span className="text-sm text-slate-700">{serviceRequest.location_address}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Calendar className="w-3 h-3 text-slate-400" />
+                            <span className="text-sm text-slate-700">{new Date(serviceRequest.start_date).toLocaleDateString()}</span>
+                          </div>
                         </div>
                       </div>
                       
-                      <div>
-                        <h4 className="text-sm font-medium text-blue-800 mb-2">Assigned Staff</h4>
-                        <div className="space-y-1 text-sm text-blue-700">
-                          <p>Name: {selectedStaffForAssignment.full_name}</p>
-                          <p>Contact: {selectedStaffForAssignment.mobile_number}</p>
-                          <p>Email: {selectedStaffForAssignment.email}</p>
+                      {/* Assigned Staff Section */}
+                      <div className="bg-white rounded-lg p-4 border border-green-100">
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="w-6 h-6 bg-green-100 rounded-full flex items-center justify-center">
+                            <CheckCircle className="w-3 h-3 text-green-600" />
+                          </div>
+                          <h4 className="text-sm font-semibold text-green-900">Assigned Staff</h4>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
+                            {selectedStaffForAssignment.profile_picture_url ? (
+                              <img 
+                                src={selectedStaffForAssignment.profile_picture_url} 
+                                alt={selectedStaffForAssignment.full_name}
+                                className="w-10 h-10 rounded-full object-cover"
+                              />
+                            ) : (
+                              <User className="w-5 h-5 text-green-600" />
+                            )}
+                          </div>
+                          <div className="flex-1">
+                            <p className="text-sm font-semibold text-slate-900">{selectedStaffForAssignment.full_name}</p>
+                            <div className="flex items-center gap-4 text-xs text-slate-600">
+                              <span className="flex items-center gap-1">
+                                <Phone className="w-3 h-3" />
+                                {selectedStaffForAssignment.mobile_number}
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <Mail className="w-3 h-3" />
+                                {selectedStaffForAssignment.email}
+                              </span>
+                            </div>
+                          </div>
                         </div>
                       </div>
                       
-                      <div>
-                        <h4 className="text-sm font-medium text-blue-800 mb-2">Payment Slip</h4>
-                        <div className="space-y-1 text-sm text-blue-700">
-                          <p>File: {paymentSlipFile.name}</p>
-                          <p>Size: {(paymentSlipFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                      {/* Payment Slip Section */}
+                      <div className="bg-white rounded-lg p-4 border border-amber-100">
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="w-6 h-6 bg-amber-100 rounded-full flex items-center justify-center">
+                            <FileText className="w-3 h-3 text-amber-600" />
+                          </div>
+                          <h4 className="text-sm font-semibold text-amber-900">Payment Slip</h4>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                            <FileText className="w-5 h-5 text-amber-600" />
+                          </div>
+                          <div className="flex-1">
+                            <p className="text-sm font-medium text-slate-900">{paymentSlipFile.name}</p>
+                            <p className="text-xs text-slate-600">
+                              Size: {(paymentSlipFile.size / 1024 / 1024).toFixed(2)} MB
+                            </p>
+                          </div>
                         </div>
                       </div>
                     </div>
                   </div>
 
-                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                    <p className="text-sm text-amber-800">
-                      <strong>Please review all details carefully.</strong> Once confirmed, this will create the booking and assign the staff member. The staff member will be notified immediately.
-                    </p>
+                  {/* Warning Notice */}
+                  <div className="bg-amber-50 border-l-4 border-amber-400 rounded-lg p-4">
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-medium text-amber-900 mb-1">Final Confirmation Required</p>
+                        <p className="text-sm text-amber-800">
+                          Please review all details carefully. Once confirmed, this will create the booking and assign the staff member. The staff member will be notified immediately.
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}

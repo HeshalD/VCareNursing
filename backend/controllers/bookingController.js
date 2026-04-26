@@ -171,7 +171,28 @@ const convertToBookingInternal = async (req, res) => {
                 adminId
             ]
         );
+
         // =========================================================
+        // 7.6 CREATE REGISTRATION FEE DEBIT TRANSACTION (IF APPLICABLE)
+        // =========================================================
+        if (Number(quoteData.registration_fee) > 0) {
+            await client.query(
+                `INSERT INTO transactions (
+                    client_id, booking_id, quote_id, 
+                    category, transaction_type,
+                    amount, payment_method, receipt_url, verified_by, status, notes
+                ) VALUES ($1, $2, $3, 'AGENCY_FEE', 'DEBIT', $4, $5, $6, $7, 'COMPLETED', 'Registration fee deduction from initial payment')`,
+                [
+                    clientProfileId,
+                    bookingId,
+                    bookingQuoteId,
+                    quoteData.registration_fee,
+                    payment_method,
+                    slip_url,
+                    adminId
+                ]
+            );
+        }
 
         // 8. Fetch Staff Details (For Notification)
         const staffRes = await client.query(
@@ -193,7 +214,8 @@ const convertToBookingInternal = async (req, res) => {
             `You can view their profile by logging in at: vcarenursing.com\n` +
             (reqData.tempPassword ? `\n*Login:* ${reqData.payer_mobile}\n*Temp Password:* ${reqData.tempPassword}` : ``);
 
-        // await sendWhatsAppMessage(reqData.payer_mobile, welcomeMsg);
+        // Send WhatsApp confirmation to client
+        await sendWhatsAppMessage(reqData.payer_mobile, welcomeMsg);
 
         const assignmentMsg =
             `*New Assignment Alert!* 🚨\n\n` +
@@ -203,7 +225,8 @@ const convertToBookingInternal = async (req, res) => {
             `*Start Date:* ${new Date(reqData.start_date).toDateString()}\n\n` +
             `Please log in to the App for full details.`;
 
-        // await sendWhatsAppMessage(staffData.mobile_number, assignmentMsg);
+        // Send WhatsApp notification to staff
+        await sendWhatsAppMessage(staffData.mobile_number, assignmentMsg);
 
         // if (staffData.email) { ... sendEmail ... }
 
