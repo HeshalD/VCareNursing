@@ -798,6 +798,43 @@ class ApiClient {
       body: JSON.stringify(reviewData),
     });
   }
+
+  // Finances endpoints
+  async getFinancesOverview() {
+    return this.request('/finances/overview');
+  }
+
+  async getFinancesTransactions(params = {}) {
+    const queryParams = new URLSearchParams(params).toString();
+    const url = queryParams ? `/finances/transactions?${queryParams}` : '/finances/transactions';
+    return this.request(url);
+  }
+
+  async getAdvancesSummary() {
+    return this.request('/finances/advances-summary');
+  }
+
+  async getStaffWalletsSummary() {
+    return this.request('/finances/staff-wallets-summary');
+  }
+
+  async getCreditAlertsSummary() {
+    return this.request('/finances/credit-alerts-summary');
+  }
+
+  async getStoreSummary() {
+    return this.request('/finances/store-summary');
+  }
+
+  async getRevenueChart(period) {
+    const queryParams = period ? `?period=${encodeURIComponent(period)}` : '';
+    const url = `/finances/revenue-chart${queryParams}`;
+    return this.request(url);
+  }
+
+  async getTransactionCategoriesChart() {
+    return this.request('/finances/transaction-categories-chart');
+  }
 }
 
 // Create and export a singleton instance
