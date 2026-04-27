@@ -12,11 +12,11 @@ cloudinary.config({
 });
 
 exports.createQuotation = async (req, res) => {
-    const { request_id, daily_rate, qty_days, transport_fee } = req.body;
+    const { request_id, daily_rate, qty_days, transport_fee, registration_fee } = req.body;
 
     try {
         // 1. Setup constants based on Sample Estimate 
-        const regFee = 10000.00;
+        const regFee = (registration_fee !== undefined && registration_fee !== '' && registration_fee !== null) ? parseFloat(registration_fee) : 0;
         const days = qty_days || 7;
         const transport = transport_fee || 1000.00; // Based on sample 
 

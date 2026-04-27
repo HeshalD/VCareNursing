@@ -21,6 +21,7 @@ const QuoteBuilder = () => {
   const navigate = useNavigate();
   console.log('Quote builder - requestId from params:', requestId);
   const [serviceRequest, setServiceRequest] = useState(null);
+  const [clientProfile, setClientProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [creatingQuote, setCreatingQuote] = useState(false);
@@ -32,7 +33,7 @@ const QuoteBuilder = () => {
     daily_rate: '',
     qty_days: '7',
     transport_fee: '1000',
-    registration_fee: '10000'
+    registration_fee: ''
   });
 
   useEffect(() => {
@@ -55,6 +56,17 @@ const QuoteBuilder = () => {
       setLoading(true);
       const response = await apiClient.getServiceRequestById(requestId);
       setServiceRequest(response.data);
+      
+      // Fetch client profile to check registration fee status
+      if (response.data.client_id) {
+        try {
+          const clientResponse = await apiClient.getClientProfile(response.data.client_id);
+          setClientProfile(clientResponse.data);
+        } catch (clientErr) {
+          console.warn('Failed to fetch client profile:', clientErr);
+          // Continue even if client profile fetch fails
+        }
+      }
     } catch (err) {
       if (err.message?.includes('404') || err.message?.includes('not found')) {
         setError('Service request not found');
@@ -97,7 +109,7 @@ const QuoteBuilder = () => {
   };
 
   const calculateTotals = () => {
-    const regFee = parseFloat(quoteForm.registration_fee) || 0;
+    const regFee = (quoteForm.registration_fee !== '' && quoteForm.registration_fee !== null) ? parseFloat(quoteForm.registration_fee) : 0;
     const dailyRate = parseFloat(quoteForm.daily_rate) || 0;
     const days = parseInt(quoteForm.qty_days) || 0;
     const transport = parseFloat(quoteForm.transport_fee) || 0;
@@ -125,7 +137,7 @@ const QuoteBuilder = () => {
         daily_rate: parseFloat(quoteForm.daily_rate),
         qty_days: parseInt(quoteForm.qty_days),
         transport_fee: parseFloat(quoteForm.transport_fee),
-        registration_fee: parseFloat(quoteForm.registration_fee)
+        registration_fee: (quoteForm.registration_fee !== '' && quoteForm.registration_fee !== null) ? parseFloat(quoteForm.registration_fee) : ''
       });
       setCreatedQuote(response.data);
     } catch (err) {
@@ -357,11 +369,16 @@ const QuoteBuilder = () => {
                       name="registration_fee"
                       value={quoteForm.registration_fee}
                       onChange={handleInputChange}
-                      required
                       className="w-full pl-12 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="Enter registration fee"
+                      placeholder="Enter registration fee (optional)"
                     />
                   </div>
+                  {clientProfile?.is_registration_fee_paid && (
+                    <div className="mt-2 flex items-center gap-2 text-sm text-amber-600 bg-amber-50 px-3 py-2 rounded-lg border border-amber-200">
+                      <AlertCircle className="w-4 h-4" />
+                      <span>Client has already paid registration fee</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Daily Rate */}
@@ -489,7 +506,7 @@ const QuoteBuilder = () => {
                     <div className="flex justify-between text-sm">
                       <span className="text-slate-600">Total Amount:</span>
                       <span className="font-bold text-blue-600">
-                        KES {createdQuote.total_amount?.toLocaleString()}
+                        Rs. {createdQuote.total_amount?.toLocaleString()}
                       </span>
                     </div>
                   </div>
@@ -522,7 +539,7 @@ const QuoteBuilder = () => {
                         daily_rate: '',
                         qty_days: '7',
                         transport_fee: '1000',
-                        registration_fee: '10000'
+                        registration_fee: ''
                       });
                     }}
                     className="w-full bg-slate-200 text-slate-700 py-3 px-4 rounded-lg font-medium hover:bg-slate-300 transition-colors"

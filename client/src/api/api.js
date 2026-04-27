@@ -267,6 +267,14 @@ class ApiClient {
 
 
 
+  async getClientProfile(clientId) {
+
+    return this.request(`/client/${clientId}`);
+
+  }
+
+
+
   // Product endpoints
 
   async getAllProducts() {

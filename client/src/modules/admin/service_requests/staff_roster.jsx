@@ -40,18 +40,23 @@ const StaffRoster = () => {
   const [availableStaffForAssignment, setAvailableStaffForAssignment] = useState([]);
   const [useSmartFiltering, setUseSmartFiltering] = useState(true);
   
-  // Filters
+  // Smart Filters (when enabled)
   const [statusFilter, setStatusFilter] = useState('all');
   const [genderFilter, setGenderFilter] = useState('all');
   const [liveInFilter, setLiveInFilter] = useState('all');
   const [roleFilter, setRoleFilter] = useState('all');
+  
+  // Admin Filters (when smart filters disabled)
+  const [adminSearchTerm, setAdminSearchTerm] = useState('');
+  const [adminRoleFilter, setAdminRoleFilter] = useState('all');
+  const [adminLiveInFilter, setAdminLiveInFilter] = useState('all');
   
   // Get service request data from location state
   const serviceRequest = location.state?.serviceRequest;
 
   useEffect(() => {
     fetchStaff();
-  }, [statusFilter, genderFilter, liveInFilter, roleFilter]);
+  }, [statusFilter, genderFilter, liveInFilter, roleFilter, adminSearchTerm, adminRoleFilter, adminLiveInFilter, useSmartFiltering]);
 
   const fetchStaff = async () => {
     try {
@@ -70,43 +75,99 @@ const StaffRoster = () => {
       // Apply filters client-side for better control
       let filteredStaff = allStaff;
       
-      // Status filter
-      if (statusFilter !== 'all') {
-        filteredStaff = filteredStaff.filter(staff => staff.current_status === statusFilter);
-      }
-      
-      // Gender filter
-      if (genderFilter !== 'all') {
-        filteredStaff = filteredStaff.filter(staff => staff.gender === genderFilter);
-      }
-      
-      // Live-in filter
-      if (liveInFilter !== 'all') {
-        if (liveInFilter === 'yes') {
-          filteredStaff = filteredStaff.filter(staff => staff.willing_to_live_in === true);
-        } else {
-          filteredStaff = filteredStaff.filter(staff => staff.willing_to_live_in === false);
+      if (useSmartFiltering) {
+        // Smart Filters (when enabled) - Show all staff with manual filtering
+        // Status filter
+        if (statusFilter !== 'all') {
+          filteredStaff = filteredStaff.filter(staff => staff.current_status === statusFilter);
         }
-      }
-      
-      // Role filter
-      if (roleFilter !== 'all') {
-        filteredStaff = filteredStaff.filter(staff => {
-          // Handle different role data structures
-          if (Array.isArray(staff.role)) {
-            return staff.role.includes(roleFilter);
-          } else if (typeof staff.role === 'string') {
-            // Remove curly braces and quotes, then split by comma if multiple roles
-            const cleanRole = staff.role.replace(/[{}"]/g, '');
-            const roles = cleanRole.includes(',') ? cleanRole.split(',') : [cleanRole];
-            return roles.includes(roleFilter);
-          } else if (staff.role && typeof staff.role === 'object') {
-            // Handle PostgreSQL array format: {role: ["NURSE", "CARETAKER"]}
-            const roles = Object.values(staff.role);
-            return roles.includes(roleFilter);
+        
+        // Gender filter
+        if (genderFilter !== 'all') {
+          filteredStaff = filteredStaff.filter(staff => staff.gender === genderFilter);
+        }
+        
+        // Live-in filter
+        if (liveInFilter !== 'all') {
+          if (liveInFilter === 'yes') {
+            filteredStaff = filteredStaff.filter(staff => staff.willing_to_live_in === true);
+          } else {
+            filteredStaff = filteredStaff.filter(staff => staff.willing_to_live_in === false);
           }
-          return false;
-        });
+        }
+        
+        // Role filter
+        if (roleFilter !== 'all') {
+          filteredStaff = filteredStaff.filter(staff => {
+            // Handle different role data structures
+            if (Array.isArray(staff.role)) {
+              return staff.role.includes(roleFilter);
+            } else if (typeof staff.role === 'string') {
+              // Remove curly braces and quotes, then split by comma if multiple roles
+              const cleanRole = staff.role.replace(/[{}"]/g, '');
+              const roles = cleanRole.includes(',') ? cleanRole.split(',') : [cleanRole];
+              return roles.includes(roleFilter);
+            } else if (staff.role && typeof staff.role === 'object') {
+              // Handle PostgreSQL array format: {role: ["NURSE", "CARETAKER"]}
+              const roles = Object.values(staff.role);
+              return roles.includes(roleFilter);
+            }
+            return false;
+          });
+        }
+      } else {
+        // Admin Filters (when smart filters disabled)
+        
+        // Search across all staff_profiles columns
+        if (adminSearchTerm) {
+          const searchLower = adminSearchTerm.toLowerCase();
+          filteredStaff = filteredStaff.filter(staff => {
+            // Search across all relevant staff_profiles columns
+            return (
+              staff.full_name?.toLowerCase().includes(searchLower) ||
+              staff.designation?.toLowerCase().includes(searchLower) ||
+              staff.home_address?.toLowerCase().includes(searchLower) ||
+              staff.location?.toLowerCase().includes(searchLower) ||
+              staff.email?.toLowerCase().includes(searchLower) ||
+              staff.mobile_number?.includes(searchLower) ||
+              staff.qualifications?.toLowerCase().includes(searchLower) ||
+              staff.current_status?.toLowerCase().includes(searchLower) ||
+              staff.verification_status?.toLowerCase().includes(searchLower) ||
+              // Also search in roles
+              (Array.isArray(staff.role) && staff.role.some(role => role.toLowerCase().includes(searchLower))) ||
+              (typeof staff.role === 'string' && staff.role.toLowerCase().includes(searchLower))
+            );
+          });
+        }
+        
+        // Role filter (admin)
+        if (adminRoleFilter !== 'all') {
+          filteredStaff = filteredStaff.filter(staff => {
+            // Handle different role data structures
+            if (Array.isArray(staff.role)) {
+              return staff.role.includes(adminRoleFilter);
+            } else if (typeof staff.role === 'string') {
+              // Remove curly braces and quotes, then split by comma if multiple roles
+              const cleanRole = staff.role.replace(/[{}"]/g, '');
+              const roles = cleanRole.includes(',') ? cleanRole.split(',') : [cleanRole];
+              return roles.includes(adminRoleFilter);
+            } else if (staff.role && typeof staff.role === 'object') {
+              // Handle PostgreSQL array format: {role: ["NURSE", "CARETAKER"]}
+              const roles = Object.values(staff.role);
+              return roles.includes(adminRoleFilter);
+            }
+            return false;
+          });
+        }
+        
+        // Willing to live in filter (admin)
+        if (adminLiveInFilter !== 'all') {
+          if (adminLiveInFilter === 'yes') {
+            filteredStaff = filteredStaff.filter(staff => staff.willing_to_live_in === true);
+          } else {
+            filteredStaff = filteredStaff.filter(staff => staff.willing_to_live_in === false);
+          }
+        }
       }
       
       console.log('Filtered staff data:', filteredStaff);
@@ -146,11 +207,15 @@ const StaffRoster = () => {
   };
 
   const filteredStaff = staff.filter(staffMember => {
-    const matchesSearch = 
-      staffMember.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      staffMember.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      staffMember.mobile_number?.includes(searchTerm) ||
-      staffMember.home_address?.toLowerCase().includes(searchTerm.toLowerCase());
+    // Use appropriate search term based on filtering mode
+    const currentSearchTerm = useSmartFiltering ? searchTerm : adminSearchTerm;
+    
+    const matchesSearch = !currentSearchTerm || (
+      staffMember.full_name?.toLowerCase().includes(currentSearchTerm.toLowerCase()) ||
+      staffMember.email?.toLowerCase().includes(currentSearchTerm.toLowerCase()) ||
+      staffMember.mobile_number?.includes(currentSearchTerm) ||
+      staffMember.home_address?.toLowerCase().includes(currentSearchTerm.toLowerCase())
+    );
     
     return matchesSearch;
   });
@@ -161,44 +226,8 @@ const StaffRoster = () => {
       return;
     }
 
-    let matchingStaff;
-
-    if (useSmartFiltering) {
-      // Map service types to required roles
-      const serviceToRoleMap = {
-        'HOME_NURSING': ['NURSE'],
-        'BABY_CARE': ['NANNY'],
-        'CARETAKER': ['CARETAKER', 'NURSE']
-      };
-
-      // Get required roles for this service type
-      const requiredRoles = serviceToRoleMap[serviceRequest.service_type] || [];
-
-      // Filter available staff that match service request criteria
-      matchingStaff = staff.filter(s => 
-        s.current_status === 'AVAILABLE' &&
-        (!serviceRequest.preferred_gender || serviceRequest.preferred_gender === 'ANY' || s.gender === serviceRequest.preferred_gender) &&
-        (requiredRoles.length === 0 || requiredRoles.some(role => {
-          // Handle different role data structures
-          if (Array.isArray(s.role)) {
-            return s.role.includes(role);
-          } else if (typeof s.role === 'string') {
-            // Remove curly braces and quotes, then split by comma if multiple roles
-            const cleanRole = s.role.replace(/[{}"]/g, '');
-            const roles = cleanRole.includes(',') ? cleanRole.split(',') : [cleanRole];
-            return roles.includes(role);
-          } else if (s.role && typeof s.role === 'object') {
-            // Handle PostgreSQL array format: {role: ["NURSE", "CARETAKER"]}
-            const roles = Object.values(s.role);
-            return roles.includes(role);
-          }
-          return false;
-        }))
-      );
-    } else {
-      // Show all available staff (manual selection mode)
-      matchingStaff = staff.filter(s => s.current_status === 'AVAILABLE');
-    }
+    // Show all available staff for manual selection
+    let matchingStaff = staff.filter(s => s.current_status === 'AVAILABLE');
 
     setAvailableStaffForAssignment(matchingStaff);
     setShowAssignModal(true);
@@ -392,69 +421,147 @@ const StaffRoster = () => {
 
       {/* Filters and Search */}
       <div className="bg-white rounded-lg border border-slate-200 p-6 mb-6">
-        <div className="flex flex-col lg:flex-row gap-4">
-          <div className="flex-1">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search by name, email, phone, or address..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-            </div>
-          </div>
-          
-          <div className="flex flex-wrap items-center gap-4">
+        {/* Smart Filtering Toggle */}
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <Filter className="w-4 h-4 text-slate-500" />
-              <span className="text-sm font-medium text-slate-700">Filters:</span>
+              <span className="text-sm font-medium text-slate-700">Filter Mode:</span>
             </div>
-            
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="all">All Status</option>
-              <option value="AVAILABLE">Available</option>
-              <option value="ASSIGNED">Assigned</option>
-              <option value="UNAVAILABLE">Unavailable</option>
-            </select>
-            
-            <select
-              value={genderFilter}
-              onChange={(e) => setGenderFilter(e.target.value)}
-              className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="all">All Genders</option>
-              <option value="MALE">Male</option>
-              <option value="FEMALE">Female</option>
-            </select>
-            
-            <select
-              value={liveInFilter}
-              onChange={(e) => setLiveInFilter(e.target.value)}
-              className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="all">Live-in Preference</option>
-              <option value="yes">Willing to Live-in</option>
-              <option value="no">Not Willing to Live-in</option>
-            </select>
-            
-            <select
-              value={roleFilter}
-              onChange={(e) => setRoleFilter(e.target.value)}
-              className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="all">All Roles</option>
-              <option value="NURSE">Nurse</option>
-              <option value="CARETAKER">Caregiver</option>
-              <option value="NANNY">Nanny</option>
-            </select>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={useSmartFiltering}
+                onChange={(e) => setUseSmartFiltering(e.target.checked)}
+                className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
+              />
+              <span className="text-sm font-medium text-slate-700">
+                {useSmartFiltering ? 'Smart Filtering' : 'Admin Filters'}
+              </span>
+            </label>
+          </div>
+          <div className="text-xs text-slate-500">
+            {useSmartFiltering 
+              ? 'Manual filtering with service request context visible' 
+              : 'Manual filtering across all staff profiles'
+            }
           </div>
         </div>
+
+        {useSmartFiltering ? (
+          /* Smart Filters */
+          <div className="flex flex-col lg:flex-row gap-4">
+            <div className="flex-1">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search by name, email, phone, or address..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+            </div>
+            
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-slate-700">Smart Filters:</span>
+              </div>
+              
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="all">All Status</option>
+                <option value="AVAILABLE">Available</option>
+                <option value="ASSIGNED">Assigned</option>
+                <option value="UNAVAILABLE">Unavailable</option>
+              </select>
+              
+              <select
+                value={genderFilter}
+                onChange={(e) => setGenderFilter(e.target.value)}
+                className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="all">All Genders</option>
+                <option value="MALE">Male</option>
+                <option value="FEMALE">Female</option>
+              </select>
+              
+              <select
+                value={liveInFilter}
+                onChange={(e) => setLiveInFilter(e.target.value)}
+                className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="all">Live-in Preference</option>
+                <option value="yes">Willing to Live-in</option>
+                <option value="no">Not Willing to Live-in</option>
+              </select>
+              
+              <select
+                value={roleFilter}
+                onChange={(e) => setRoleFilter(e.target.value)}
+                className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="all">All Roles</option>
+                <option value="NURSE">Nurse</option>
+                <option value="CARETAKER">Caregiver</option>
+                <option value="NANNY">Nanny</option>
+              </select>
+            </div>
+          </div>
+        ) : (
+          /* Admin Filters */
+          <div className="space-y-4">
+            <div className="flex-1">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search across all staff profiles (name, email, phone, address, designation, qualifications, status, etc.)..."
+                  value={adminSearchTerm}
+                  onChange={(e) => setAdminSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+            </div>
+            
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-slate-700">Admin Filters:</span>
+              </div>
+              
+              <select
+                value={adminRoleFilter}
+                onChange={(e) => setAdminRoleFilter(e.target.value)}
+                className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="all">All Roles</option>
+                <option value="NURSE">Nurse</option>
+                <option value="CARETAKER">Caregiver</option>
+                <option value="NANNY">Nanny</option>
+                <option value="STAFF">Staff</option>
+                <option value="SUPER_ADMIN">Super Admin</option>
+                <option value="ACCOUNTS">Accounts</option>
+                <option value="COORDINATOR">Coordinator</option>
+                <option value="SALES">Sales</option>
+                <option value="STORE_MANAGER">Store Manager</option>
+              </select>
+              
+              <select
+                value={adminLiveInFilter}
+                onChange={(e) => setAdminLiveInFilter(e.target.value)}
+                className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="all">Live-in Preference</option>
+                <option value="yes">Willing to Live-in</option>
+                <option value="no">Not Willing to Live-in</option>
+              </select>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Staff List */}

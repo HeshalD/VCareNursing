@@ -89,16 +89,25 @@ const convertToBookingInternal = async (req, res) => {
 
         // 3. Create/Ensure Client Profile (Billing Profile)
         let clientProfileId;
-        const profileCheck = await client.query('SELECT client_profile_id FROM client_profiles WHERE user_id = $1', [userId]);
+        const profileCheck = await client.query('SELECT client_profile_id, is_registration_fee_paid FROM client_profiles WHERE user_id = $1', [userId]);
 
         if (profileCheck.rows.length === 0) {
             const newProfile = await client.query(
-                `INSERT INTO client_profiles (user_id, full_name, primary_address) VALUES ($1, $2, $3) RETURNING client_profile_id`,
-                [userId, reqData.payer_name, reqData.location_address]
+                `INSERT INTO client_profiles (user_id, full_name, primary_address, is_registration_fee_paid) VALUES ($1, $2, $3, $4) RETURNING client_profile_id`,
+                [userId, reqData.payer_name, reqData.location_address, Number(quoteData.registration_fee) > 0 ? true : false]
             );
             clientProfileId = newProfile.rows[0].client_profile_id;
         } else {
             clientProfileId = profileCheck.rows[0].client_profile_id;
+            
+            // Check if registration fee needs to be marked as paid
+            const clientProfile = profileCheck.rows[0];
+            if (!clientProfile.is_registration_fee_paid && Number(quoteData.registration_fee) > 0) {
+                await client.query(
+                    `UPDATE client_profiles SET is_registration_fee_paid = TRUE WHERE client_profile_id = $1`,
+                    [clientProfileId]
+                );
+            }
         }
 
         // 4. PATIENT LOGIC (The Fix for Proxy Mode)
