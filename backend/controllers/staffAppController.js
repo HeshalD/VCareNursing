@@ -22,14 +22,33 @@ exports.submitApplication = async (req, res) => {
     
    
     let rolesArray = [];
+    console.log('Raw applied_roles:', applied_roles);
+    console.log('Type of applied_roles:', typeof applied_roles);
+    
     if (applied_roles) {
         if (Array.isArray(applied_roles)) {
+            // If it's already an array, clean each element
             rolesArray = applied_roles.map(r => r.replace(/\{|\}/g, '').trim());
+        } else if (typeof applied_roles === 'string') {
+            // If it's a string, try to parse it as JSON first
+            try {
+                const parsed = JSON.parse(applied_roles);
+                if (Array.isArray(parsed)) {
+                    rolesArray = parsed.map(r => r.replace(/\{|\}/g, '').trim());
+                } else {
+                    rolesArray = [applied_roles.replace(/\{|\}/g, '').trim()];
+                }
+            } catch (e) {
+                // If JSON parsing fails, treat as single role
+                rolesArray = [applied_roles.replace(/\{|\}/g, '').trim()];
+            }
         } else {
+            // Handle other types
             rolesArray = [applied_roles.replace(/\{|\}/g, '').trim()];
         }
     }
     rolesArray = rolesArray.filter(role => role.length > 0);
+    console.log('Processed rolesArray:', rolesArray);
 
     console.log('Files received:', req.files);
     const document_urls = req.files && req.files.documents ? req.files.documents.map(file => file.path) : [];
@@ -219,25 +238,63 @@ exports.acceptApplication = async (req, res) => {
     );
 
     if (staffProfileCheck.rows.length === 0) {
+        // Process applied_roles to create designation string
+        let designation = '';
+        if (app.applied_roles) {
+            let rolesToProcess = app.applied_roles;
+            if (typeof app.applied_roles === 'string') {
+                // Remove outer braces and split by comma for PostgreSQL array format
+                rolesToProcess = app.applied_roles.replace(/^\{|\}$/g, '').split(',');
+            }
+            
+            if (Array.isArray(rolesToProcess)) {
+                designation = rolesToProcess.map(r => r.replace(/\{|\}/g, '').trim()).filter(role => role.length > 0).join(', ');
+            } else {
+                designation = rolesToProcess.replace(/\{|\}/g, '').trim();
+            }
+        }
+
         const profileInsertQuery = `
-          INSERT INTO staff_profiles (user_id, full_name, qualifications, document_urls, home_address, gps_coordinates, profile_picture_url, gender, willing_to_live_in, date_of_birth)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8::gender_enum, $9, $10)
+          INSERT INTO staff_profiles (user_id, full_name, designation,verification_status, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, gender, willing_to_live_in, date_of_birth)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::gender_enum, $12, $13)
+          RETURNING staff_profile_id
         `;
-        await client.query(profileInsertQuery, [
+        const profileResult = await client.query(profileInsertQuery, [
           userId,
           app.full_name,
+          designation,
+          'VERIFIED', // verification_status
           app.qualifications,
           app.document_urls,
           app.home_address,
+          app.location,
           app.gps_coordinates,
           app.profile_picture_url,
           app.gender,
           app.willing_to_live_in || false,
           app.date_of_birth
         ]);
+
+        // Auto-create staff wallet on approval
+        const staff_profile_id = profileResult.rows[0].staff_profile_id;
+        await client.query(
+          `INSERT INTO staff_wallet (staff_profile_id, balance, updated_at)
+           VALUES ($1, 0, NOW())
+           ON CONFLICT (staff_profile_id) DO NOTHING`,
+          [staff_profile_id]
+        );
     } else {
         // Optional: Update existing profile if needed, or just log it
         console.log(`Staff profile already exists for User ${userId}. Skipping creation.`);
+        
+        // Ensure wallet exists for existing staff profile
+        const existingProfile = staffProfileCheck.rows[0];
+        await client.query(
+          `INSERT INTO staff_wallet (staff_profile_id, balance, updated_at)
+           VALUES ($1, 0, NOW())
+           ON CONFLICT (staff_profile_id) DO NOTHING`,
+          [existingProfile.staff_profile_id]
+        );
     }
 
     // 4. Update Application Status
@@ -251,16 +308,16 @@ exports.acceptApplication = async (req, res) => {
     // 5. Send Appropriate Notification
     let messageBody = '';
     if (isNewUser) {
-        messageBody = `Welcome to VCare Staff! Your application is accepted. \nLogin with: \nEmail: ${app.email} \nPassword: ${tempPassword}`;
+        messageBody = ` Congratulations ${app.full_name}! Welcome to the VCare Family! \n\nYour staff application has been approved! Here's what you need to do:\n\nSTEP 1: Go to the VCare website\nSTEP 2: Click "Login" \nSTEP 3: Enter your EMAIL: ${app.email}\nSTEP 4: Enter your temporary password: ${tempPassword}\nSTEP 5: You'll be automatically prompted to set your own permanent password\n\nIMPORTANT: Use your EMAIL address (not phone number) to login the first time!\n\nWe're excited to have you join our team of dedicated healthcare professionals!\n\nWith love,\nThe VCare Team `;
     } else {
-        messageBody = `Congratulations! Your application to join VCare Staff has been accepted. Your existing account has been upgraded. Please log in with your current password to access the Staff Dashboard.`;
+        messageBody = ` Congratulations ${app.full_name}! Welcome to the VCare Staff Team! \n\nGreat news! Your staff application has been approved and your account has been upgraded with staff privileges.\n\nYou can now log in with your existing credentials and access the Staff Dashboard to manage your schedule and services.\n\nIf you normally login with your phone number, try using your email address: ${app.email}\n\nWe're thrilled to have you as part of our healthcare team!\n\nWith love,\nThe VCare Team `;
     }
 
     Promise.allSettled([
         // email notification temporarily disabled
         /* sendEmail({ email: app.email, subject: 'VCare Staff Application Accepted', message: messageBody }), */
         // use WhatsApp for acceptance message
-        sendWhatsAppOtp(app.mobile_number, messageBody)
+        sendWhatsAppMessage(app.mobile_number, messageBody)
     ]);
 
     res.status(200).json({
@@ -311,7 +368,7 @@ exports.rejectApplication = async (req, res) => {
 
     // 3. Send Notifications (Parallel)
     const emailSubject = 'Update on your VCare Staff Application';
-    const messageBody = `Dear ${app.full_name},\n\nThank you for your interest in joining VCare. After careful review, we regret to inform you that we cannot proceed with your application at this time.\n\nReason: ${reason}\n\nWe encourage you to apply again in the future if your qualifications change.\n\nBest regards,\nThe VCare Team`;
+    const messageBody = `Dear ${app.full_name},\n\nThank you so much for your interest in joining the VCare family! We truly appreciate the time and effort you put into your application.\n\nAfter careful consideration, we regret to inform you that we cannot proceed with your application at this time.\n\nReason: ${reason}\n\nPlease don't be discouraged! We encourage you to apply again in the future when your qualifications or experience may better match our current needs.\n\nWe wish you the very best in your healthcare career journey.\n\nWith warm regards,\nThe VCare Team`;
 
     Promise.allSettled([
         // email notification temporarily disabled
@@ -410,14 +467,24 @@ exports.staffLogin = async (req, res) => {
             return res.status(403).json({ message: "No staff profile found. Please complete your application first." });
         }
 
-        // 4. Check if this is a temporary password (we'll use a simple approach)
-        // Since we can't easily detect temp passwords without schema changes,
-        // we'll check if the password matches the pattern we use for temp passwords
-        const isTempPassword = /^[a-z0-9]{8}$/.test(password) && password.length === 8;
-
+        // 4. Check if this is a temporary password
+        // We use a more robust approach to detect temp passwords:
+        // 1. Check if the password matches our temp password pattern (8 chars, lowercase letters and numbers only)
+        // 2. Temp passwords are only generated for new users during application acceptance
+        const isTempPassword = /^[a-z0-9]{8}$/.test(password) && 
+                               password.length === 8 && 
+                               !/[A-Z]/.test(password) && // No uppercase letters
+                               !/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password); // No special characters
+        
         // 5. Generate JWT Token
+        const staffProfile = staffProfileResult.rows[0];
         const token = jwt.sign(
-            { id: user.user_id, role: user.role },
+            { 
+                id: user.user_id, 
+                role: user.role,
+                full_name: staffProfile.full_name,
+                mobile_number: null // Staff login uses email, so mobile_number is not available here
+            },
             process.env.JWT_SECRET,
             { expiresIn: process.env.JWT_EXPIRES_IN }
         );
@@ -486,8 +553,27 @@ exports.changeStaffPassword = async (req, res) => {
         );
 
         // 6. Generate new token (optional, but good practice)
+        // Get user details for token payload
+        const userDetailsResult = await db.query(
+            'SELECT mobile_number FROM users WHERE user_id = $1',
+            [userId]
+        );
+        
+        const staffProfileResult = await db.query(
+            'SELECT full_name FROM staff_profiles WHERE user_id = $1',
+            [userId]
+        );
+        
+        const userMobile = userDetailsResult.rows[0]?.mobile_number || null;
+        const userFullName = staffProfileResult.rows[0]?.full_name || null;
+        
         const token = jwt.sign(
-            { id: userId, role: req.user.role },
+            { 
+                id: userId, 
+                role: req.user.role,
+                full_name: userFullName,
+                mobile_number: userMobile
+            },
             process.env.JWT_SECRET,
             { expiresIn: process.env.JWT_EXPIRES_IN }
         );

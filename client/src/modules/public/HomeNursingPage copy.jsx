@@ -193,16 +193,7 @@ const HomeNursingPage = () => {
                 Every nurse is connected to our Command OS, ensuring vitals are recorded,
                 medicines are tracked, and doctors are kept in the loop.
               </p>
-              <div className="p-8 bg-emerald-50 border border-emerald-100 rounded-3xl">
-                <div className="flex items-center gap-4 mb-4">
-                  <Activity className="w-8 h-8 text-emerald-600" />
-                  <span className="text-lg font-bold text-emerald-900">Live Vitals Monitoring</span>
-                </div>
-                <p className="text-emerald-800/80">
-                  Our app tracks BP, Sugar, and SpO2 trends. If readings go abnormal,
-                  our central command center is alerted instantly.
-                </p>
-              </div>
+
             </div>
 
             <div className="space-y-12">
@@ -316,31 +307,6 @@ const HomeNursingPage = () => {
       </section>
 
       {/* Protocol Section */}
-      <section className="py-24 bg-white">
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-slate-900">Deployment Protocol</h2>
-          </div>
-
-          <div className="grid md:grid-cols-3 gap-8 relative">
-            <div className="hidden md:block absolute top-[2.5rem] left-[20%] right-[20%] h-0.5 bg-slate-100 -z-10" />
-
-            {[
-              { step: "01", title: "Assessment", desc: "Senior nurse visits to assess patient condition." },
-              { step: "02", title: "Discovery", desc: "Algorithm matches 3 candidates. You interview them." },
-              { step: "03", title: "Deployment", desc: "Selected nurse arrives with kit. Service begins." }
-            ].map((step, i) => (
-              <div key={i} className="bg-slate-50 p-8 rounded-3xl border border-slate-100 text-center relative">
-                <div className="w-20 h-20 mx-auto bg-white rounded-full flex items-center justify-center text-3xl font-black text-slate-200 border-4 border-slate-50 mb-6 shadow-sm">
-                  <span className="text-emerald-500">{step.step}</span>
-                </div>
-                <h3 className="text-xl font-bold text-slate-900 mb-3">{step.title}</h3>
-                <p className="text-slate-600">{step.desc}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
 
       <Footer />
     </div>

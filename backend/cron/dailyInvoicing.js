@@ -1,80 +1,315 @@
 // cron/dailyInvoicing.js
 const cron = require('node-cron');
-const db = require('../config/db'); // Adjust this path to your DB config
+const db = require('../config/db');
+
+// ─── Billing Engine ────────────────────────────────────────────────────────────
+
+const calculateLiveInCharge = (booking) => {
+  if (!booking.actual_end_time) {
+    return {
+      amount: parseFloat(booking.daily_rate),
+      notes: 'Live-in daily charge'
+    };
+  }
+
+  const scheduled = new Date(booking.scheduled_end_time);
+  const actual = new Date(booking.actual_end_time);
+  const overrunHours = (actual - scheduled) / (1000 * 60 * 60);
+
+  if (overrunHours < 2) {
+    return {
+      amount: parseFloat(booking.daily_rate),
+      notes: `Live-in daily charge (overrun ${overrunHours.toFixed(1)}h — waived)`
+    };
+  }
+
+  return {
+    amount: parseFloat(booking.daily_rate) * 2,
+    notes: `Live-in daily charge + extra day (overrun ${overrunHours.toFixed(1)}h)`
+  };
+};
+
+const calculateShiftCharge = (booking) => {
+  if (!booking.actual_end_time || !booking.scheduled_end_time) {
+    return {
+      amount: parseFloat(booking.daily_rate),
+      notes: 'Shift-based daily charge'
+    };
+  }
+
+  const scheduled = new Date(booking.scheduled_end_time);
+  const actual = new Date(booking.actual_end_time);
+  const overtimeHours = (actual - scheduled) / (1000 * 60 * 60);
+
+  if (overtimeHours <= 0) {
+    return {
+      amount: parseFloat(booking.daily_rate),
+      notes: 'Shift-based daily charge (no overtime)'
+    };
+  }
+
+  const otCharge = overtimeHours * parseFloat(booking.ot_rate);
+  const total = parseFloat(booking.daily_rate) + otCharge;
+
+  return {
+    amount: total,
+    notes: `Shift charge + OT ${overtimeHours.toFixed(1)}h × Rs.${booking.ot_rate} = Rs.${otCharge.toFixed(2)}`
+  };
+};
+
+const calculateVisitingCharge = (booking) => {
+  return {
+    amount: parseFloat(booking.daily_rate),
+    notes: 'Visiting service daily charge'
+  };
+};
+
+const getBillingCharge = (booking) => {
+  switch (booking.service_model) {
+    case 'LIVE_IN':     return calculateLiveInCharge(booking);
+    case 'SHIFT_BASED': return calculateShiftCharge(booking);
+    case 'VISITING':    return calculateVisitingCharge(booking);
+    default:
+      return {
+        amount: parseFloat(booking.daily_rate),
+        notes: 'Daily charge'
+      };
+  }
+};
+
+// ─── Invoice Number Generator ──────────────────────────────────────────────────
+
+const generateInvoiceNumber = async (client) => {
+  const today = new Date();
+  const datePart = today.toISOString().slice(0, 10).replace(/-/g, '');
+
+  const result = await client.query(
+    `SELECT COUNT(*) as count 
+     FROM transactions 
+     WHERE category = 'SERVICE_INVOICE' 
+     AND DATE(created_at) = CURRENT_DATE`
+  );
+
+  const sequence = (parseInt(result.rows[0].count) + 1).toString().padStart(4, '0');
+  return `INV-${datePart}-${sequence}`;
+};
+
+// ─── Overdue Detection ─────────────────────────────────────────────────────────
+
+const flagOverdueBookings = async (client) => {
+  // Find ACTIVE bookings where scheduled_end_time has passed
+  const overdueRes = await client.query(
+    `SELECT booking_id, client_id, assigned_staff_id
+     FROM bookings
+     WHERE status = 'ACTIVE'
+       AND scheduled_end_time IS NOT NULL
+       AND scheduled_end_time < NOW()`
+  );
+
+  if (overdueRes.rows.length === 0) return 0;
+
+  for (const booking of overdueRes.rows) {
+    // Flag booking as OVERDUE
+    await client.query(
+      `UPDATE bookings SET status = 'OVERDUE' WHERE booking_id = $1`,
+      [booking.booking_id]
+    );
+
+    console.log(`⚠️  Booking ${booking.booking_id} flagged as OVERDUE — scheduled end date has passed.`);
+
+    // TODO: Plug in WhatsApp/SMS admin alert here in Sprint 2
+    // await sendWhatsAppMessage(adminNumber, `Booking ${booking.booking_id} has exceeded its paid days. Please extend or terminate.`);
+  }
+
+  return overdueRes.rows.length;
+};
+
+// ─── Cron Job ──────────────────────────────────────────────────────────────────
 
 const startDailyInvoicing = () => {
-    // Run every minute using cron
-    cron.schedule('59 23 * * *', async () => {
-        console.log('Running daily automated invoicing...');
-        const client = await db.pool.connect();
+  cron.schedule('59 23 * * *', async () => {
+    console.log('─── Daily Invoicing Cron Started ───');
+    const client = await db.pool.connect();
 
+    try {
+      await client.query('BEGIN');
+
+      // Step 1 — Flag any overdue bookings first
+      const overdueCount = await flagOverdueBookings(client);
+      if (overdueCount > 0) {
+        console.log(`⚠️  ${overdueCount} booking(s) flagged as OVERDUE and skipped from invoicing.`);
+      }
+
+      // Step 2 — Fetch all ACTIVE bookings that are NOT overdue
+      // (overdue ones were just updated above so they won't appear here)
+      const activeBookingsRes = await client.query(
+        `SELECT
+          b.booking_id,
+          b.client_id,
+          b.service_model,
+          b.daily_rate,
+          b.ot_rate,
+          b.scheduled_end_time,
+          b.actual_end_time
+         FROM bookings b
+         WHERE b.status = 'ACTIVE'
+           AND b.daily_rate IS NOT NULL`
+      );
+
+      const activeBookings = activeBookingsRes.rows;
+
+      if (activeBookings.length === 0) {
+        console.log('No active bookings to invoice today.');
+        await client.query('COMMIT');
+        return;
+      }
+
+      // Step 3 — Generate invoices
+      let successCount = 0;
+
+      for (const booking of activeBookings) {
         try {
-            await client.query('BEGIN');
+          const { amount, notes } = getBillingCharge(booking);
+          const invoiceNumber = await generateInvoiceNumber(client);
+          const fullNotes = `${invoiceNumber} — ${notes}`;
 
-            // DEBUG: First check if there are any active bookings at all
-            console.log('DEBUG: Checking for active bookings...');
-            const debugRes = await client.query('SELECT COUNT(*) as count FROM bookings WHERE status = $1', ['ACTIVE']);
-            console.log('DEBUG: Active bookings count:', debugRes.rows[0].count);
+          await client.query(
+            `INSERT INTO transactions (
+              client_id,
+              booking_id,
+              category,
+              transaction_type,
+              amount,
+              status,
+              notes
+            ) VALUES ($1, $2, 'SERVICE_INVOICE', 'DEBIT', $3, 'COMPLETED', $4)`,
+            [booking.client_id, booking.booking_id, amount, fullNotes]
+          );
 
-            // 1. Find all ACTIVE bookings.
-            // NOTE: We join the transactions table to figure out which quote 
-            // started this booking so we can grab the daily rate.
-            // (If your bookings table already has a daily_rate or quote_id column, use that instead!)
-            const activeBookingsRes = await client.query(`
-                SELECT
-                    b.booking_id, 
-                    b.client_id, 
-                    q.daily_rate -- Make sure 'daily_rate' matches your column name in the quotations table
-                FROM bookings b
-                JOIN transactions t ON b.booking_id = t.booking_id AND t.category = 'CLIENT_PAYMENT'
-                JOIN quotations q ON t.quote_id = q.quote_id
-                WHERE b.status = 'ACTIVE'
-            `);
-
-            const activeBookings = activeBookingsRes.rows;
-
-            if (activeBookings.length === 0) {
-                console.log('No active bookings found. Skipping invoicing.');
-                await client.query('ROLLBACK');
-                return;
-            }
-
-            // 2. Format today's date exactly like the PDF (e.g., "01 Jan 2026")
-            const today = new Date();
-            const formattedDate = today.toLocaleDateString('en-GB', { 
-                day: '2-digit', month: 'short', year: 'numeric' 
-            });
-
-            // 3. Loop through every active booking and create a DEBIT invoice
-            for (const booking of activeBookings) {
-                // Generate a random 6-digit invoice number
-                const invoiceNumber = `INV-${Math.floor(100000 + Math.random() * 900000)}`;
-                const notes = `${invoiceNumber}-due on ${formattedDate}`;
-
-                // Insert the daily charge!
-                await client.query(
-                    `INSERT INTO transactions (
-                        client_id, 
-                        booking_id, 
-                        category, 
-                        transaction_type, 
-                        amount, 
-                        status, 
-                        notes
-                    ) VALUES ($1, $2, 'SERVICE_INVOICE', 'DEBIT', $3, 'COMPLETED', $4)`,
-                    [booking.client_id, booking.booking_id, booking.daily_rate, notes]
-                );
-            }
-
-            await client.query('COMMIT');
-            console.log(`✅ Successfully generated daily invoices for ${activeBookings.length} active bookings.`);
-        } catch (error) {
-            await client.query('ROLLBACK');
-            console.error('❌ Error running daily invoicing cron job:', error);
-        } finally {
-            client.release();
+          successCount++;
+        } catch (bookingError) {
+          console.error(`❌ Failed to invoice booking ${booking.booking_id}:`, bookingError);
         }
-    });
+      }
+
+      await client.query('COMMIT');
+      console.log(`✅ Invoiced ${successCount}/${activeBookings.length} active bookings.`);
+
+      // Step 3 — Run credit monitor in its own transaction
+      await client.query('BEGIN');
+      const alertsCount = await runCreditMonitor(client);
+      await client.query('COMMIT');
+      console.log(`✅ Credit monitor: ${alertsCount} alert(s) sent.`);
+      console.log('─── Daily Invoicing Cron Finished ───');
+
+
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('❌ Fatal error in daily invoicing cron:', error);
+    } finally {
+      client.release();
+    }
+  });
+};
+
+// ─── Credit Monitor ────────────────────────────────────────────────────────────
+
+const runCreditMonitor = async (client) => {
+  // Get all active bookings with their payment vs invoice totals
+  const result = await client.query(
+    `SELECT 
+        b.booking_id,
+        b.client_id,
+        b.daily_rate,
+        cp.full_name as client_name,
+        uc.mobile_number as client_mobile,
+        COALESCE(SUM(CASE WHEN t.category = 'CLIENT_PAYMENT' THEN t.amount ELSE 0 END), 0) as total_paid,
+        COALESCE(SUM(CASE WHEN t.category = 'SERVICE_INVOICE' THEN t.amount ELSE 0 END), 0) as total_invoiced
+     FROM bookings b
+     JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+     JOIN users uc ON cp.user_id = uc.user_id
+     LEFT JOIN transactions t ON b.booking_id = t.booking_id
+     WHERE b.status = 'ACTIVE'
+       AND b.daily_rate IS NOT NULL
+       AND b.daily_rate > 0
+     GROUP BY 
+        b.booking_id, b.client_id, b.daily_rate, 
+        cp.full_name, uc.mobile_number`
+  );
+
+  let alertsSent = 0;
+
+  for (const booking of result.rows) {
+    const totalPaid = parseFloat(booking.total_paid);
+    const totalInvoiced = parseFloat(booking.total_invoiced);
+    const dailyRate = parseFloat(booking.daily_rate);
+
+    const remainingBalance = totalPaid - totalInvoiced;
+    const remainingDays = remainingBalance / dailyRate;
+
+    // Check if we already sent an alert today to avoid duplicates
+    const alertCheck = await client.query(
+      `SELECT alert_id FROM client_alerts
+       WHERE booking_id = $1
+         AND alert_type = $2
+         AND DATE(sent_at) = CURRENT_DATE`,
+      [booking.booking_id, remainingDays <= 0 ? 'NEGATIVE_BALANCE' : 'EXPIRING_SOON']
+    );
+
+    if (alertCheck.rows.length > 0) continue; // Already alerted today
+
+    if (remainingDays <= 0) {
+      // Day +1 — balance has gone negative
+      console.log(`🔴 NEGATIVE BALANCE: Booking ${booking.booking_id} — Client ${booking.client_name} owes Rs.${Math.abs(remainingBalance).toFixed(2)}`);
+
+      // Log the alert
+      await client.query(
+        `INSERT INTO client_alerts (booking_id, client_id, alert_type, message, sent_at)
+         VALUES ($1, $2, 'NEGATIVE_BALANCE', $3, NOW())`,
+        [
+          booking.booking_id,
+          booking.client_id,
+          `Balance negative by Rs.${Math.abs(remainingBalance).toFixed(2)}. Payment required.`
+        ]
+      );
+
+      // TODO: Uncomment when WhatsApp is live
+      // await sendCreditAlert(
+      //   booking.client_mobile,
+      //   booking.client_name,
+      //   'our office number here'
+      // );
+
+      alertsSent++;
+
+    } else if (remainingDays <= 1) {
+      // Day -1 — balance runs out tomorrow
+      console.log(`🟡 EXPIRING SOON: Booking ${booking.booking_id} — Client ${booking.client_name} has ~${remainingDays.toFixed(1)} days left (Rs.${remainingBalance.toFixed(2)})`);
+
+      // Log the alert
+      await client.query(
+        `INSERT INTO client_alerts (booking_id, client_id, alert_type, message, sent_at)
+         VALUES ($1, $2, 'EXPIRING_SOON', $3, NOW())`,
+        [
+          booking.booking_id,
+          booking.client_id,
+          `Balance expiring soon. Approximately ${remainingDays.toFixed(1)} days remaining (Rs.${remainingBalance.toFixed(2)}).`
+        ]
+      );
+
+      // TODO: Uncomment when WhatsApp is live
+      // await sendCreditAlert(
+      //   booking.client_mobile,
+      //   booking.client_name,
+      //   'our office number here'
+      // );
+
+      alertsSent++;
+    }
+  }
+
+  return alertsSent;
 };
 
 module.exports = startDailyInvoicing;

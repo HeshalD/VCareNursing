@@ -9,7 +9,6 @@ import {
   Calendar,
   Clock,
   FileText,
-  DollarSign,
   Calculator,
   Send,
   AlertCircle,
@@ -22,6 +21,7 @@ const QuoteBuilder = () => {
   const navigate = useNavigate();
   console.log('Quote builder - requestId from params:', requestId);
   const [serviceRequest, setServiceRequest] = useState(null);
+  const [clientProfile, setClientProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [creatingQuote, setCreatingQuote] = useState(false);
@@ -32,7 +32,8 @@ const QuoteBuilder = () => {
   const [quoteForm, setQuoteForm] = useState({
     daily_rate: '',
     qty_days: '7',
-    transport_fee: '1000'
+    transport_fee: '1000',
+    registration_fee: ''
   });
 
   useEffect(() => {
@@ -55,6 +56,17 @@ const QuoteBuilder = () => {
       setLoading(true);
       const response = await apiClient.getServiceRequestById(requestId);
       setServiceRequest(response.data);
+      
+      // Fetch client profile to check registration fee status
+      if (response.data.client_id) {
+        try {
+          const clientResponse = await apiClient.getClientProfile(response.data.client_id);
+          setClientProfile(clientResponse.data);
+        } catch (clientErr) {
+          console.warn('Failed to fetch client profile:', clientErr);
+          // Continue even if client profile fetch fails
+        }
+      }
     } catch (err) {
       if (err.message?.includes('404') || err.message?.includes('not found')) {
         setError('Service request not found');
@@ -97,7 +109,7 @@ const QuoteBuilder = () => {
   };
 
   const calculateTotals = () => {
-    const regFee = 10000;
+    const regFee = (quoteForm.registration_fee !== '' && quoteForm.registration_fee !== null) ? parseFloat(quoteForm.registration_fee) : 0;
     const dailyRate = parseFloat(quoteForm.daily_rate) || 0;
     const days = parseInt(quoteForm.qty_days) || 0;
     const transport = parseFloat(quoteForm.transport_fee) || 0;
@@ -124,7 +136,8 @@ const QuoteBuilder = () => {
         request_id: serviceRequest.request_id,
         daily_rate: parseFloat(quoteForm.daily_rate),
         qty_days: parseInt(quoteForm.qty_days),
-        transport_fee: parseFloat(quoteForm.transport_fee)
+        transport_fee: parseFloat(quoteForm.transport_fee),
+        registration_fee: (quoteForm.registration_fee !== '' && quoteForm.registration_fee !== null) ? parseFloat(quoteForm.registration_fee) : ''
       });
       setCreatedQuote(response.data);
     } catch (err) {
@@ -344,20 +357,44 @@ const QuoteBuilder = () => {
           <div className="p-6">
             {!createdQuote ? (
               <form onSubmit={handleCreateQuote} className="space-y-6">
+                {/* Registration Fee */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Registration Fee (Rs.)
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-sm text-slate-400">Rs.</span>
+                    <input
+                      type="number"
+                      name="registration_fee"
+                      value={quoteForm.registration_fee}
+                      onChange={handleInputChange}
+                      className="w-full pl-12 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="Enter registration fee (optional)"
+                    />
+                  </div>
+                  {clientProfile?.is_registration_fee_paid && (
+                    <div className="mt-2 flex items-center gap-2 text-sm text-amber-600 bg-amber-50 px-3 py-2 rounded-lg border border-amber-200">
+                      <AlertCircle className="w-4 h-4" />
+                      <span>Client has already paid registration fee</span>
+                    </div>
+                  )}
+                </div>
+
                 {/* Daily Rate */}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2">
                     Daily Rate (Rs.)
                   </label>
                   <div className="relative">
-                    <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-sm text-slate-400">Rs.</span>
                     <input
                       type="number"
                       name="daily_rate"
                       value={quoteForm.daily_rate}
                       onChange={handleInputChange}
                       required
-                      className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full pl-12 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       placeholder="Enter daily rate"
                     />
                   </div>
@@ -385,14 +422,14 @@ const QuoteBuilder = () => {
                     Transport Fee (Rs.)
                   </label>
                   <div className="relative">
-                    <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-sm text-slate-400">Rs.</span>
                     <input
                       type="number"
                       name="transport_fee"
                       value={quoteForm.transport_fee}
                       onChange={handleInputChange}
                       required
-                      className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full pl-12 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                   </div>
                 </div>
@@ -469,13 +506,13 @@ const QuoteBuilder = () => {
                     <div className="flex justify-between text-sm">
                       <span className="text-slate-600">Total Amount:</span>
                       <span className="font-bold text-blue-600">
-                        KES {createdQuote.total_amount?.toLocaleString()}
+                        Rs. {createdQuote.total_amount?.toLocaleString()}
                       </span>
                     </div>
                   </div>
                 </div>
 
-                {/* Action Buttons */}
+                {/* Action Buttons  */}
                 <div className="space-y-3">
                   <button
                     onClick={handleSendPDF}
@@ -501,7 +538,8 @@ const QuoteBuilder = () => {
                       setQuoteForm({
                         daily_rate: '',
                         qty_days: '7',
-                        transport_fee: '1000'
+                        transport_fee: '1000',
+                        registration_fee: ''
                       });
                     }}
                     className="w-full bg-slate-200 text-slate-700 py-3 px-4 rounded-lg font-medium hover:bg-slate-300 transition-colors"

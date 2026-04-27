@@ -15,12 +15,15 @@ import ElderlyCareBookingPage from './modules/public/ElderlyCareBookingPage';
 import BookingSuccessPage from './modules/public/BookingSuccessPage';
 import WorkersTeamPage from './modules/public/service_team/WorkersTeamPage';
 import WorkerRegistrationPage from './modules/public/service_team/WorkerRegistrationPage';
+import WorkerRegistrationSuccessPage from './modules/public/service_team/WorkerRegistrationSuccessPage';
 import WorkerDashboardDemo from './modules/public/service_team/WorkerDashboardDemo';
 import ClientDashboardDemo from './modules/public/ClientDashboardDemo';
 import ClientProfileDemo from './modules/public/ClientProfileDemo';
 import AdminDashboard from './modules/admin/admin_dashboard_main/AdminDashboard';
 import UserManagement from './modules/admin/user_managemnet/user_managemnet';
+import ProxyUserManagement from './modules/admin/user_managemnet/proxy_user_management';
 import ServiceRequests from './modules/admin/service_requests/service_requests';
+import ProxyServiceRequest from './modules/admin/service_requests/proxy_service_request';
 import QuoteBuilder from './modules/admin/service_requests/quote_builder';
 import WorkerVerification from './modules/admin/worker_verifications/worker_verifications';
 import Financials from './modules/admin/financial/financial';
@@ -37,6 +40,13 @@ import Bookings from './modules/admin/bookings/Bookings';
 import ClientBookings from './modules/client/ClientBookings';
 import TerminationRequests from './modules/admin/termination_requests/termination_requests';
 import Statements from './modules/admin/statements/statements';
+import Earnings from './modules/public/service_team/Earnings';
+import AdvanceRequests from './modules/admin/advance_requests/advance_requests';
+import ForgotPasswordPage from './modules/auth/ForgotPasswordPage';
+import VerifyForgotPasswordOtp from './modules/auth/VerifyForgotPasswordOtp';
+import ResetPasswordPage from './modules/auth/ResetPasswordPage';
+import ViewStaffPage from './modules/public/ViewStaffPage';
+import StaffProfile from './modules/public/StaffProfile';
 
 function App() {
   return (
@@ -49,6 +59,9 @@ function App() {
             <Route path="/about" element={<AboutPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/forgot-password/verify-otp" element={<VerifyForgotPasswordOtp />} />
+            <Route path="/forgot-password/reset" element={<ResetPasswordPage />} />
             <Route path="/change-staff-password" element={<StaffPasswordChangePage />} />
             <Route path="/admin" element={
               <AdminAuthProvider>
@@ -63,10 +76,14 @@ function App() {
             <Route path='/services/child-care/book' element={<BabyCareBookingPage/>}/>
             <Route path="/services/elderly-care" element={<ElderlyCarePage />} />
             <Route path="/services/elderly-care/book" element={<ElderlyCareBookingPage />} />
+            <Route path="/services/view-staff" element={<ViewStaffPage />} />
+            <Route path="/services/staff-profile/:id" element={<StaffProfile/>}/>
             <Route path="/booking-success" element={<BookingSuccessPage />} />
             <Route path="/services/join-team" element={<WorkersTeamPage />} />
             <Route path="/services/apply" element={<WorkerRegistrationPage />} />
+            <Route path="/worker-registration-success" element={<WorkerRegistrationSuccessPage />} />
             <Route path="/services/provider-dashboard" element={<WorkerDashboardDemo />} />
+            <Route path="/services/earnings" element={<Earnings />} />
             <Route path="/client/dashboard" element={<ClientDashboardDemo />} />
             <Route path="/client/profile" element={<ClientProfileDemo />} />
             <Route path="/client/bookings" element={<ClientBookings/>}/>
@@ -80,9 +97,19 @@ function App() {
                 <UserManagement />
               </AdminAuthProvider>
             } />
+            <Route path="/admin/proxy-user-management" element={
+              <AdminAuthProvider>
+                <ProxyUserManagement />
+              </AdminAuthProvider>
+            } />
             <Route path="/admin/service-requests" element={
               <AdminAuthProvider>
                 <ServiceRequests />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/proxy-service-requests" element={
+              <AdminAuthProvider>
+                <ProxyServiceRequest />
               </AdminAuthProvider>
             } />
             <Route path="/admin/termination-requests" element={
@@ -123,6 +150,11 @@ function App() {
             <Route path="/admin/statements" element={
               <AdminAuthProvider>
                 <Statements />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/advance-requests" element={
+              <AdminAuthProvider>
+                <AdvanceRequests />
               </AdminAuthProvider>
             } />
             <Route path="/admin/settings" element={

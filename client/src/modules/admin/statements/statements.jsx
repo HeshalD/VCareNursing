@@ -147,10 +147,10 @@ const Statements = () => {
 
   const openDateRangeModal = (booking) => {
     setSelectedBookingForStatement(booking);
-    // Set default dates (last month to today)
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setMonth(startDate.getMonth() - 1);
+    // Set default dates (booking start date to 7 days after)
+    const startDate = new Date(booking.start_date);
+    const endDate = new Date(booking.start_date);
+    endDate.setDate(endDate.getDate() + 7);
     setStartDate(startDate.toISOString().split('T')[0]);
     setEndDate(endDate.toISOString().split('T')[0]);
     setDateRangeModal(true);
@@ -525,7 +525,7 @@ const Statements = () => {
 
       {/* Date Range Modal */}
       {dateRangeModal && selectedBookingForStatement && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl max-w-md w-full">
             <div className="p-6 border-b border-slate-200">
               <div className="flex items-center justify-between">

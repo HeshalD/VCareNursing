@@ -2,87 +2,288 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VCare Nursing - Statement of Accounts</title>
     <style>
-        body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 12px; color: #333; margin: 0; padding: 20px; }
-        .header { display: flex; justify-content: space-between; margin-bottom: 30px; }
-        .company-info h1 { margin: 0; color: #2c3e50; }
-        .company-info p { margin: 2px 0; color: #7f8c8d; }
-        .statement-info { text-align: right; }
-        .statement-info h2 { margin: 0; color: #2980b9; }
-        
-        table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
-        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
-        th { background-color: #f8f9fa; font-weight: bold; color: #2c3e50; }
-        tr { page-break-inside: avoid; } /* Prevents rows from cutting in half across pages */
-        
-        .summary-table { width: 50%; margin-bottom: 40px; border: 1px solid #ddd; }
-        .summary-table th, .summary-table td { border: none; padding: 8px 10px; }
-        .summary-table tr:nth-child(even) { background-color: #f9f9f9; }
-        
-        .footer { margin-top: 40px; padding-top: 20px; border-top: 2px solid #2980b9; font-size: 11px; }
-        .footer h4 { margin: 0 0 10px 0; }
-        .text-right { text-align: right; }
-        .amount { font-family: monospace; font-size: 13px; }
+        @import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap');
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Open Sans', Arial, sans-serif;
+            font-size: 11px;
+            color: #333;
+            background: #fff;
+            padding: 30px 36px;
+        }
+
+        /* ── HEADER ── */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 28px;
+        }
+
+        .logo-block {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* SVG heart-logo placeholder – replace with <img> if you have the real logo */
+
+        .company-details {
+            text-align: right;
+            font-size: 10.5px;
+            color: #444;
+            line-height: 1.7;
+        }
+
+        .company-details strong {
+            font-size: 11.5px;
+            font-weight: 700;
+            color: #222;
+        }
+
+        /* ── TO BLOCK ── */
+        .to-block {
+            margin-bottom: 20px;
+            font-size: 10.5px;
+            line-height: 1.6;
+        }
+
+        .to-block p { margin: 0; }
+
+        /* ── STATEMENT TITLE ── */
+        .statement-title-bar {
+            border-bottom: 2px solid #2f6f8f;
+            margin-bottom: 2px;
+        }
+
+        .statement-title-bar h2 {
+            font-size: 22px;
+            font-weight: 700;
+            color: #2f6f8f;
+            text-align: center;
+            padding-bottom: 4px;
+        }
+
+        .period-bar {
+            background: #2f6f8f;
+            color: #fff;
+            text-align: center;
+            font-size: 10px;
+            padding: 3px 0;
+            margin-bottom: 18px;
+        }
+
+        /* ── ACCOUNT SUMMARY ── */
+        .summary-box {
+            border: 1px solid #ccc;
+            width: 340px;
+            margin-bottom: 28px;
+        }
+
+        .summary-box .summary-heading {
+            background: #f0f0f0;
+            font-weight: 700;
+            font-size: 11px;
+            padding: 7px 12px;
+            border-bottom: 1px solid #ccc;
+            color: #222;
+        }
+
+        .summary-box table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .summary-box table tr td {
+            padding: 6px 12px;
+            font-size: 10.5px;
+            color: #333;
+        }
+
+        .summary-box table tr td:last-child {
+            text-align: right;
+            font-weight: 600;
+        }
+
+        .summary-box table tr:nth-child(even) td {
+            background: #fafafa;
+        }
+
+        /* ── LEDGER TABLE ── */
+        .ledger-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 30px;
+        }
+
+        .ledger-table thead tr {
+            background: #2f6f8f;
+            color: #fff;
+        }
+
+        .ledger-table thead th {
+            padding: 8px 10px;
+            font-weight: 600;
+            font-size: 10.5px;
+            text-align: left;
+        }
+
+        .ledger-table thead th.right { text-align: right; }
+
+        .ledger-table tbody tr {
+            border-bottom: 1px solid #e8e8e8;
+        }
+
+        .ledger-table tbody tr:nth-child(even) {
+            background: #f9f9f9;
+        }
+
+        .ledger-table tbody td {
+            padding: 7px 10px;
+            font-size: 10.5px;
+            vertical-align: top;
+            color: #333;
+        }
+
+        .ledger-table tbody td.right {
+            text-align: right;
+            font-family: 'Courier New', monospace;
+            white-space: nowrap;
+        }
+
+        /* Payment received row – slightly different background */
+        .ledger-table tbody tr.payment-row td {
+            background: #f0f7fb;
+        }
+
+        /* Balance Due row at bottom */
+        .ledger-table tfoot tr td {
+            padding: 8px 10px;
+            font-weight: 700;
+            font-size: 11px;
+            border-top: 2px solid #2f6f8f;
+            color: #2f6f8f;
+        }
+
+        .ledger-table tfoot tr td.right {
+            text-align: right;
+        }
+
+        /* ── FOOTER / BANK DETAILS ── */
+        .footer-note {
+            border-top: 2px solid #2f6f8f;
+            padding-top: 14px;
+            font-size: 10.5px;
+            line-height: 1.8;
+            color: #444;
+        }
+
+        .footer-note strong {
+            color: #222;
+        }
     </style>
 </head>
 <body>
 
+    <!-- ══ HEADER ══ -->
     <div class="header">
-        <div class="company-info">
-            <h1>VCare Nursing</h1>
-            <p>No: 293/17B, Hospital Rd</p>
-            <p>Sri Jayewardenepura, Sri Lanka</p>
+        <!-- Logo (SVG approximation of the VCare heart icon + text) -->
+        <div class="logo-block">
+            <img src="https://tuvh2lxa24zjyv7p.public.blob.vercel-storage.com/VCareLogo.png" alt="VCare Nursing" style="width: 160px; height: auto;" />
         </div>
-        <div class="statement-info">
-            <h2>Statement of Accounts</h2>
-            <p><strong>To:</strong> {{clientName}}</p>
-            <p>{{periodStart}} To {{periodEnd}}</p>
+
+        <!-- Company address -->
+        <div class="company-details">
+            <strong>Vcare Nursing</strong><br>
+            No: 293/17B<br>
+            Hospital Rd<br>
+            Sri Jayewardenepura Sri Lanka<br>
+            SriLanka
         </div>
     </div>
 
-    <table class="summary-table">
-        <tr><th>Account Summary</th><th></th></tr>
-        <tr><td>Opening Balance</td><td class="text-right amount">LKR {{summary.openingBalance}}</td></tr>
-        <tr><td>Invoiced Amount</td><td class="text-right amount">LKR {{summary.invoicedAmount}}</td></tr>
-        <tr><td>Amount Paid</td><td class="text-right amount">LKR {{summary.amountPaid}}</td></tr>
-        <tr><td><strong>Balance Due</strong></td><td class="text-right amount"><strong>LKR {{summary.balanceDue}}</strong></td></tr>
-    </table>
+    <!-- ══ TO BLOCK ══ -->
+    <div class="to-block">
+        <p><strong>To</strong></p>
+        <p>{{clientName}}</p>
+    </div>
 
-    <table>
+    <!-- ══ STATEMENT TITLE + PERIOD ══ -->
+    <div class="statement-title-bar">
+        <h2>Statement of Accounts</h2>
+    </div>
+    <div class="period-bar">{{periodStart}} To {{periodEnd}}</div>
+
+    <!-- ══ ACCOUNT SUMMARY ══ -->
+    <div class="summary-box">
+        <div class="summary-heading">Account Summary</div>
+        <table>
+            <tr>
+                <td>Opening Balance</td>
+                <td>LKR {{summary.openingBalance}}</td>
+            </tr>
+            <tr>
+                <td>Invoiced Amount</td>
+                <td>LKR {{summary.invoicedAmount}}</td>
+            </tr>
+            <tr>
+                <td>Amount Paid</td>
+                <td>LKR {{summary.amountPaid}}</td>
+            </tr>
+            <tr>
+                <td><strong>Balance Due</strong></td>
+                <td><strong>LKR {{summary.balanceDue}}</strong></td>
+            </tr>
+        </table>
+    </div>
+
+    <!-- ══ LEDGER TABLE ══ -->
+    <table class="ledger-table">
         <thead>
             <tr>
-                <th>Date</th>
-                <th>Transactions</th>
+                <th style="width:90px;">Date</th>
+                <th style="width:110px;">Transactions</th>
                 <th>Details</th>
-                <th class="text-right">Amount</th>
-                <th class="text-right">Payments</th>
-                <th class="text-right">Balance</th>
+                <th class="right" style="width:90px;">Amount</th>
+                <th class="right" style="width:90px;">Payments</th>
+                <th class="right" style="width:90px;">Balance</th>
             </tr>
         </thead>
         <tbody>
             {{#each ledger}}
-            <tr>
+            <tr class="{{#if this.isPayment}}payment-row{{/if}}">
                 <td>{{this.date}}</td>
                 <td>{{this.transactions}}</td>
-                <td>{{this.details}}</td>
-                <td class="text-right amount">{{this.amount}}</td>
-                <td class="text-right amount">{{this.payments}}</td>
-                <td class="text-right amount">{{this.balance}}</td>
+                <td style="white-space: pre-line;">{{this.details}}</td>
+                <td class="right">{{this.amount}}</td>
+                <td class="right">{{this.payments}}</td>
+                <td class="right">{{this.balance}}</td>
             </tr>
             {{/each}}
         </tbody>
+        <tfoot>
+            <tr>
+                <td colspan="5">Balance Due</td>
+                <td class="right">LKR {{summary.balanceDue}}</td>
+            </tr>
+        </tfoot>
     </table>
 
-    <div class="footer">
-        <h4>Note:</h4>
-        <p>Please use the below bank account details for the payments, And you will receive a payment receipt after you done the payment.</p>
-        <p>
-            <strong>Account Name:</strong> VCare<br>
-            <strong>Account Number:</strong> 100654589154<br>
-            <strong>Bank:</strong> Sampath Bank<br>
-            <strong>Branch:</strong> Maharagama<br>
-            <strong>Description:</strong> Vcare Home Nursing
-        </p>
+    <!-- ══ FOOTER / BANK DETAILS ══ -->
+    <div class="footer-note">
+        <strong>Note:</strong><br>
+        Please use the below bank account details for the payments,
+        And you will receive a payment receipt after you done the payment.<br><br>
+        <strong>Account Number</strong> - 100654589154<br>
+        <strong>Account Name</strong> - VCare<br>
+        <strong>Bank</strong> - Sampath Bank<br>
+        <strong>Branch</strong> - Maharagama<br>
+        <strong>Description</strong> - Vcare Home Nursing
     </div>
 
 </body>

@@ -11,25 +11,32 @@ import { useAuth } from '../../../context/AuthContext';
 const WorkerDashboardDemo = () => {
   const { user } = useAuth();
   const [staffData, setStaffData] = useState(null);
+  const [walletData, setWalletData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
   useEffect(() => {
-    const fetchStaffData = async () => {
+    const fetchData = async () => {
       try {
-        if (user?.staff_id) {
-          const response = await apiClient.getStaffByID(user.staff_id);
-          setStaffData(response.data);
+        // Try to get staff_id from user object, fallback to id if staff_id is not available
+        const staffId = user?.staff_id || user?.id;
+        if (staffId) {
+          const [staffResponse, walletResponse] = await Promise.all([
+            user?.staff_id ? apiClient.getStaffByID(user.staff_id) : apiClient.getStaffByUserID(user.id),
+            apiClient.getMyWallet()
+          ]);
+          setStaffData(staffResponse.data);
+          setWalletData(walletResponse.data?.data);
         }
       } catch (error) {
-        console.error('Error fetching staff data:', error);
+        console.error('Error fetching data:', error);
       } finally {
         setLoading(false);
       }
     };
 
-    fetchStaffData();
-  }, [user?.staff_id]);
+    fetchData();
+  }, [user?.staff_id, user?.id]);
 
   if (loading) {
     return (
@@ -62,8 +69,13 @@ const WorkerDashboardDemo = () => {
       }
       
       // Refresh staff data to get updated status
-      const response = await apiClient.getStaffByID(user.staff_id);
-      setStaffData(response.data);
+      const staffId = user?.staff_id || user?.id;
+      if (staffId) {
+        const response = user?.staff_id 
+          ? await apiClient.getStaffByID(user.staff_id)
+          : await apiClient.getStaffByUserID(user.id);
+        setStaffData(response.data);
+      }
     } catch (error) {
       console.error('Error updating status:', error);
       // You might want to show a toast notification here
@@ -90,7 +102,7 @@ const WorkerDashboardDemo = () => {
 
         <nav className="flex-1 space-y-2">
           <NavItem icon={LayoutDashboard} label="Dashboard" active />
-          <NavItem icon={DollarSign} label="Earnings" />
+          <NavItem icon={DollarSign} label="Earnings" to="/services/earnings" />
           <NavItem icon={User} label="My Profile" />
           <NavItem icon={Settings} label="Settings" />
         </nav>
@@ -217,9 +229,9 @@ const WorkerDashboardDemo = () => {
           {/* Stats Grid */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <StatCard
-              title="Total Earnings"
-              value="LKR 45,000"
-              sub="This Month"
+              title="Wallet Balance"
+              value={`LKR ${parseFloat(walletData?.balance || 0).toLocaleString()}`}
+              sub="Current Balance"
               icon={DollarSign}
               color="emerald"
             />
@@ -264,12 +276,20 @@ const WorkerDashboardDemo = () => {
 };
 
 // Helper Components
-const NavItem = ({ icon: Icon, label, active }) => (
-  <button className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${active ? 'bg-indigo-800 text-white shadow-lg shadow-indigo-900/50' : 'text-indigo-200 hover:bg-white/10 hover:text-white'}`}>
-    <Icon className="w-5 h-5" />
-    <span className="font-medium">{label}</span>
-  </button>
-);
+const NavItem = ({ icon: Icon, label, active, to }) => {
+  const Component = to ? Link : 'button';
+  const props = to ? { to } : {};
+  
+  return (
+    <Component 
+      {...props}
+      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${active ? 'bg-indigo-800 text-white shadow-lg shadow-indigo-900/50' : 'text-indigo-200 hover:bg-white/10 hover:text-white'}`}
+    >
+      <Icon className="w-5 h-5" />
+      <span className="font-medium">{label}</span>
+    </Component>
+  );
+};
 
 const StatCard = ({ title, value, sub, icon: Icon, color }) => {
   const colors = {

@@ -186,6 +186,33 @@ class ApiClient {
 
   }
 
+  // Forgot password endpoints
+  async requestForgotPasswordOtp(mobileNumber) {
+    return this.request('/auth/forgot-password/request-otp', {
+      method: 'POST',
+      body: JSON.stringify({ mobile_number: mobileNumber }),
+    });
+  }
+
+  async verifyForgotPasswordOtp(userId, otp) {
+    return this.request('/auth/forgot-password/verify-otp', {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId, otp_code: otp }),
+    });
+  }
+
+  async resetPassword(userId, otp, newPassword, confirmPassword) {
+    return this.request('/auth/forgot-password/reset', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        user_id: userId, 
+        otp_code: otp, 
+        new_password: newPassword, 
+        confirm_password: confirmPassword 
+      }),
+    });
+  }
+
 
 
   async getUnifiedOverview() {
@@ -235,6 +262,14 @@ class ApiClient {
   async getAllClients() {
 
     return this.request('/client');
+
+  }
+
+
+
+  async getClientProfile(clientId) {
+
+    return this.request(`/client/${clientId}`);
 
   }
 
@@ -522,6 +557,7 @@ class ApiClient {
         ...data,
         user: {
           id: data.data?.user_id,
+          staff_id: data.data?.staff_info?.staff_id,
           role: data.data?.staff_info,
           email: data.data?.email,
           requires_password_change: data.requires_password_change,
@@ -551,6 +587,10 @@ class ApiClient {
 
   async getStaffByID(staffId) {
     return this.request(`/staff/${staffId}`);
+  }
+
+  async getStaffByUserID(userId) {
+    return this.request(`/staff/user/${userId}`);
   }
 
   async getAllStaff(filters = {}) {
@@ -685,6 +725,115 @@ class ApiClient {
       console.error('PDF Download Error:', error);
       throw error;
     }
+  }
+
+  // Admin Staff Management endpoints
+  async createStaffProfile(staffData) {
+    return this.request('/staff/proxy-create', {
+      method: 'POST',
+      body: staffData, // Pass FormData directly without JSON.stringify
+    });
+  }
+
+  async updateStaffProfile(staffProfileId, staffData) {
+    return this.request(`/staff/${staffProfileId}`, {
+      method: 'PUT',
+      body: staffData, // Pass FormData directly without JSON.stringify
+    });
+  }
+
+  async deleteStaffProfile(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Admin Service Request Management endpoints
+  async createProxyServiceRequest(requestData) {
+    return this.request('/service-requests/proxy-service-request', {
+      method: 'POST',
+      body: JSON.stringify(requestData),
+    });
+  }
+
+  async requestAdvance(advanceData) {
+    return this.request('/staff-wallet/request-advance', {
+      method: 'POST',
+      body: JSON.stringify(advanceData),
+    });
+  }
+
+  async getAllAdvances() {
+    return this.request('/staff-wallet/advances');
+  }
+
+  async approveAdvance(advanceId) {
+    return this.request(`/staff-wallet/approve-advance/${advanceId}`, {
+      method: 'POST',
+    });
+  }
+
+  async rejectAdvance(advanceId, reason) {
+    return this.request(`/staff-wallet/reject-advance/${advanceId}`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  async updateAdvanceThreshold(staffProfileId, thresholdData) {
+    return this.request(`/staff-wallet/threshold/${staffProfileId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(thresholdData),
+    });
+  }
+
+  async getPendingAdvances() {
+    return this.request('/staff-wallet/advances/pending');
+  }
+
+  // Staff Review endpoints
+  async createStaffReview(reviewData) {
+    return this.request('/staff-reviews', {
+      method: 'POST',
+      body: JSON.stringify(reviewData),
+    });
+  }
+
+  // Finances endpoints
+  async getFinancesOverview() {
+    return this.request('/finances/overview');
+  }
+
+  async getFinancesTransactions(params = {}) {
+    const queryParams = new URLSearchParams(params).toString();
+    const url = queryParams ? `/finances/transactions?${queryParams}` : '/finances/transactions';
+    return this.request(url);
+  }
+
+  async getAdvancesSummary() {
+    return this.request('/finances/advances-summary');
+  }
+
+  async getStaffWalletsSummary() {
+    return this.request('/finances/staff-wallets-summary');
+  }
+
+  async getCreditAlertsSummary() {
+    return this.request('/finances/credit-alerts-summary');
+  }
+
+  async getStoreSummary() {
+    return this.request('/finances/store-summary');
+  }
+
+  async getRevenueChart(period) {
+    const queryParams = period ? `?period=${encodeURIComponent(period)}` : '';
+    const url = `/finances/revenue-chart${queryParams}`;
+    return this.request(url);
+  }
+
+  async getTransactionCategoriesChart() {
+    return this.request('/finances/transaction-categories-chart');
   }
 }
 

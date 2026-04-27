@@ -1,18 +1,37 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Filter, MoreHorizontal, User, Mail, Phone, MapPin, CheckCircle, XCircle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Search, Filter, MoreHorizontal, User, Mail, Phone, MapPin, CheckCircle, XCircle, DollarSign, ChevronDown, ChevronUp, FileText, Calendar, Home, Briefcase, UserCircle, Shield, ShieldOff } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 
 const UserManagement = () => {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('clients');
   const [clients, setClients] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [showThresholdModal, setShowThresholdModal] = useState(false);
+  const [selectedWorker, setSelectedWorker] = useState(null);
+  const [thresholdAmount, setThresholdAmount] = useState('');
+  const [thresholdLoading, setThresholdLoading] = useState(false);
+  const [expandedRows, setExpandedRows] = useState(new Set());
+  const [isProxyMode, setIsProxyMode] = useState(false);
+  
+  // Filter states
+  const [sortField, setSortField] = useState('name');
+  const [sortOrder, setSortOrder] = useState('asc');
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     fetchData();
   }, [activeTab]);
+
+  useEffect(() => {
+    if (isProxyMode) {
+      navigate('/admin/proxy-user-management');
+    }
+  }, [isProxyMode, navigate]);
 
   const fetchData = async () => {
     try {
@@ -34,6 +53,45 @@ const UserManagement = () => {
     }
   };
 
+  const handleUpdateThreshold = async (user) => {
+    try {
+      // Get the complete staff data including advance threshold
+      const staffResponse = await apiClient.getStaffByID(user.id);
+      const completeWorker = staffResponse.data;
+      
+      setSelectedWorker(completeWorker);
+      setThresholdAmount(completeWorker?.advance_threshold_amount?.toString() || '');
+      setShowThresholdModal(true);
+    } catch (err) {
+      console.error('Error fetching staff details:', err);
+      setError('Failed to load staff details');
+    }
+  };
+
+  const confirmUpdateThreshold = async () => {
+    try {
+      setThresholdLoading(true);
+      await apiClient.updateAdvanceThreshold(selectedWorker.staff_profile_id, {
+        advance_threshold_amount: parseFloat(thresholdAmount)
+      });
+      
+      setShowThresholdModal(false);
+      setSelectedWorker(null);
+      setThresholdAmount('');
+      
+      // Refresh workers data
+      if (activeTab === 'workers') {
+        const response = await apiClient.getAllStaff();
+        setWorkers(response.data || []);
+      }
+    } catch (err) {
+      console.error('Error updating threshold:', err);
+      setError('Failed to update advance threshold');
+    } finally {
+      setThresholdLoading(false);
+    }
+  };
+
   const data = activeTab === 'clients' ? clients : workers;
 
   const formatClientData = (client) => ({
@@ -52,12 +110,79 @@ const UserManagement = () => {
     phone: staff.mobile_number || 'N/A',
     location: staff.home_address || 'Not set',
     status: staff.current_status || 'Unknown',
-    type: staff.role || 'Staff'
+    type: staff.role || 'Staff',
+    advance_threshold_amount: staff.advance_threshold_amount || 0,
+    // Additional staff profile fields
+    designation: staff.designation || 'N/A',
+    qualifications: staff.qualifications || 'N/A',
+    document_urls: staff.document_urls || [],
+    profile_picture_url: staff.profile_picture_url || null,
+    gender: staff.gender || 'N/A',
+    willing_to_live_in: staff.willing_to_live_in || false,
+    date_of_birth: staff.date_of_birth || null,
+    location_city: staff.location || 'N/A'
   });
 
-  const displayData = activeTab === 'clients' 
-    ? clients.map(formatClientData)
-    : workers.map(formatStaffData);
+  // Apply filters and sorting
+  const getFilteredAndSortedData = () => {
+    let data = activeTab === 'clients' 
+      ? clients.map(formatClientData)
+      : workers.map(formatStaffData);
+    
+    // Apply search filter
+    if (searchTerm) {
+      data = data.filter(item => 
+        item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        item.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        item.phone.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (item.designation && item.designation.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (item.status && item.status.toLowerCase().includes(searchTerm.toLowerCase()))
+      );
+    }
+    
+    // Apply sorting
+    data.sort((a, b) => {
+      let aValue, bValue;
+      
+      switch (sortField) {
+        case 'name':
+          aValue = a.name.toLowerCase();
+          bValue = b.name.toLowerCase();
+          break;
+        case 'designation':
+          aValue = (a.designation || 'N/A').toLowerCase();
+          bValue = (b.designation || 'N/A').toLowerCase();
+          break;
+        case 'status':
+          aValue = (a.status || 'N/A').toLowerCase();
+          bValue = (b.status || 'N/A').toLowerCase();
+          break;
+        default:
+          aValue = a.name.toLowerCase();
+          bValue = b.name.toLowerCase();
+      }
+      
+      if (sortOrder === 'asc') {
+        return aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
+      } else {
+        return aValue > bValue ? -1 : aValue < bValue ? 1 : 0;
+      }
+    });
+    
+    return data;
+  };
+
+  const displayData = getFilteredAndSortedData();
+
+  const toggleRowExpansion = (userId) => {
+    const newExpanded = new Set(expandedRows);
+    if (newExpanded.has(userId)) {
+      newExpanded.delete(userId);
+    } else {
+      newExpanded.add(userId);
+    }
+    setExpandedRows(newExpanded);
+  };
 
   return (
     <AdminLayout
@@ -90,17 +215,64 @@ const UserManagement = () => {
             </button>
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            {/* Proxy Mode Toggle */}
+            <div className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-lg">
+              {isProxyMode ? (
+                <Shield className="w-4 h-4 text-emerald-600" />
+              ) : (
+                <ShieldOff className="w-4 h-4 text-slate-400" />
+              )}
+              <span className={`text-sm font-medium ${isProxyMode ? 'text-emerald-600' : 'text-slate-500'}`}>
+                Proxy Mode
+              </span>
+              <button
+                onClick={() => setIsProxyMode(!isProxyMode)}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                  isProxyMode ? 'bg-emerald-600' : 'bg-slate-300'
+                }`}
+              >
+                <span
+                  className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                    isProxyMode ? 'translate-x-5' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+            
             <div className="relative">
               <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
               <input
                 type="text"
                 placeholder="Search users..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100 transition-all w-64"
               />
             </div>
-            <button className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition-colors">
-              <Filter className="w-4 h-4" />
+            
+            {/* Sort by dropdown */}
+            <div className="relative">
+              <select
+                value={sortField}
+                onChange={(e) => setSortField(e.target.value)}
+                className="appearance-none bg-white border border-slate-200 rounded-lg px-3 py-2 pr-8 text-sm outline-none focus:ring-2 focus:ring-blue-100 transition-all cursor-pointer hover:bg-slate-50"
+              >
+                <option value="name">Sort by Name</option>
+                <option value="designation">Sort by Designation</option>
+                <option value="status">Sort by Status</option>
+              </select>
+              <ChevronDown className="absolute right-2 top-2.5 w-4 h-4 text-slate-400 pointer-events-none" />
+            </div>
+            
+            {/* Sort order toggle */}
+            <button
+              onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+              className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition-colors"
+              title={`Sort order: ${sortOrder === 'asc' ? 'Ascending' : 'Descending'}`}
+            >
+              {sortOrder === 'asc' ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              <span className="text-sm">{sortOrder === 'asc' ? 'A-Z' : 'Z-A'}</span>
             </button>
           </div>
         </div>
@@ -114,42 +286,57 @@ const UserManagement = () => {
                 <th className="px-6 py-4">Contact</th>
                 <th className="px-6 py-4">Location</th>
                 <th className="px-6 py-4">Status</th>
+                {activeTab === 'workers' && (
+                  <>
+                    <th className="px-6 py-4">Designation</th>
+                    <th className="px-6 py-4">Advance Threshold</th>
+                  </>
+                )}
                 <th className="px-6 py-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan="5" className="px-6 py-8 text-center text-slate-500">
+                  <td colSpan={activeTab === 'workers' ? "7" : "5"} className="px-6 py-8 text-center text-slate-500">
                     Loading...
                   </td>
                 </tr>
               ) : error ? (
                 <tr>
-                  <td colSpan="5" className="px-6 py-8 text-center text-red-500">
+                  <td colSpan={activeTab === 'workers' ? "7" : "5"} className="px-6 py-8 text-center text-red-500">
                     {error}
                   </td>
                 </tr>
               ) : displayData.length === 0 ? (
                 <tr>
-                  <td colSpan="5" className="px-6 py-8 text-center text-slate-500">
+                  <td colSpan={activeTab === 'workers' ? "7" : "5"} className="px-6 py-8 text-center text-slate-500">
                     No {activeTab} found
                   </td>
                 </tr>
               ) : (
                 displayData.map((user) => (
-                  <tr key={user.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-500 font-bold">
-                          {user.name.charAt(0)}
+                  <React.Fragment key={user.id}>
+                    <tr className="hover:bg-slate-50 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          {user.profile_picture_url ? (
+                            <img
+                              src={user.profile_picture_url}
+                              alt={user.name}
+                              className="w-10 h-10 rounded-full object-cover"
+                            />
+                          ) : (
+                            <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-500 font-bold">
+                              {user.name.charAt(0)}
+                            </div>
+                          )}
+                          <div>
+                            <p className="font-medium text-slate-900">{user.name}</p>
+                            <p className="text-xs text-slate-500">{user.type}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="font-medium text-slate-900">{user.name}</p>
-                          <p className="text-xs text-slate-500">{user.type}</p>
-                        </div>
-                      </div>
-                    </td>
+                      </td>
                     <td className="px-6 py-4">
                       <div className="space-y-1">
                         <div className="flex items-center gap-2 text-slate-500">
@@ -176,12 +363,121 @@ const UserManagement = () => {
                         {user.status}
                       </span>
                     </td>
+                    {activeTab === 'workers' && (
+                      <td className="px-6 py-4">
+                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                          {user.designation}
+                        </span>
+                      </td>
+                    )}
+                    {activeTab === 'workers' && (
+                      <td className="px-6 py-4">
+                        <span className="font-medium text-slate-900">
+                          Rs. {user.advance_threshold_amount?.toLocaleString('en-IN') || '0'}
+                        </span>
+                      </td>
+                    )}
                     <td className="px-6 py-4 text-right">
-                      <button className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors">
-                        <MoreHorizontal className="w-5 h-5" />
-                      </button>
+                      <div className="flex items-center gap-2 justify-end">
+                        {activeTab === 'workers' && (
+                          <button
+                            onClick={() => handleUpdateThreshold(user)}
+                            className="text-blue-600 hover:text-blue-800 p-1 rounded-lg hover:bg-blue-50 transition-colors mr-2"
+                            title="Update Advance Threshold"
+                          >
+                            <DollarSign className="w-4 h-4" />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => toggleRowExpansion(user.id)}
+                          className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors"
+                          title="View Details"
+                        >
+                          {expandedRows.has(user.id) ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                        </button>
+                        <button className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors">
+                          <MoreHorizontal className="w-5 h-5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
+                  
+                  {/* Collapsible Details Row */}
+                  {activeTab === 'workers' && expandedRows.has(user.id) && (
+                    <tr className="bg-slate-50">
+                      <td colSpan={activeTab === 'workers' ? "7" : "5"} className="px-6 py-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                          {/* Qualifications */}
+                          <div className="bg-white p-3 rounded-lg border border-slate-200">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Briefcase className="w-4 h-4 text-blue-600" />
+                              <h4 className="text-sm font-semibold text-slate-700">Qualifications</h4>
+                            </div>
+                            <p className="text-xs text-slate-600">{user.qualifications}</p>
+                          </div>
+                          
+                          {/* Personal Details */}
+                          <div className="bg-white p-3 rounded-lg border border-slate-200">
+                            <div className="flex items-center gap-2 mb-2">
+                              <UserCircle className="w-4 h-4 text-purple-600" />
+                              <h4 className="text-sm font-semibold text-slate-700">Personal Details</h4>
+                            </div>
+                            <div className="space-y-1">
+                              <p className="text-xs text-slate-600">
+                                <span className="font-medium">Gender:</span> <span className="capitalize">{user.gender}</span>
+                              </p>
+                              <p className="text-xs text-slate-600">
+                                <span className="font-medium">DOB:</span> {user.date_of_birth ? new Date(user.date_of_birth).toLocaleDateString() : 'N/A'}
+                              </p>
+                              <p className="text-xs text-slate-600">
+                                <span className="font-medium">Willing to Live In:</span> {user.willing_to_live_in ? 'Yes' : 'No'}
+                              </p>
+                            </div>
+                          </div>
+                          
+                          {/* Location Details */}
+                          <div className="bg-white p-3 rounded-lg border border-slate-200">
+                            <div className="flex items-center gap-2 mb-2">
+                              <MapPin className="w-4 h-4 text-green-600" />
+                              <h4 className="text-sm font-semibold text-slate-700">Location Details</h4>
+                            </div>
+                            <div className="space-y-1">
+                              <p className="text-xs text-slate-600">
+                                <span className="font-medium">Home:</span> {user.location}
+                              </p>
+                              <p className="text-xs text-slate-600">
+                                <span className="font-medium">City:</span> {user.location_city}
+                              </p>
+                            </div>
+                          </div>
+                          
+                          {/* Documents */}
+                          {user.document_urls && user.document_urls.length > 0 && (
+                            <div className="bg-white p-3 rounded-lg border border-slate-200">
+                              <div className="flex items-center gap-2 mb-2">
+                                <FileText className="w-4 h-4 text-orange-600" />
+                                <h4 className="text-sm font-semibold text-slate-700">Documents</h4>
+                              </div>
+                              <div className="space-y-1">
+                                {user.document_urls.map((docUrl, index) => (
+                                  <a
+                                    key={index}
+                                    href={docUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                                  >
+                                    <FileText className="w-3 h-3" /> Document {index + 1}
+                                  </a>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 ))
               )}
             </tbody>
@@ -198,6 +494,89 @@ const UserManagement = () => {
         </div>
 
       </div>
+
+      {/* Threshold Update Modal */}
+      {showThresholdModal && selectedWorker && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-md w-full shadow-2xl">
+            <div className="p-6 border-b border-slate-200">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-bold text-slate-900">Update Advance Threshold</h2>
+                <button
+                  onClick={() => setShowThresholdModal(false)}
+                  className="text-slate-400 hover:text-slate-600"
+                >
+                  <XCircle className="w-6 h-6" />
+                </button>
+              </div>
+            </div>
+            
+            <div className="p-6 space-y-6">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  <User className="w-5 h-5 text-blue-600 mt-0.5" />
+                  <div>
+                    <h4 className="font-semibold text-blue-800">Worker Information</h4>
+                    <p className="text-blue-700 text-sm mt-1">
+                      {selectedWorker.full_name || `Worker #${selectedWorker.staff_profile_id}`}
+                    </p>
+                    <p className="text-blue-600 text-xs mt-1">
+                      Current Threshold: Rs. {selectedWorker.advance_threshold_amount?.toLocaleString('en-IN') || '0'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    New Advance Threshold Amount <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    value={thresholdAmount}
+                    onChange={(e) => setThresholdAmount(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="Enter new threshold amount..."
+                    min="0"
+                    step="100"
+                    required
+                  />
+                  <p className="text-xs text-slate-500 mt-1">
+                    This is the maximum amount the staff member can request as advance
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => setShowThresholdModal(false)}
+                  className="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmUpdateThreshold}
+                  disabled={thresholdLoading || !thresholdAmount.trim() || parseFloat(thresholdAmount) < 0}
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {thresholdLoading ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <DollarSign className="w-4 h-4" />
+                      Update Threshold
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </AdminLayout>
   );
 };

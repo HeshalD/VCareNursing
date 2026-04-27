@@ -2,7 +2,7 @@ import React from 'react';
 import {
   Users, Calendar, DollarSign, Activity,
   Settings, LogOut, Bell, Search,
-  ShieldCheck, FileText, SendHorizontal , Stethoscope, Baby, Heart, CalendarDays, AlertTriangle
+  ShieldCheck, FileText, SendHorizontal , Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 
@@ -44,7 +44,7 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
             icon={Users}
             label="User Management"
             path="/admin/users"
-            active={isActive('/admin/users')}
+            active={isActive('/admin/users') || isActive('/admin/proxy-user-management')}
           />
           <SidebarItem
             icon={SendHorizontal}
@@ -69,6 +69,12 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
             label="Statements"
             path="/admin/statements"
             active={isActive('/admin/statements')}
+          />
+          <SidebarItem
+            icon={Wallet}
+            label="Advance Requests"
+            path="/admin/advance-requests"
+            active={isActive('/admin/advance-requests')}
           />
           <SidebarItem
             icon={ShieldCheck}

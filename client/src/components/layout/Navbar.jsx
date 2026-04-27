@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Menu, X, User, LogOut, Briefcase, Calendar } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import logoUrl from '../../assets/Logo/VCareLogo.png';  
+import logoUrl from '../../assets/Logo/VCareLogo.png';
 const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
   const { user, isAuthenticated, logout, loading } = useAuth();
@@ -25,6 +25,11 @@ const Navbar = () => {
   };
 
   const getUserDisplayName = () => {
+    // Use full_name from AuthContext (from JWT payload)
+    if (user?.full_name) {
+      return user.full_name;
+    }
+    // Fallback to nested info objects for backward compatibility
     if (user?.client_info?.name) {
       return user.client_info.name;
     }
@@ -37,7 +42,7 @@ const Navbar = () => {
   const isStaffUser = () => {
     const staffRoles = ['{CARETAKER}', '{NURSE}', '{NANNY}', '{ACCOUNTS}', '{COORDINATOR}', '{SALES}', '{STORE_MANAGER}'];
     const userRole = user?.role;
-    
+
     if (Array.isArray(userRole)) {
       return userRole.some(role => staffRoles.includes(role));
     }
@@ -58,7 +63,7 @@ const Navbar = () => {
             <Link to="/" className="text-sm font-medium text-slate-600 hover:text-blue-600 transition-colors">Home</Link>
             <button onClick={() => scrollToSection('services')} className="text-sm font-medium text-slate-600 hover:text-blue-600 transition-colors">Services</button>
             <Link to="/about" className="text-sm font-medium text-slate-600 hover:text-blue-600 transition-colors">About</Link>
-            
+
             {loading ? (
               <div className="w-20 h-8 bg-slate-200 rounded-full animate-pulse"></div>
             ) : isAuthenticated ? (
@@ -121,7 +126,7 @@ const Navbar = () => {
             <Link to="/" className="block px-3 py-2 text-base font-medium text-slate-600 hover:text-blue-600 bg-slate-50 rounded-lg">Home</Link>
             <button onClick={() => { scrollToSection('services'); setIsOpen(false); }} className="block w-full text-left px-3 py-2 text-base font-medium text-slate-600 hover:text-blue-600 hover:bg-slate-50 rounded-lg">Services</button>
             <Link to="/about" className="block px-3 py-2 text-base font-medium text-slate-600 hover:text-blue-600 hover:bg-slate-50 rounded-lg">About</Link>
-            
+
             {loading ? (
               <div className="w-full h-12 bg-slate-200 rounded-xl animate-pulse mt-4"></div>
             ) : isAuthenticated ? (

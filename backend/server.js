@@ -11,6 +11,9 @@ const patientRoutes = require('./routes/patientRoutes')
 const statementRoutes = require('./routes/statementRoutes')
 const paymentRoutes = require('./routes/paymentRoutes')
 const migrateRoutes = require('./routes/migrateRoutes');
+const staffWalletRoutes = require('./routes/staffWalletRoutes');
+const staffReviewRoutes = require('./routes/staffReviewRoutes')
+const financesRoutes = require('./routes/financesRoutes')
 
 const startDailyInvoicing = require('./cron/dailyInvoicing');
 
@@ -41,6 +44,10 @@ const allowedOrigins = [
   process.env.CLIENT_URL,
   'http://localhost:3000',
   'http://127.0.0.1:3000',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:3001',
+  'http://127.0.0.1:3001',
 ].filter(Boolean);
 
 const corsOptions = {
@@ -69,7 +76,10 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/patients', patientRoutes);
 app.use('/api/statement', statementRoutes);
 app.use('/api/payment', paymentRoutes);
-app.use('/api/migrate', migrateRoutes);
+app.use('/api/migrate', migrateRoutes); 
+app.use('/api/staff-wallet', staffWalletRoutes);
+app.use('/api/staff-reviews', staffReviewRoutes);
+app.use('/api/finances', financesRoutes);
 
 // Health check endpoint for Render
 app.get('/health', (req, res) => {

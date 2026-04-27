@@ -8,8 +8,8 @@ import {
 import Navbar from '../../components/layout/Navbar';
 import Footer from '../../components/layout/Footer';
 
-// Placeholder image
-import babyImage from '../../assets/images/baby_caretakers_image_landingpage.webp';
+// Using requested image for child care
+import babyImage from '../../assets/images/baby_care.webp';
 import FeaturedCaregivers from './components/FeaturedCaregivers';
 import apiClient from '../../api/api';
 
@@ -20,6 +20,7 @@ const ChildCarePage = () => {
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    window.scrollTo(0, 0);
     fetchStaffData();
   }, []);
 
@@ -27,11 +28,11 @@ const ChildCarePage = () => {
     try {
       setLoading(true);
       setError(null);
-      
+
       // Fetch NANNY staff
       const nanniesResponse = await apiClient.getStaffByRole('NANNY', { status: 'AVAILABLE', limit: 20 });
       const nannies = nanniesResponse.data || [];
-      
+
       // Transform API data to match expected format
       const transformedStaff = nannies.map(staff => {
         // Calculate age from date_of_birth if available
@@ -59,8 +60,8 @@ const ChildCarePage = () => {
           isVerified: staff.verification_status === 'VERIFIED',
           price: `LKR ${Math.floor(Math.random() * 800) + 600}/hr`, // Placeholder pricing
           image: staff.profile_picture_url || `https://i.pravatar.cc/300?u=${staff.staff_profile_id}`,
-          badges: Array.isArray(staff.qualifications) && staff.qualifications.length > 0 
-            ? staff.qualifications.slice(0, 2) 
+          badges: Array.isArray(staff.qualifications) && staff.qualifications.length > 0
+            ? staff.qualifications.slice(0, 2)
             : ['Experienced'],
           staffType: 'NANNY'
         };
@@ -110,7 +111,7 @@ const ChildCarePage = () => {
                   <Link to="/services/child-care/book" className="px-8 py-4 bg-rose-500 text-white rounded-full font-bold text-lg hover:bg-rose-600 transition-all shadow-lg shadow-rose-500/20 flex items-center justify-center gap-2">
                     Find a Nanny <ArrowRight className="w-5 h-5" />
                   </Link>
-                  
+
                   <div className="flex items-center gap-4 px-6 py-4 bg-white border border-slate-200 rounded-full shadow-sm">
                     <div className="flex -space-x-3">
                       <img src="https://i.pravatar.cc/100?u=5" alt="Nanny" className="w-8 h-8 rounded-full border-2 border-white" />
@@ -264,73 +265,7 @@ const ChildCarePage = () => {
       </section>
 
       {/* Pricing Section */}
-      <section className="py-24 bg-slate-50">
-        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center max-w-3xl mx-auto mb-16">
-            <h2 className="text-4xl md:text-5xl font-bold text-slate-900 mb-6">Simple Pricing</h2>
-            <p className="text-slate-600 text-lg">Invest in quality care for your children.</p>
-          </div>
 
-          <div className="grid md:grid-cols-2 gap-8 max-w-5xl mx-auto">
-            {/* Card 1 */}
-            <div className="bg-white p-10 rounded-[40px] shadow-sm hover:shadow-xl transition-shadow border border-slate-200">
-              <div className="flex justify-between items-start mb-8">
-                <div>
-                  <h3 className="text-2xl font-bold text-slate-900">Babysitting</h3>
-                  <p className="text-slate-500">Hourly Care</p>
-                </div>
-                <span className="px-4 py-1.5 bg-slate-100 rounded-full text-xs font-bold text-slate-600 uppercase tracking-wide">4 Hours Min</span>
-              </div>
-              <div className="mb-8">
-                <span className="text-4xl font-bold text-slate-900">LKR 800</span>
-                <span className="text-slate-500 ml-2">/ hour</span>
-              </div>
-              <ul className="space-y-4 mb-10">
-                {["Date Nights", "Weekend Help", "Verified Sitters"].map((item, i) => (
-                  <li key={i} className="flex items-center gap-3 text-slate-600">
-                    <div className="w-6 h-6 rounded-full bg-rose-50 flex items-center justify-center flex-shrink-0">
-                      <CheckCircle className="w-4 h-4 text-rose-500" />
-                    </div>
-                    {item}
-                  </li>
-                ))}
-              </ul>
-              <button className="w-full py-4 rounded-xl border-2 border-slate-200 text-slate-700 font-bold hover:border-slate-900 hover:text-slate-900 transition-colors">
-                Book a Sitter
-              </button>
-            </div>
-
-            {/* Card 2 - Featured */}
-            <div className="bg-white p-10 rounded-[40px] shadow-2xl relative border-2 border-rose-500 overflow-hidden transform md:-translate-y-4">
-              <div className="absolute top-0 right-0 bg-rose-500 text-white text-xs font-bold px-6 py-2 rounded-bl-2xl">FULL TIME</div>
-              <div className="flex justify-between items-start mb-8">
-                <div>
-                  <h3 className="text-2xl font-bold text-slate-900">Professional Nanny</h3>
-                  <p className="text-rose-600 font-medium">Monthly Contract</p>
-                </div>
-                <span className="px-4 py-1.5 bg-rose-100 rounded-full text-xs font-bold text-rose-700 uppercase tracking-wide">Daily</span>
-              </div>
-              <div className="mb-8">
-                <span className="text-4xl font-bold text-slate-900">LKR 65,000</span>
-                <span className="text-slate-500 ml-2">/ month</span>
-              </div>
-              <ul className="space-y-4 mb-10">
-                {["Dedicated Nanny", "Developmental Activities", "Light Housekeeping", "Sick Days Covered"].map((item, i) => (
-                  <li key={i} className="flex items-center gap-3 text-slate-700 font-medium">
-                    <div className="w-6 h-6 rounded-full bg-rose-100 flex items-center justify-center flex-shrink-0">
-                      <CheckCircle className="w-4 h-4 text-rose-600" />
-                    </div>
-                    {item}
-                  </li>
-                ))}
-              </ul>
-              <button className="w-full py-4 rounded-xl bg-rose-500 text-white font-bold hover:bg-rose-600 transition-colors shadow-lg shadow-rose-500/30">
-                Find My Nanny
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
 
       <Footer />
     </div >

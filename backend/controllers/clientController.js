@@ -1,5 +1,59 @@
 const db = require('../config/db');
 
+// 0. Get Client Profile by User ID
+exports.getClientProfileByUserId = async (req, res) => {
+  const { user_id } = req.params;
+
+  try {
+    const result = await db.query(
+      'SELECT * FROM client_profiles WHERE user_id = $1',
+      [user_id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ 
+        message: "Client profile not found for this user" 
+      });
+    }
+
+    res.status(200).json({
+      message: "Client profile retrieved successfully",
+      data: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error("Error fetching client profile by user ID:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// 0.1. Get Client Profile by Client ID
+exports.getClientProfile = async (req, res) => {
+  const { client_id } = req.params;
+
+  try {
+    const result = await db.query(
+      'SELECT * FROM client_profiles WHERE client_profile_id = $1',
+      [client_id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ 
+        message: "Client profile not found" 
+      });
+    }
+
+    res.status(200).json({
+      message: "Client profile retrieved successfully",
+      data: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error("Error fetching client profile by client ID:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
 // 1. Update Client Profile
 exports.updateMe = async (req, res) => {
   const { full_name, latitude, longitude, gender } = req.body;

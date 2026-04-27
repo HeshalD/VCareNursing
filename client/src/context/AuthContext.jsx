@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { getUserFromToken, isAuthenticated } from '../utils/auth';
+import apiClient from '../api/api';
 
 const AuthContext = createContext();
 
@@ -17,18 +18,29 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     // Check authentication status on component mount
-    const checkAuth = () => {
+    const checkAuth = async () => {
       try {
         if (isAuthenticated()) {
-          const userData = getUserFromToken();
-          setUser(userData);
+          const decodedUser = getUserFromToken();
+
+          // If token payload doesn't include email, try fetching enriched user data
+          if (decodedUser && !decodedUser.email) {
+            try {
+              const full = await apiClient.getUnifiedOverview();
+              // prefer API response shape if available, otherwise fallback to decoded token
+              setUser(full?.data || full || decodedUser);
+            } catch (err) {
+              setUser(decodedUser);
+            }
+          } else {
+            setUser(decodedUser);
+          }
         } else {
           // Clear invalid token
           localStorage.removeItem('token');
           setUser(null);
         }
       } catch (error) {
-        console.error('Auth check error:', error);
         localStorage.removeItem('token');
         setUser(null);
       } finally {
@@ -41,7 +53,21 @@ export const AuthProvider = ({ children }) => {
 
   const login = (token, userData) => {
     localStorage.setItem('token', token);
-    setUser(userData);
+    
+    // Extract user data from JWT payload to get full_name and other JWT fields
+    try {
+      const jwtPayload = JSON.parse(atob(token.split('.')[1]));
+      // Merge JWT payload with API response data, giving priority to JWT fields
+      const mergedUserData = {
+        ...userData,
+        ...jwtPayload
+      };
+      console.log('AuthContext - User data stored:', mergedUserData);
+      setUser(mergedUserData);
+    } catch (error) {
+      // Fallback to original userData if JWT parsing fails
+      setUser(userData);
+    }
   };
 
   const logout = () => {

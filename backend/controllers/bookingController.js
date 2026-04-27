@@ -55,6 +55,10 @@ const convertToBookingInternal = async (req, res) => {
         }
 
         const quoteData = quoteRes.rows[0];
+        // Calculate scheduled end time from start date + qty_days
+        const startDate = new Date(reqData.start_date);
+        const scheduledEndTime = new Date(startDate);
+        scheduledEndTime.setDate(scheduledEndTime.getDate() + parseInt(quoteData.qty_days));
 
         // Determine staff assignment: use provided assigned_staff_id, fallback to preferred_staff_id from request
         const finalStaffId = assigned_staff_id || reqData.preferred_staff_id;
@@ -85,16 +89,25 @@ const convertToBookingInternal = async (req, res) => {
 
         // 3. Create/Ensure Client Profile (Billing Profile)
         let clientProfileId;
-        const profileCheck = await client.query('SELECT client_profile_id FROM client_profiles WHERE user_id = $1', [userId]);
+        const profileCheck = await client.query('SELECT client_profile_id, is_registration_fee_paid FROM client_profiles WHERE user_id = $1', [userId]);
 
         if (profileCheck.rows.length === 0) {
             const newProfile = await client.query(
-                `INSERT INTO client_profiles (user_id, full_name, primary_address) VALUES ($1, $2, $3) RETURNING client_profile_id`,
-                [userId, reqData.payer_name, reqData.location_address]
+                `INSERT INTO client_profiles (user_id, full_name, primary_address, is_registration_fee_paid) VALUES ($1, $2, $3, $4) RETURNING client_profile_id`,
+                [userId, reqData.payer_name, reqData.location_address, Number(quoteData.registration_fee) > 0 ? true : false]
             );
             clientProfileId = newProfile.rows[0].client_profile_id;
         } else {
             clientProfileId = profileCheck.rows[0].client_profile_id;
+            
+            // Check if registration fee needs to be marked as paid
+            const clientProfile = profileCheck.rows[0];
+            if (!clientProfile.is_registration_fee_paid && Number(quoteData.registration_fee) > 0) {
+                await client.query(
+                    `UPDATE client_profiles SET is_registration_fee_paid = TRUE WHERE client_profile_id = $1`,
+                    [clientProfileId]
+                );
+            }
         }
 
         // 4. PATIENT LOGIC (The Fix for Proxy Mode)
@@ -123,12 +136,12 @@ const convertToBookingInternal = async (req, res) => {
 
         // 5. Create Final Booking (UPDATED: Added RETURNING booking_id)
         const newBooking = await client.query(
-            `INSERT INTO bookings (client_id, patient_id, service_type, service_model, start_date, assigned_staff_id, status, preferred_gender, request_id) 
-             VALUES ($1, $2, $3, $4::service_model_enum, $5, $6, 'ACTIVE', $7::gender_preference_enum, $8)
+            `INSERT INTO bookings (client_id, patient_id, service_type, service_model, start_date, assigned_staff_id, status, preferred_gender, request_id, service_mode, scheduled_end_time, actual_end_time, ot_rate, daily_rate) 
+             VALUES ($1, $2, $3, $4::service_model_enum, $5, $6, 'ACTIVE', $7::gender_preference_enum, $8, $9, $10, $11, $12, $13)
              RETURNING booking_id`,
-            [clientProfileId, patientId, reqData.service_type, reqData.service_model || 'SHIFT_BASED', reqData.start_date, finalStaffId, reqData.preferred_gender || 'ANY', request_id]
+            [clientProfileId, patientId, reqData.service_type, reqData.service_model || 'SHIFT_BASED', reqData.start_date, finalStaffId, reqData.preferred_gender || 'ANY', request_id, null, scheduledEndTime, null, 500.00, quoteData.daily_rate]
         );
-        
+
         const bookingId = newBooking.rows[0].booking_id;
 
         // 6. UPDATE STAFF STATUS (Lock them)
@@ -144,11 +157,11 @@ const convertToBookingInternal = async (req, res) => {
         // =========================================================
         // 7.5 CREATE THE FINANCIAL TRANSACTION RECORD (NEW!)
         // =========================================================
-        
+
         // Note: Assuming your admin's ID is available in req.user.user_id from your auth middleware.
         // If not, you can leave verified_by as NULL for now.
-        const adminId = req.user ? req.user.user_id : null; 
-        
+        const adminId = req.user ? req.user.user_id : null;
+
         // Note: Assuming your quotations table has a 'total_amount' column. 
         // Change quoteData.total_amount if your column is named differently.
         await client.query(
@@ -158,16 +171,37 @@ const convertToBookingInternal = async (req, res) => {
                 amount, payment_method, receipt_url, verified_by, status, notes
             ) VALUES ($1, $2, $3, 'CLIENT_PAYMENT', 'CREDIT', $4, $5, $6, $7, 'COMPLETED', 'Initial payment for quote conversion')`,
             [
-                clientProfileId, 
-                bookingId, 
-                bookingQuoteId, 
-                quoteData.total_amount, 
-                payment_method, 
-                slip_url, 
+                clientProfileId,
+                bookingId,
+                bookingQuoteId,
+                quoteData.total_amount,
+                payment_method,
+                slip_url,
                 adminId
             ]
         );
+
         // =========================================================
+        // 7.6 CREATE REGISTRATION FEE DEBIT TRANSACTION (IF APPLICABLE)
+        // =========================================================
+        if (Number(quoteData.registration_fee) > 0) {
+            await client.query(
+                `INSERT INTO transactions (
+                    client_id, booking_id, quote_id, 
+                    category, transaction_type,
+                    amount, payment_method, receipt_url, verified_by, status, notes
+                ) VALUES ($1, $2, $3, 'AGENCY_FEE', 'DEBIT', $4, $5, $6, $7, 'COMPLETED', 'Registration fee deduction from initial payment')`,
+                [
+                    clientProfileId,
+                    bookingId,
+                    bookingQuoteId,
+                    quoteData.registration_fee,
+                    payment_method,
+                    slip_url,
+                    adminId
+                ]
+            );
+        }
 
         // 8. Fetch Staff Details (For Notification)
         const staffRes = await client.query(
@@ -189,7 +223,8 @@ const convertToBookingInternal = async (req, res) => {
             `You can view their profile by logging in at: vcarenursing.com\n` +
             (reqData.tempPassword ? `\n*Login:* ${reqData.payer_mobile}\n*Temp Password:* ${reqData.tempPassword}` : ``);
 
-        // await sendWhatsAppMessage(reqData.payer_mobile, welcomeMsg);
+        // Send WhatsApp confirmation to client
+        await sendWhatsAppMessage(reqData.payer_mobile, welcomeMsg);
 
         const assignmentMsg =
             `*New Assignment Alert!* 🚨\n\n` +
@@ -199,7 +234,8 @@ const convertToBookingInternal = async (req, res) => {
             `*Start Date:* ${new Date(reqData.start_date).toDateString()}\n\n` +
             `Please log in to the App for full details.`;
 
-        // await sendWhatsAppMessage(staffData.mobile_number, assignmentMsg);
+        // Send WhatsApp notification to staff
+        await sendWhatsAppMessage(staffData.mobile_number, assignmentMsg);
 
         // if (staffData.email) { ... sendEmail ... }
 
@@ -250,6 +286,11 @@ exports.getByBookingID = async (req, res) => {
                 b.status,
                 b.preferred_gender,
                 b.created_at,
+                b.service_mode,
+                b.scheduled_end_time,
+                b.actual_end_time,
+                b.ot_rate,
+                b.daily_rate,
                 c.client_profile_id,
                 c.full_name as client_name,
                 c.primary_address as client_address,
@@ -278,9 +319,9 @@ exports.getByBookingID = async (req, res) => {
         console.log('Query result:', result.rows);
 
         if (result.rows.length === 0) {
-            return res.status(404).json({ 
+            return res.status(404).json({
                 status: 'error',
-                message: 'Booking not found' 
+                message: 'Booking not found'
             });
         }
 
@@ -494,9 +535,9 @@ exports.approveTerminationRequest = async (req, res) => {
         // 3. Terminate the Booking
         await client.query(
             `UPDATE bookings 
-             SET status = 'COMPLETED'
-             WHERE booking_id = $1`,
-            [request.booking_id]
+     SET status = 'COMPLETED', actual_end_time = $2
+     WHERE booking_id = $1`,
+            [request.booking_id, officialEndDate]
         );
 
         // 4. Free up the Staff Member! (Crucial for availability)
@@ -659,11 +700,10 @@ exports.forceStopBooking = async (req, res) => {
         // 3. Terminate the Booking
         await client.query(
             `UPDATE bookings 
-             SET status = 'TERMINATED'
-             WHERE booking_id = $1`,
-            [booking_id]
+     SET status = 'TERMINATED', actual_end_time = $2
+     WHERE booking_id = $1`,
+            [booking_id, officialEndDate]
         );
-
         // 4. Free up the Staff Member!
         if (booking.assigned_staff_id) {
             await client.query(
@@ -772,6 +812,11 @@ exports.getAllBookings = async (req, res) => {
                 b.status,
                 b.preferred_gender,
                 b.created_at,
+                b.service_mode,
+                b.scheduled_end_time,
+                b.actual_end_time,
+                b.ot_rate,
+                b.daily_rate,
                 c.client_profile_id,
                 c.full_name as client_name,
                 c.primary_address as client_address,
@@ -809,3 +854,316 @@ exports.getAllBookings = async (req, res) => {
     }
 };
 
+exports.extendBooking = async (req, res) => {
+  const { booking_id } = req.params;
+  const { additional_days, payment_amount, payment_method, notes } = req.body;
+
+  if (!additional_days || additional_days <= 0) {
+    return res.status(400).json({ status: 'error', message: 'Invalid additional_days value' });
+  }
+
+  const client = await db.pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // Fetch the booking
+    const bookingRes = await client.query(
+      `SELECT * FROM bookings WHERE booking_id = $1 FOR UPDATE`,
+      [booking_id]
+    );
+
+    if (!bookingRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ status: 'error', message: 'Booking not found' });
+    }
+
+    const booking = bookingRes.rows[0];
+
+    if (!['ACTIVE', 'OVERDUE'].includes(booking.status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        status: 'error',
+        message: `Cannot extend a booking with status ${booking.status}`
+      });
+    }
+
+    // Calculate new scheduled_end_time
+    // If overdue, extend from NOW rather than the old expired scheduled_end_time
+    const baseDate = booking.status === 'OVERDUE' ? new Date() : new Date(booking.scheduled_end_time);
+    const newScheduledEndTime = new Date(baseDate);
+    newScheduledEndTime.setDate(newScheduledEndTime.getDate() + parseInt(additional_days));
+
+    // Update the booking
+    await client.query(
+      `UPDATE bookings 
+       SET scheduled_end_time = $1, status = 'ACTIVE'
+       WHERE booking_id = $2`,
+      [newScheduledEndTime, booking_id]
+    );
+
+    // Record the payment transaction if amount provided
+    if (payment_amount && payment_amount > 0) {
+      await client.query(
+        `INSERT INTO transactions (
+          client_id, booking_id, category, transaction_type,
+          amount, payment_method, status, notes
+        ) VALUES ($1, $2, 'CLIENT_PAYMENT', 'CREDIT', $3, $4, 'COMPLETED', $5)`,
+        [
+          booking.client_id,
+          booking_id,
+          payment_amount,
+          payment_method || 'BANK_TRANSFER',
+          notes || `Booking extended by ${additional_days} days`
+        ]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    res.status(200).json({
+      status: 'success',
+      message: `Booking extended by ${additional_days} days.`,
+      data: {
+        booking_id,
+        new_scheduled_end_time: newScheduledEndTime,
+        status: 'ACTIVE'
+      }
+    });
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('extendBooking error:', error);
+    res.status(500).json({ status: 'error', message: 'Failed to extend booking' });
+  } finally {
+    client.release();
+  }
+};
+
+exports.swapStaff = async (req, res) => {
+    const { booking_id } = req.params;
+    const {
+        new_staff_id,
+        swap_reason,
+        arrival_time,
+        // Optional overrides
+        new_daily_rate,
+        new_ot_rate,
+        new_scheduled_end_time
+    } = req.body;
+
+    if (!new_staff_id) {
+        return res.status(400).json({ status: 'error', message: 'new_staff_id is required' });
+    }
+
+    const client = await db.pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        // 1. Fetch the current booking
+        const bookingRes = await client.query(
+            `SELECT b.*, 
+                    sp.full_name as old_staff_name,
+                    u.mobile_number as old_staff_mobile,
+                    cp.full_name as client_name,
+                    uc.mobile_number as client_mobile,
+                    p.full_name as patient_name
+             FROM bookings b
+             JOIN staff_profiles sp ON b.assigned_staff_id = sp.staff_profile_id
+             JOIN users u ON sp.user_id = u.user_id
+             JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+             JOIN users uc ON cp.user_id = uc.user_id
+             JOIN patient_profiles p ON b.patient_id = p.patient_id
+             WHERE b.booking_id = $1 FOR UPDATE`,
+            [booking_id]
+        );
+
+        if (!bookingRes.rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Booking not found' });
+        }
+
+        const booking = bookingRes.rows[0];
+
+        if (!['ACTIVE', 'OVERDUE'].includes(booking.status)) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                status: 'error',
+                message: `Cannot swap staff on a booking with status ${booking.status}`
+            });
+        }
+
+        // 2. Verify new staff exists and is available
+        const newStaffRes = await client.query(
+            `SELECT sp.staff_profile_id, sp.full_name, sp.current_status,
+                    u.mobile_number as staff_mobile
+             FROM staff_profiles sp
+             JOIN users u ON sp.user_id = u.user_id
+             WHERE sp.staff_profile_id = $1`,
+            [new_staff_id]
+        );
+
+        if (!newStaffRes.rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'New staff member not found' });
+        }
+
+        const newStaff = newStaffRes.rows[0];
+
+        if (newStaff.current_status !== 'AVAILABLE') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                status: 'error',
+                message: `${newStaff.full_name} is not available for assignment (status: ${newStaff.current_status})`
+            });
+        }
+
+        // 3. Determine billing gap
+        // If arrival_time provided and it's within 4 hours of now — no billing gap
+        let billingGap = false;
+        if (arrival_time) {
+            const arrivalDate = new Date(arrival_time);
+            const now = new Date();
+            const diffHours = (arrivalDate - now) / (1000 * 60 * 60);
+            billingGap = diffHours > 4;
+        }
+
+        const oldStaffId = booking.assigned_staff_id;
+
+        // 4. Log the swap
+        await client.query(
+            `INSERT INTO staff_swaps 
+                (booking_id, old_staff_id, new_staff_id, swap_reason, swapped_at, swapped_by, arrival_time, billing_gap)
+             VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7)`,
+            [
+                booking_id,
+                oldStaffId,
+                new_staff_id,
+                swap_reason || null,
+                req.user.user_id,
+                arrival_time ? new Date(arrival_time) : null,
+                billingGap
+            ]
+        );
+
+        // 5. Build the booking update dynamically
+        // Only override fields the admin explicitly passed in
+        let updateFields = [`assigned_staff_id = $1`];
+        let updateValues = [new_staff_id];
+        let paramCount = 2;
+
+        if (new_daily_rate !== undefined) {
+            updateFields.push(`daily_rate = $${paramCount}`);
+            updateValues.push(new_daily_rate);
+            paramCount++;
+        }
+
+        if (new_ot_rate !== undefined) {
+            updateFields.push(`ot_rate = $${paramCount}`);
+            updateValues.push(new_ot_rate);
+            paramCount++;
+        }
+
+        if (new_scheduled_end_time !== undefined) {
+            updateFields.push(`scheduled_end_time = $${paramCount}`);
+            updateValues.push(new Date(new_scheduled_end_time));
+            paramCount++;
+        }
+
+        updateValues.push(booking_id);
+
+        await client.query(
+            `UPDATE bookings SET ${updateFields.join(', ')} WHERE booking_id = $${paramCount}`,
+            updateValues
+        );
+
+        // 6. Free old staff member
+        await client.query(
+            `UPDATE staff_profiles SET current_status = 'AVAILABLE' WHERE staff_profile_id = $1`,
+            [oldStaffId]
+        );
+
+        // 7. Lock new staff member
+        await client.query(
+            `UPDATE staff_profiles SET current_status = 'ASSIGNED' WHERE staff_profile_id = $1`,
+            [new_staff_id]
+        );
+
+        await client.query('COMMIT');
+
+        // 8. Notifications — stubbed out, ready for WhatsApp go-live
+        // await sendBookingConfirmation(
+        //     booking.client_mobile,
+        //     booking.client_name,
+        //     newStaff.full_name,
+        //     booking.patient_name,
+        //     new Date().toDateString()
+        // );
+        // await sendWhatsAppMessage(
+        //     booking.old_staff_mobile,
+        //     `Your assignment for patient ${booking.patient_name} has ended. You are now available for new bookings.`
+        // );
+        // await sendWhatsAppMessage(
+        //     newStaff.staff_mobile,
+        //     `New Assignment: You have been assigned to care for ${booking.patient_name} at ${booking.client_name}'s address. Please log in to the app for full details.`
+        // );
+
+        res.status(200).json({
+            status: 'success',
+            message: `Staff swapped successfully. ${booking.old_staff_name} replaced by ${newStaff.full_name}.`,
+            data: {
+                booking_id,
+                old_staff: booking.old_staff_name,
+                new_staff: newStaff.full_name,
+                billing_gap: billingGap,
+                billing_note: billingGap
+                    ? 'Gap exceeds 4 hours — billing gap recorded. Manual review may be needed.'
+                    : 'Replacement within 4 hours — billing continues uninterrupted.'
+            }
+        });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('swapStaff error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to swap staff member' });
+    } finally {
+        client.release();
+    }
+};
+
+// GET /api/bookings/:booking_id/swap-history
+exports.getSwapHistory = async (req, res) => {
+    const { booking_id } = req.params;
+
+    try {
+        const result = await db.query(
+            `SELECT 
+                ss.swap_id,
+                ss.swapped_at,
+                ss.swap_reason,
+                ss.arrival_time,
+                ss.billing_gap,
+                old_sp.full_name as old_staff_name,
+                new_sp.full_name as new_staff_name,
+                u.mobile_number as swapped_by_mobile
+             FROM staff_swaps ss
+             JOIN staff_profiles old_sp ON ss.old_staff_id = old_sp.staff_profile_id
+             JOIN staff_profiles new_sp ON ss.new_staff_id = new_sp.staff_profile_id
+             JOIN users u ON ss.swapped_by = u.user_id
+             WHERE ss.booking_id = $1
+             ORDER BY ss.swapped_at DESC`,
+            [booking_id]
+        );
+
+        res.status(200).json({
+            status: 'success',
+            count: result.rowCount,
+            data: result.rows
+        });
+
+    } catch (error) {
+        console.error('getSwapHistory error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to fetch swap history' });
+    }
+};

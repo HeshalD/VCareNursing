@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Lock, ArrowLeft, Mail } from 'lucide-react';
+import { Lock, ArrowLeft } from 'lucide-react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import loginBg from '../assets/images/Gemini_Generated_Image_5nmpua5nmpua5nmp.png';
-import apiClient from '../api/api';
+import loginBg from '../../assets/images/Gemini_Generated_Image_5nmpua5nmpua5nmp.png';
+import apiClient from '../../api/api';
 
-const VerifyOTPReg = () => {
+const VerifyForgotPasswordOtp = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
@@ -13,21 +13,21 @@ const VerifyOTPReg = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [timeLeft, setTimeLeft] = useState(300); // 5 minutes
-  const [email, setEmail] = useState('');
   const [userId, setUserId] = useState('');
+  const [mobileNumber, setMobileNumber] = useState('');
 
   useEffect(() => {
-    // Get email and userId from location state
-    if (location.state?.email) {
-      setEmail(location.state.email);
-    }
+    // Get userId and mobileNumber from location state
     if (location.state?.userId) {
       setUserId(location.state.userId);
     }
+    if (location.state?.mobileNumber) {
+      setMobileNumber(location.state.mobileNumber);
+    }
 
-    // Redirect if no email provided
-    if (!location.state?.email) {
-      navigate('/register');
+    // Redirect if no userId provided
+    if (!location.state?.userId) {
+      navigate('/forgot-password');
       return;
     }
 
@@ -53,14 +53,14 @@ const VerifyOTPReg = () => {
 
   const handleOtpChange = (index, value) => {
     if (value.length > 1) return;
-    
+
     const newOtp = [...otp];
     newOtp[index] = value;
     setOtp(newOtp);
 
     // Auto-focus next input
     if (value && index < 5) {
-      const nextInput = document.getElementById(`otp-${index + 1}`);
+      const nextInput = document.getElementById(`otp-forgot-${index + 1}`);
       if (nextInput) nextInput.focus();
     }
   };
@@ -68,7 +68,7 @@ const VerifyOTPReg = () => {
   const handleKeyDown = (index, e) => {
     // Handle backspace
     if (e.key === 'Backspace' && !otp[index] && index > 0) {
-      const prevInput = document.getElementById(`otp-${index - 1}`);
+      const prevInput = document.getElementById(`otp-forgot-${index - 1}`);
       if (prevInput) {
         prevInput.focus();
         const newOtp = [...otp];
@@ -81,7 +81,7 @@ const VerifyOTPReg = () => {
   const handlePaste = (e) => {
     e.preventDefault();
     const pastedData = e.clipboardData.getData('text').slice(0, 6);
-    const newOtp = pastedData.split('').map((char, index) => 
+    const newOtp = pastedData.split('').map((char, index) =>
       index < 6 ? char : otp[index]
     );
     setOtp(newOtp);
@@ -93,7 +93,7 @@ const VerifyOTPReg = () => {
     setSuccess('');
 
     const otpValue = otp.join('');
-    
+
     if (otpValue.length !== 6) {
       setError('Please enter all 6 digits');
       return;
@@ -101,16 +101,20 @@ const VerifyOTPReg = () => {
 
     try {
       setIsLoading(true);
-      const response = await apiClient.verifyOtp(userId, otpValue);
-      
+      const response = await apiClient.verifyForgotPasswordOtp(userId, otpValue);
+
       console.log('OTP verification successful:', response);
-      setSuccess('Email verified successfully! Redirecting to login...');
-      
-      // Redirect to login page after 2 seconds
+      setSuccess('OTP verified successfully! Redirecting to password reset...');
+
+      // Redirect to reset password page after 1.5 seconds
       setTimeout(() => {
-        navigate('/login');
-      }, 2000);
-      
+        navigate('/forgot-password/reset', {
+          state: {
+            userId: userId,
+            otp: otpValue
+          }
+        });
+      }, 1500);
     } catch (err) {
       setError(err.message || 'Invalid OTP. Please try again.');
       console.error('OTP verification error:', err);
@@ -122,8 +126,7 @@ const VerifyOTPReg = () => {
   const handleResendOtp = async () => {
     try {
       setIsLoading(true);
-      // You would need to implement resendOtp in your API
-      // await apiClient.resendOtp(email);
+      await apiClient.requestForgotPasswordOtp(mobileNumber);
       setTimeLeft(300); // Reset timer
       setSuccess('OTP resent successfully!');
     } catch (err) {
@@ -153,7 +156,7 @@ const VerifyOTPReg = () => {
             className="text-5xl font-bold text-white mb-6 leading-tight"
           >
             Verify Your <br />
-            Email Address.
+            Phone Number.
           </motion.h1>
           <motion.p
             initial={{ opacity: 0, y: 20 }}
@@ -161,8 +164,8 @@ const VerifyOTPReg = () => {
             transition={{ duration: 0.7, delay: 0.2 }}
             className="text-lg text-slate-300 leading-relaxed font-light"
           >
-            Enter the 6-digit verification code sent to your email address
-            to complete your registration and access our healthcare services.
+            Enter the 6-digit verification code sent to your registered phone number
+            to proceed with resetting your password.
           </motion.p>
         </div>
       </div>
@@ -176,17 +179,17 @@ const VerifyOTPReg = () => {
             transition={{ duration: 0.5 }}
           >
             <Link
-              to="/register"
+              to="/forgot-password"
               className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-4 transition-colors"
             >
               <ArrowLeft className="w-4 h-4 mr-2" />
-              Back to Register
+              Back to Phone Number
             </Link>
-            
-            <h2 className="text-3xl font-bold text-slate-900 mb-2">Verify Email</h2>
+
+            <h2 className="text-3xl font-bold text-slate-900 mb-2">Verify Phone</h2>
             <p className="text-slate-600 text-sm">
               We've sent a verification code to:<br />
-              <span className="font-medium text-slate-900">{email}</span>
+              <span className="font-medium text-slate-900">{mobileNumber}</span>
             </p>
           </motion.div>
 
@@ -206,7 +209,7 @@ const VerifyOTPReg = () => {
                   {otp.map((digit, index) => (
                     <input
                       key={index}
-                      id={`otp-${index}`}
+                      id={`otp-forgot-${index}`}
                       type="text"
                       maxLength="1"
                       className="w-12 h-12 text-center text-lg font-semibold text-black bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
@@ -275,29 +278,15 @@ const VerifyOTPReg = () => {
               ) : (
                 <>
                   <Lock className="w-5 h-5" />
-                  Verify Email
+                  Verify Code
                 </>
               )}
             </motion.button>
           </form>
-
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.3 }}
-            className="text-center"
-          >
-            <p className="text-sm text-slate-600">
-              Already have an account?{' '}
-              <Link to="/login" className="text-blue-600 hover:text-blue-700 font-medium">
-                Sign In
-              </Link>
-            </p>
-          </motion.div>
         </div>
       </div>
     </div>
   );
 };
 
-export default VerifyOTPReg;
+export default VerifyForgotPasswordOtp;

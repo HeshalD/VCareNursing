@@ -1,6 +1,7 @@
 import React from 'react';
 import { ShieldCheck, Facebook, Instagram, Twitter, Linkedin, Mail, Phone, MapPin } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import logoUrl from '../../assets/Logo/VCareLogo.png';
 
 const Footer = () => {
   return (
@@ -11,10 +12,7 @@ const Footer = () => {
           {/* Brand Column */}
           <div>
             <Link to="/" className="flex items-center gap-2 mb-6">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-blue-500 to-indigo-600 flex items-center justify-center">
-                <ShieldCheck className="w-5 h-5 text-white" />
-              </div>
-              <span className="font-bold text-xl tracking-tight text-slate-900">VCare<span className="text-blue-500">.</span></span>
+              <img src={logoUrl} alt="VCare Nursing" className="h-12 w-auto object-contain" />
             </Link>
             <p className="text-slate-600 text-sm leading-relaxed mb-6">
               Sri Lanka's first healthcare staffing network.
@@ -43,7 +41,7 @@ const Footer = () => {
               <li><a href="#" className="hover:text-blue-400 transition-colors">Hospital Staffing</a></li>
               <li><a href="#" className="hover:text-blue-400 transition-colors">Child Care</a></li>
               <li><a href="#" className="hover:text-blue-400 transition-colors">Elderly Care</a></li>
-              
+
             </ul>
           </div>
 
@@ -89,7 +87,7 @@ const Footer = () => {
         {/* Bottom Bar */}
         <div className="pt-8 border-t border-slate-200 flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="text-slate-500 text-sm">
-          2026 VCare. All rights reserved.
+            2026 VCare. All rights reserved.
           </div>
           <div className="flex gap-8 text-sm text-slate-500">
             <a href="#" className="hover:text-slate-900 transition-colors">Privacy Policy</a>

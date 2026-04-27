@@ -18,7 +18,10 @@ async function migrate() {
       return;
     }
 
-    // Create Enums
+    // =========================================================
+    // ENUMS
+    // =========================================================
+
     await db.query(`
       DO $$ BEGIN
         CREATE TYPE user_role_enum AS ENUM (
@@ -101,7 +104,30 @@ async function migrate() {
       END $$;
     `);
 
-    // Create Tables
+    await db.query(`
+      DO $$ BEGIN
+        CREATE TYPE wallet_transaction_type AS ENUM (
+          'CREDIT', 'DEBIT'
+        );
+      EXCEPTION
+        WHEN duplicate_object THEN null;
+      END $$;
+    `);
+
+    await db.query(`
+      DO $$ BEGIN
+        CREATE TYPE advance_status AS ENUM (
+          'PENDING', 'APPROVED', 'REJECTED'
+        );
+      EXCEPTION
+        WHEN duplicate_object THEN null;
+      END $$;
+    `);
+
+    // =========================================================
+    // CORE TABLES
+    // =========================================================
+
     await db.query(`
       CREATE TABLE IF NOT EXISTS users (
         user_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -160,7 +186,9 @@ async function migrate() {
         profile_picture_url TEXT,
         gender gender_enum,
         willing_to_live_in BOOLEAN DEFAULT false,
-        date_of_birth DATE
+        date_of_birth DATE,
+        average_rating DECIMAL(3,2) DEFAULT 0.00,
+        total_reviews INTEGER DEFAULT 0
       );
     `);
 
@@ -251,7 +279,12 @@ async function migrate() {
         assigned_staff_id UUID REFERENCES staff_profiles(staff_profile_id),
         service_model service_model_enum DEFAULT 'SHIFT_BASED',
         preferred_gender gender_preference_enum DEFAULT 'ANY',
-        request_id UUID REFERENCES service_requests(request_id)
+        request_id UUID REFERENCES service_requests(request_id),
+        service_mode VARCHAR(20),
+        scheduled_end_time TIMESTAMP,
+        actual_end_time TIMESTAMP,
+        ot_rate DECIMAL(10,2) DEFAULT 500.00,
+        daily_rate DECIMAL(10,2)
       );
     `);
 
@@ -332,13 +365,110 @@ async function migrate() {
       );
     `);
 
-    // Create Indexes
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS staff_wallet (
+        wallet_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        staff_profile_id UUID NOT NULL UNIQUE REFERENCES staff_profiles(staff_profile_id) ON DELETE CASCADE,
+        balance DECIMAL(12, 2) NOT NULL DEFAULT 0,
+        updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS staff_wallet_transactions (
+        transaction_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        staff_profile_id UUID NOT NULL REFERENCES staff_profiles(staff_profile_id) ON DELETE CASCADE,
+        type wallet_transaction_type NOT NULL,
+        amount DECIMAL(12, 2) NOT NULL CHECK (amount > 0),
+        reason VARCHAR(100) NOT NULL,
+        reference_id UUID,
+        created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS staff_advances (
+        advance_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        staff_profile_id UUID NOT NULL REFERENCES staff_profiles(staff_profile_id) ON DELETE CASCADE,
+        amount_requested DECIMAL(12, 2) NOT NULL CHECK (amount_requested > 0),
+        status advance_status NOT NULL DEFAULT 'PENDING',
+        requested_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+        approved_at TIMESTAMP WITH TIME ZONE,
+        rejected_reason VARCHAR(255)
+      );
+    `);
+
+    // =========================================================
+    // SPRINT 2 TABLES (added after initial deployment)
+    // =========================================================
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS staff_swaps (
+        swap_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        booking_id UUID REFERENCES bookings(booking_id),
+        old_staff_id UUID REFERENCES staff_profiles(staff_profile_id),
+        new_staff_id UUID REFERENCES staff_profiles(staff_profile_id),
+        swap_reason TEXT,
+        swapped_at TIMESTAMP DEFAULT NOW(),
+        swapped_by UUID REFERENCES users(user_id),
+        arrival_time TIMESTAMP,
+        billing_gap BOOLEAN DEFAULT FALSE
+      );
+    `);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS client_alerts (
+        alert_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        booking_id UUID REFERENCES bookings(booking_id),
+        client_id UUID REFERENCES client_profiles(client_profile_id),
+        alert_type VARCHAR(50),
+        message TEXT,
+        sent_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS password_reset_otps (
+        id SERIAL PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+        otp_code VARCHAR(6) NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS staff_reviews (
+        review_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        staff_profile_id UUID REFERENCES staff_profiles(staff_profile_id),
+        client_profile_id UUID REFERENCES client_profiles(client_profile_id),
+        rating INTEGER CHECK (rating >= 1 AND rating <= 5),
+        review_text TEXT,
+        is_visible BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+
+    // =========================================================
+    // INDEXES
+    // =========================================================
+
     await db.query(`
       CREATE INDEX IF NOT EXISTS idx_request_preferred_staff 
       ON service_requests(preferred_staff_id);
     `);
 
-    // Add foreign key for quotations active_quote_id
+    await db.query(`
+      CREATE INDEX IF NOT EXISTS idx_password_reset_user 
+      ON password_reset_otps(user_id);
+    `);
+
+    // =========================================================
+    // DEFERRED FOREIGN KEYS
+    // =========================================================
+
+    // active_quote_id on service_requests references quotations,
+    // but quotations references service_requests — so we add it after both exist
     await db.query(`
       DO $$ BEGIN
         ALTER TABLE service_requests 
