@@ -512,7 +512,7 @@ const QuoteBuilder = () => {
                   </div>
                 </div>
 
-                {/* Action Buttons */}
+                {/* Action Buttons  */}
                 <div className="space-y-3">
                   <button
                     onClick={handleSendPDF}
