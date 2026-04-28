@@ -209,12 +209,30 @@ export default function StaffDirectory() {
         if (!staffContentType || !staffContentType.includes('application/json')) {
           const text = await staffResponse.text();
           console.error('Staff API non-JSON response:', text.substring(0, 500));
+          
+          if (text.includes('<!doctype') || text.includes('<html')) {
+            console.error('Staff API returned HTML error page - check backend deployment');
+            setStaff([]);
+            setAvailableStaff([]);
+            setError('Service temporarily unavailable');
+            return;
+          }
+          
           throw new Error('Staff API returned non-JSON response');
         }
         
         if (!availableContentType || !availableContentType.includes('application/json')) {
           const text = await availableResponse.text();
           console.error('Available staff API non-JSON response:', text.substring(0, 500));
+          
+          if (text.includes('<!doctype') || text.includes('<html')) {
+            console.error('Available staff API returned HTML error page - check backend deployment');
+            setStaff([]);
+            setAvailableStaff([]);
+            setError('Service temporarily unavailable');
+            return;
+          }
+          
           throw new Error('Available staff API returned non-JSON response');
         }
         

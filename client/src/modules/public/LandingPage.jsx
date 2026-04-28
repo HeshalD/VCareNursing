@@ -184,6 +184,15 @@ const BrowseStaffSection = () => {
           const text = await staffResponse.text();
           console.error('Non-JSON response (first 500 chars):', text.substring(0, 500));
           console.error('Full response URL:', staffResponse.url);
+          
+          // Check if it's an HTML error page
+          if (text.includes('<!doctype') || text.includes('<html')) {
+            console.error('API returned HTML error page - check backend deployment');
+            setStaff([]); // Set empty array to prevent crashes
+            setError('Service temporarily unavailable');
+            return;
+          }
+          
           throw new Error('API returned non-JSON response');
         }
         
