@@ -164,13 +164,41 @@ const BrowseStaffSection = () => {
         setLoading(true);
 
         // Fetch staff profiles
+        console.log('Fetching staff from:', '/api/staff/top-rated');
         const staffResponse = await fetch('/api/staff/top-rated');
-        if (!staffResponse.ok) throw new Error('Failed to fetch staff');
+        
+        console.log('Response status:', staffResponse.status, staffResponse.statusText);
+        console.log('Response headers:', Object.fromEntries(staffResponse.headers.entries()));
+        
+        if (!staffResponse.ok) {
+          const errorText = await staffResponse.text();
+          console.error('Error response body:', errorText.substring(0, 500));
+          throw new Error(`HTTP ${staffResponse.status}: ${staffResponse.statusText}`);
+        }
+        
+        // Check if response is JSON before parsing
+        const contentType = staffResponse.headers.get('content-type');
+        console.log('Content-Type:', contentType);
+        
+        if (!contentType || !contentType.includes('application/json')) {
+          const text = await staffResponse.text();
+          console.error('Non-JSON response (first 500 chars):', text.substring(0, 500));
+          console.error('Full response URL:', staffResponse.url);
+          throw new Error('API returned non-JSON response');
+        }
+        
         const staffData = await staffResponse.json();
+        console.log('Parsed JSON response:', staffData);
+
+        // Validate response structure
+        if (!staffData.data || !Array.isArray(staffData.data)) {
+          console.error('Invalid API response structure:', staffData);
+          throw new Error('Invalid API response structure');
+        }
 
         // Sort by average rating and limit to top 8 for landing page
         const topRatedStaff = staffData.data
-          .sort((a, b) => b.average_rating - a.average_rating)
+          .sort((a, b) => (b.average_rating || 0) - (a.average_rating || 0))
           .slice(0, 8);
 
         setStaff(topRatedStaff);
