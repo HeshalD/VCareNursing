@@ -181,17 +181,66 @@ export default function StaffDirectory() {
       try {
         setLoading(true);
         
+        console.log('Fetching staff data from multiple endpoints');
         // Fetch all staff and available staff in parallel
         const [staffResponse, availableResponse] = await Promise.all([
           fetch('/api/staff'),
           fetch('/api/staff/available-staff')
         ]);
         
-        if (!staffResponse.ok) throw new Error('Failed to fetch staff');
-        if (!availableResponse.ok) throw new Error('Failed to fetch available staff');
+        console.log('Staff response status:', staffResponse.status, staffResponse.statusText);
+        console.log('Available staff response status:', availableResponse.status, availableResponse.statusText);
+        
+        if (!staffResponse.ok) {
+          const errorText = await staffResponse.text();
+          console.error('Staff API error response:', errorText.substring(0, 500));
+          throw new Error(`Failed to fetch staff: ${staffResponse.status}`);
+        }
+        if (!availableResponse.ok) {
+          const errorText = await availableResponse.text();
+          console.error('Available staff API error response:', errorText.substring(0, 500));
+          throw new Error(`Failed to fetch available staff: ${availableResponse.status}`);
+        }
+        
+        // Check content-type before parsing JSON
+        const staffContentType = staffResponse.headers.get('content-type');
+        const availableContentType = availableResponse.headers.get('content-type');
+        
+        if (!staffContentType || !staffContentType.includes('application/json')) {
+          const text = await staffResponse.text();
+          console.error('Staff API non-JSON response:', text.substring(0, 500));
+          
+          if (text.includes('<!doctype') || text.includes('<html')) {
+            console.error('Staff API returned HTML error page - check backend deployment');
+            setStaff([]);
+            setAvailableStaff([]);
+            setError('Service temporarily unavailable');
+            return;
+          }
+          
+          throw new Error('Staff API returned non-JSON response');
+        }
+        
+        if (!availableContentType || !availableContentType.includes('application/json')) {
+          const text = await availableResponse.text();
+          console.error('Available staff API non-JSON response:', text.substring(0, 500));
+          
+          if (text.includes('<!doctype') || text.includes('<html')) {
+            console.error('Available staff API returned HTML error page - check backend deployment');
+            setStaff([]);
+            setAvailableStaff([]);
+            setError('Service temporarily unavailable');
+            return;
+          }
+          
+          throw new Error('Available staff API returned non-JSON response');
+        }
         
         const staffData = await staffResponse.json();
         const availableData = await availableResponse.json();
+        
+        console.log('Staff data received:', staffData);
+        console.log('Available staff data received:', availableData);
         
         setStaff(staffData.data || []);
         setAvailableStaff(availableData.data || []);

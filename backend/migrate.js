@@ -509,4 +509,5 @@ if (require.main === module) {
     .catch(() => process.exit(1));
 }
 
+
 module.exports = migrate;
