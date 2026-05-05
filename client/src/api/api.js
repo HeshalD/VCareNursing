@@ -273,7 +273,13 @@ class ApiClient {
 
   }
 
-
+  async getClientProfileByUserId(userId) {
+    try {
+      return this.request(`/client/profile/user/${userId}`);
+    } catch (error) {
+      throw error;
+    }
+  }
 
   // Product endpoints
 

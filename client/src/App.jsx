@@ -47,6 +47,7 @@ import VerifyForgotPasswordOtp from './modules/auth/VerifyForgotPasswordOtp';
 import ResetPasswordPage from './modules/auth/ResetPasswordPage';
 import ViewStaffPage from './modules/public/ViewStaffPage';
 import StaffProfile from './modules/public/StaffProfile';
+import ClientProfile from './modules/client/ClientProfile';
 
 function App() {
   return (
@@ -84,9 +85,8 @@ function App() {
             <Route path="/worker-registration-success" element={<WorkerRegistrationSuccessPage />} />
             <Route path="/services/provider-dashboard" element={<WorkerDashboardDemo />} />
             <Route path="/services/earnings" element={<Earnings />} />
-            <Route path="/client/dashboard" element={<ClientDashboardDemo />} />
-            <Route path="/client/profile" element={<ClientProfileDemo />} />
             <Route path="/client/bookings" element={<ClientBookings/>}/>
+            <Route path="/client/profile" element={<ClientProfile/>}/>
             <Route path="/admin/dashboard" element={
               <AdminAuthProvider>
                 <AdminDashboard />

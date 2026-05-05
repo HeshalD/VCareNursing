@@ -164,30 +164,21 @@ const BrowseStaffSection = () => {
         setLoading(true);
 
         // Fetch staff profiles
-        console.log('Fetching staff from:', '/api/staff/top-rated');
         const staffResponse = await fetch('/api/staff/top-rated');
-        
-        console.log('Response status:', staffResponse.status, staffResponse.statusText);
-        console.log('Response headers:', Object.fromEntries(staffResponse.headers.entries()));
         
         if (!staffResponse.ok) {
           const errorText = await staffResponse.text();
-          console.error('Error response body:', errorText.substring(0, 500));
           throw new Error(`HTTP ${staffResponse.status}: ${staffResponse.statusText}`);
         }
         
         // Check if response is JSON before parsing
         const contentType = staffResponse.headers.get('content-type');
-        console.log('Content-Type:', contentType);
         
         if (!contentType || !contentType.includes('application/json')) {
           const text = await staffResponse.text();
-          console.error('Non-JSON response (first 500 chars):', text.substring(0, 500));
-          console.error('Full response URL:', staffResponse.url);
           
           // Check if it's an HTML error page
           if (text.includes('<!doctype') || text.includes('<html')) {
-            console.error('API returned HTML error page - check backend deployment');
             setStaff([]); // Set empty array to prevent crashes
             setError('Service temporarily unavailable');
             return;
@@ -197,11 +188,9 @@ const BrowseStaffSection = () => {
         }
         
         const staffData = await staffResponse.json();
-        console.log('Parsed JSON response:', staffData);
 
         // Validate response structure
         if (!staffData.data || !Array.isArray(staffData.data)) {
-          console.error('Invalid API response structure:', staffData);
           throw new Error('Invalid API response structure');
         }
 

@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Menu, X, User, LogOut, Briefcase, Calendar } from 'lucide-react';
+import { Menu, X, User, LogOut, Briefcase, Calendar, ChevronDown } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import logoUrl from '../../assets/Logo/VCareLogo.png';
 const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const dropdownRef = useRef(null);
   const { user, isAuthenticated, logout, loading } = useAuth();
   const navigate = useNavigate();
 
@@ -22,7 +24,22 @@ const Navbar = () => {
     logout();
     navigate('/');
     setIsOpen(false);
+    setIsDropdownOpen(false);
   };
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsDropdownOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
   const getUserDisplayName = () => {
     // Use full_name from AuthContext (from JWT payload)
@@ -47,6 +64,16 @@ const Navbar = () => {
       return userRole.some(role => staffRoles.includes(role));
     }
     return staffRoles.includes(userRole);
+  };
+
+  const isClientUser = () => {
+    const clientRoles = ['{CLIENT}'];
+    const userRole = user?.role;
+
+    if (Array.isArray(userRole)) {
+      return userRole.some(role => clientRoles.includes(role));
+    }
+    return clientRoles.includes(userRole);
   };
 
   return (
@@ -84,17 +111,60 @@ const Navbar = () => {
                     <span className="hidden sm:inline">Dashboard</span>
                   </Link>
                 )}
-                <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 rounded-full">
-                  <User className="w-4 h-4 text-blue-600" />
-                  <span className="text-sm font-medium text-blue-900">{getUserDisplayName()}</span>
+                <div className="relative" ref={dropdownRef}>
+                  <button
+                    onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-50 hover:bg-blue-100 rounded-full transition-all"
+                  >
+                    <User className="w-4 h-4 text-blue-600" />
+                    <span className="text-sm font-medium text-blue-900">{getUserDisplayName()}</span>
+                    <ChevronDown className={`w-4 h-4 text-blue-600 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {isDropdownOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-2 z-50"
+                    >
+                      <Link
+                        to="/client/profile"
+                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                        onClick={() => setIsDropdownOpen(false)}
+                      >
+                        <User className="w-4 h-4 text-slate-400" />
+                        My Profile
+                      </Link>
+                      <Link
+                        to="/client/bookings"
+                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                        onClick={() => setIsDropdownOpen(false)}
+                      >
+                        <Calendar className="w-4 h-4 text-slate-400" />
+                        My Bookings
+                      </Link>
+                      {isStaffUser() && (
+                        <Link
+                          to="/services/provider-dashboard"
+                          className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                          onClick={() => setIsDropdownOpen(false)}
+                        >
+                          <Briefcase className="w-4 h-4 text-slate-400" />
+                          Staff Dashboard
+                        </Link>
+                      )}
+                      <div className="border-t border-slate-100 my-2"></div>
+                      <button
+                        onClick={handleLogout}
+                        className="flex items-center gap-3 px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition-colors w-full text-left"
+                      >
+                        <LogOut className="w-4 h-4" />
+                        Logout
+                      </button>
+                    </motion.div>
+                  )}
                 </div>
-                <button
-                  onClick={handleLogout}
-                  className="flex items-center gap-2 px-4 py-2 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-full text-sm font-medium transition-all"
-                  title="Logout"
-                >
-                  <LogOut className="w-4 h-4" />
-                </button>
               </div>
             ) : (
               <Link
@@ -147,17 +217,60 @@ const Navbar = () => {
                     Staff Dashboard
                   </Link>
                 )}
-                <div className="flex items-center gap-2 px-3 py-3 bg-blue-50 rounded-xl mt-4">
-                  <User className="w-4 h-4 text-blue-600" />
-                  <span className="text-sm font-medium text-blue-900">{getUserDisplayName()}</span>
+                <div className="relative" ref={dropdownRef}>
+                  <button
+                    onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                    className="flex items-center gap-2 px-3 py-3 bg-blue-50 hover:bg-blue-100 rounded-xl mt-4 transition-all w-full"
+                  >
+                    <User className="w-4 h-4 text-blue-600" />
+                    <span className="text-sm font-medium text-blue-900">{getUserDisplayName()}</span>
+                    <ChevronDown className={`w-4 h-4 text-blue-600 transition-transform ml-auto ${isDropdownOpen ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {isDropdownOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-2 z-50"
+                    >
+                      <Link
+                        to="/client/profile"
+                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                        onClick={() => { setIsDropdownOpen(false); setIsOpen(false); }}
+                      >
+                        <User className="w-4 h-4 text-slate-400" />
+                        My Profile
+                      </Link>
+                      <Link
+                        to="/client/bookings"
+                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                        onClick={() => { setIsDropdownOpen(false); setIsOpen(false); }}
+                      >
+                        <Calendar className="w-4 h-4 text-slate-400" />
+                        My Bookings
+                      </Link>
+                      {isStaffUser() && (
+                        <Link
+                          to="/services/provider-dashboard"
+                          className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                          onClick={() => { setIsDropdownOpen(false); setIsOpen(false); }}
+                        >
+                          <Briefcase className="w-4 h-4 text-slate-400" />
+                          Staff Dashboard
+                        </Link>
+                      )}
+                      <div className="border-t border-slate-100 my-2"></div>
+                      <button
+                        onClick={() => { handleLogout(); setIsOpen(false); }}
+                        className="flex items-center gap-3 px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition-colors w-full text-left"
+                      >
+                        <LogOut className="w-4 h-4" />
+                        Logout
+                      </button>
+                    </motion.div>
+                  )}
                 </div>
-                <button
-                  onClick={handleLogout}
-                  className="flex items-center justify-center gap-2 w-full px-5 py-3 text-red-600 hover:bg-red-50 rounded-xl font-medium transition-all"
-                >
-                  <LogOut className="w-4 h-4" />
-                  Logout
-                </button>
               </>
             ) : (
               <Link to="/login" className="block w-full text-center mt-4 px-5 py-3 bg-blue-600 text-white rounded-xl font-medium">

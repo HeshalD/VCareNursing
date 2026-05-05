@@ -6,7 +6,7 @@ exports.getClientProfileByUserId = async (req, res) => {
 
   try {
     const result = await db.query(
-      'SELECT * FROM client_profiles WHERE user_id = $1',
+      'SELECT cp.*, u.email, u.mobile_number, u.created_at as user_created_at FROM client_profiles cp JOIN users u ON cp.user_id = u.user_id WHERE cp.user_id = $1',
       [user_id]
     );
 
