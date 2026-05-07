@@ -127,9 +127,9 @@ const convertToBookingInternal = async (req, res) => {
         } else {
             // SCENARIO B: New Lead (Auto-create Patient)
             const newPatient = await client.query(
-                `INSERT INTO patient_profiles (client_id, full_name, age, relationship_to_client, medical_condition, is_registration_fee_paid) 
-                 VALUES ($1, $2, $3, $4, $5, TRUE) RETURNING patient_id`,
-                [clientProfileId, reqData.patient_name, reqData.patient_age, reqData.relationship_to_client, reqData.patient_condition]
+                `INSERT INTO patient_profiles (client_id, full_name, age, relationship_to_client, medical_condition, is_registration_fee_paid, special_remarks, residential_address, emergency_contact_name, emergency_contact_number) 
+                 VALUES ($1, $2, $3, $4, $5, TRUE, $6, $7, $8, $9) RETURNING patient_id`,
+                [clientProfileId, reqData.patient_name, reqData.patient_age, reqData.relationship_to_client, reqData.patient_condition, reqData.remarks, reqData.location_address, reqData.payer_name, reqData.payer_mobile]
             );
             patientId = newPatient.rows[0].patient_id;
         }

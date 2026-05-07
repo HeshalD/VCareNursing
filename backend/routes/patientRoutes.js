@@ -7,7 +7,6 @@ const { protect, restrictTo } = require('../middleware/authMiddleware');
 router.post(
     '/create', 
     protect, 
-    restrictTo('SUPER_ADMIN', 'COORDINATOR'), 
     patientController.createPatientProfile
 );
 
@@ -15,8 +14,28 @@ router.post(
 router.get(
     '/client/:client_id', 
     protect, 
-    restrictTo('SUPER_ADMIN', 'COORDINATOR'), 
     patientController.getPatientsByClient
+);
+
+// Route to get patient by ID
+router.get(
+    '/:patient_id', 
+    protect, 
+    patientController.getPatientById
+);
+
+// Route to update patient profile
+router.put(
+    '/:patient_id', 
+    protect, 
+    patientController.updatePatientProfile
+);
+
+// Route to delete patient profile
+router.delete(
+    '/:patient_id', 
+    protect, 
+    patientController.deletePatientProfile
 );
 
 module.exports = router;

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Menu, X, User, LogOut, Briefcase, Calendar, ChevronDown } from 'lucide-react';
+import { Menu, X, User, LogOut, Briefcase, Calendar, ChevronDown, Users } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import logoUrl from '../../assets/Logo/VCareLogo.png';
 const Navbar = () => {
@@ -152,6 +152,14 @@ const Navbar = () => {
                         <Briefcase className="w-4 h-4 text-slate-400" />
                         Service Requests
                       </Link>
+                      <Link
+                        to="/client/patients"
+                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                        onClick={() => setIsDropdownOpen(false)}
+                      >
+                        <Users className="w-4 h-4 text-slate-400" />
+                        Patients
+                      </Link>
                       {isStaffUser() && (
                         <Link
                           to="/services/provider-dashboard"
@@ -257,6 +265,14 @@ const Navbar = () => {
                       >
                         <Calendar className="w-4 h-4 text-slate-400" />
                         My Bookings
+                      </Link>
+                      <Link
+                        to="/client/patients"
+                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                        onClick={() => { setIsDropdownOpen(false); setIsOpen(false); }}
+                      >
+                        <Users className="w-4 h-4 text-slate-400" />
+                        Patients
                       </Link>
                       {isStaffUser() && (
                         <Link
