@@ -48,6 +48,7 @@ import ResetPasswordPage from './modules/auth/ResetPasswordPage';
 import ViewStaffPage from './modules/public/ViewStaffPage';
 import StaffProfile from './modules/public/StaffProfile';
 import ClientProfile from './modules/client/ClientProfile';
+import ClientServiceRequests from './modules/client/ClientServiceRequests';
 
 function App() {
   return (
@@ -87,6 +88,7 @@ function App() {
             <Route path="/services/earnings" element={<Earnings />} />
             <Route path="/client/bookings" element={<ClientBookings/>}/>
             <Route path="/client/profile" element={<ClientProfile/>}/>
+            <Route path="/client/service-requests" element={<ClientServiceRequests/>}/>
             <Route path="/admin/dashboard" element={
               <AdminAuthProvider>
                 <AdminDashboard />

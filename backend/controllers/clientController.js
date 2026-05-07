@@ -199,6 +199,102 @@ exports.getAllBookingsForClient = async (req, res) => {
   }
 };
 
+// 4.5. Get all client service requests, quotes, and payments in chronological order
+exports.getClientServiceHistory = async (req, res) => {
+  const { client_id } = req.params;
+
+  try {
+    // Get all service requests for this client
+    const serviceRequestsResult = await db.query(`
+      SELECT 
+        sr.*,
+        u.mobile_number as client_mobile
+      FROM service_requests sr
+      JOIN users u ON sr.payer_mobile = u.mobile_number
+      WHERE sr.client_id = $1
+      ORDER BY sr.created_at DESC
+    `, [client_id]);
+
+    // Get all quotes for this client
+    const quotesResult = await db.query(`
+      SELECT 
+        q.*,
+        sr.payer_name,
+        sr.payer_mobile,
+        sr.patient_name,
+        sr.service_type,
+        sr.status as request_status
+      FROM quotations q
+      JOIN service_requests sr ON q.request_id = sr.request_id
+      WHERE sr.client_id = $1
+      ORDER BY q.created_at DESC
+    `, [client_id]);
+
+    // Get all payment slips for this client
+    const paymentSlipsResult = await db.query(`
+      SELECT 
+        ps.*,
+        q.estimate_number,
+        q.total_amount,
+        sr.payer_name,
+        sr.payer_mobile
+      FROM payment_slips ps
+      JOIN quotations q ON ps.quote_id = q.quote_id
+      JOIN service_requests sr ON q.request_id = sr.request_id
+      WHERE sr.client_id = $1
+      ORDER BY ps.created_at DESC
+    `, [client_id]);
+
+    // Combine all data into a single timeline
+    const timeline = [];
+
+    // Add service requests
+    serviceRequestsResult.rows.forEach(request => {
+      timeline.push({
+        ...request,
+        type: 'service_request',
+        date: request.created_at,
+        sortKey: request.created_at
+      });
+    });
+
+    // Add quotes
+    quotesResult.rows.forEach(quote => {
+      timeline.push({
+        ...quote,
+        type: 'quote',
+        date: quote.created_at,
+        sortKey: quote.created_at
+      });
+    });
+
+    // Add payment slips
+    paymentSlipsResult.rows.forEach(payment => {
+      timeline.push({
+        ...payment,
+        type: 'payment',
+        date: payment.created_at,
+        sortKey: payment.created_at
+      });
+    });
+
+    // Sort all items by date (newest first)
+    timeline.sort((a, b) => new Date(b.sortKey) - new Date(a.sortKey));
+
+    res.status(200).json({
+      status: 'success',
+      results: timeline.length,
+      data: timeline
+    });
+
+  } catch (error) {
+    console.error('Error fetching client service history:', error);
+    res.status(500).json({ 
+      message: 'Failed to fetch service history' 
+    });
+  }
+};
+
 // 5. Get all clients
 exports.getAllClients = async (req, res) => {
   try {

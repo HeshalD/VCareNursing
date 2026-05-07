@@ -22,4 +22,11 @@ router.put('/:id/status', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), ser
 // Admin route to create service request manually
 router.post('/proxy-service-request', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), serviceRequestController.createServiceRequest);
 
+// Client-specific routes
+router.get('/client/:client_id', protect, serviceRequestController.getClientServiceRequests);
+
+router.get('/client/:client_id/with-quotes', protect, serviceRequestController.getClientServiceRequestsWithQuotes);
+
+router.get('/client/:client_id/with-payments', protect, serviceRequestController.getClientServiceRequestsWithPayments);
+
 module.exports = router;

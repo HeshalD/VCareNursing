@@ -841,6 +841,39 @@ class ApiClient {
   async getTransactionCategoriesChart() {
     return this.request('/finances/transaction-categories-chart');
   }
+
+  // Client-specific endpoints
+  async getClientProfileByUserId(userId) {
+    return this.request(`/client/profile/user/${userId}`);
+  }
+
+  async getClientServiceHistory(clientId) {
+    return this.request(`/client/service-history/${clientId}`);
+  }
+
+  async getClientServiceRequests(clientId) {
+    return this.request(`/service-requests/client/${clientId}`);
+  }
+
+  async getClientServiceRequestsWithQuotes(clientId) {
+    return this.request(`/service-requests/client/${clientId}/with-quotes`);
+  }
+
+  async getClientServiceRequestsWithPayments(clientId) {
+    return this.request(`/service-requests/client/${clientId}/with-payments`);
+  }
+
+  async getClientQuotes(clientId) {
+    return this.request(`/quotes/client/${clientId}`);
+  }
+
+  async getClientPaymentSlips(clientId) {
+    return this.request(`/payment-slips/client/${clientId}`);
+  }
+
+  async getClientBookings(clientId) {
+    return this.request(`/bookings/client/${clientId}`);
+  }
 }
 
 // Create and export a singleton instance

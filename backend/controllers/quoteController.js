@@ -82,6 +82,39 @@ exports.getQuoteByRequest = async (req, res) => {
     }
 };
 
+exports.getClientQuotes = async (req, res) => {
+    const { client_id } = req.params;
+
+    try {
+        const result = await db.query(`
+            SELECT q.*, 
+                   sr.payer_name, 
+                   sr.payer_mobile, 
+                   sr.patient_name, 
+                   sr.service_type,
+                   sr.status as request_status,
+                   sr.created_at as request_created_at,
+                   cp.full_name as client_name,
+                   u.mobile_number as client_mobile
+            FROM quotations q
+            JOIN service_requests sr ON q.request_id = sr.request_id
+            LEFT JOIN client_profiles cp ON sr.client_id = cp.client_profile_id
+            LEFT JOIN users u ON cp.user_id = u.user_id
+            WHERE sr.client_id = $1
+            ORDER BY q.created_at DESC
+        `, [client_id]);
+
+        res.status(200).json({
+            status: 'success',
+            data: result.rows
+        });
+
+    } catch (error) {
+        console.error("Get Client Quotes Error:", error);
+        res.status(500).json({ message: "Failed to fetch client quotes" });
+    }
+};
+
 exports.generateAndSendPDF = async (req, res) => {
     const { quote_id } = req.params;
 

@@ -39,4 +39,7 @@ router.post(
     quoteController.generateAndSendPDF
 );
 
+// Client-specific routes
+router.get('/client/:client_id', protect, quoteController.getClientQuotes);
+
 module.exports = router;

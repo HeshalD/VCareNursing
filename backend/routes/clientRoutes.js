@@ -13,6 +13,7 @@ router.get('/active-bookings', clientController.getActiveBookingByClientID);
 router.get('/all-bookings/:client_id', clientController.getAllBookingsForClient);
 router.get('/all-bookings', clientController.getAllBookingsForClient);
 router.get('/:client_id', clientController.getClientProfile);
+router.get('/service-history/:client_id', clientController.getClientServiceHistory);
 router.patch('/update-me', clientController.updateMe);
 router.delete('/delete-me', clientController.deleteMe);
 

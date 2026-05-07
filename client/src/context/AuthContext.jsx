@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { getUserFromToken, isAuthenticated } from '../utils/auth';
 import apiClient from '../api/api';
 
@@ -15,25 +15,37 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const authCheckedRef = useRef(false);
 
   useEffect(() => {
+    // Prevent double execution in React Strict Mode
+    if (authCheckedRef.current) return;
+    authCheckedRef.current = true;
+
     // Check authentication status on component mount
     const checkAuth = async () => {
       try {
         if (isAuthenticated()) {
           const decodedUser = getUserFromToken();
-
-          // If token payload doesn't include email, try fetching enriched user data
-          if (decodedUser && !decodedUser.email) {
+          
+          if (decodedUser) {
+            // Set user immediately from JWT token
+            setUser(decodedUser);
+            
+            // Optionally try to enrich user data in background
             try {
               const full = await apiClient.getUnifiedOverview();
-              // prefer API response shape if available, otherwise fallback to decoded token
-              setUser(full?.data || full || decodedUser);
+              // Only update user if the API response contains actual user data
+              if (full?.data && typeof full.data === 'object' && !Array.isArray(full.data)) {
+                setUser(full.data);
+              }
             } catch (err) {
-              setUser(decodedUser);
+              // Silently ignore API errors, user is already set from JWT
             }
           } else {
-            setUser(decodedUser);
+            // Clear invalid token
+            localStorage.removeItem('token');
+            setUser(null);
           }
         } else {
           // Clear invalid token
@@ -62,7 +74,6 @@ export const AuthProvider = ({ children }) => {
         ...userData,
         ...jwtPayload
       };
-      console.log('AuthContext - User data stored:', mergedUserData);
       setUser(mergedUserData);
     } catch (error) {
       // Fallback to original userData if JWT parsing fails

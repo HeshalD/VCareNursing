@@ -1167,3 +1167,44 @@ exports.getSwapHistory = async (req, res) => {
         res.status(500).json({ status: 'error', message: 'Failed to fetch swap history' });
     }
 };
+
+exports.getClientBookings = async (req, res) => {
+    try {
+        const { client_id } = req.params;
+        
+        const result = await db.query(`
+            SELECT b.*, 
+                   sp.full_name as staff_name,
+                   u.mobile_number as staff_mobile,
+                   sr.patient_name,
+                   sr.service_type,
+                   sr.payer_name,
+                   sr.payer_mobile,
+                   cp.full_name as client_name,
+                   uc.mobile_number as client_mobile,
+                   pp.full_name as patient_full_name,
+                   pp.age as patient_age,
+                   pp.gender as patient_gender
+            FROM bookings b
+            JOIN staff_profiles sp ON b.assigned_staff_id = sp.staff_profile_id
+            JOIN users u ON sp.user_id = u.user_id
+            JOIN service_requests sr ON b.request_id = sr.request_id
+            LEFT JOIN client_profiles cp ON sr.client_id = cp.client_profile_id
+            LEFT JOIN users uc ON cp.user_id = uc.user_id
+            LEFT JOIN patient_profiles pp ON b.patient_id = pp.patient_id
+            WHERE sr.client_id = $1
+            ORDER BY b.created_at DESC
+        `, [client_id]);
+
+        res.status(200).json({
+            status: 'success',
+            data: result.rows
+        });
+    } catch (error) {
+        console.error('Error fetching client bookings:', error);
+        res.status(500).json({
+            status: 'error',
+            message: 'Failed to fetch bookings'
+        });
+    }
+};

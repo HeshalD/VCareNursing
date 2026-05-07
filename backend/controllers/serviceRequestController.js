@@ -383,3 +383,107 @@ exports.createServiceRequest = async (req, res) => {
         });
     }
 };
+
+// Client-specific methods
+
+exports.getClientServiceRequests = async (req, res) => {
+    try {
+        const { client_id } = req.params;
+        
+        const result = await db.query(`
+            SELECT sr.*, 
+                   cp.full_name as client_name,
+                   u.mobile_number as client_mobile
+            FROM service_requests sr
+            LEFT JOIN client_profiles cp ON sr.client_id = cp.client_profile_id
+            LEFT JOIN users u ON cp.user_id = u.user_id
+            WHERE sr.client_id = $1
+            ORDER BY sr.created_at DESC
+        `, [client_id]);
+
+        res.status(200).json({
+            status: 'success',
+            data: result.rows
+        });
+    } catch (error) {
+        console.error('Error fetching client service requests:', error);
+        res.status(500).json({
+            status: 'error',
+            message: 'Failed to fetch service requests'
+        });
+    }
+};
+
+exports.getClientServiceRequestsWithQuotes = async (req, res) => {
+    try {
+        const { client_id } = req.params;
+        
+        const result = await db.query(`
+            SELECT sr.*, 
+                   cp.full_name as client_name,
+                   u.mobile_number as client_mobile,
+                   q.estimate_number,
+                   q.daily_rate,
+                   q.qty_days,
+                   q.transport_fee,
+                   q.registration_fee,
+                   q.sub_total,
+                   q.total_amount,
+                   q.created_at as quote_created_at,
+                   q.status as quote_status
+            FROM service_requests sr
+            LEFT JOIN client_profiles cp ON sr.client_id = cp.client_profile_id
+            LEFT JOIN users u ON cp.user_id = u.user_id
+            LEFT JOIN quotations q ON sr.request_id = q.request_id
+            WHERE sr.client_id = $1
+            ORDER BY sr.created_at DESC
+        `, [client_id]);
+
+        res.status(200).json({
+            status: 'success',
+            data: result.rows
+        });
+    } catch (error) {
+        console.error('Error fetching client service requests with quotes:', error);
+        res.status(500).json({
+            status: 'error',
+            message: 'Failed to fetch service requests with quotes'
+        });
+    }
+};
+
+exports.getClientServiceRequestsWithPayments = async (req, res) => {
+    try {
+        const { client_id } = req.params;
+        
+        const result = await db.query(`
+            SELECT sr.*, 
+                   cp.full_name as client_name,
+                   u.mobile_number as client_mobile,
+                   ps.slip_id,
+                   ps.slip_url,
+                   ps.verified_at,
+                   ps.created_at as payment_uploaded_at,
+                   q.estimate_number,
+                   q.total_amount
+            FROM service_requests sr
+            LEFT JOIN client_profiles cp ON sr.client_id = cp.client_profile_id
+            LEFT JOIN users u ON cp.user_id = u.user_id
+            LEFT JOIN quotations q ON sr.request_id = q.request_id
+            LEFT JOIN payment_slips ps ON q.quote_id = ps.quote_id
+            WHERE sr.client_id = $1
+            ORDER BY sr.created_at DESC
+        `, [client_id]);
+
+        res.status(200).json({
+            status: 'success',
+            data: result.rows
+        });
+    } catch (error) {
+        console.error('Error fetching client service requests with payments:', error);
+        res.status(500).json({
+            status: 'error',
+            message: 'Failed to fetch service requests with payments'
+        });
+    }
+};
