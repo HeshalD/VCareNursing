@@ -805,6 +805,10 @@ class ApiClient {
     });
   }
 
+  async getClientReviews(clientProfileId, page = 1, limit = 10) {
+    return this.request(`/staff-reviews/client/${clientProfileId}?page=${page}&limit=${limit}`);
+  }
+
   // Finances endpoints
   async getFinancesOverview() {
     return this.request('/finances/overview');

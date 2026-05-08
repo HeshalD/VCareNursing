@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Menu, X, User, LogOut, Briefcase, Calendar, ChevronDown, Users, Wallet } from 'lucide-react';
+import { Menu, X, User, LogOut, Briefcase, Calendar, ChevronDown, Users, Wallet, Star } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import logoUrl from '../../assets/Logo/VCareLogo.png';
 const Navbar = () => {
@@ -168,6 +168,14 @@ const Navbar = () => {
                         <Wallet className="w-4 h-4 text-slate-400" />
                         Financial
                       </Link>
+                      <Link
+                        to="/client/reviews"
+                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                        onClick={() => setIsDropdownOpen(false)}
+                      >
+                        <Star className="w-4 h-4 text-slate-400" />
+                        Reviews
+                      </Link>
                       {isStaffUser() && (
                         <Link
                           to="/services/provider-dashboard"
@@ -289,6 +297,14 @@ const Navbar = () => {
                       >
                         <Wallet className="w-4 h-4 text-slate-400" />
                         Financial
+                      </Link>
+                      <Link
+                        to="/client/reviews"
+                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                        onClick={() => { setIsDropdownOpen(false); setIsOpen(false); }}
+                      >
+                        <Star className="w-4 h-4 text-slate-400" />
+                        Reviews
                       </Link>
                       {isStaffUser() && (
                         <Link
