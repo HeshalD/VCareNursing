@@ -879,6 +879,10 @@ class ApiClient {
     return this.request(`/bookings/client/${clientId}`);
   }
 
+  async getStaffBookings(staffId) {
+    return this.request(`/bookings/staff/${staffId}`);
+  }
+
   // Financial endpoints
   async getClientWalletBalance(clientId) {
     return this.request(`/client/wallet-balance/${clientId}`);
