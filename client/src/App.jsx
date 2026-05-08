@@ -50,6 +50,7 @@ import StaffProfile from './modules/public/StaffProfile';
 import ClientProfile from './modules/client/ClientProfile';
 import ClientServiceRequests from './modules/client/ClientServiceRequests';
 import ClientPatients from './modules/client/ClientPatients';
+import ClientFinancial from './modules/client/ClientFinancial';
 
 function App() {
   return (
@@ -91,6 +92,7 @@ function App() {
             <Route path="/client/profile" element={<ClientProfile/>}/>
             <Route path="/client/service-requests" element={<ClientServiceRequests/>}/>
             <Route path="/client/patients" element={<ClientPatients/>}/>
+            <Route path="/client/financial" element={<ClientFinancial/>}/>
             <Route path="/admin/dashboard" element={
               <AdminAuthProvider>
                 <AdminDashboard />

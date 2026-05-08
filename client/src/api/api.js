@@ -874,6 +874,21 @@ class ApiClient {
   async getClientBookings(clientId) {
     return this.request(`/bookings/client/${clientId}`);
   }
+
+  // Financial endpoints
+  async getClientWalletBalance(clientId) {
+    return this.request(`/client/wallet-balance/${clientId}`);
+  }
+
+  async getClientPaymentHistory(clientId, queryParams = {}) {
+    const queryString = new URLSearchParams(queryParams).toString();
+    const url = queryString ? `/client/payment-history/${clientId}?${queryString}` : `/client/payment-history/${clientId}`;
+    return this.request(url);
+  }
+
+  async getClientOverduePayments(clientId) {
+    return this.request(`/client/overdue-payments/${clientId}`);
+  }
 }
 
 // Create and export a singleton instance
