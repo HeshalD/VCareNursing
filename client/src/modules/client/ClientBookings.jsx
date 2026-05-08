@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Eye, XCircle, Loader2, Calendar, User, Activity,
   Clock, CheckCircle, AlertCircle, Stethoscope, Baby,
-  Heart, AlertTriangle, RefreshCw, ChevronDown
+  Heart, AlertTriangle, RefreshCw, ChevronDown, Star
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import apiClient from '../../api/api';
@@ -64,6 +64,15 @@ const ClientBookings = () => {
   });
   const [terminationLoading, setTerminationLoading] = useState(false);
 
+  // Review modal state
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [reviewBooking, setReviewBooking] = useState(null);
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewText, setReviewText] = useState('');
+  const [submittingReview, setSubmittingReview] = useState(false);
+  const [reviewError, setReviewError] = useState('');
+  const [reviewSuccess, setReviewSuccess] = useState(false);
+
   useEffect(() => { if (user) fetchBookings(); }, [user, showAllBookings]);
 
   const fetchBookings = async () => {
@@ -112,6 +121,59 @@ const ClientBookings = () => {
   const handleStaffClick = (staffId) => {
     if (staffId) {
       navigate(`/services/staff-profile/${staffId}`);
+    }
+  };
+
+  const openReviewModal = (booking) => {
+    setReviewBooking(booking);
+    setShowReviewModal(true);
+    setReviewRating(5);
+    setReviewText('');
+    setReviewError('');
+    setReviewSuccess(false);
+  };
+
+  const closeReviewModal = () => {
+    setShowReviewModal(false);
+    setReviewBooking(null);
+    setReviewRating(5);
+    setReviewText('');
+    setReviewError('');
+    setReviewSuccess(false);
+  };
+
+  const submitReview = async () => {
+    if (!reviewBooking) return;
+
+    const staffProfileId = bookingDetails[reviewBooking.booking_id]?.staff_profile_id;
+    if (!staffProfileId) {
+      setReviewError('Staff information not available');
+      return;
+    }
+
+    setSubmittingReview(true);
+    setReviewError('');
+
+    try {
+      const reviewData = {
+        staff_profile_id: staffProfileId,
+        rating: reviewRating,
+        review_text: reviewText.trim() || null,
+        booking_id: reviewBooking.booking_id,
+      };
+
+      await apiClient.createStaffReview(reviewData);
+      setReviewSuccess(true);
+
+      // Auto-close after 2 seconds
+      setTimeout(() => {
+        closeReviewModal();
+      }, 2000);
+    } catch (err) {
+      console.error('Error submitting review:', err);
+      setReviewError(err.message || 'Failed to submit review. Please try again.');
+    } finally {
+      setSubmittingReview(false);
     }
   };
 
@@ -321,6 +383,16 @@ const ClientBookings = () => {
                               <Eye size={14} />
                               View
                             </button>
+                            {(b.status === 'ACTIVE' || b.status === 'COMPLETED') && details?.staff_profile_id && (
+                              <button
+                                onClick={() => openReviewModal(b)}
+                                style={{ ...s.ghostBtn, color: '#f59e0b', borderColor: '#fde68a' }}
+                                title="Leave a review for staff"
+                              >
+                                <Star size={14} />
+                                Review
+                              </button>
+                            )}
                             {b.status === 'ACTIVE' && (
                               <button
                                 onClick={() => handleTerminationRequest(b)}
@@ -418,6 +490,108 @@ const ClientBookings = () => {
                   {JSON.stringify({ ...selectedBooking, details: bookingDetails[selectedBooking.booking_id] }, null, 2)}
                 </pre>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Review Modal */}
+      {showReviewModal && reviewBooking && (
+        <div style={s.modalOverlay}>
+          <div style={{ ...s.modalCard, maxWidth: 480 }}>
+            <div style={s.modalHeader}>
+              <div>
+                <h2 style={{ fontSize: 18, fontWeight: 700, color: '#0f172a', margin: 0 }}>Leave a Review</h2>
+                <p style={{ fontSize: 12, color: '#64748b', margin: '4px 0 0' }}>
+                  For: {bookingDetails[reviewBooking.booking_id]?.staff_name || 'Staff Member'}
+                </p>
+              </div>
+              <button onClick={closeReviewModal} style={s.closeBtn}>
+                <XCircle size={22} style={{ color: '#94a3b8' }} />
+              </button>
+            </div>
+
+            <div style={{ padding: '24px 28px' }}>
+              {reviewSuccess ? (
+                <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                  <CheckCircle size={48} style={{ color: '#22c55e', marginBottom: 16 }} />
+                  <h3 style={{ fontSize: 16, fontWeight: 600, color: '#166534', margin: '0 0 8px' }}>Review Submitted!</h3>
+                  <p style={{ fontSize: 14, color: '#64748b', margin: 0 }}>Thank you for your feedback.</p>
+                </div>
+              ) : (
+                <>
+                  <div style={{ marginBottom: 20 }}>
+                    <label style={s.fieldLabel}>Your Rating</label>
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <button
+                          key={star}
+                          onClick={() => setReviewRating(star)}
+                          onMouseEnter={() => setReviewRating(star)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            padding: 4,
+                            transition: 'transform 0.15s',
+                          }}
+                          onMouseLeave={() => setReviewRating(reviewRating)}
+                        >
+                          <Star
+                            size={28}
+                            fill={star <= reviewRating ? '#f59e0b' : '#e2e8f0'}
+                            stroke={star <= reviewRating ? '#f59e0b' : '#e2e8f0'}
+                            strokeWidth={1}
+                          />
+                        </button>
+                      ))}
+                    </div>
+                    <p style={{ fontSize: 13, color: '#64748b', margin: 0 }}>
+                      {reviewRating === 5 ? 'Excellent' :
+                       reviewRating === 4 ? 'Very Good' :
+                       reviewRating === 3 ? 'Good' :
+                       reviewRating === 2 ? 'Fair' : 'Poor'}
+                    </p>
+                  </div>
+
+                  <div style={{ marginBottom: 20 }}>
+                    <label style={s.fieldLabel}>Your Review <span style={{ color: '#64748b' }}>(optional)</span></label>
+                    <textarea
+                      value={reviewText}
+                      onChange={(e) => setReviewText(e.target.value)}
+                      placeholder="Share your experience with this staff member..."
+                      rows={4}
+                      maxLength={500}
+                      style={s.input}
+                    />
+                    <p style={{ fontSize: 12, color: '#94a3b8', margin: '4px 0 0', textAlign: 'right' }}>
+                      {reviewText.length}/500
+                    </p>
+                  </div>
+
+                  {reviewError && (
+                    <div style={{ ...s.alertWarning, marginBottom: 20, background: '#fef2f2', borderColor: '#fecaca' }}>
+                      <AlertCircle size={16} style={{ color: '#ef4444', flexShrink: 0 }} />
+                      <p style={{ fontSize: 13, color: '#991b1b', margin: 0 }}>{reviewError}</p>
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button onClick={closeReviewModal} style={s.secondaryBtn}>Cancel</button>
+                    <button
+                      onClick={submitReview}
+                      disabled={submittingReview}
+                      style={{ ...s.primaryBtn, flex: 1, opacity: submittingReview ? 0.7 : 1 }}
+                    >
+                      {submittingReview ? (
+                        <><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Submitting…</>
+                      ) : (
+                        'Submit Review'
+                      )}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

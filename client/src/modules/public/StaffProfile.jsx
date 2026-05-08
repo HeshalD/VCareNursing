@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ArrowLeft, MapPin, Clock, Star, Shield, Award, ChevronRight, Calendar, Heart, CheckCircle, Quote, Phone, MessageSquare, Plus, X } from "lucide-react";
+import { ArrowLeft, MapPin, Clock, Star, Shield, Award, ChevronRight, Calendar, Heart, CheckCircle, Quote, Phone, MessageSquare } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import apiClient from "../../api/api";
@@ -234,16 +234,8 @@ export default function StaffProfile() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [bookClicked, setBookClicked] = useState(false);
-  const [showReviewForm, setShowReviewForm] = useState(false);
-  const [reviewRating, setReviewRating] = useState(5);
-  const [reviewText, setReviewText] = useState('');
-  const [submittingReview, setSubmittingReview] = useState(false);
-  const [reviewError, setReviewError] = useState(null);
-  const [reviewSuccess, setReviewSuccess] = useState(false);
   const [relatedStaff, setRelatedStaff] = useState([]);
   const [relatedLoading, setRelatedLoading] = useState(false);
-  const [isOwnProfile, setIsOwnProfile] = useState(false);
-  const [checkingOwnership, setCheckingOwnership] = useState(false);
 
   // Fetch staff data and reviews
   useEffect(() => {
@@ -313,116 +305,6 @@ export default function StaffProfile() {
       fetchRelatedStaff();
     }
   }, [staff, staffId]);
-
-  // Check if current user is trying to review their own profile
-  useEffect(() => {
-    const checkProfileOwnership = async () => {
-      if (!isAuthenticated || !user) {
-        setIsOwnProfile(false);
-        return;
-      }
-
-      // Try different possible user ID field names
-      const userId = user.user_id || user.id || user.userId || user.sub;
-
-      if (!userId) {
-        setIsOwnProfile(false);
-        return;
-      }
-
-      try {
-        setCheckingOwnership(true);
-        
-        // First get client profile ID for the current user
-        const clientProfileResponse = await fetch(`${API_URL}/client/profile/user/${userId}`, {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
-          }
-        });
-        
-        if (!clientProfileResponse.ok) {
-          // User doesn't have a client profile, so they can't be reviewing their own staff profile
-          setIsOwnProfile(false);
-          return;
-        }
-        
-        const clientProfileData = await clientProfileResponse.json();
-        const clientProfileId = clientProfileData.data?.client_profile_id;
-        
-        if (!clientProfileId) {
-          setIsOwnProfile(false);
-          return;
-        }
-        
-        // Now check if this client profile is associated with staff profile being viewed
-        const staffByClientResponse = await fetch(`${API_URL}/staff/by-client/${clientProfileId}`, {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
-          }
-        });
-        
-        if (staffByClientResponse.ok) {
-          const staffByClientData = await staffByClientResponse.json();
-          
-          // If the staff profile ID matches, user is trying to review their own profile
-          if (staffByClientData.data?.staff_profile_id === staffId) {
-            setIsOwnProfile(true);
-          } else {
-            setIsOwnProfile(false);
-          }
-        } else {
-          setIsOwnProfile(false);
-        }
-        
-      } catch (error) {
-        console.error('Error checking profile ownership:', error);
-        setIsOwnProfile(false);
-      } finally {
-        setCheckingOwnership(false);
-      }
-    };
-
-    checkProfileOwnership();
-  }, [isAuthenticated, user, staffId]);
-
-  // Handle review submission
-  const handleReviewSubmit = async (e) => {
-    e.preventDefault();
-    setSubmittingReview(true);
-    setReviewError(null);
-    setReviewSuccess(false);
-
-    try {
-      const reviewData = {
-        staff_profile_id: staffId,
-        rating: reviewRating,
-        review_text: reviewText.trim()
-      };
-
-      const response = await apiClient.createStaffReview(reviewData);
-      
-      // Refresh reviews to show the new one
-      const reviewsUrl = `${API_URL}/staff-reviews/staff/${staffId}`;
-      const reviewsResponse = await fetch(reviewsUrl);
-      const reviewsData = reviewsResponse.ok ? await reviewsResponse.json() : { reviews: [] };
-      setReviews(reviewsData.reviews || []);
-
-      // Reset form
-      setReviewText('');
-      setReviewRating(5);
-      setShowReviewForm(false);
-      setReviewSuccess(true);
-      
-      // Hide success message after 3 seconds
-      setTimeout(() => setReviewSuccess(false), 3000);
-      
-    } catch (error) {
-      console.error('Error submitting review:', error);
-      setReviewError(error.message || 'Failed to submit review. Please try again.');
-    } finally {
-      setSubmittingReview(false);
-    }
-  };
 
   if (loading) {
     return (
@@ -770,10 +652,10 @@ export default function StaffProfile() {
 
             {/* Show more reviews indicator if there are more than 3 */}
             {reviews.length > 3 && (
-              <div style={{ 
-                textAlign: "center", 
-                padding: "1rem", 
-                color: "#64748b", 
+              <div style={{
+                textAlign: "center",
+                padding: "1rem",
+                color: "#64748b",
                 fontSize: 13,
                 fontStyle: "italic",
                 marginBottom: "1.5rem"
@@ -781,182 +663,7 @@ export default function StaffProfile() {
                 Showing 3 of {reviews.length} reviews
               </div>
             )}
-
-            {/* Add Review Button - Only show for authenticated users */}
-            {isAuthenticated && (
-              <div>
-                {checkingOwnership ? (
-                  <div style={{
-                    padding: "12px 20px",
-                    background: "#f8fafc",
-                    border: "1px solid #e2e8f0",
-                    borderRadius: 12,
-                    fontSize: 14,
-                    color: "#64748b",
-                    textAlign: "center",
-                  }}>
-                    Checking permissions...
-                  </div>
-                ) : isOwnProfile ? (
-                  <div style={{
-                    padding: "12px 20px",
-                    background: "#fef2f2",
-                    border: "1px solid #fecaca",
-                    borderRadius: 12,
-                    fontSize: 14,
-                    color: "#991b1b",
-                    textAlign: "center",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8,
-                  }}>
-                    <span style={{ fontSize: 16 }}>⚠️</span>
-                    You cannot review your own profile
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => setShowReviewForm(!showReviewForm)}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      padding: "12px 20px",
-                      background: showReviewForm ? "#f1f5f9" : s.color,
-                      color: showReviewForm ? "#334155" : "#fff",
-                      border: showReviewForm ? "1px solid #e2e8f0" : "none",
-                      borderRadius: 12,
-                      fontSize: 14,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      fontFamily: "inherit",
-                      transition: "all 0.2s ease",
-                    }}
-                  >
-                    {showReviewForm ? <X size={16} /> : <Plus size={16} />}
-                    {showReviewForm ? "Cancel Review" : "Add Review"}
-                  </button>
-                )}
-
-                {/* Success Message */}
-                {reviewSuccess && (
-                  <div style={{
-                    marginTop: "12px",
-                    padding: "12px 16px",
-                    background: "#f0fdf4",
-                    border: "1px solid #bbf7d0",
-                    borderRadius: 8,
-                    color: "#166534",
-                    fontSize: 13,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                  }}>
-                    <CheckCircle size={16} />
-                    Review submitted successfully!
-                  </div>
-                )}
-
-                {/* Review Form - Collapsible */}
-                {showReviewForm && (
-                  <form onSubmit={handleReviewSubmit} style={{
-                    marginTop: "1rem",
-                    padding: "1.5rem",
-                    background: "#fff",
-                    border: "1px solid #e2e8f0",
-                    borderRadius: 12,
-                  }}>
-                    {/* Star Rating Selector */}
-                    <div style={{ marginBottom: "1.5rem" }}>
-                      <label style={{ display: "block", fontSize: 14, fontWeight: 600, color: "#334155", marginBottom: "8px" }}>
-                        Your Rating
-                      </label>
-                      <StarSelector rating={reviewRating} setRating={setReviewRating} size={32} />
-                      <div style={{ fontSize: 12, color: "#64748b", marginTop: "4px" }}>
-                        {reviewRating === 5 ? "Excellent" : 
-                         reviewRating === 4 ? "Very Good" :
-                         reviewRating === 3 ? "Good" :
-                         reviewRating === 2 ? "Fair" : "Poor"}
-                      </div>
-                    </div>
-
-                    {/* Review Text */}
-                    <div style={{ marginBottom: "1.5rem" }}>
-                      <label style={{ display: "block", fontSize: 14, fontWeight: 600, color: "#334155", marginBottom: "8px" }}>
-                        Your Review
-                      </label>
-                      <textarea
-                        value={reviewText}
-                        onChange={(e) => setReviewText(e.target.value)}
-                        placeholder="Share your experience with this staff member..."
-                        required
-                        minLength={10}
-                        maxLength={500}
-                        style={{
-                          width: "100%",
-                          minHeight: "100px",
-                          padding: "12px",
-                          border: "1px solid #e2e8f0",
-                          borderRadius: 8,
-                          fontSize: 14,
-                          color: "#000000",
-                          fontFamily: "inherit",
-                          resize: "vertical",
-                          outline: "none",
-                          transition: "border-color 0.2s ease",
-                        }}
-                        onFocus={(e) => e.target.style.borderColor = s.color}
-                        onBlur={(e) => e.target.style.borderColor = "#e2e8f0"}
-                      />
-                      <div style={{ fontSize: 12, color: "#64748b", marginTop: "4px", textAlign: "right" }}>
-                        {reviewText.length}/500 characters
-                      </div>
-                    </div>
-
-                    {/* Error Message */}
-                    {reviewError && (
-                      <div style={{
-                        marginBottom: "1rem",
-                        padding: "12px 16px",
-                        background: "#fef2f2",
-                        border: "1px solid #fecaca",
-                        borderRadius: 8,
-                        color: "#dc2626",
-                        fontSize: 13,
-                      }}>
-                        {reviewError}
-                      </div>
-                    )}
-
-                    {/* Submit Button */}
-                    <button
-                      type="submit"
-                      disabled={submittingReview || !reviewText.trim() || reviewText.trim().length < 10}
-                      style={{
-                        width: "100%",
-                        padding: "12px 20px",
-                        background: submittingReview ? "#94a3b8" : s.color,
-                        color: "#fff",
-                        border: "none",
-                        borderRadius: 8,
-                        fontSize: 14,
-                        fontWeight: 600,
-                        cursor: submittingReview || !reviewText.trim() || reviewText.trim().length < 10 ? "not-allowed" : "pointer",
-                        fontFamily: "inherit",
-                        transition: "background-color 0.2s ease",
-                      }}
-                    >
-                      {submittingReview ? "Submitting..." : "Submit Review"}
-                    </button>
-                  </form>
-                )}
-              </div>
-            )}
           </Section>
-        </div>
-
-        {/* ── RIGHT COLUMN ── */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
 
           {/* Book Card */}
           <div style={{
