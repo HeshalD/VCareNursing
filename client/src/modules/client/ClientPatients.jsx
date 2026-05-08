@@ -5,7 +5,6 @@ import {
   Phone, AlertCircle, ChevronDown, ChevronRight,
   Clock, FileText, Shield, X, Save, Loader2, CheckCircle
 } from 'lucide-react';
-import Navbar from '../../components/layout/Navbar';
 import apiClient from '../../api/api';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -470,7 +469,6 @@ const ClientPatients = () => {
   if (loading) {
     return (
       <div style={s.pageWrapper}>
-        <Navbar />
         <style>{kf}</style>
         <div style={s.centerState}>
           <Loader2 size={28} style={{ color: '#64748b', animation: 'spin 1s linear infinite' }} />
@@ -482,7 +480,6 @@ const ClientPatients = () => {
 
   return (
     <div style={s.pageWrapper}>
-      <Navbar />
       <style>{kf}</style>
 
       <main style={s.main}>

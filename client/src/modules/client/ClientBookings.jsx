@@ -1,10 +1,56 @@
 import React, { useState, useEffect } from 'react';
-import { Eye, XCircle, Loader2, Calendar, User, Activity, Clock, CheckCircle, AlertCircle, DollarSign, Stethoscope, Baby, Heart, ToggleLeft, ToggleRight, AlertTriangle } from 'lucide-react';
+import {
+  Eye, XCircle, Loader2, Calendar, User, Activity,
+  Clock, CheckCircle, AlertCircle, Stethoscope, Baby,
+  Heart, AlertTriangle, RefreshCw, ChevronDown
+} from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import apiClient from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const formatDate = d => d
+  ? new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+  : '—';
+
+const formatDateLong = d => d
+  ? new Date(d).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+  : '—';
+
+const STATUS_META = {
+  active:             { bg: '#f0fdf4', color: '#166534', border: '#bbf7d0', label: 'Active' },
+  pending_termination:{ bg: '#fffbeb', color: '#92400e', border: '#fde68a', label: 'Pending Termination' },
+  terminated:         { bg: '#fef2f2', color: '#991b1b', border: '#fecaca', label: 'Terminated' },
+  completed:          { bg: '#eff6ff', color: '#1d4ed8', border: '#bfdbfe', label: 'Completed' },
+  cancelled:          { bg: '#f1f5f9', color: '#64748b', border: '#e2e8f0', label: 'Cancelled' },
+};
+
+const StatusBadge = ({ status }) => {
+  const key = status?.toLowerCase();
+  const m = STATUS_META[key] || { bg: '#f1f5f9', color: '#64748b', border: '#e2e8f0', label: status };
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 4,
+      fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.03em',
+      background: m.bg, color: m.color, border: `1px solid ${m.border}`,
+      borderRadius: 9999, padding: '3px 10px',
+    }}>
+      {m.label}
+    </span>
+  );
+};
+
+const getServiceTypeIcon = (serviceType) => {
+  const icons = { '{NURSE}': Stethoscope, '{NANNY}': Baby, 'HOME_NURSING': Heart };
+  return icons[serviceType] || Activity;
+};
+
+// ─── Main Component ─────────────────────────────────────────────────────────
+
 const ClientBookings = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -14,73 +60,27 @@ const ClientBookings = () => {
   const [showTerminationForm, setShowTerminationForm] = useState(false);
   const [terminationBooking, setTerminationBooking] = useState(null);
   const [terminationForm, setTerminationForm] = useState({
-    urgency: '',
-    requested_end_date: '',
-    reason: ''
+    urgency: '', requested_end_date: '', reason: ''
   });
   const [terminationLoading, setTerminationLoading] = useState(false);
 
-  const getStatusBadge = (status) => {
-    const statusConfig = {
-      active: { color: 'green', icon: CheckCircle, label: 'Active' },
-      pending_termination: { color: 'yellow', icon: Clock, label: 'PENDING TERMINATION' },
-      terminated: { color: 'red', icon: CheckCircle, label: 'Terminated' },
-      completed: { color: 'blue', icon: CheckCircle, label: 'Completed' },
-      cancelled: { color: 'red', icon: XCircle, label: 'Cancelled' },
-    };
-    
-    const config = statusConfig[status?.toLowerCase()] || { color: 'gray', icon: AlertCircle, label: status };
-    const Icon = config.icon;
-    
-    return (
-      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-${config.color}-100 text-${config.color}-800`}>
-        <Icon className="w-3 h-3" />
-        {config.label}
-      </span>
-    );
-  };
-
-  const getServiceTypeIcon = (serviceType) => {
-    const icons = {
-      '{NURSE}': Stethoscope,
-      '{NANNY}': Baby,
-      'HOME_NURSING': Heart,
-    };
-    return icons[serviceType] || Activity;
-  };
-
-  useEffect(() => {
-    if (user) {
-      fetchBookings();
-    }
-  }, [user, showAllBookings]);
+  useEffect(() => { if (user) fetchBookings(); }, [user, showAllBookings]);
 
   const fetchBookings = async () => {
+    setLoading(true); setError('');
     try {
-      setLoading(true);
-      if (!user) {
-        setError('User authentication required');
-        return;
-      }
-      
-      // Use different API based on toggle state
-      const response = showAllBookings 
+      if (!user) { setError('User authentication required'); return; }
+      const response = showAllBookings
         ? await apiClient.getAllBookingsForClient()
         : await apiClient.getActiveBookingByClientID();
 
       let bookingsData = [];
-      if (Array.isArray(response)) {
-        bookingsData = response;
-      } else if (response.status === 'success') {
-        bookingsData = response.data || [];
-      } else {
-        setError(response.message || 'Failed to load bookings');
-        return;
-      }
+      if (Array.isArray(response)) bookingsData = response;
+      else if (response.status === 'success') bookingsData = response.data || [];
+      else { setError(response.message || 'Failed to load bookings'); return; }
 
       setBookings(bookingsData);
-      
-      // Fetch detailed information for each booking
+
       const detailsPromises = bookingsData.map(async (booking) => {
         try {
           const detailResponse = await apiClient.getBookingById(booking.booking_id);
@@ -93,14 +93,8 @@ const ClientBookings = () => {
 
       const detailsResults = await Promise.all(detailsPromises);
       const detailsMap = {};
-      detailsResults.forEach(result => {
-        if (result.details) {
-          detailsMap[result.bookingId] = result.details;
-        }
-      });
-      
+      detailsResults.forEach(r => { if (r.details) detailsMap[r.bookingId] = r.details; });
       setBookingDetails(detailsMap);
-      setError(null);
     } catch (err) {
       console.error('Error fetching bookings:', err);
       setError(err.message || 'Unknown error');
@@ -109,38 +103,28 @@ const ClientBookings = () => {
     }
   };
 
-  const handleTerminationRequest = async (booking) => {
+  const handleTerminationRequest = (booking) => {
     setTerminationBooking(booking);
     setShowTerminationForm(true);
-    setTerminationForm({
-      urgency: '',
-      requested_end_date: '',
-      reason: ''
-    });
+    setTerminationForm({ urgency: '', requested_end_date: '', reason: '' });
+  };
+
+  const handleStaffClick = (staffId) => {
+    if (staffId) {
+      navigate(`/services/staff-profile/${staffId}`);
+    }
   };
 
   const submitTerminationRequest = async () => {
     if (!terminationForm.urgency || !terminationForm.requested_end_date || !terminationForm.reason) {
-      setError('Please fill in all termination form fields');
-      return;
+      setError('Please fill in all termination form fields'); return;
     }
-
     try {
       setTerminationLoading(true);
-      await apiClient.requestBookingTermination(
-        terminationBooking.booking_id,
-        terminationForm
-      );
-      
+      await apiClient.requestBookingTermination(terminationBooking.booking_id, terminationForm);
       setShowTerminationForm(false);
       setTerminationBooking(null);
-      setTerminationForm({
-        urgency: '',
-        requested_end_date: '',
-        reason: ''
-      });
-      
-      // Refresh bookings to show updated status
+      setTerminationForm({ urgency: '', requested_end_date: '', reason: '' });
       fetchBookings();
     } catch (err) {
       console.error('Error requesting termination:', err);
@@ -150,223 +134,200 @@ const ClientBookings = () => {
     }
   };
 
+  const stats = [
+    { label: 'Total', value: bookings.length, color: '#1e293b', bg: '#f1f5f9', icon: Calendar },
+    { label: 'Active', value: bookings.filter(b => b.status === 'ACTIVE').length, color: '#166534', bg: '#f0fdf4', icon: CheckCircle },
+    { label: 'Pending Termination', value: bookings.filter(b => b.status === 'PENDING_TERMINATION').length, color: '#92400e', bg: '#fffbeb', icon: Clock },
+    { label: 'Terminated', value: bookings.filter(b => b.status === 'TERMINATED').length, color: '#991b1b', bg: '#fef2f2', icon: AlertCircle },
+    { label: 'Completed', value: bookings.filter(b => b.status === 'COMPLETED').length, color: '#1d4ed8', bg: '#eff6ff', icon: CheckCircle },
+  ];
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center">
-        <div className="text-center">
-          <Loader2 className="animate-spin w-12 h-12 text-blue-600 mx-auto mb-4" />
-          <p className="text-slate-500 font-medium">Loading your bookings...</p>
+      <div style={s.pageWrapper}>
+        <div style={s.centerState}>
+          <Loader2 size={28} style={{ ...s.spinnerIcon, animation: 'spin 1s linear infinite' }} />
+          <p style={s.loadingText}>Loading your bookings…</p>
         </div>
+        <style>{keyframes}</style>
       </div>
     );
   }
 
-  if (error) {
+  if (error && bookings.length === 0) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-xl border border-red-100 p-8 max-w-md w-full">
-          <div className="flex items-start gap-4">
-            <div className="bg-red-100 rounded-full p-2">
-              <XCircle className="w-6 h-6 text-red-600" />
-            </div>
-            <div className="flex-1">
-              <h3 className="font-semibold text-red-800 mb-1">Unable to load bookings</h3>
-              <p className="text-red-600 text-sm">{error}</p>
-              <button 
-                onClick={fetchBookings}
-                className="mt-3 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium"
-              >
-                Try Again
-              </button>
-            </div>
+      <div style={s.pageWrapper}>
+        <div style={s.centerState}>
+          <div style={s.errorCard}>
+            <AlertCircle size={32} style={{ color: '#ef4444', marginBottom: 12 }} />
+            <p style={s.errorTitle}>Unable to load bookings</p>
+            <p style={s.errorBody}>{error}</p>
+            <button onClick={fetchBookings} style={s.retryBtn}>Retry</button>
           </div>
         </div>
+        <style>{keyframes}</style>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 py-8 px-4">
-      <div className="max-w-7xl mx-auto">
+    <div style={s.pageWrapper}>
+      <style>{keyframes}</style>
+      <main style={s.main}>
         {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-slate-900 mb-2">
-            {showAllBookings ? "All My Bookings" : "My Active Bookings"}
-          </h1>
-          <p className="text-slate-600">Manage and track your service bookings</p>
-        </div>
-
-        {/* Toggle Button */}
-        <div className="mb-6 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-xs font-medium text-slate-700">Active Only</span>
-            <button
-              onClick={() => setShowAllBookings(!showAllBookings)}
-              className="relative inline-flex h-5 w-10 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-              style={{ backgroundColor: showAllBookings ? '#3b82f6' : '#d1d5db' }}
-            >
-              <span
-                className="inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow-sm"
-                style={{ transform: showAllBookings ? 'translateX(1.3rem)' : 'translateX(0.23rem)' }}
-              />
+        <header style={s.pageHeader}>
+          <div>
+            <p style={s.breadcrumb}>Account</p>
+            <h1 style={s.pageTitle}>{showAllBookings ? 'All My Bookings' : 'My Active Bookings'}</h1>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {/* Toggle */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: '#475569' }}>Active</span>
+              <button
+                onClick={() => setShowAllBookings(!showAllBookings)}
+                style={{
+                  width: 36, height: 20, borderRadius: 10, border: 'none', cursor: 'pointer',
+                  background: showAllBookings ? '#3b82f6' : '#cbd5e1', position: 'relative',
+                  transition: 'background 0.2s',
+                }}
+              >
+                <span style={{
+                  position: 'absolute', top: 2, left: showAllBookings ? 18 : 2,
+                  width: 16, height: 16, borderRadius: '50%', background: '#fff',
+                  transition: 'left 0.2s', boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                }} />
+              </button>
+              <span style={{ fontSize: 11, fontWeight: 600, color: '#475569' }}>All</span>
+            </div>
+            <button onClick={fetchBookings} style={s.primaryBtn}>
+              <RefreshCw size={14} />
+              Refresh
             </button>
-            <span className="text-xs font-medium text-slate-700">All Bookings</span>
           </div>
-          <button 
-            onClick={fetchBookings}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium flex items-center gap-2"
-          >
-            <Calendar className="w-4 h-4" />
-            Refresh
-          </button>
-        </div>
+        </header>
 
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
-          <div className="bg-white rounded-xl border border-slate-200 p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-500 mb-1">Total Bookings</p>
-                <p className="text-2xl font-bold text-slate-900">{bookings.length}</p>
+        {/* Stats */}
+        <div style={s.statsGrid}>
+          {stats.map(({ label, value, color, bg, icon: Icon }) => (
+            <div key={label} style={s.statCard}>
+              <div style={{ ...s.statIconWrap, background: bg }}>
+                <Icon size={18} style={{ color }} />
               </div>
-              <div className="bg-blue-100 rounded-full p-3">
-                <Calendar className="w-6 h-6 text-blue-600" />
+              <div>
+                <p style={{ ...s.statValue, color }}>{value}</p>
+                <p style={s.statLabel}>{label}</p>
               </div>
             </div>
-          </div>
-          <div className="bg-white rounded-xl border border-slate-200 p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-500 mb-1">Active</p>
-                <p className="text-2xl font-bold text-green-600">{bookings.filter(b => b.status === 'ACTIVE').length}</p>
-              </div>
-              <div className="bg-green-100 rounded-full p-3">
-                <CheckCircle className="w-6 h-6 text-green-600" />
-              </div>
-            </div>
-          </div>
-          <div className="bg-white rounded-xl border border-slate-200 p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-500 mb-1">Termination Pending</p>
-                <p className="text-2xl font-bold text-yellow-600">{bookings.filter(b => b.status === 'PENDING_TERMINATION').length}</p>
-              </div>
-              <div className="bg-yellow-100 rounded-full p-3">
-                <Clock className="w-6 h-6 text-yellow-600" />
-              </div>
-            </div>
-          </div>
-          <div className="bg-white rounded-xl border border-slate-200 p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-500 mb-1">Terminated</p>
-                <p className="text-2xl font-bold text-red-600">{bookings.filter(b => b.status === 'TERMINATED').length}</p>
-              </div>
-              <div className="bg-red-100 rounded-full p-3">
-                <Activity className="w-6 h-6 text-red-600" />
-              </div>
-            </div>
-          </div>
-          <div className="bg-white rounded-xl border border-slate-200 p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-500 mb-1">Completed</p>
-                <p className="text-2xl font-bold text-blue-600">{bookings.filter(b => b.status === 'COMPLETED').length}</p>
-              </div>
-              <div className="bg-blue-100 rounded-full p-3">
-                <CheckCircle className="w-6 h-6 text-blue-600" />
-              </div>
-            </div>
-          </div>
+          ))}
         </div>
 
         {/* Bookings Table */}
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+        <div style={s.card}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+            <h2 style={{ ...s.cardHeading, margin: 0 }}>Bookings</h2>
+          </div>
+
           {bookings.length === 0 ? (
-            <div className="p-12 text-center">
-              <div className="bg-slate-100 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
-                <Calendar className="w-8 h-8 text-slate-400" />
-              </div>
-              <h3 className="text-lg font-semibold text-slate-900 mb-2">No bookings found</h3>
-              <p className="text-slate-500">
+            <div style={s.emptyState}>
+              <Calendar size={32} style={{ color: '#cbd5e1', marginBottom: 12 }} />
+              <p style={{ fontSize: 14, fontWeight: 600, color: '#475569', margin: '0 0 4px' }}>No bookings found</p>
+              <p style={{ fontSize: 13, color: '#94a3b8', margin: 0 }}>
                 {showAllBookings ? "You don't have any bookings yet." : "You don't have any active bookings at the moment."}
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-slate-50 border-b border-slate-200">
-                  <tr>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Booking ID</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Service</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Start Date</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Staff Assigned</th>
-                    <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
-                    <th className="px-6 py-4 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Actions</th>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    {['Booking ID', 'Service', 'Start Date', 'Staff Assigned', 'Status', 'Actions'].map(h => (
+                      <th key={h} style={s.th}>{h}</th>
+                    ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody>
                   {bookings.map((b) => {
                     const ServiceIcon = getServiceTypeIcon(b.service_type);
                     const details = bookingDetails[b.booking_id];
                     return (
-                      <tr key={b.booking_id || b.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-6 py-4">
-                          <span className="font-mono text-sm font-medium text-slate-900">#{b.booking_id || b.id}</span>
+                      <tr key={b.booking_id || b.id} style={{ borderBottom: '1px solid #f8fafc' }}>
+                        <td style={s.td}>
+                          <span style={{ fontFamily: 'monospace', fontWeight: 600, fontSize: 13, color: '#0f172a' }}>
+                            #{b.booking_id || b.id}
+                          </span>
                         </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            <div className="bg-blue-50 rounded-lg p-1.5">
-                              <ServiceIcon className="w-4 h-4 text-blue-600" />
+                        <td style={s.td}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{ width: 28, height: 28, borderRadius: 6, background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <ServiceIcon size={14} style={{ color: '#3b82f6' }} />
                             </div>
-                            <span className="text-sm font-medium text-slate-900 capitalize">{b.service_type || 'General Service'}</span>
+                            <span style={{ fontWeight: 500, color: '#0f172a', textTransform: 'capitalize' }}>
+                              {b.service_type || 'General Service'}
+                            </span>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2 text-sm text-slate-600">
-                            <Calendar className="w-4 h-4" />
-                            {b.start_date ? new Date(b.start_date).toLocaleDateString('en-US', { 
-                              month: 'short', 
-                              day: 'numeric', 
-                              year: 'numeric' 
-                            }) : '-'}
+                        <td style={s.td}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#475569' }}>
+                            <Calendar size={12} />
+                            {formatDate(b.start_date)}
                           </div>
                         </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="bg-slate-100 rounded-full w-8 h-8 flex items-center justify-center">
-                              <User className="w-4 h-4 text-slate-600" />
+                        <td style={s.td}>
+                          <div 
+                            style={{ 
+                              display: 'flex', alignItems: 'center', gap: 8, 
+                              cursor: details?.staff_profile_id ? 'pointer' : 'default',
+                              padding: '4px',
+                              borderRadius: '6px',
+                              transition: 'background-color 0.2s'
+                            }}
+                            onClick={() => handleStaffClick(details?.staff_profile_id)}
+                            onMouseEnter={(e) => {
+                              if (details?.staff_profile_id) {
+                                e.currentTarget.style.backgroundColor = '#f1f5f9';
+                              }
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.backgroundColor = 'transparent';
+                            }}
+                          >
+                            <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <User size={12} style={{ color: '#64748b' }} />
                             </div>
                             <div>
-                              <span className="text-sm font-medium text-slate-900">
+                              <p style={{ 
+                                margin: 0, fontWeight: 500, color: '#0f172a', fontSize: 13,
+                                textDecoration: details?.staff_profile_id ? 'underline' : 'none',
+                                textDecorationColor: details?.staff_profile_id ? '#3b82f6' : 'transparent',
+                                textUnderlineOffset: '2px'
+                              }}>
                                 {details?.staff_name || `Staff #${b.assigned_staff_id || 'Not assigned'}`}
-                              </span>
+                              </p>
                               {details?.staff_mobile && (
-                                <p className="text-xs text-slate-500 mt-1">{details.staff_mobile}</p>
+                                <p style={{ margin: '2px 0 0', fontSize: 11, color: '#94a3b8' }}>{details.staff_mobile}</p>
                               )}
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
-                          {getStatusBadge(b.status)}
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <div className="flex items-center justify-end gap-2">
+                        <td style={s.td}><StatusBadge status={b.status} /></td>
+                        <td style={{ ...s.td, textAlign: 'right' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
                             <button
                               onClick={() => setSelectedBooking(b)}
-                              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-all"
+                              style={{ ...s.ghostBtn, color: '#3b82f6', borderColor: '#bfdbfe' }}
                               title="View details"
                             >
-                              <Eye className="w-4 h-4" />
+                              <Eye size={14} />
                               View
                             </button>
                             {b.status === 'ACTIVE' && (
                               <button
                                 onClick={() => handleTerminationRequest(b)}
-                                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg transition-all"
+                                style={{ ...s.ghostBtn, color: '#ef4444', borderColor: '#fecaca' }}
                                 title="Request termination"
                               >
-                                <AlertTriangle className="w-4 h-4" />
+                                <AlertTriangle size={14} />
                                 Terminate
                               </button>
                             )}
@@ -380,225 +341,357 @@ const ClientBookings = () => {
             </div>
           )}
         </div>
+      </main>
 
-        {/* Detail Modal */}
-        {selectedBooking && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto shadow-2xl">
-              <div className="sticky top-0 bg-white border-b border-slate-200 p-6 rounded-t-2xl">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="text-2xl font-bold text-slate-900">Booking Details</h2>
-                    <p className="text-slate-500 text-sm mt-1">Booking ID: #{selectedBooking.booking_id || selectedBooking.id}</p>
-                  </div>
-                  <button
-                    onClick={() => setSelectedBooking(null)}
-                    className="text-slate-400 hover:text-slate-600 transition-colors"
-                  >
-                    <XCircle className="w-6 h-6" />
-                  </button>
-                </div>
+      {/* Detail Modal */}
+      {selectedBooking && (
+        <div style={s.modalOverlay}>
+          <div style={s.modalCard}>
+            <div style={s.modalHeader}>
+              <div>
+                <h2 style={{ fontSize: 18, fontWeight: 700, color: '#0f172a', margin: 0 }}>Booking Details</h2>
+                <p style={{ fontSize: 12, color: '#64748b', margin: '4px 0 0' }}>
+                  Booking ID: #{selectedBooking.booking_id || selectedBooking.id}
+                </p>
               </div>
-              <div className="p-6 space-y-6">
-                {/* Booking Information */}
-                <div className="bg-slate-50 rounded-xl p-6">
-                  <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
-                    <Calendar className="w-5 h-5 text-blue-600" />
-                    Booking Information
-                  </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-sm text-slate-500 mb-1">Booking ID</p>
-                      <p className="font-mono font-medium text-slate-900">#{selectedBooking.booking_id || selectedBooking.id}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-slate-500 mb-1">Status</p>
-                      <div>{getStatusBadge(selectedBooking.status)}</div>
-                    </div>
-                    <div>
-                      <p className="text-sm text-slate-500 mb-1">Service Type</p>
-                      <div className="flex items-center gap-2">
-                        <div className="bg-blue-50 rounded-lg p-1.5">
-                          {React.createElement(getServiceTypeIcon(selectedBooking.service_type), { className: "w-4 h-4 text-blue-600" })}
-                        </div>
-                        <span className="font-medium text-slate-900 capitalize">{selectedBooking.service_type || 'General Service'}</span>
+              <button onClick={() => setSelectedBooking(null)} style={s.closeBtn}>
+                <XCircle size={22} style={{ color: '#94a3b8' }} />
+              </button>
+            </div>
+            <div style={{ padding: '24px 28px' }}>
+              {/* Booking Info */}
+              <div style={{ ...s.infoBlock, marginBottom: 20 }}>
+                <h3 style={s.infoBlockTitle}><Calendar size={16} style={{ color: '#3b82f6' }} /> Booking Information</h3>
+                <div style={s.infoGrid}>
+                  <InfoItem label="Booking ID" value={`#${selectedBooking.booking_id || selectedBooking.id}`} />
+                  <InfoItem label="Status" value={<StatusBadge status={selectedBooking.status} />} />
+                  <InfoItem label="Service Type" value={
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ width: 28, height: 28, borderRadius: 6, background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {React.createElement(getServiceTypeIcon(selectedBooking.service_type), { size: 14, style: { color: '#3b82f6' } })}
                       </div>
+                      <span style={{ fontWeight: 500, textTransform: 'capitalize' }}>{selectedBooking.service_type || 'General Service'}</span>
                     </div>
-                    <div>
-                      <p className="text-sm text-slate-500 mb-1">Start Date</p>
-                      <p className="font-medium text-slate-900">
-                        {selectedBooking.start_date ? new Date(selectedBooking.start_date).toLocaleDateString('en-US', { 
-                          weekday: 'long',
-                          year: 'numeric', 
-                          month: 'long', 
-                          day: 'numeric' 
-                        }) : '-'}
-                      </p>
-                    </div>
-                  </div>
+                  } />
+                  <InfoItem label="Start Date" value={formatDateLong(selectedBooking.start_date)} />
                 </div>
+              </div>
 
-                {/* Staff Information */}
-                <div className="bg-slate-50 rounded-xl p-6">
-                  <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
-                    <User className="w-5 h-5 text-blue-600" />
-                    Assigned Staff
-                  </h3>
-                  {(() => {
-                    const details = bookingDetails[selectedBooking.booking_id];
-                    if (details && details.staff_name) {
-                      return (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <p className="text-sm text-slate-500 mb-1">Staff Name</p>
-                            <p className="font-medium text-slate-900">{details.staff_name}</p>
-                          </div>
-                          <div>
-                            <p className="text-sm text-slate-500 mb-1">Mobile</p>
-                            <p className="font-medium text-slate-900">{details.staff_mobile || 'N/A'}</p>
-                          </div>
-                          <div>
-                            <p className="text-sm text-slate-500 mb-1">Email</p>
-                            <p className="font-medium text-slate-900">{details.staff_email || 'N/A'}</p>
-                          </div>
-                        </div>
-                      );
-                    } else {
-                      return (
-                        <div className="text-slate-500">
-                          <p>Staff information not available</p>
-                        </div>
-                      );
-                    }
-                  })()}
-                </div>
+              {/* Staff Info */}
+              <div style={{ ...s.infoBlock, marginBottom: 20 }}>
+                <h3 style={s.infoBlockTitle}><User size={16} style={{ color: '#3b82f6' }} /> Assigned Staff</h3>
+                {(() => {
+                  const details = bookingDetails[selectedBooking.booking_id];
+                  if (details && details.staff_name) {
+                    return (
+                      <div style={s.infoGrid}>
+                        <InfoItem 
+                          label="Staff Name" 
+                          value={
+                            <span
+                              style={{ 
+                                cursor: details.staff_profile_id ? 'pointer' : 'default',
+                                color: details.staff_profile_id ? '#3b82f6' : '#1e293b',
+                                textDecoration: details.staff_profile_id ? 'underline' : 'none',
+                                textDecorationColor: details.staff_profile_id ? '#3b82f6' : 'transparent',
+                                textUnderlineOffset: '2px'
+                              }}
+                              onClick={() => handleStaffClick(details.staff_profile_id)}
+                            >
+                              {details.staff_name}
+                            </span>
+                          } 
+                        />
+                        <InfoItem label="Mobile" value={details.staff_mobile || 'N/A'} />
+                        <InfoItem label="Email" value={details.staff_email || 'N/A'} />
+                      </div>
+                    );
+                  }
+                  return <p style={{ fontSize: 13, color: '#64748b', margin: 0 }}>Staff information not available</p>;
+                })()}
+              </div>
 
-                {/* Complete Data */}
-                <div className="bg-slate-50 rounded-xl p-6">
-                  <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
-                    <Activity className="w-5 h-5 text-blue-600" />
-                    Complete Data
-                  </h3>
-                  <div className="bg-slate-900 rounded-lg p-4 overflow-x-auto">
-                    <pre className="text-xs text-green-400 font-mono">
-                      {JSON.stringify({ ...selectedBooking, details: bookingDetails[selectedBooking.booking_id] }, null, 2)}
-                    </pre>
-                  </div>
-                </div>
+              {/* Raw Data */}
+              <div style={s.infoBlock}>
+                <h3 style={s.infoBlockTitle}><Activity size={16} style={{ color: '#3b82f6' }} /> Complete Data</h3>
+                <pre style={s.codeBlock}>
+                  {JSON.stringify({ ...selectedBooking, details: bookingDetails[selectedBooking.booking_id] }, null, 2)}
+                </pre>
               </div>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* Termination Form Modal */}
-        {showTerminationForm && terminationBooking && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl">
-              <div className="bg-white border-b border-slate-200 p-6 rounded-t-2xl">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="text-2xl font-bold text-slate-900">Request Termination</h2>
-                    <p className="text-slate-500 text-sm mt-1">Booking ID: #{terminationBooking.booking_id || terminationBooking.id}</p>
-                  </div>
-                  <button
-                    onClick={() => setShowTerminationForm(false)}
-                    className="text-slate-400 hover:text-slate-600 transition-colors"
-                  >
-                    <XCircle className="w-6 h-6" />
-                  </button>
+      {/* Termination Modal */}
+      {showTerminationForm && terminationBooking && (
+        <div style={s.modalOverlay}>
+          <div style={{ ...s.modalCard, maxWidth: 480 }}>
+            <div style={s.modalHeader}>
+              <div>
+                <h2 style={{ fontSize: 18, fontWeight: 700, color: '#0f172a', margin: 0 }}>Request Termination</h2>
+                <p style={{ fontSize: 12, color: '#64748b', margin: '4px 0 0' }}>
+                  Booking ID: #{terminationBooking.booking_id || terminationBooking.id}
+                </p>
+              </div>
+              <button onClick={() => setShowTerminationForm(false)} style={s.closeBtn}>
+                <XCircle size={22} style={{ color: '#94a3b8' }} />
+              </button>
+            </div>
+
+            <div style={{ padding: '24px 28px' }}>
+              <div style={{ ...s.alertWarning, marginBottom: 20 }}>
+                <AlertTriangle size={16} style={{ color: '#b45309', flexShrink: 0, marginTop: 2 }} />
+                <div>
+                  <h4 style={{ fontSize: 13, fontWeight: 600, color: '#92400e', margin: '0 0 2px' }}>Termination Request</h4>
+                  <p style={{ fontSize: 12, color: '#b45309', margin: 0, lineHeight: 1.5 }}>
+                    Submitting this request will initiate the termination process. The admin team will review and process it accordingly.
+                  </p>
                 </div>
               </div>
-              
-              <div className="p-6 space-y-6">
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                  <div className="flex items-start gap-3">
-                    <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5" />
-                    <div>
-                      <h4 className="font-semibold text-amber-800">Termination Request</h4>
-                      <p className="text-amber-700 text-sm mt-1">
-                        Submitting this request will initiate the termination process for your booking. 
-                        The admin team will review your request and process it accordingly.
-                      </p>
-                    </div>
-                  </div>
-                </div>
 
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      Urgency Level <span className="text-red-500">*</span>
-                    </label>
-                    <select
-                      value={terminationForm.urgency}
-                      onChange={(e) => setTerminationForm({...terminationForm, urgency: e.target.value})}
-                      className="w-full px-3 py-2 text-slate-700 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      required
-                    >
-                      <option value="">Select urgency level</option>
-                      <option value="FUTURE">Low - Can wait</option>
-                      <option value="TODAY">Medium - Soon</option>
-                      <option value="IMMEDIATE">High - Urgent</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      Requested End Date <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="date"
-                      value={terminationForm.requested_end_date}
-                      onChange={(e) => setTerminationForm({...terminationForm, requested_end_date: e.target.value})}
-                      className="w-full px-3 py-2 text-slate-700 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      min={new Date().toISOString().split('T')[0]}
-                      required
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      Reason for Termination <span className="text-red-500">*</span>
-                    </label>
-                    <textarea
-                      value={terminationForm.reason}
-                      onChange={(e) => setTerminationForm({...terminationForm, reason: e.target.value})}
-                      className="w-full px-3 py-2 text-slate-700 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      rows={4}
-                      placeholder="Please explain why you need to terminate this booking..."
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div className="flex gap-3 pt-4">
-                  <button
-                    onClick={() => setShowTerminationForm(false)}
-                    className="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors font-medium"
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div>
+                  <label style={s.fieldLabel}>Urgency Level <span style={{ color: '#ef4444' }}>*</span></label>
+                  <select
+                    value={terminationForm.urgency}
+                    onChange={e => setTerminationForm({ ...terminationForm, urgency: e.target.value })}
+                    style={s.select}
                   >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={submitTerminationRequest}
-                    disabled={terminationLoading}
-                    className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                  >
-                    {terminationLoading ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        Submitting...
-                      </>
-                    ) : (
-                      'Submit Request'
-                    )}
-                  </button>
+                    <option value="">Select urgency level</option>
+                    <option value="FUTURE">Low – Can wait</option>
+                    <option value="TODAY">Medium – Soon</option>
+                    <option value="IMMEDIATE">High – Urgent</option>
+                  </select>
                 </div>
+                <div>
+                  <label style={s.fieldLabel}>Requested End Date <span style={{ color: '#ef4444' }}>*</span></label>
+                  <input
+                    type="date"
+                    value={terminationForm.requested_end_date}
+                    onChange={e => setTerminationForm({ ...terminationForm, requested_end_date: e.target.value })}
+                    min={new Date().toISOString().split('T')[0]}
+                    style={s.input}
+                  />
+                </div>
+                <div>
+                  <label style={s.fieldLabel}>Reason for Termination <span style={{ color: '#ef4444' }}>*</span></label>
+                  <textarea
+                    value={terminationForm.reason}
+                    onChange={e => setTerminationForm({ ...terminationForm, reason: e.target.value })}
+                    rows={4}
+                    placeholder="Please explain why you need to terminate this booking…"
+                    style={s.input}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>
+                <button onClick={() => setShowTerminationForm(false)} style={s.secondaryBtn}>Cancel</button>
+                <button
+                  onClick={submitTerminationRequest}
+                  disabled={terminationLoading}
+                  style={{ ...s.dangerBtn, opacity: terminationLoading ? 0.7 : 1 }}
+                >
+                  {terminationLoading ? (
+                    <><Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> Submitting…</>
+                  ) : (
+                    'Submit Request'
+                  )}
+                </button>
               </div>
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
+};
+
+// ─── Inline Helpers ───────────────────────────────────────────────────────────
+
+const InfoItem = ({ label, value }) => (
+  <div>
+    <p style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 4px' }}>{label}</p>
+    <div style={{ fontSize: 13, fontWeight: 500, color: '#1e293b' }}>{value}</div>
+  </div>
+);
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
+const keyframes = `
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=DM+Serif+Display:ital@0;1&display=swap');
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  * { box-sizing: border-box; }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: #1e293b !important; box-shadow: 0 0 0 3px rgba(30,41,59,0.08) !important; }
+`;
+
+const s = {
+  pageWrapper: {
+    minHeight: '100vh',
+    background: '#f8fafc',
+    fontFamily: "'DM Sans', sans-serif",
+    color: '#1e293b',
+  },
+  main: {
+    maxWidth: 960,
+    margin: '0 auto',
+    padding: '48px 24px 80px',
+    animation: 'fadeIn 0.35s ease both',
+  },
+  centerState: {
+    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+    minHeight: '60vh', gap: 12,
+  },
+  spinnerIcon: { width: 28, height: 28, color: '#64748b' },
+  loadingText: { fontSize: 14, color: '#94a3b8', letterSpacing: '0.03em' },
+  errorCard: {
+    background: '#fff', border: '1px solid #fecaca', borderRadius: 12,
+    padding: '32px 40px', textAlign: 'center', maxWidth: 360,
+  },
+  errorTitle: { fontWeight: 600, fontSize: 16, color: '#1e293b', marginBottom: 6 },
+  errorBody: { fontSize: 14, color: '#64748b', marginBottom: 16 },
+  retryBtn: {
+    background: '#1e293b', color: '#fff', border: 'none', borderRadius: 8,
+    padding: '8px 20px', fontSize: 13, fontWeight: 500, cursor: 'pointer',
+    fontFamily: "'DM Sans', sans-serif",
+  },
+
+  pageHeader: {
+    display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
+    marginBottom: 28, padding: '24px 28px',
+    borderBottom: '1px solid #e2e8f0', backgroundColor: '#fff', borderRadius: 12,
+  },
+  breadcrumb: { fontSize: 12, color: '#64748b', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4, fontWeight: 500 },
+  pageTitle: { fontSize: 26, fontWeight: 600, color: '#1e293b', letterSpacing: '-0.02em', margin: 0, fontFamily: "'DM Serif Display', serif" },
+
+  primaryBtn: {
+    display: 'inline-flex', alignItems: 'center', gap: 6,
+    background: '#0f172a', color: '#fff',
+    border: 'none', borderRadius: 8,
+    padding: '9px 18px', fontSize: 13, fontWeight: 500,
+    cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
+  },
+  ghostBtn: {
+    display: 'inline-flex', alignItems: 'center', gap: 6,
+    background: 'transparent', color: '#64748b',
+    border: '1px solid #cbd5e1', borderRadius: 8,
+    padding: '6px 12px', fontSize: 12, fontWeight: 500,
+    cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
+  },
+
+  statsGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+    gap: 12, marginBottom: 20,
+  },
+  statCard: {
+    background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12,
+    padding: '20px 24px', display: 'flex', alignItems: 'center', gap: 14,
+  },
+  statIconWrap: {
+    width: 40, height: 40, borderRadius: 10,
+    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+  },
+  statValue: { fontSize: 20, fontWeight: 700, margin: '0 0 2px', lineHeight: 1 },
+  statLabel: { fontSize: 12, color: '#64748b', margin: 0, fontWeight: 500 },
+
+  card: {
+    background: '#fff', border: '1px solid #e2e8f0',
+    borderRadius: 12, padding: '28px', marginBottom: 16,
+  },
+  cardHeading: {
+    fontSize: 13, fontWeight: 600, color: '#94a3b8',
+    letterSpacing: '0.07em', textTransform: 'uppercase',
+    margin: '0 0 24px', paddingBottom: 16,
+    borderBottom: '1px solid #f1f5f9',
+  },
+
+  th: {
+    textAlign: 'left', fontSize: 10, fontWeight: 700,
+    color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.07em',
+    padding: '12px 14px',
+  },
+  td: { padding: '14px', verticalAlign: 'middle', color: '#334155' },
+
+  emptyState: { textAlign: 'center', padding: '48px 24px' },
+
+  modalOverlay: {
+    position: 'fixed', inset: 0, zIndex: 50,
+    background: 'rgba(0,0,0,0.45)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    background: '#fff', borderRadius: 14,
+    maxWidth: 640, width: '100%', maxHeight: '90vh', overflowY: 'auto',
+    boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
+  },
+  modalHeader: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    padding: '22px 28px', borderBottom: '1px solid #f1f5f9',
+    position: 'sticky', top: 0, background: '#fff', borderRadius: '14px 14px 0 0',
+  },
+  closeBtn: { background: 'none', border: 'none', cursor: 'pointer', padding: 2 },
+
+  infoBlock: {
+    background: '#f8fafc', borderRadius: 10, padding: 20,
+    border: '1px solid #e2e8f0',
+  },
+  infoBlockTitle: {
+    fontSize: 13, fontWeight: 600, color: '#0f172a',
+    display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 16px',
+  },
+  infoGrid: {
+    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 28px',
+  },
+  codeBlock: {
+    background: '#0f172a', color: '#22c55e', fontSize: 11,
+    fontFamily: "'DM Mono', monospace", padding: 16, borderRadius: 8,
+    overflowX: 'auto', lineHeight: 1.6, margin: 0,
+  },
+
+  alertWarning: {
+    display: 'flex', alignItems: 'flex-start', gap: 10,
+    background: '#fffbeb', border: '1px solid #fde68a',
+    borderRadius: 8, padding: '14px 16px',
+  },
+
+  fieldLabel: {
+    display: 'block', fontSize: 11, fontWeight: 600,
+    color: '#64748b', letterSpacing: '0.07em',
+    textTransform: 'uppercase', marginBottom: 8,
+  },
+  input: {
+    width: '100%', fontSize: 14, color: '#1e293b',
+    border: '1px solid #e2e8f0', borderRadius: 8,
+    padding: '9px 12px', background: '#fff',
+    fontFamily: "'DM Sans', sans-serif",
+    resize: 'vertical', lineHeight: 1.5,
+    transition: 'border-color 0.15s, box-shadow 0.15s',
+  },
+  select: {
+    width: '100%', fontSize: 14, color: '#1e293b',
+    border: '1px solid #e2e8f0', borderRadius: 8,
+    padding: '9px 12px', background: '#fff',
+    fontFamily: "'DM Sans', sans-serif",
+    transition: 'border-color 0.15s, box-shadow 0.15s',
+  },
+
+  secondaryBtn: {
+    flex: 1, background: '#fff', color: '#475569',
+    border: '1px solid #e2e8f0', borderRadius: 8,
+    padding: '9px 16px', fontSize: 13, fontWeight: 500,
+    cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
+  },
+  dangerBtn: {
+    flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+    background: '#ef4444', color: '#fff',
+    border: 'none', borderRadius: 8,
+    padding: '9px 16px', fontSize: 13, fontWeight: 500,
+    cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
+  },
 };
 
 export default ClientBookings;

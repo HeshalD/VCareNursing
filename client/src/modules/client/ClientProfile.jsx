@@ -2,8 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { User, MapPin, Phone, Mail, Edit2, Save, X, Loader2, CheckCircle, AlertCircle, Wallet, Shield } from 'lucide-react';
 import apiClient from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
-import Navbar from '../../components/layout/Navbar';
-import ProfileBackground from '../../assets/images/ProfileBackground.jpg';
 
 const ClientProfile = () => {
   const { user } = useAuth();
@@ -69,7 +67,6 @@ const ClientProfile = () => {
   if (loading) {
     return (
       <div style={styles.pageWrapper}>
-        <Navbar />
         <div style={styles.centerState}>
           <Loader2 style={{ ...styles.spinnerIcon, animation: 'spin 1s linear infinite' }} />
           <p style={styles.loadingText}>Loading profile</p>
@@ -82,7 +79,6 @@ const ClientProfile = () => {
   if (error && !profile) {
     return (
       <div style={styles.pageWrapper}>
-        <Navbar />
         <div style={styles.centerState}>
           <div style={styles.errorCard}>
             <AlertCircle style={styles.errorIcon} />
@@ -102,7 +98,6 @@ const ClientProfile = () => {
 
   return (
     <div style={styles.pageWrapper}>
-      <Navbar />
       <style>{keyframes}</style>
 
       <main style={styles.main}>
@@ -304,31 +299,12 @@ const keyframes = `
   @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
   * { box-sizing: border-box; }
   input:focus, textarea:focus { outline: none; border-color: #1e293b !important; box-shadow: 0 0 0 3px rgba(30,41,59,0.08) !important; }
-  .pageWrapper::before {
-    content: '';
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-image: inherit;
-    background-size: inherit;
-    background-position: inherit;
-    background-attachment: inherit;
-    filter: blur(15px);
-    -webkit-filter: blur(15px);
-    opacity: 0.4;
-    z-index: -1;
-  }
 `;
 
 const styles = {
   pageWrapper: {
     minHeight: '100vh',
-    backgroundImage: `url(${ProfileBackground})`,
-    backgroundSize: 'cover',
-    backgroundPosition: 'center',
-    backgroundAttachment: 'fixed',
+    background: '#f8fafc',
     fontFamily: "'DM Sans', sans-serif",
     color: '#1e293b',
   },

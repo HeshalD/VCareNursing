@@ -7,7 +7,6 @@ import {
 } from 'lucide-react';
 import apiClient from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
-import Navbar from '../../components/layout/Navbar';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -91,7 +90,6 @@ const ClientReviews = () => {
   if (loading) {
     return (
       <div style={s.pageWrapper}>
-        <Navbar />
         <div style={s.centerState}>
           <Loader2 size={28} style={{ ...s.spinnerIcon, animation: 'spin 1s linear infinite' }} />
           <p style={s.loadingText}>Loading reviews</p>
@@ -104,7 +102,6 @@ const ClientReviews = () => {
   if (error && reviews.length === 0) {
     return (
       <div style={s.pageWrapper}>
-        <Navbar />
         <div style={s.centerState}>
           <div style={s.errorCard}>
             <AlertCircle size={32} style={{ color: '#ef4444', marginBottom: 12 }} />
@@ -120,7 +117,6 @@ const ClientReviews = () => {
 
   return (
     <div style={s.pageWrapper}>
-      <Navbar />
       <style>{keyframes}</style>
       <main style={s.main}>
         {/* Header */}

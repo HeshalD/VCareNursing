@@ -9,8 +9,6 @@ import {
 } from 'lucide-react';
 import apiClient from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
-import Navbar from '../../components/layout/Navbar';
-import ProfileBackground from '../../assets/images/ProfileBackground.jpg';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -445,7 +443,6 @@ const ClientServiceRequests = () => {
 
   return (
     <div style={s.pageWrapper}>
-      <Navbar />
       <style>{keyframes}</style>
 
       <main style={s.main}>

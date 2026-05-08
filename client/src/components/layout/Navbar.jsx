@@ -95,20 +95,13 @@ const Navbar = () => {
               <div className="w-20 h-8 bg-slate-200 rounded-full animate-pulse"></div>
             ) : isAuthenticated ? (
               <div className="flex items-center gap-3">
-                <Link
-                  to="/client/bookings"
-                  className="flex items-center gap-2 px-3 py-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-full text-sm font-medium transition-all"
-                  title="My Bookings"
-                >
-                  <Calendar className="w-4 h-4" />
-                </Link>
                 {isStaffUser() && (
                   <Link
                     to="/services/provider-dashboard"
                     className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full text-sm font-medium transition-all"
                   >
                     <Briefcase className="w-4 h-4" />
-                    <span className="hidden sm:inline">Dashboard</span>
+                    
                   </Link>
                 )}
                 <div className="relative" ref={dropdownRef}>

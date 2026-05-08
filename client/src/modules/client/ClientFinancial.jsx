@@ -7,7 +7,6 @@ import {
   ChevronLeft, ChevronRight, RefreshCw, Loader2,
   AlertCircle, Calendar
 } from 'lucide-react';
-import Navbar from '../../components/layout/Navbar';
 import apiClient from '../../api/api';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -152,7 +151,6 @@ const ClientFinancial = () => {
   if (loading || authLoading) {
     return (
       <div style={s.pageWrapper}>
-        <Navbar />
         <style>{kf}</style>
         <div style={s.centerState}>
           <Loader2 size={28} style={{ color: '#64748b', animation: 'spin 1s linear infinite' }} />
@@ -166,7 +164,6 @@ const ClientFinancial = () => {
 
   return (
     <div style={s.pageWrapper}>
-      <Navbar />
       <style>{kf}</style>
 
       <main style={s.main}>
