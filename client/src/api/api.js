@@ -273,7 +273,13 @@ class ApiClient {
 
   }
 
-
+  async getClientProfileByUserId(userId) {
+    try {
+      return this.request(`/client/profile/user/${userId}`);
+    } catch (error) {
+      throw error;
+    }
+  }
 
   // Product endpoints
 
@@ -799,6 +805,10 @@ class ApiClient {
     });
   }
 
+  async getClientReviews(clientProfileId, page = 1, limit = 10) {
+    return this.request(`/staff-reviews/client/${clientProfileId}?page=${page}&limit=${limit}`);
+  }
+
   // Finances endpoints
   async getFinancesOverview() {
     return this.request('/finances/overview');
@@ -834,6 +844,54 @@ class ApiClient {
 
   async getTransactionCategoriesChart() {
     return this.request('/finances/transaction-categories-chart');
+  }
+
+  // Client-specific endpoints
+  async getClientProfileByUserId(userId) {
+    return this.request(`/client/profile/user/${userId}`);
+  }
+
+  async getClientServiceHistory(clientId) {
+    return this.request(`/client/service-history/${clientId}`);
+  }
+
+  async getClientServiceRequests(clientId) {
+    return this.request(`/service-requests/client/${clientId}`);
+  }
+
+  async getClientServiceRequestsWithQuotes(clientId) {
+    return this.request(`/service-requests/client/${clientId}/with-quotes`);
+  }
+
+  async getClientServiceRequestsWithPayments(clientId) {
+    return this.request(`/service-requests/client/${clientId}/with-payments`);
+  }
+
+  async getClientQuotes(clientId) {
+    return this.request(`/quotes/client/${clientId}`);
+  }
+
+  async getClientPaymentSlips(clientId) {
+    return this.request(`/payment-slips/client/${clientId}`);
+  }
+
+  async getClientBookings(clientId) {
+    return this.request(`/bookings/client/${clientId}`);
+  }
+
+  // Financial endpoints
+  async getClientWalletBalance(clientId) {
+    return this.request(`/client/wallet-balance/${clientId}`);
+  }
+
+  async getClientPaymentHistory(clientId, queryParams = {}) {
+    const queryString = new URLSearchParams(queryParams).toString();
+    const url = queryString ? `/client/payment-history/${clientId}?${queryString}` : `/client/payment-history/${clientId}`;
+    return this.request(url);
+  }
+
+  async getClientOverduePayments(clientId) {
+    return this.request(`/client/overdue-payments/${clientId}`);
   }
 }
 

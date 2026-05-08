@@ -9,6 +9,7 @@ import {
 import Navbar from '../../components/layout/Navbar';
 import Footer from '../../components/layout/Footer';
 import apiClient from '../../api/api';
+import { useAuth } from '../../context/AuthContext';
 
 const ElderlyCareBookingPage = () => {
   const navigate = useNavigate();
@@ -46,6 +47,61 @@ const ElderlyCareBookingPage = () => {
     preferred_gender: 'ANY',
     preferred_staff_id: null
   });
+
+  const { user } = useAuth();
+
+  // Prefill payer details when user is logged in (but don't overwrite existing input)
+  useEffect(() => {
+    if (!user) return;
+
+    setFormData(prev => {
+      // name can be in multiple places depending on user type
+      const payerName = prev.payer_name
+        || user.client_info?.name
+        || user.staff_info?.name
+        || user.full_name
+        || user.name
+        || (user.first_name && user.last_name ? `${user.first_name} ${user.last_name}` : '')
+        || user.displayName
+        || '';
+
+      // mobile/phone fields
+      const payerMobile = prev.payer_mobile
+        || user.client_info?.mobile_number
+        || user.staff_info?.mobile_number
+        || user.mobile_number
+        || user.mobile
+        || user.phone
+        || user.contact_number
+        || '';
+
+      // email fields - try several common locations
+      const payerEmail = prev.payer_email
+        || user.client_info?.email
+        || user.client_info?.contact?.email
+        || user.staff_info?.email
+        || user.staff_info?.contact?.email
+        || user.data?.email
+        || user.user?.email
+        || user.email
+        || user.email_address
+        || user.username
+        || '';
+
+      // Log user payload when email couldn't be resolved to help debugging
+      if (!payerEmail) {
+        // avoid noisy logs in production but useful during development
+        // eslint-disable-next-line no-console
+        console.debug('Prefill: could not find email in user payload', user);
+      }
+
+      if (prev.payer_name === payerName && prev.payer_mobile === payerMobile && prev.payer_email === payerEmail) {
+        return prev;
+      }
+
+      return { ...prev, payer_name: payerName, payer_mobile: payerMobile, payer_email: payerEmail };
+    });
+  }, [user]);
 
   const totalSteps = 4;
 

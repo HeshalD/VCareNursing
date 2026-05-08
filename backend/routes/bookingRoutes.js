@@ -28,6 +28,9 @@ router.get('/active-bookings', protect,
 router.get('/:booking_id', protect,  
     bookingController.getByBookingID);
 
+// Client-specific routes
+router.get('/client/:client_id', protect, bookingController.getClientBookings);
+
 router.post(
     '/terminate/:booking_id', 
     protect,

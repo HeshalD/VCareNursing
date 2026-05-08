@@ -10,6 +10,7 @@ const bookingRoutes = require('./routes/bookingRoutes')
 const patientRoutes = require('./routes/patientRoutes')
 const statementRoutes = require('./routes/statementRoutes')
 const paymentRoutes = require('./routes/paymentRoutes')
+const paymentSlipRoutes = require('./routes/paymentSlipRoutes')
 const migrateRoutes = require('./routes/migrateRoutes');
 const staffWalletRoutes = require('./routes/staffWalletRoutes');
 const staffReviewRoutes = require('./routes/staffReviewRoutes')
@@ -76,6 +77,7 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/patients', patientRoutes);
 app.use('/api/statement', statementRoutes);
 app.use('/api/payment', paymentRoutes);
+app.use('/api/payment-slips', paymentSlipRoutes);
 app.use('/api/migrate', migrateRoutes); 
 app.use('/api/staff-wallet', staffWalletRoutes);
 app.use('/api/staff-reviews', staffReviewRoutes);

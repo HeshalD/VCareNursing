@@ -47,6 +47,12 @@ import VerifyForgotPasswordOtp from './modules/auth/VerifyForgotPasswordOtp';
 import ResetPasswordPage from './modules/auth/ResetPasswordPage';
 import ViewStaffPage from './modules/public/ViewStaffPage';
 import StaffProfile from './modules/public/StaffProfile';
+import ClientProfile from './modules/client/ClientProfile';
+import ClientServiceRequests from './modules/client/ClientServiceRequests';
+import ClientPatients from './modules/client/ClientPatients';
+import ClientFinancial from './modules/client/ClientFinancial';
+import ClientReviews from './modules/client/ClientReviews';
+import ClientLayout from './modules/client/components/ClientLayout';
 
 function App() {
   return (
@@ -84,9 +90,14 @@ function App() {
             <Route path="/worker-registration-success" element={<WorkerRegistrationSuccessPage />} />
             <Route path="/services/provider-dashboard" element={<WorkerDashboardDemo />} />
             <Route path="/services/earnings" element={<Earnings />} />
-            <Route path="/client/dashboard" element={<ClientDashboardDemo />} />
-            <Route path="/client/profile" element={<ClientProfileDemo />} />
-            <Route path="/client/bookings" element={<ClientBookings/>}/>
+            <Route element={<ClientLayout />}>
+              <Route path="/client/profile" element={<ClientProfile />} />
+              <Route path="/client/bookings" element={<ClientBookings />} />
+              <Route path="/client/service-requests" element={<ClientServiceRequests />} />
+              <Route path="/client/patients" element={<ClientPatients />} />
+              <Route path="/client/financial" element={<ClientFinancial />} />
+              <Route path="/client/reviews" element={<ClientReviews />} />
+            </Route>
             <Route path="/admin/dashboard" element={
               <AdminAuthProvider>
                 <AdminDashboard />
