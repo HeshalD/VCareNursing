@@ -879,6 +879,10 @@ class ApiClient {
     return this.request(`/bookings/client/${clientId}`);
   }
 
+  async getStaffBookings(staffId) {
+    return this.request(`/bookings/staff/${staffId}`);
+  }
+
   // Financial endpoints
   async getClientWalletBalance(clientId) {
     return this.request(`/client/wallet-balance/${clientId}`);
@@ -892,6 +896,57 @@ class ApiClient {
 
   async getClientOverduePayments(clientId) {
     return this.request(`/client/overdue-payments/${clientId}`);
+  }
+
+  // ==================== MODULAR QUOTE ENDPOINTS ====================
+
+  // Preset Items Management
+  async getPresetItems() {
+    return this.request('/quotes/presets');
+  }
+
+  async createPresetItem(presetData) {
+    return this.request('/quotes/presets', {
+      method: 'POST',
+      body: JSON.stringify(presetData),
+    });
+  }
+
+  async updatePresetItem(presetId, presetData) {
+    return this.request(`/quotes/presets/${presetId}`, {
+      method: 'PUT',
+      body: JSON.stringify(presetData),
+    });
+  }
+
+  async deletePresetItem(presetId) {
+    return this.request(`/quotes/presets/${presetId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Modular Quote Operations
+  async createModularQuotation(quoteData) {
+    return this.request('/quotes/create-modular', {
+      method: 'POST',
+      body: JSON.stringify(quoteData),
+    });
+  }
+
+  async getQuoteWithLineItems(quoteId) {
+    return this.request(`/quotes/${quoteId}/details`);
+  }
+
+  async updateQuoteLineItems(quoteId, lineItemsData) {
+    return this.request(`/quotes/${quoteId}/line-items`, {
+      method: 'PUT',
+      body: JSON.stringify(lineItemsData),
+    });
+  }
+
+  // Patient endpoints
+  async getPatientsByClient(clientId) {
+    return this.request(`/patients/client/${clientId}`);
   }
 }
 

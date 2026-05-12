@@ -7,6 +7,83 @@ module.exports = (data) => {
         day: '2-digit' 
     });
 
+    // Handle both old format (backwards compatibility) and new modular format
+    const lineItems = data.line_items || [];
+    let itemsHtml = '';
+    let itemNumber = 1;
+
+    // If no line_items, fall back to old format for backwards compatibility
+    if (lineItems.length === 0) {
+        itemsHtml = `
+            <tr>
+              <td>1</td>
+              <td>
+                Registration
+                <div class="item-desc">Valid for 1 year from date of commencement</div>
+              </td>
+              <td>1.00</td>
+              <td>${parseFloat(data.registration_fee || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+              <td>${parseFloat(data.registration_fee || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>
+                ${data.service_type || 'Service'}
+                <div class="item-desc">Daily rates</div>
+              </td>
+              <td>${data.qty_days || 1}.00<br><span style="font-size:10px;color:#888;">Days</span></td>
+              <td>${parseFloat(data.daily_rate || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+              <td>${(parseFloat(data.daily_rate || 0) * parseFloat(data.qty_days || 1)).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+            </tr>
+            <tr>
+              <td>3</td>
+              <td>Transport</td>
+              <td>1.00</td>
+              <td>${parseFloat(data.transport_fee || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+              <td>${parseFloat(data.transport_fee || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+            </tr>
+        `;
+    } else {
+        // Generate HTML for each line item
+        itemsHtml = lineItems.map(item => {
+            const quantity = parseFloat(item.quantity) || 1;
+            const unitPrice = parseFloat(item.unit_price) || 0;
+            const amount = parseFloat(item.amount) || 0;
+            const isDiscount = item.item_type === 'DISCOUNT';
+            
+            return `
+                <tr>
+                  <td>${itemNumber++}</td>
+                  <td>
+                    ${item.description}
+                    ${isDiscount ? '<div class="item-desc" style="color: #d32f2f;">Discount</div>' : ''}
+                  </td>
+                  <td>${quantity.toFixed(2)}${isDiscount ? '' : '<br><span style="font-size:10px;color:#888;">Units</span>'}</td>
+                  <td>${unitPrice.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                  <td style="${isDiscount ? 'color: #d32f2f;' : ''}">${isDiscount ? '-' : ''}${Math.abs(amount).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    // Calculate charges and discounts for summary
+    let totalCharges = 0;
+    let totalDiscounts = 0;
+    
+    if (lineItems.length > 0) {
+        lineItems.forEach(item => {
+            const amount = parseFloat(item.amount) || 0;
+            if (item.item_type === 'DISCOUNT') {
+                totalDiscounts += Math.abs(amount);
+            } else {
+                totalCharges += amount;
+            }
+        });
+    } else {
+        // Backwards compatibility calculation
+        totalCharges = parseFloat(data.sub_total || 0);
+    }
+
     return `
     <html>
       <head>
@@ -50,6 +127,7 @@ module.exports = (data) => {
           .totals-table td { padding: 6px 12px; font-size: 13px; }
           .totals-table td:last-child { text-align: right; }
           .totals-table tr.total-row td { font-weight: bold; font-size: 14px; border-top: 2px solid #333; padding-top: 10px; }
+          .discount-row td { color: #d32f2f; }
 
           /* Notes & Terms */
           .notes-section { margin-bottom: 20px; }
@@ -105,33 +183,7 @@ module.exports = (data) => {
             </tr>
           </thead>
           <tbody>
-            <tr>
-              <td>1</td>
-              <td>
-                Registration
-                <div class="item-desc">Valid for 1 year from date of commencement</div>
-              </td>
-              <td>1.00</td>
-              <td>${parseFloat(data.registration_fee).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
-              <td>${parseFloat(data.registration_fee).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
-            </tr>
-            <tr>
-              <td>2</td>
-              <td>
-                ${data.service_type}
-                <div class="item-desc">Daily rates</div>
-              </td>
-              <td>${data.qty_days}.00<br><span style="font-size:10px;color:#888;">Days</span></td>
-              <td>${parseFloat(data.daily_rate).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
-              <td>${(data.daily_rate * data.qty_days).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
-            </tr>
-            <tr>
-              <td>3</td>
-              <td>Transport</td>
-              <td>1.00</td>
-              <td>${parseFloat(data.transport_fee).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
-              <td>${parseFloat(data.transport_fee).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
-            </tr>
+            ${itemsHtml}
           </tbody>
         </table>
 
@@ -140,11 +192,17 @@ module.exports = (data) => {
           <table class="totals-table">
             <tr>
               <td>Sub Total</td>
-              <td>${parseFloat(data.sub_total).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+              <td>${parseFloat(data.sub_total || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
             </tr>
+            ${totalDiscounts > 0 ? `
+            <tr class="discount-row">
+              <td>Discounts</td>
+              <td>-${totalDiscounts.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+            </tr>
+            ` : ''}
             <tr class="total-row">
               <td>Total</td>
-              <td>LKR${parseFloat(data.total_amount).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+              <td>LKR${parseFloat(data.total_amount || 0).toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
             </tr>
           </table>
         </div>
@@ -158,7 +216,7 @@ module.exports = (data) => {
         <!-- Terms & Conditions -->
         <div class="notes-section">
           <h4>Terms &amp; Conditions</h4>
-          <p>Please note: The initial estimated amount is non-refundable. Our work includes a Service Guarantee.</p>
+          <p>${data.terms_conditions || 'Please note: The initial estimated amount is non-refundable. Our work includes a Service Guarantee.'}</p>
         </div>
 
         <!-- Page footer -->

@@ -53,6 +53,7 @@ import ClientPatients from './modules/client/ClientPatients';
 import ClientFinancial from './modules/client/ClientFinancial';
 import ClientReviews from './modules/client/ClientReviews';
 import ClientLayout from './modules/client/components/ClientLayout';
+import WorkerBookings from './modules/public/service_team/WorkerBookings';
 
 function App() {
   return (
@@ -90,6 +91,7 @@ function App() {
             <Route path="/worker-registration-success" element={<WorkerRegistrationSuccessPage />} />
             <Route path="/services/provider-dashboard" element={<WorkerDashboardDemo />} />
             <Route path="/services/earnings" element={<Earnings />} />
+            <Route path="/services/bookings" element={<WorkerBookings />} />
             <Route element={<ClientLayout />}>
               <Route path="/client/profile" element={<ClientProfile />} />
               <Route path="/client/bookings" element={<ClientBookings />} />

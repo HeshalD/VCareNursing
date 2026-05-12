@@ -1208,3 +1208,55 @@ exports.getClientBookings = async (req, res) => {
         });
     }
 };
+
+exports.getStaffBookings = async (req, res) => {
+    try {
+        const { staff_id } = req.params;
+
+        const result = await db.query(`
+            SELECT b.*,
+                   cp.full_name as client_name,
+                   u.mobile_number as client_mobile,
+                   pp.full_name as patient_name,
+                   pp.age as patient_age,
+                   pp.gender as patient_gender,
+                   pp.medical_condition,
+                   pp.residential_address as patient_address,
+                   pp.emergency_contact_name,
+                   pp.emergency_contact_number,
+                   sr.payer_name,
+                   sr.payer_mobile,
+                   sr.location_address,
+                   sr.gps_coordinates,
+                   sr.remarks as service_remarks,
+                   q.daily_rate,
+                   q.registration_fee,
+                   q.total_amount,
+                   q.qty_days as duration_days,
+                   st.status as termination_status,
+                    st.requested_end_date,
+                    st.reason as termination_reason
+            FROM bookings b
+            JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+            JOIN users u ON cp.user_id = u.user_id
+            LEFT JOIN patient_profiles pp ON b.patient_id = pp.patient_id
+            LEFT JOIN service_requests sr ON b.request_id = sr.request_id
+            LEFT JOIN quotations q ON sr.active_quote_id = q.quote_id
+            LEFT JOIN service_terminations st ON b.booking_id = st.booking_id
+            WHERE b.assigned_staff_id = $1
+            ORDER BY b.created_at DESC
+        `, [staff_id]);
+
+        res.status(200).json({
+            status: 'success',
+            count: result.rowCount,
+            data: result.rows
+        });
+    } catch (error) {
+        console.error('Error fetching staff bookings:', error);
+        res.status(500).json({
+            status: 'error',
+            message: 'Failed to fetch staff bookings'
+        });
+    }
+};

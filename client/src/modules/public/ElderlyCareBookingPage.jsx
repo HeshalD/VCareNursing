@@ -23,6 +23,8 @@ const ElderlyCareBookingPage = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [shouldRefetchStaff, setShouldRefetchStaff] = useState(false);
+  const [patients, setPatients] = useState([]);
+  const [patientsLoading, setPatientsLoading] = useState(false);
 
   const [formData, setFormData] = useState({
     // Payer Information
@@ -48,7 +50,7 @@ const ElderlyCareBookingPage = () => {
     preferred_staff_id: null
   });
 
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
 
   // Prefill payer details when user is logged in (but don't overwrite existing input)
   useEffect(() => {
@@ -102,6 +104,64 @@ const ElderlyCareBookingPage = () => {
       return { ...prev, payer_name: payerName, payer_mobile: payerMobile, payer_email: payerEmail };
     });
   }, [user]);
+
+  // Fetch patients for authenticated client
+  useEffect(() => {
+    const fetchPatients = async () => {
+      if (!isAuthenticated || !user?.id) return;
+      
+      try {
+        setPatientsLoading(true);
+        console.log('Fetching patients for user:', user);
+        
+        // First get the client profile to get client_profile_id
+        const clientProfileResponse = await apiClient.getClientProfileByUserId(user.id);
+        console.log('Client profile response:', clientProfileResponse);
+        
+        if (clientProfileResponse.data?.client_profile_id) {
+          const response = await apiClient.getPatientsByClient(clientProfileResponse.data.client_profile_id);
+          console.log('Patients response:', response);
+          setPatients(response.data || []);
+        } else {
+          console.log('No client profile found for user');
+          setPatients([]);
+        }
+      } catch (error) {
+        console.error('Error fetching patients:', error);
+        setPatients([]);
+      } finally {
+        setPatientsLoading(false);
+      }
+    };
+
+    fetchPatients();
+  }, [isAuthenticated, user?.id]);
+
+  // Handle patient selection from dropdown
+  const handlePatientSelection = (patientId) => {
+    if (!patientId) {
+      // Clear patient fields
+      setFormData(prev => ({
+        ...prev,
+        patient_name: '',
+        patient_age: '',
+        relationship: 'SELF',
+        patient_condition: ''
+      }));
+      return;
+    }
+
+    const selectedPatient = patients.find(p => p.patient_id === patientId);
+    if (selectedPatient) {
+      setFormData(prev => ({
+        ...prev,
+        patient_name: selectedPatient.full_name,
+        patient_age: selectedPatient.age.toString(),
+        relationship: selectedPatient.relationship_to_client || 'OTHER',
+        patient_condition: selectedPatient.medical_condition || ''
+      }));
+    }
+  };
 
   const totalSteps = 4;
 
@@ -403,9 +463,77 @@ const ElderlyCareBookingPage = () => {
                     className="space-y-6"
                   >
                     <h2 className="text-2xl font-bold text-slate-800 mb-6">Patient Information</h2>
+                    
+                    {/* Patient Selection for Authenticated Clients */}
+                    {isAuthenticated && patients.length > 0 && (
+                      <div className="md:col-span-2 mb-6">
+                        <label className="text-sm font-semibold text-slate-600 block mb-3">
+                          Select Registered Patient
+                        </label>
+                        <div className="grid gap-3 mb-4">
+                          {patients.map(patient => (
+                            <div
+                              key={patient.patient_id}
+                              onClick={() => handlePatientSelection(patient.patient_id)}
+                              className={`p-4 border-2 rounded-xl cursor-pointer transition-all duration-200 hover:shadow-md ${
+                                formData.patient_name === patient.full_name && 
+                                formData.patient_age === patient.age.toString()
+                                  ? 'border-amber-500 bg-amber-50'
+                                  : 'border-slate-200 bg-white hover:border-amber-300'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex-1">
+                                  <h4 className="font-semibold text-slate-800 text-lg">{patient.full_name}</h4>
+                                  <div className="flex gap-4 mt-1 text-sm text-slate-600">
+                                    <span className="flex items-center gap-1">
+                                      <User className="w-4 h-4" />
+                                      Age: {patient.age}
+                                    </span>
+                                    <span className="flex items-center gap-1">
+                                      <Heart className="w-4 h-4" />
+                                      {patient.relationship_to_client || 'Other'}
+                                    </span>
+                                  </div>
+                                  {patient.medical_condition && (
+                                    <p className="text-xs text-slate-500 mt-2">
+                                      <strong>Medical Condition:</strong> {patient.medical_condition}
+                                    </p>
+                                  )}
+                                </div>
+                                <div className="ml-4">
+                                  {formData.patient_name === patient.full_name && 
+                                   formData.patient_age === patient.age.toString() && (
+                                    <div className="w-6 h-6 bg-amber-500 rounded-full flex items-center justify-center">
+                                      <CheckCircle className="w-4 h-4 text-white" />
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-slate-500">
+                          <button
+                            onClick={() => handlePatientSelection('')}
+                            className="text-amber-600 hover:text-amber-700 underline"
+                          >
+                            Clear selection
+                          </button>
+                          <span>•</span>
+                          <span>Or fill in form below for a new patient</span>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="grid md:grid-cols-2 gap-6">
                       <div className="md:col-span-2">
-                        <label className="text-sm font-semibold text-slate-600 block mb-1">Patient Name</label>
+                        <label className="text-sm font-semibold text-slate-600 block mb-1">
+                          Patient Name
+                          {isAuthenticated && patients.length > 0 && (
+                            <span className="ml-2 text-xs text-amber-600">(Required if no patient selected above)</span>
+                          )}
+                        </label>
                         <input
                           type="text"
                           className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none text-slate-900 placeholder:text-slate-400"
@@ -413,7 +541,7 @@ const ElderlyCareBookingPage = () => {
                           onChange={e => setFormData({ ...formData, patient_name: e.target.value })}
                           onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
                           placeholder="e.g. Jane Doe"
-                          required
+                          required={!isAuthenticated || patients.length === 0}
                         />
                       </div>
                       <div>

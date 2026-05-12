@@ -472,6 +472,40 @@ async function runMigration() {
   `);
 
   // =========================================================
+  // MODULAR QUOTATION TABLES
+  // =========================================================
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS quote_preset_items (
+      preset_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      name VARCHAR(100) NOT NULL,
+      item_type VARCHAR(50) NOT NULL,
+      description VARCHAR(255),
+      default_quantity NUMERIC(12,2) DEFAULT 1,
+      default_unit_price NUMERIC(12,2) NOT NULL,
+      is_active BOOLEAN DEFAULT true,
+      sort_order INTEGER DEFAULT 0,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS quote_line_items (
+      line_item_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      quote_id UUID NOT NULL REFERENCES quotations(quote_id) ON DELETE CASCADE,
+      item_type VARCHAR(50) NOT NULL,
+      description VARCHAR(255) NOT NULL,
+      quantity NUMERIC(12,2) DEFAULT 1,
+      unit_price NUMERIC(12,2) NOT NULL,
+      amount NUMERIC(12,2) NOT NULL,
+      sort_order INTEGER DEFAULT 0,
+      is_preset_item BOOLEAN DEFAULT false,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // =========================================================
   // INDEXES
   // =========================================================
 
@@ -483,6 +517,16 @@ async function runMigration() {
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_password_reset_user 
     ON password_reset_otps(user_id);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_quote_line_items_quote_id 
+    ON quote_line_items(quote_id);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_quote_preset_items_active 
+    ON quote_preset_items(is_active);
   `);
 
   // =========================================================
@@ -499,7 +543,64 @@ async function runMigration() {
     END $$;
   `);
 
+  // =========================================================
+  // SEED DEFAULT PRESET ITEMS
+  // =========================================================
+
+  await seedQuotePresetItems();
+
   console.log('Migration completed successfully!');
+}
+
+async function seedQuotePresetItems() {
+  try {
+    // Check if presets already exist
+    const existingPresets = await db.query('SELECT COUNT(*) FROM quote_preset_items');
+    if (parseInt(existingPresets.rows[0].count) > 0) {
+      console.log('Quote preset items already seeded. Skipping...');
+      return;
+    }
+
+    const presets = [
+      {
+        name: 'Registration Fee',
+        item_type: 'CHARGE',
+        description: 'One-time registration fee for new clients',
+        default_quantity: 1,
+        default_unit_price: 10000.00,
+        sort_order: 1
+      },
+      {
+        name: 'Daily Care Rate',
+        item_type: 'CHARGE',
+        description: 'Daily nursing/caretaker service rate',
+        default_quantity: 7,
+        default_unit_price: 0,
+        sort_order: 2
+      },
+      {
+        name: 'Transport Fee',
+        item_type: 'CHARGE',
+        description: 'Daily transport allowance for staff',
+        default_quantity: 1,
+        default_unit_price: 1000.00,
+        sort_order: 3
+      }
+    ];
+
+    for (const preset of presets) {
+      await db.query(`
+        INSERT INTO quote_preset_items 
+        (name, item_type, description, default_quantity, default_unit_price, sort_order, is_active)
+        VALUES ($1, $2, $3, $4, $5, $6, true)
+      `, [preset.name, preset.item_type, preset.description, preset.default_quantity, preset.default_unit_price, preset.sort_order]);
+    }
+
+    console.log(`Seeded ${presets.length} default quote preset items`);
+  } catch (error) {
+    console.error('Error seeding quote preset items:', error.message);
+    // Don't fail migration if seeding fails
+  }
 }
 
 // Run migration if this file is executed directly

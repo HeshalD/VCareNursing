@@ -18,8 +18,10 @@ import {
   Calculator,
   Users,
   Shield,
-  ShieldOff
+  ShieldOff,
+  Settings
 } from 'lucide-react';
+import PresetManager from '../service_quotes/PresetManager';
 
 const ServiceRequests = () => {
   const navigate = useNavigate();
@@ -30,6 +32,7 @@ const ServiceRequests = () => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [isProxyMode, setIsProxyMode] = useState(false);
+  const [showPresetManager, setShowPresetManager] = useState(false);
 
   useEffect(() => {
     fetchServiceRequests();
@@ -200,6 +203,15 @@ const ServiceRequests = () => {
               />
             </button>
           </div>
+
+          {/* Manage Presets Button */}
+          <button
+            onClick={() => setShowPresetManager(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <Settings className="w-4 h-4" />
+            Manage Presets
+          </button>
         </div>
       </div>
 
@@ -442,6 +454,15 @@ const ServiceRequests = () => {
           </div>
         </div>
       )}
+
+      {/* Preset Manager Modal */}
+      <PresetManager
+        isOpen={showPresetManager}
+        onClose={() => setShowPresetManager(false)}
+        onSave={() => {
+          setShowPresetManager(false);
+        }}
+      />
     </AdminLayout>
   );
 };
