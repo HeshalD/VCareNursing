@@ -943,6 +943,11 @@ class ApiClient {
       body: JSON.stringify(lineItemsData),
     });
   }
+
+  // Patient endpoints
+  async getPatientsByClient(clientId) {
+    return this.request(`/patients/client/${clientId}`);
+  }
 }
 
 // Create and export a singleton instance
