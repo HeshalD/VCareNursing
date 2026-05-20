@@ -34,9 +34,9 @@ The features are grouped by category for clarity. For each feature, I've include
   - Frontend: Use a table or list component to display requests, with expandable quote details.
   - Show status (e.g., NEW_LEAD, SENT) and allow filtering.
 - **Checklist**:
-  - [ ] Backend query for requests + quotes.
-  - [ ] Frontend list component for requests.
-  - [ ] Display payment slips with verification status.
+  - [x] Backend query for requests + quotes.
+  - [x] Frontend list component for requests.
+  - [x] Display payment slips with verification status.
 
 ## 3. Active and Past Bookings
 - **Description**: Show all bookings, including assigned staff, swaps, and terminations.
@@ -58,9 +58,9 @@ The features are grouped by category for clarity. For each feature, I've include
   - Frontend: Patient list with details; allow adding/editing patients.
   - Cross-reference with bookings for personalized views.
 - **Checklist**:
-  - [ ] Backend patient fetch with booking links.
-  - [ ] Frontend patient management component.
-  - [ ] Edit/add patient functionality.
+  - [X] Backend patient fetch with booking links.
+  - [X] Frontend patient management component.
+  - [X] Edit/add patient functionality.
 
 ## 5. Financial and Payment History
 - **Description**: Provide full transaction history, including overdue payments.
@@ -70,9 +70,9 @@ The features are grouped by category for clarity. For each feature, I've include
   - Frontend: Transaction table with filters (e.g., by category/type).
   - Integrate wallet balance from `client_profiles`.
 - **Checklist**:
-  - [ ] Backend transaction history endpoint.
-  - [ ] Frontend payment dashboard.
-  - [ ] Overdue payment alerts/highlights.
+  - [X] Backend transaction history endpoint.
+  - [X] Frontend payment dashboard.
+  - [X] Overdue payment alerts/highlights.
 
 ## 6. Reviews and Feedback
 - **Description**: Display client-submitted reviews for staff.

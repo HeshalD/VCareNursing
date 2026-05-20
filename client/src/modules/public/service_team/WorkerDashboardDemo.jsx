@@ -7,44 +7,60 @@ import {
 import { Link } from 'react-router-dom';
 import apiClient from '../../../api/api';
 import { useAuth } from '../../../context/AuthContext';
+import StaffSidebar from './StaffSidebar';
 
 const WorkerDashboardDemo = () => {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [staffData, setStaffData] = useState(null);
   const [walletData, setWalletData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [dataLoading, setDataLoading] = useState(true);
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
+      // Wait for auth to finish
+      if (authLoading) return;
+
+      const userId = user?.user_id || user?.id;
+      const staffId = user?.staff_id;
+      
+      if (!userId) {
+        setDataLoading(false);
+        return;
+      }
+
       try {
-        // Try to get staff_id from user object, fallback to id if staff_id is not available
-        const staffId = user?.staff_id || user?.id;
-        if (staffId) {
-          const [staffResponse, walletResponse] = await Promise.all([
-            user?.staff_id ? apiClient.getStaffByID(user.staff_id) : apiClient.getStaffByUserID(user.id),
-            apiClient.getMyWallet()
-          ]);
+        // Fetch staff data first
+        try {
+          const staffResponse = staffId 
+            ? await apiClient.getStaffByID(staffId) 
+            : await apiClient.getStaffByUserID(userId);
           setStaffData(staffResponse.data);
-          setWalletData(walletResponse.data?.data);
+        } catch (staffErr) {
+          console.error('Dashboard - Staff fetch failed:', staffErr);
+        }
+
+        // Fetch wallet data separately
+        try {
+          const walletResponse = await apiClient.getMyWallet();
+          setWalletData(walletResponse.data?.data || walletResponse.data);
+        } catch (walletErr) {
+          console.error('Dashboard - Wallet fetch failed:', walletErr);
         }
       } catch (error) {
-        console.error('Error fetching data:', error);
+        console.error('Dashboard - General error:', error);
       } finally {
-        setLoading(false);
+        setDataLoading(false);
       }
     };
 
     fetchData();
-  }, [user?.staff_id, user?.id]);
+  }, [user, authLoading]);
 
-  if (loading) {
+  if (authLoading || dataLoading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-slate-600">Loading your dashboard...</p>
-        </div>
+        <div className="text-center text-slate-600 font-medium">Loading your dashboard...</div>
       </div>
     );
   }
@@ -54,66 +70,36 @@ const WorkerDashboardDemo = () => {
   const status = staffData?.verification_status || 'PENDING';
   const currentStatus = staffData?.current_status || 'AVAILABLE';
   const isAvailable = currentStatus === 'AVAILABLE';
-  
+
   const toggleAvailability = async () => {
     if (!staffData?.staff_profile_id || updatingStatus) return;
-    
     setUpdatingStatus(true);
     try {
       if (isAvailable) {
-        // Change to UNAVAILABLE
         await apiClient.updateStaffToUnavailable(staffData.staff_profile_id);
       } else {
-        // Change to AVAILABLE
         await apiClient.updateStaffStatus(staffData.staff_profile_id, 'AVAILABLE');
       }
-      
-      // Refresh staff data to get updated status
-      const staffId = user?.staff_id || user?.id;
-      if (staffId) {
-        const response = user?.staff_id 
-          ? await apiClient.getStaffByID(user.staff_id)
-          : await apiClient.getStaffByUserID(user.id);
-        setStaffData(response.data);
-      }
+      const response = user?.staff_id 
+        ? await apiClient.getStaffByID(user.staff_id) 
+        : await apiClient.getStaffByUserID(user.id);
+      setStaffData(response.data);
     } catch (error) {
       console.error('Error updating status:', error);
-      // You might want to show a toast notification here
     } finally {
       setUpdatingStatus(false);
     }
   };
-  
-  // Extract role from user data
+
   const role = Array.isArray(user?.role) ? user.role[0] : user?.role;
-  const displayRole = role === 'NURSE' ? 'Certified Nurse' : 
-                     role === 'CAREGIVER' ? 'Professional Caregiver' : 
-                     role === 'COORDINATOR' ? 'Care Coordinator' : 
-                     'Healthcare Professional';
+  const displayRole = role === 'NURSE' ? 'Certified Nurse' :
+    role === 'CAREGIVER' ? 'Professional Caregiver' :
+      role === 'COORDINATOR' ? 'Care Coordinator' :
+        'Healthcare Professional';
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans flex text-slate-900">
-      {/* Sidebar Navigation (Desktop) */}
-      <aside className="hidden md:flex flex-col w-72 bg-indigo-900 text-white p-6 sticky top-0 h-screen">
-        <div className="flex items-center gap-3 mb-10 text-emerald-400">
-          <Briefcase className="w-8 h-8" />
-          <span className="text-2xl font-bold text-white tracking-tight">VCare<span className="text-indigo-300">Pro</span></span>
-        </div>
-
-        <nav className="flex-1 space-y-2">
-          <NavItem icon={LayoutDashboard} label="Dashboard" active />
-          <NavItem icon={DollarSign} label="Earnings" to="/services/earnings" />
-          <NavItem icon={User} label="My Profile" />
-          <NavItem icon={Settings} label="Settings" />
-        </nav>
-
-        <div className="pt-6 border-t border-indigo-800">
-          <button className="flex items-center gap-3 text-indigo-300 hover:text-white transition-colors w-full px-4 py-3 rounded-xl hover:bg-white/10">
-            <LogOut className="w-5 h-5" />
-            <span>Sign Out</span>
-          </button>
-        </div>
-      </aside>
+      <StaffSidebar staffProfileId={staffData?.staff_profile_id} />
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto">
@@ -125,12 +111,8 @@ const WorkerDashboardDemo = () => {
             </div>
 
             <div className="flex items-center gap-4">
-              <Link 
-                to="/"
-                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
-              >
-                <Home className="w-4 h-4" />
-                <span className="hidden sm:inline">Landing Page</span>
+              <Link to="/" className="text-indigo-600 hover:text-indigo-800 text-sm font-medium flex items-center gap-1">
+                <Home className="w-4 h-4" /> Home
               </Link>
               <button className="relative p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors">
                 <Bell className="w-6 h-6" />
@@ -138,19 +120,15 @@ const WorkerDashboardDemo = () => {
               </button>
               <div className="flex items-center gap-3 pl-4 border-l border-slate-200">
                 {profilePicture ? (
-                  <img
-                    src={profilePicture}
-                    alt="Profile"
-                    className="w-10 h-10 rounded-full object-cover border-2 border-indigo-100"
-                  />
+                  <img src={profilePicture} alt="Profile" className="w-10 h-10 rounded-full object-cover border-2 border-indigo-100" />
                 ) : (
                   <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center">
                     <User className="w-5 h-5 text-indigo-600" />
                   </div>
                 )}
-                <div className="hidden sm:block">
+                <div className="hidden sm:block text-right">
                   <p className="text-sm font-bold text-slate-900">{displayName}</p>
-                  <p className="text-xs text-slate-500">{displayRole} • {currentStatus}</p>
+                  <p className="text-xs text-slate-500 font-medium">{displayRole}</p>
                 </div>
               </div>
             </div>
@@ -169,18 +147,16 @@ const WorkerDashboardDemo = () => {
                 </p>
               </div>
             </div>
-            
+
             <button
               onClick={toggleAvailability}
               disabled={updatingStatus}
-              className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${
-                isAvailable ? 'bg-emerald-500' : 'bg-slate-300'
-              } ${updatingStatus ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+              className={`relative inline-flex h-8 w-14 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${isAvailable ? 'bg-emerald-500' : 'bg-slate-300'
+                } ${updatingStatus ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
             >
               <span
-                className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform shadow-lg ${
-                  isAvailable ? 'translate-x-7' : 'translate-x-1'
-                }`}
+                className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform shadow-lg ${isAvailable ? 'translate-x-7' : 'translate-x-1'
+                  }`}
               />
             </button>
           </div>
@@ -189,40 +165,37 @@ const WorkerDashboardDemo = () => {
         <div className="p-8 max-w-7xl mx-auto space-y-8">
 
           {/* Application Status Banner */}
-          <div className={`rounded-2xl p-6 md:p-8 text-white flex flex-col md:flex-row items-center justify-between gap-6 shadow-xl ${
-            status === 'VERIFIED' ? 'bg-emerald-600 shadow-emerald-200' : 
-            status === 'REJECTED' ? 'bg-red-600 shadow-red-200' : 
-            'bg-indigo-600 shadow-indigo-200'
-          }`}>
+          <div className={`rounded-2xl p-6 md:p-8 text-white flex flex-col md:flex-row items-center justify-between gap-6 shadow-xl ${status === 'VERIFIED' ? 'bg-emerald-600 shadow-emerald-200' :
+            status === 'REJECTED' ? 'bg-red-600 shadow-red-200' :
+              'bg-indigo-600 shadow-indigo-200'
+            }`}>
             <div className="flex items-center gap-6">
               <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-sm">
-                <CheckCircle className={`w-8 h-8 ${
-                  status === 'VERIFIED' ? 'text-emerald-300' : 
-                  status === 'REJECTED' ? 'text-red-300' : 
-                  'text-indigo-300'
-                }`} />
+                <CheckCircle className={`w-8 h-8 ${status === 'VERIFIED' ? 'text-emerald-300' :
+                  status === 'REJECTED' ? 'text-red-300' :
+                    'text-indigo-300'
+                  }`} />
               </div>
               <div>
                 <h2 className="text-2xl font-bold mb-1">
                   {status === 'VERIFIED' ? 'Profile Verified Successfully!' :
-                   status === 'REJECTED' ? 'Application Rejected' :
-                   'Application Under Review'}
+                    status === 'REJECTED' ? 'Application Rejected' :
+                      'Application Under Review'}
                 </h2>
                 <p className="text-white/80">
                   {status === 'VERIFIED' ? 'Your profile has been verified and you can start accepting shifts.' :
-                   status === 'REJECTED' ? 'Unfortunately your application was not approved at this time.' :
-                   'Your profile is currently under review by our team. We will contact you soon.'}
+                    status === 'REJECTED' ? 'Unfortunately your application was not approved at this time.' :
+                      'Your profile is currently under review by our team. We will contact you soon.'}
                 </p>
               </div>
             </div>
-            <div className={`px-5 py-2 rounded-full text-sm font-bold uppercase tracking-wider backdrop-blur-md border ${
-              status === 'VERIFIED' ? 'bg-emerald-400/20 border-emerald-400/50 text-emerald-100' :
+            <div className={`px-5 py-2 rounded-full text-sm font-bold uppercase tracking-wider backdrop-blur-md border ${status === 'VERIFIED' ? 'bg-emerald-400/20 border-emerald-400/50 text-emerald-100' :
               status === 'REJECTED' ? 'bg-red-400/20 border-red-400/50 text-red-100' :
-              'bg-yellow-400/20 border-yellow-400/50 text-yellow-100'
-            }`}>
+                'bg-yellow-400/20 border-yellow-400/50 text-yellow-100'
+              }`}>
               {status === 'VERIFIED' ? 'Verified' :
-               status === 'REJECTED' ? 'Rejected' :
-               'Pending Verification'}
+                status === 'REJECTED' ? 'Rejected' :
+                  'Pending Verification'}
             </div>
           </div>
 
@@ -279,9 +252,9 @@ const WorkerDashboardDemo = () => {
 const NavItem = ({ icon: Icon, label, active, to }) => {
   const Component = to ? Link : 'button';
   const props = to ? { to } : {};
-  
+
   return (
-    <Component 
+    <Component
       {...props}
       className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${active ? 'bg-indigo-800 text-white shadow-lg shadow-indigo-900/50' : 'text-indigo-200 hover:bg-white/10 hover:text-white'}`}
     >

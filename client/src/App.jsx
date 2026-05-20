@@ -54,6 +54,8 @@ import ClientFinancial from './modules/client/ClientFinancial';
 import ClientReviews from './modules/client/ClientReviews';
 import ClientLayout from './modules/client/components/ClientLayout';
 import WorkerBookings from './modules/public/service_team/WorkerBookings';
+import StaffMyProfile from './modules/public/service_team/StaffMyProfile';
+import StaffSettings from './modules/public/service_team/StaffSettings';
 
 function App() {
   return (
@@ -92,6 +94,8 @@ function App() {
             <Route path="/services/provider-dashboard" element={<WorkerDashboardDemo />} />
             <Route path="/services/earnings" element={<Earnings />} />
             <Route path="/services/bookings" element={<WorkerBookings />} />
+            <Route path="/services/my-profile" element={<StaffMyProfile />} />
+            <Route path="/services/settings" element={<StaffSettings />} />
             <Route element={<ClientLayout />}>
               <Route path="/client/profile" element={<ClientProfile />} />
               <Route path="/client/bookings" element={<ClientBookings />} />
