@@ -1,6 +1,12 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
+import {
+  LayoutDashboard, User, DollarSign, Settings, LogOut, Briefcase,
+  Home, Bell, Clock, TrendingUp, ChevronRight
+} from 'lucide-react';
+import { Link } from "react-router-dom";
 import apiClient from "../../../api/api";
 import { useAuth } from "../../../context/AuthContext";
+import StaffSidebar from './StaffSidebar';
 
 const Earnings = () => {
   const [wallet, setWallet] = useState(null);
@@ -8,62 +14,45 @@ const Earnings = () => {
   const [advances, setAdvances] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [amount, setAmount] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [dataLoading, setDataLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [successMsg, setSuccessMsg] = useState(null);
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
 
   useEffect(() => {
     const fetchData = async () => {
+      // Wait for auth
+      if (authLoading) return;
+
+      const userId = user?.user_id || user?.id;
+      const staffId = user?.staff_id;
+
+      if (!userId) {
+        setDataLoading(false);
+        return;
+      }
+
       try {
-        setLoading(true);
-        // Try to get staff_id from user object, fallback to id if staff_id is not available
-        const staffId = user?.staff_id || user?.id;
-        if (staffId) {
-          console.log("Fetching data for staffId:", staffId);
-          const [walletResponse, staffResponse] = await Promise.all([
-            apiClient.getMyWallet(),
-            user?.staff_id ? apiClient.getStaffByID(user.staff_id) : apiClient.getStaffByUserID(user.id)
-          ]);
-          console.log("Wallet API response:", walletResponse);
-          console.log("Staff API response:", staffResponse);
-          setWallet(walletResponse.data);
-          setStaffData(staffResponse.data);
-        }
-        // Dummy advance history for now
-        setAdvances([
-          {
-            advance_id: "1",
-            amount_requested: 5000,
-            status: "APPROVED",
-            requested_at: "2025-03-01T10:00:00Z",
-            approved_at: "2025-03-02T09:00:00Z",
-          },
-          {
-            advance_id: "2",
-            amount_requested: 3000,
-            status: "PENDING",
-            requested_at: "2025-03-20T14:00:00Z",
-            approved_at: null,
-          },
-          {
-            advance_id: "3",
-            amount_requested: 7000,
-            status: "REJECTED",
-            requested_at: "2025-02-15T11:00:00Z",
-            approved_at: null,
-          },
+        const [walletResponse, staffResponse, advancesResponse] = await Promise.all([
+          apiClient.getMyWallet(),
+          staffId ? apiClient.getStaffByID(staffId) : apiClient.getStaffByUserID(userId),
+          apiClient.getMyAdvances()
         ]);
+        
+        setWallet(walletResponse.data);
+        setStaffData(staffResponse.data);
+        setAdvances(advancesResponse.data || []);
       } catch (err) {
-        setError("Failed to load data.");
+        console.error("Earnings - Data fetch failed:", err);
+        setError("Failed to load earnings data.");
       } finally {
-        setLoading(false);
+        setDataLoading(false);
       }
     };
 
     fetchData();
-  }, [user?.staff_id, user?.id]);
+  }, [user, authLoading]);
 
   const handleRequestAdvance = async () => {
     if (!amount || isNaN(amount) || parseFloat(amount) <= 0) {
@@ -77,10 +66,14 @@ const Earnings = () => {
       setSuccessMsg("Advance request submitted successfully.");
       setShowModal(false);
       setAmount("");
-      // Refresh wallet data
-      const walletResponse = await apiClient.getMyWallet();
-      console.log("Wallet response after advance request:", walletResponse);
-      setWallet(walletResponse.data);
+
+      // Refresh data
+      const [walletRes, advancesRes] = await Promise.all([
+        apiClient.getMyWallet(),
+        apiClient.getMyAdvances()
+      ]);
+      setWallet(walletRes.data);
+      setAdvances(advancesRes.data);
     } catch (err) {
       console.error("Advance request error:", err);
       setError(err.message || "Failed to submit advance request.");
@@ -89,241 +82,175 @@ const Earnings = () => {
     }
   };
 
-  const canRequestAdvance =
-    wallet && parseFloat(wallet.balance) >= parseFloat(wallet.advance_threshold_amount);
+  if (authLoading || dataLoading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="text-center text-slate-600 font-medium">Loading earnings...</div>
+      </div>
+    );
+  }
 
-  const statusStyles = {
-    APPROVED: {
-      bg: "bg-green-100",
-      text: "text-green-700",
-      label: "Approved",
-    },
-    PENDING: {
-      bg: "bg-yellow-100",
-      text: "text-yellow-700",
-      label: "Pending",
-    },
-    REJECTED: {
-      bg: "bg-red-100",
-      text: "text-red-700",
-      label: "Rejected",
-    },
-  };
+  const displayName = staffData?.full_name || user?.name || 'Staff Member';
+  const profilePicture = staffData?.profile_picture_url;
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Page Header with Staff Info */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-800">Earnings</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Track your earnings and manage advance requests.
-          </p>
-        </div>
-        {staffData && (
-          <div className="text-right">
-            <p className="text-sm text-gray-500">Staff Member</p>
-            <p className="text-lg font-semibold text-gray-800">{staffData.full_name || user?.name}</p>
-            <p className="text-xs text-gray-500">
-              {staffData.verification_status === 'VERIFIED' ? 'Verified' : 'Pending Verification'}
-            </p>
-          </div>
-        )}
-      </div>
+    <div className="min-h-screen bg-slate-50 font-sans flex text-slate-900">
+      <StaffSidebar staffProfileId={staffData?.staff_profile_id} />
 
-      {/* Top Stats Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {/* Wallet Balance */}
-        <div className="bg-indigo-600 rounded-2xl p-5 text-white shadow">
-          <p className="text-sm opacity-80">Wallet Balance</p>
-          {loading ? (
-            <p className="text-2xl font-bold mt-1">Loading...</p>
-          ) : (
-            <>
-              <p className="text-3xl font-bold mt-1">
-                LKR {parseFloat(wallet?.balance || 0).toLocaleString()}
-              </p>
-              <p className="text-xs opacity-70 mt-1">
-                Advance threshold: LKR{" "}
-                {parseFloat(wallet?.advance_threshold_amount || 15000).toLocaleString()}
-              </p>
-              {/* Debug info 
-              <p className="text-xs opacity-50 mt-1">
-                Debug: wallet={JSON.stringify(wallet)}
-              </p>*/}
-            </>
-          )}
-        </div>
+      {/* Main Content */}
+      <main className="flex-1 overflow-y-auto">
+        <header className="bg-white border-b border-slate-200 sticky top-0 z-30 px-8 py-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-slate-800">Earnings & Wallet</h1>
+              <p className="text-slate-500 text-sm">Manage your income and advances.</p>
+            </div>
 
-        {/* Dummy — Total Earned This Month */}
-        <div className="bg-white rounded-2xl p-5 shadow border border-gray-100">
-          <p className="text-sm text-gray-500">Total Earned · This Month</p>
-          <p className="text-3xl font-bold text-gray-800 mt-1">LKR 45,000</p>
-          <p className="text-xs text-green-500 mt-1">↑ +12% from last month</p>
-        </div>
-
-        {/* Dummy — Completed Shifts */}
-        <div className="bg-white rounded-2xl p-5 shadow border border-gray-100">
-          <p className="text-sm text-gray-500">Completed Shifts · This Month</p>
-          <p className="text-3xl font-bold text-gray-800 mt-1">12</p>
-          <p className="text-xs text-green-500 mt-1">↑ +2 upcoming</p>
-        </div>
-      </div>
-
-      {/* Advance Requests Section */}
-      <div className="bg-white rounded-2xl shadow border border-gray-100">
-        <div className="flex items-center justify-between p-5 border-b border-gray-100">
-          <div>
-            <h2 className="text-base font-semibold text-gray-800">
-              Advance Requests
-            </h2>
-            <p className="text-xs text-gray-400 mt-0.5">
-              Your advance request history
-            </p>
-          </div>
-          <div className="flex flex-col items-end gap-1">
-            <button
-              onClick={() => {
-                setError(null);
-                setSuccessMsg(null);
-                setShowModal(true);
-              }}
-              disabled={!canRequestAdvance || loading}
-              className={`px-4 py-2 rounded-xl text-sm font-medium transition ${
-                canRequestAdvance && !loading
-                  ? "bg-indigo-600 text-white hover:bg-indigo-700"
-                  : "bg-gray-100 text-gray-400 cursor-not-allowed"
-              }`}
-            >
-              Request Advance
-            </button>
-            {!loading && !canRequestAdvance && (
-              <p className="text-xs text-red-400">
-                Min. LKR{" "}
-                {parseFloat(
-                  wallet?.advance_threshold_amount || 15000
-                ).toLocaleString()}{" "}
-                balance required
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* Success message */}
-        {successMsg && (
-          <div className="mx-5 mt-4 p-3 bg-green-50 border border-green-200 rounded-xl text-sm text-green-700">
-            {successMsg}
-          </div>
-        )}
-
-        {/* Advances Table */}
-        <div className="overflow-x-auto">
-          {advances.length === 0 ? (
-            <p className="text-sm text-gray-400 text-center py-10">
-              No advance requests yet.
-            </p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-gray-400 border-b border-gray-100">
-                  <th className="px-5 py-3 font-medium">Amount</th>
-                  <th className="px-5 py-3 font-medium">Status</th>
-                  <th className="px-5 py-3 font-medium">Requested</th>
-                  <th className="px-5 py-3 font-medium">Actioned</th>
-                </tr>
-              </thead>
-              <tbody>
-                {advances.map((adv) => {
-                  const style = statusStyles[adv.status];
-                  return (
-                    <tr
-                      key={adv.advance_id}
-                      className="border-b border-gray-50 hover:bg-gray-50 transition"
-                    >
-                      <td className="px-5 py-4 font-semibold text-gray-800">
-                        LKR {parseFloat(adv.amount_requested).toLocaleString()}
-                      </td>
-                      <td className="px-5 py-4">
-                        <span
-                          className={`px-3 py-1 rounded-full text-xs font-medium ${style.bg} ${style.text}`}
-                        >
-                          {style.label}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4 text-gray-500">
-                        {new Date(adv.requested_at).toLocaleDateString(
-                          "en-GB",
-                          { day: "numeric", month: "short", year: "numeric" }
-                        )}
-                      </td>
-                      <td className="px-5 py-4 text-gray-500">
-                        {adv.approved_at
-                          ? new Date(adv.approved_at).toLocaleDateString(
-                              "en-GB",
-                              {
-                                day: "numeric",
-                                month: "short",
-                                year: "numeric",
-                              }
-                            )
-                          : "—"}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-
-      {/* Request Advance Modal */}
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 p-6">
-            <h2 className="text-lg font-semibold text-gray-800 mb-1">
-              Request Advance
-            </h2>
-            <p className="text-sm text-gray-400 mb-5">
-              Your current balance: LKR{" "}
-              {parseFloat(wallet?.balance || 0).toLocaleString()}
-            </p>
-
-            {error && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-600">
-                {error}
+            <div className="flex items-center gap-4">
+              <Link to="/" className="text-indigo-600 hover:text-indigo-800 text-sm font-medium flex items-center gap-1">
+                <Home className="w-4 h-4" /> Home
+              </Link>
+              <div className="flex items-center gap-3 pl-4 border-l border-slate-200">
+                {profilePicture ? (
+                  <img src={profilePicture} alt="Profile" className="w-9 h-9 rounded-full object-cover" />
+                ) : (
+                  <div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center">
+                    <User className="w-5 h-5 text-indigo-600" />
+                  </div>
+                )}
+                <div className="hidden sm:block">
+                  <p className="text-sm font-bold text-slate-900">{displayName}</p>
+                </div>
               </div>
-            )}
+            </div>
+          </div>
+        </header>
 
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Amount (LKR)
-            </label>
-            <input
-              type="number"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="e.g. 5000"
-              className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 mb-5"
-            />
+        <div className="p-8 max-w-6xl mx-auto space-y-8">
+          {/* Stats Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-indigo-600 rounded-3xl p-8 text-white shadow-xl shadow-indigo-100 relative overflow-hidden group">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-bl-full -z-0"></div>
+              <div className="relative z-10">
+                <p className="text-indigo-100 font-medium mb-1">Available Balance</p>
+                <h2 className="text-4xl font-bold mb-4">LKR {parseFloat(wallet?.balance || 0).toLocaleString()}</h2>
+                <div className="flex items-center gap-2 text-xs bg-white/20 w-fit px-3 py-1 rounded-full border border-white/30 backdrop-blur-sm">
+                  Threshold: LKR {parseFloat(wallet?.advance_threshold_amount || 15000).toLocaleString()}
+                </div>
+              </div>
+            </div>
 
-            <div className="flex gap-3">
+            <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
+              <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mb-4">
+                <TrendingUp size={24} />
+              </div>
+              <p className="text-slate-500 font-medium mb-1">Total Earned</p>
+              <h2 className="text-3xl font-bold">LKR 45,200</h2>
+              <p className="text-xs text-emerald-600 mt-2 font-bold">+15% from last month</p>
+            </div>
+
+            <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm flex flex-col justify-center">
               <button
-                onClick={() => {
-                  setShowModal(false);
-                  setError(null);
-                  setAmount("");
-                }}
-                className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition"
+                onClick={() => setShowModal(true)}
+                disabled={parseFloat(wallet?.balance) < parseFloat(wallet?.advance_threshold_amount)}
+                className={`w-full py-4 rounded-2xl font-bold transition-all shadow-lg flex items-center justify-center gap-2 ${parseFloat(wallet?.balance) >= parseFloat(wallet?.advance_threshold_amount)
+                    ? 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700 hover:-translate-y-1'
+                    : 'bg-slate-100 text-slate-400 cursor-not-allowed shadow-none'
+                  }`}
               >
-                Cancel
+                Request Advance <ChevronRight size={18} />
               </button>
-              <button
-                onClick={handleRequestAdvance}
-                disabled={submitting}
-                className="flex-1 px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition disabled:opacity-50"
-              >
-                {submitting ? "Submitting..." : "Submit Request"}
-              </button>
+              {parseFloat(wallet?.balance) < parseFloat(wallet?.advance_threshold_amount) && (
+                <p className="text-[10px] text-slate-400 mt-3 text-center uppercase tracking-wider font-bold">
+                  Balance must be &gt; LKR {parseFloat(wallet?.advance_threshold_amount).toLocaleString()}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Advance History */}
+          <section className="bg-white rounded-3xl p-8 shadow-sm border border-slate-100">
+            <div className="flex items-center justify-between mb-8">
+              <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                <Clock className="text-indigo-500" size={20} /> Advance History
+              </h3>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-slate-50">
+                    <th className="pb-4 text-xs font-bold text-slate-400 uppercase tracking-widest">Date</th>
+                    <th className="pb-4 text-xs font-bold text-slate-400 uppercase tracking-widest">Amount</th>
+                    <th className="pb-4 text-xs font-bold text-slate-400 uppercase tracking-widest text-center">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {advances.length > 0 ? (
+                    advances.map((adv) => (
+                      <tr key={adv.advance_id} className="group hover:bg-slate-50/50 transition-colors">
+                        <td className="py-5 text-sm text-slate-600 font-medium">
+                          {new Date(adv.requested_at).toLocaleDateString()}
+                        </td>
+                        <td className="py-5 text-sm text-slate-900 font-bold">
+                          LKR {parseFloat(adv.amount_requested).toLocaleString()}
+                        </td>
+                        <td className="py-5 text-center">
+                          <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full ${adv.status === 'APPROVED' ? 'bg-emerald-100 text-emerald-700' :
+                              adv.status === 'REJECTED' ? 'bg-red-100 text-red-700' :
+                                'bg-amber-100 text-amber-700'
+                            }`}>
+                            {adv.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="3" className="py-12 text-center text-slate-400 italic">No history found.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </main>
+
+      {/* Advance Modal */}
+      {showModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[32px] p-8 w-full max-w-md shadow-2xl">
+            <h3 className="text-2xl font-bold text-slate-900 mb-2">Request Advance</h3>
+            <p className="text-slate-500 text-sm mb-6">Enter the amount you'd like to request from your available balance.</p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 block">Amount (LKR)</label>
+                <input
+                  type="number"
+                  className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl text-xl font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  placeholder="0.00"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => setShowModal(false)}
+                  className="flex-1 py-4 rounded-2xl font-bold text-slate-500 hover:bg-slate-50 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleRequestAdvance}
+                  disabled={submitting}
+                  className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-bold shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all disabled:opacity-50"
+                >
+                  {submitting ? 'Submitting...' : 'Confirm'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

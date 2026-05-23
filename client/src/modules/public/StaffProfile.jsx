@@ -6,8 +6,8 @@ import apiClient from "../../api/api";
 
 const statusStyle = {
   "Available": { dot: "#22c55e", bg: "#f0fdf4", text: "#166534" },
-  "On Shift":  { dot: "#f59e0b", bg: "#fffbeb", text: "#92400e" },
-  "Off Duty":  { dot: "#94a3b8", bg: "#f8fafc", text: "#475569" },
+  "On Shift": { dot: "#f59e0b", bg: "#fffbeb", text: "#92400e" },
+  "Off Duty": { dot: "#94a3b8", bg: "#f8fafc", text: "#475569" },
 };
 
 // StaffCard component from ViewStaffPage
@@ -54,8 +54,8 @@ function StaffCard({ member, index }) {
       {/* Top: Avatar + Status */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         {member.profile_picture_url ? (
-          <img 
-            src={member.profile_picture_url} 
+          <img
+            src={member.profile_picture_url}
             alt={member.full_name}
             style={{
               width: 52, height: 52, borderRadius: 16,
@@ -134,7 +134,7 @@ function StaffCard({ member, index }) {
             <span style={{ fontSize: 12, color: "#94a3b8" }}>No ratings yet</span>
           )}
         </div>
-        <button 
+        <button
           onClick={() => navigate(`/services/staff-profile/${member.staff_profile_id}`)}
           style={{
             padding: "7px 16px",
@@ -161,8 +161,8 @@ function StaffCard({ member, index }) {
 const API_URL = import.meta.env.VITE_API_URL;
 const STATUS_STYLE = {
   "Available": { dot: "#22c55e", bg: "#f0fdf4", text: "#166534" },
-  "On Shift":  { dot: "#f59e0b", bg: "#fffbeb", text: "#92400e" },
-  "Off Duty":  { dot: "#94a3b8", bg: "#f8fafc", text: "#475569" },
+  "On Shift": { dot: "#f59e0b", bg: "#fffbeb", text: "#92400e" },
+  "Off Duty": { dot: "#94a3b8", bg: "#f8fafc", text: "#475569" },
   "AVAILABLE": { dot: "#22c55e", bg: "#f0fdf4", text: "#166534" },
   "ON_SHIFT": { dot: "#f59e0b", bg: "#fffbeb", text: "#92400e" },
   "OFF_DUTY": { dot: "#94a3b8", bg: "#f8fafc", text: "#475569" },
@@ -172,12 +172,12 @@ const STATUS_STYLE = {
 function StarRow({ rating, size = 14 }) {
   return (
     <span style={{ display: "inline-flex", gap: 2 }}>
-      {[1,2,3,4,5].map(i => (
+      {[1, 2, 3, 4, 5].map(i => (
         <svg key={i} width={size} height={size} viewBox="0 0 24 24"
           fill={i <= Math.round(rating) ? "#f59e0b" : "#e2e8f0"}
           stroke={i <= Math.round(rating) ? "#f59e0b" : "#e2e8f0"}
           strokeWidth="1">
-          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
         </svg>
       ))}
     </span>
@@ -186,11 +186,11 @@ function StarRow({ rating, size = 14 }) {
 
 function RatingBar({ stars, count, total }) {
   const pct = total > 0 ? Math.round((count / total) * 100) : 0;
-    return (
+  return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
       <span style={{ fontSize: 12, color: "#64748b", width: 14, textAlign: "right" }}>{stars}</span>
       <svg width="11" height="11" viewBox="0 0 24 24" fill="#f59e0b" stroke="#f59e0b" strokeWidth="1">
-        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
       </svg>
       <div style={{ flex: 1, height: 6, background: "#f1f5f9", borderRadius: 999, overflow: "hidden" }}>
         <div style={{ width: `${pct}%`, height: "100%", background: "#f59e0b", borderRadius: 999, transition: "width 0.8s ease" }} />
@@ -217,7 +217,7 @@ function StarSelector({ rating, setRating, size = 24 }) {
           onMouseLeave={() => setRating(rating)}
           onClick={() => setRating(star)}
         >
-          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
         </svg>
       ))}
     </div>
@@ -250,18 +250,18 @@ export default function StaffProfile() {
     const fetchData = async () => {
       try {
         setLoading(true);
-        
+
         // Fetch staff profile
         const staffUrl = `${API_URL}/staff/${staffId}`;
         const staffResponse = await fetch(staffUrl);
         if (!staffResponse.ok) throw new Error('Failed to fetch staff profile');
         const staffData = await staffResponse.json();
-        
+
         // Fetch staff reviews
         const reviewsUrl = `${API_URL}/staff-reviews/staff/${staffId}`;
         const reviewsResponse = await fetch(reviewsUrl);
         const reviewsData = reviewsResponse.ok ? await reviewsResponse.json() : { reviews: [] };
-        
+
         setStaff(staffData.data);
         setReviews(reviewsData.reviews || []);
       } catch (err) {
@@ -281,19 +281,19 @@ export default function StaffProfile() {
   useEffect(() => {
     const fetchRelatedStaff = async () => {
       if (!staff || !staff.role) return;
-      
+
       try {
         setRelatedLoading(true);
-        
+
         // Get the primary role from the staff member and clean it
         let primaryRole = Array.isArray(staff.role) ? staff.role[0] : staff.role;
         if (!primaryRole) return;
-        
+
         // Remove curly braces if present
         primaryRole = primaryRole.replace(/[{}]/g, '');
-        
+
         console.log('Fetching related staff for role:', primaryRole);
-        
+
         // Fetch staff by role (limit to 4 related staff, excluding current staff)
         const response = await fetch(`${API_URL}/staff/role/${primaryRole}?limit=5`);
         if (response.ok) {
@@ -332,38 +332,38 @@ export default function StaffProfile() {
 
       try {
         setCheckingOwnership(true);
-        
+
         // First get client profile ID for the current user
         const clientProfileResponse = await fetch(`${API_URL}/client/profile/user/${userId}`, {
           headers: {
             'Authorization': `Bearer ${localStorage.getItem('token')}`
           }
         });
-        
+
         if (!clientProfileResponse.ok) {
           // User doesn't have a client profile, so they can't be reviewing their own staff profile
           setIsOwnProfile(false);
           return;
         }
-        
+
         const clientProfileData = await clientProfileResponse.json();
         const clientProfileId = clientProfileData.data?.client_profile_id;
-        
+
         if (!clientProfileId) {
           setIsOwnProfile(false);
           return;
         }
-        
+
         // Now check if this client profile is associated with staff profile being viewed
         const staffByClientResponse = await fetch(`${API_URL}/staff/by-client/${clientProfileId}`, {
           headers: {
             'Authorization': `Bearer ${localStorage.getItem('token')}`
           }
         });
-        
+
         if (staffByClientResponse.ok) {
           const staffByClientData = await staffByClientResponse.json();
-          
+
           // If the staff profile ID matches, user is trying to review their own profile
           if (staffByClientData.data?.staff_profile_id === staffId) {
             setIsOwnProfile(true);
@@ -373,7 +373,7 @@ export default function StaffProfile() {
         } else {
           setIsOwnProfile(false);
         }
-        
+
       } catch (error) {
         console.error('Error checking profile ownership:', error);
         setIsOwnProfile(false);
@@ -400,7 +400,7 @@ export default function StaffProfile() {
       };
 
       const response = await apiClient.createStaffReview(reviewData);
-      
+
       // Refresh reviews to show the new one
       const reviewsUrl = `${API_URL}/staff-reviews/staff/${staffId}`;
       const reviewsResponse = await fetch(reviewsUrl);
@@ -412,10 +412,10 @@ export default function StaffProfile() {
       setReviewRating(5);
       setShowReviewForm(false);
       setReviewSuccess(true);
-      
+
       // Hide success message after 3 seconds
       setTimeout(() => setReviewSuccess(false), 3000);
-      
+
     } catch (error) {
       console.error('Error submitting review:', error);
       setReviewError(error.message || 'Failed to submit review. Please try again.');
@@ -469,7 +469,7 @@ export default function StaffProfile() {
     ],
     ratingBreakdown: (() => {
       const breakdown = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-      reviews.filter(review => 
+      reviews.filter(review =>
         review && typeof review === 'object' && review.rating && !isNaN(parseInt(review.rating))
       ).forEach(review => {
         const rating = parseInt(review.rating);
@@ -480,7 +480,7 @@ export default function StaffProfile() {
       return breakdown;
     })(),
   };
-  
+
   const st = STATUS_STYLE[staff.current_status] || STATUS_STYLE["Available"];
 
   return (
@@ -573,7 +573,7 @@ export default function StaffProfile() {
             <div style={{ display: "flex", gap: 16, paddingBottom: "1.5rem", flexWrap: "wrap" }}>
               {[
                 { label: "Rating", value: s.rating.toFixed(1), sub: `${s.totalReviews} reviews`, icon: "★" },
-                { label: "Age", value: s.exp.replace(" years",""), sub: "Age", icon: "◈" },
+                { label: "Age", value: s.exp.replace(" years", ""), sub: "Age", icon: "◈" },
               ].map(stat => (
                 <div key={stat.label} style={{
                   background: "#fff",
@@ -620,15 +620,15 @@ export default function StaffProfile() {
                     cursor: "pointer",
                     transition: "transform 0.2s, box-shadow 0.2s",
                   }}
-                  onClick={() => window.open(doc, '_blank')}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = "scale(1.05)";
-                    e.currentTarget.style.boxShadow = "0 8px 25px rgba(0,0,0,0.15)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = "scale(1)";
-                    e.currentTarget.style.boxShadow = "none";
-                  }}>
+                    onClick={() => window.open(doc, '_blank')}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.transform = "scale(1.05)";
+                      e.currentTarget.style.boxShadow = "0 8px 25px rgba(0,0,0,0.15)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = "scale(1)";
+                      e.currentTarget.style.boxShadow = "none";
+                    }}>
                     {doc.toLowerCase().includes('.pdf') ? (
                       <div style={{
                         width: "100%",
@@ -646,8 +646,8 @@ export default function StaffProfile() {
                         </div>
                       </div>
                     ) : (
-                      <img 
-                        src={doc} 
+                      <img
+                        src={doc}
                         alt={`Certification ${index + 1}`}
                         style={{
                           width: "100%",
@@ -733,7 +733,7 @@ export default function StaffProfile() {
                 <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>{s.totalReviews} reviews</div>
               </div>
               <div style={{ flex: 1, minWidth: 180 }}>
-                {[5,4,3,2,1].map(n => (
+                {[5, 4, 3, 2, 1].map(n => (
                   <RatingBar key={n} stars={n} count={s.ratingBreakdown[n]} total={s.totalReviews} />
                 ))}
               </div>
@@ -770,10 +770,10 @@ export default function StaffProfile() {
 
             {/* Show more reviews indicator if there are more than 3 */}
             {reviews.length > 3 && (
-              <div style={{ 
-                textAlign: "center", 
-                padding: "1rem", 
-                color: "#64748b", 
+              <div style={{
+                textAlign: "center",
+                padding: "1rem",
+                color: "#64748b",
                 fontSize: 13,
                 fontStyle: "italic",
                 marginBottom: "1.5rem"
@@ -873,10 +873,10 @@ export default function StaffProfile() {
                       </label>
                       <StarSelector rating={reviewRating} setRating={setReviewRating} size={32} />
                       <div style={{ fontSize: 12, color: "#64748b", marginTop: "4px" }}>
-                        {reviewRating === 5 ? "Excellent" : 
-                         reviewRating === 4 ? "Very Good" :
-                         reviewRating === 3 ? "Good" :
-                         reviewRating === 2 ? "Fair" : "Poor"}
+                        {reviewRating === 5 ? "Excellent" :
+                          reviewRating === 4 ? "Very Good" :
+                            reviewRating === 3 ? "Good" :
+                              reviewRating === 2 ? "Fair" : "Poor"}
                       </div>
                     </div>
 
@@ -973,8 +973,8 @@ export default function StaffProfile() {
             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: "1.25rem" }}>
               {[
                 { label: "Specialty", value: s.specialty },
-                { label: "Location",  value: s.location },
-                {/*{ label: "Languages", value: s.languages.join(", ") },*/}
+                { label: "Location", value: s.location },
+                {/*{ label: "Languages", value: s.languages.join(", ") },*/ }
               ].map(row => (
                 <div key={row.label} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
                   <span style={{ color: "#94a3b8" }}>{row.label}</span>
@@ -1056,10 +1056,10 @@ export default function StaffProfile() {
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 20 }}>
                 {[...Array(4)].map((_, i) => (
                   <div key={i} style={{
-                    background: "#fff", 
-                    border: "1px solid #e2e8f0", 
+                    background: "#fff",
+                    border: "1px solid #e2e8f0",
                     borderRadius: 16,
-                    padding: "1.5rem", 
+                    padding: "1.5rem",
                     animation: "pulse 2s infinite"
                   }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: "1rem" }}>

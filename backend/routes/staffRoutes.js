@@ -80,8 +80,8 @@ router.put('/:staff_profile_id/status', protect, staffController.updateStaffStat
 // Get staff by user_id (must be before catch-all)
 router.get('/user/:user_id', protect, staffController.getStaffByUserID);
 
-// Update staff profile (handle file uploads from proxy management)
-router.put('/:staff_profile_id', uploadApplicationFiles, protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), staffController.updateStaffProfile);
+// Update staff profile (handle file uploads and self-updates)
+router.put('/:staff_profile_id', uploadApplicationFiles, protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'NURSE', 'CARETAKER', 'NANNY'), staffController.updateStaffProfile);
 
 // Delete staff profile
 router.delete('/:staff_profile_id', protect, staffController.deleteStaffProfile);

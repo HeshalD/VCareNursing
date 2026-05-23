@@ -48,6 +48,8 @@ import ResetPasswordPage from './modules/auth/ResetPasswordPage';
 import ViewStaffPage from './modules/public/ViewStaffPage';
 import StaffProfile from './modules/public/StaffProfile';
 import ClientProfile from './modules/client/ClientProfile';
+import StaffMyProfile from './modules/public/service_team/StaffMyProfile';
+import StaffSettings from './modules/public/service_team/StaffSettings';
 
 function App() {
   return (
@@ -85,6 +87,8 @@ function App() {
             <Route path="/worker-registration-success" element={<WorkerRegistrationSuccessPage />} />
             <Route path="/services/provider-dashboard" element={<WorkerDashboardDemo />} />
             <Route path="/services/earnings" element={<Earnings />} />
+            <Route path="/services/my-profile" element={<StaffMyProfile />} />
+          <Route path="/services/settings" element={<StaffSettings />} />
             <Route path="/client/bookings" element={<ClientBookings/>}/>
             <Route path="/client/profile" element={<ClientProfile/>}/>
             <Route path="/admin/dashboard" element={

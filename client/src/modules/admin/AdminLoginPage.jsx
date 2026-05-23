@@ -5,7 +5,6 @@ import { Link, useNavigate } from 'react-router-dom';
 import loginBg from '../../assets/images/Gemini_Generated_Image_5nmpua5nmpua5nmp.png';
 import apiClient from '../../api/api';
 import { useAdminAuth } from '../../context/AdminAuthContext';
-
 const AdminLoginPage = () => {
   const navigate = useNavigate();
   const { adminLogin } = useAdminAuth();
@@ -21,7 +20,7 @@ const AdminLoginPage = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-    
+
     if (!formData.identifier || !formData.password) {
       setError('Please fill in all fields');
       return;
@@ -33,14 +32,14 @@ const AdminLoginPage = () => {
         identifier: formData.identifier,
         password: formData.password,
       });
-      
+
       // Check if user has admin role
       if (response.token && response.user) {
         // Decode JWT to get the role
         try {
           const tokenPayload = JSON.parse(atob(response.token.split('.')[1]));
           let userRole = tokenPayload.role;
-          
+
           // Handle different role formats
           if (typeof userRole === 'object' && userRole !== null) {
             // If role is an object, check if it has SUPER_ADMIN property or value
@@ -49,13 +48,13 @@ const AdminLoginPage = () => {
             // Remove curly braces if present
             userRole = userRole.replace(/[{}]/g, '');
           }
-          
+
           console.log('Processed user role:', userRole);
-          
+
           if (userRole === 'SUPER_ADMIN') {
             // Use adminLogin from context
             adminLogin(response.token, response.user);
-            
+
             console.log('Admin login successful:', response);
             navigate('/admin/dashboard');
           } else {

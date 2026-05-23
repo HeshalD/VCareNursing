@@ -820,6 +820,17 @@ exports.updateStaffProfile = async (req, res) => {
 
         const existingStaff = existingResult.rows[0];
 
+        // Security Check: Only the owner or an admin/coordinator can update
+        const isOwner = existingStaff.user_id === req.user.user_id;
+        const isAdmin = ['SUPER_ADMIN', 'COORDINATOR'].includes(req.user.role);
+
+        if (!isOwner && !isAdmin) {
+            return res.status(403).json({
+                status: 'error',
+                message: 'You are not authorized to update this profile'
+            });
+        }
+
         // Validate required fields if provided
         if (full_name === '' || designation === '' || gender === '' || date_of_birth === '') {
             return res.status(400).json({

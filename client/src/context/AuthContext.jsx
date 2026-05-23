@@ -21,6 +21,8 @@ export const AuthProvider = ({ children }) => {
     const checkAuth = async () => {
       try {
         if (isAuthenticated()) {
+          const token = localStorage.getItem('token');
+          apiClient.setToken(token); // Sync token with singleton
           const decodedUser = getUserFromToken();
 
           // If token payload doesn't include email, try fetching enriched user data

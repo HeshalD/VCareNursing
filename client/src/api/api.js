@@ -33,6 +33,9 @@ class ApiClient {
 
 
   async request(endpoint, options = {}) {
+    // Ensure we have the latest token
+    const storedToken = localStorage.getItem('token');
+    if (storedToken) this.token = storedToken;
 
     const url = `${this.baseURL}${endpoint}`;
 
@@ -124,7 +127,7 @@ class ApiClient {
 
     });
 
-    
+
 
     if (data.token) {
 
@@ -152,7 +155,7 @@ class ApiClient {
 
     }
 
-    
+
 
     return data;
 
@@ -204,11 +207,11 @@ class ApiClient {
   async resetPassword(userId, otp, newPassword, confirmPassword) {
     return this.request('/auth/forgot-password/reset', {
       method: 'POST',
-      body: JSON.stringify({ 
-        user_id: userId, 
-        otp_code: otp, 
-        new_password: newPassword, 
-        confirm_password: confirmPassword 
+      body: JSON.stringify({
+        user_id: userId,
+        otp_code: otp,
+        new_password: newPassword,
+        confirm_password: confirmPassword
       }),
     });
   }
@@ -295,7 +298,7 @@ class ApiClient {
 
     const formData = new FormData();
 
-    
+
 
     // Append all product data fields
 
@@ -305,7 +308,7 @@ class ApiClient {
 
     });
 
-    
+
 
     // Append image file if provided
 
@@ -390,12 +393,12 @@ class ApiClient {
 
   async convertToBooking(bookingData, paymentSlipFile) {
     const formData = new FormData();
-    
+
     // Append all booking data fields
     Object.keys(bookingData).forEach(key => {
       formData.append(key, bookingData[key]);
     });
-    
+
     // Append payment slip file if provided
     if (paymentSlipFile) {
       formData.append('payment_slip', paymentSlipFile);
@@ -440,7 +443,7 @@ class ApiClient {
 
     const formData = new FormData();
 
-    
+
 
     // Append all application data fields
 
@@ -458,7 +461,7 @@ class ApiClient {
 
     });
 
-    
+
 
     // Append document files if provided
 
@@ -555,7 +558,7 @@ class ApiClient {
         password: credentials.password
       }),
     });
-    
+
     if (data.token) {
       this.setToken(data.token);
       // Return both response data and user info for AuthContext
@@ -571,7 +574,7 @@ class ApiClient {
         }
       };
     }
-    
+
     return data;
   }
 
@@ -583,11 +586,11 @@ class ApiClient {
         new_password: passwordData.new_password
       }),
     });
-    
+
     if (data.token) {
       this.setToken(data.token);
     }
-    
+
     return data;
   }
 
@@ -707,7 +710,7 @@ class ApiClient {
 
   async downloadClientStatement(clientId, dateRange) {
     const url = `${this.baseURL}/statement/download/${clientId}`;
-    
+
     const config = {
       method: 'POST',
       headers: {
@@ -719,7 +722,7 @@ class ApiClient {
 
     try {
       const response = await fetch(url, config);
-      
+
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.message || 'PDF download failed');
@@ -795,6 +798,14 @@ class ApiClient {
 
   async getPendingAdvances() {
     return this.request('/staff-wallet/advances/pending');
+  }
+
+  async getMyWallet() {
+    return this.request('/staff-wallet/my-wallet');
+  }
+
+  async getMyAdvances() {
+    return this.request('/staff-wallet/my-advances');
   }
 
   // Staff Review endpoints

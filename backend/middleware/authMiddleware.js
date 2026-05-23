@@ -35,17 +35,20 @@ exports.protect = async (req, res, next) => {
 exports.restrictTo = (...roles) => {
   return (req, res, next) => {
     // req.user was set by the protect middleware above
-    // Handle both string and array role formats
-    const userRoles = Array.isArray(req.user.role) ? req.user.role : [req.user.role];
-    
-    // Clean roles by removing curly braces and trim
-    const cleanedUserRoles = userRoles.map(role => 
-      typeof role === 'string' ? role.replace(/\{|\}/g, '').trim() : role
-    );
+    // Handle both string and array role formats and split if it's a PG array string
+    let userRoles = [];
+    if (Array.isArray(req.user.role)) {
+      userRoles = req.user.role;
+    } else if (typeof req.user.role === 'string') {
+      // Split by comma and remove curly braces for PG array strings
+      userRoles = req.user.role.replace(/\{|\}/g, '').split(',').map(r => r.trim());
+    } else {
+      userRoles = [req.user.role];
+    }
     
     // Check if user has any of the required roles
     const hasRequiredRole = roles.some(requiredRole => 
-      cleanedUserRoles.includes(requiredRole)
+      userRoles.includes(requiredRole)
     );
     
     if (!hasRequiredRole) {

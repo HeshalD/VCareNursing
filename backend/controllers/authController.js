@@ -301,18 +301,18 @@ exports.login = async (req, res) => {
     // We embed the user_id, full_name, mobile_number, gender, and primary_address in the JWT payload
     // Priority: client profile full_name > staff profile full_name > fallback
     const fullName = clientProfile?.full_name || staffProfile?.full_name || null;
-    
-    const tokenPayload = { 
-      id: user.user_id, 
+
+    const tokenPayload = {
+      id: user.user_id,
       role: user.role,
       full_name: fullName,
       mobile_number: mobile_number,
       gender: clientProfile?.gender || null,
       primary_address: clientProfile?.primary_address || null
     };
-    
+
     console.log('JWT Payload:', tokenPayload); // Debug log
-    
+
     const token = jwt.sign(
       tokenPayload,
       process.env.JWT_SECRET,
