@@ -436,7 +436,7 @@ class ApiClient {
 
   // Staff endpoints
 
-  async submitApplication(applicationData, documentFiles, profilePictureFile) {
+  async submitApplication(applicationData, documentFiles, profilePictureFile, nicFrontFile, nicBackFile) {
 
     const formData = new FormData();
 
@@ -477,6 +477,18 @@ class ApiClient {
     if (profilePictureFile) {
 
       formData.append('profile_picture', profilePictureFile);
+
+    }
+
+    if (nicFrontFile) {
+
+      formData.append('nic_front', nicFrontFile);
+
+    }
+
+    if (nicBackFile) {
+
+      formData.append('nic_back', nicBackFile);
 
     }
 
