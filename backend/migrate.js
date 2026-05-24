@@ -98,7 +98,7 @@ async function runMigration() {
   await db.query(`
     DO $$ BEGIN
       CREATE TYPE payment_method AS ENUM (
-        'BANK_TRANSFER', 'CASH', 'WALLET', 'ONLINE_GATEWAY'
+        'BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE', 'WALLET', 'ONLINE_GATEWAY'
       );
     EXCEPTION
       WHEN duplicate_object THEN null;
@@ -169,6 +169,23 @@ async function runMigration() {
       category_id SERIAL PRIMARY KEY,
       name VARCHAR(100) UNIQUE NOT NULL,
       description TEXT
+    );
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS bank_accounts (
+      account_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      account_nickname VARCHAR(100) NOT NULL,
+      account_number VARCHAR(50) NOT NULL UNIQUE,
+      account_holder_name VARCHAR(255) NOT NULL,
+      bank_name VARCHAR(100) NOT NULL,
+      branch_name VARCHAR(100),
+      is_active BOOLEAN DEFAULT true,
+      currency VARCHAR(5) DEFAULT 'LKR',
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      created_by UUID REFERENCES users(user_id)
+
     );
   `);
 
@@ -296,6 +313,22 @@ async function runMigration() {
   `);
 
   await db.query(`
+    CREATE TABLE IF NOT EXISTS payment_tracking (
+      payment_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      quote_id UUID NOT NULL REFERENCES quotations(quote_id),
+      client_id UUID NOT NULL REFERENCES client_profiles(client_profile_id),
+      amount_received DECIMAL(12, 2) NOT NULL,
+      payment_method VARCHAR(50),
+      slip_url TEXT,
+      payment_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      verified_at TIMESTAMP WITH TIME ZONE,
+      verified_by UUID REFERENCES users(user_id),
+      status VARCHAR(20) DEFAULT 'PENDING',
+      notes TEXT
+    );
+  `);
+
+  await db.query(`
     CREATE TABLE IF NOT EXISTS bookings (
       booking_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
       client_id UUID NOT NULL REFERENCES client_profiles(client_profile_id),
@@ -349,6 +382,24 @@ async function runMigration() {
   `);
 
   await db.query(`
+    CREATE TABLE IF NOT EXISTS booking_staff_assignments (
+      assignment_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      booking_id UUID NOT NULL REFERENCES bookings(booking_id) ON DELETE CASCADE,
+      staff_profile_id UUID NOT NULL REFERENCES staff_profiles(staff_profile_id),
+      assigned_on TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      assigned_by UUID REFERENCES users(user_id),
+      daily_rate DECIMAL(12, 2) NOT NULL,
+      service_start_date DATE NOT NULL,
+      service_end_date DATE,
+      quote_id UUID REFERENCES quotations(quote_id),
+      amount_allocated DECIMAL(12, 2),
+      status VARCHAR(20) DEFAULT 'ACTIVE',
+      notes TEXT,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  await db.query(`
     CREATE TABLE IF NOT EXISTS transactions (
       transaction_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
       client_id UUID REFERENCES client_profiles(client_profile_id),
@@ -357,7 +408,10 @@ async function runMigration() {
       quote_id UUID REFERENCES quotations(quote_id),
       category transaction_category NOT NULL,
       amount NUMERIC(12,2) NOT NULL,
-      payment_method payment_method,
+      payment_method VARCHAR(50),
+      bank_account_id UUID REFERENCES bank_accounts(account_id),
+      cheque_number VARCHAR(50),
+      cheque_date DATE,
       receipt_url TEXT,
       reference_number VARCHAR(100),
       verified_by UUID REFERENCES users(user_id),
@@ -475,6 +529,34 @@ async function runMigration() {
       is_visible BOOLEAN DEFAULT TRUE,
       created_at TIMESTAMP DEFAULT NOW()
     );
+  `);
+
+  // =========================================================
+  // ALTER TABLE: Add payment tracking columns
+  // =========================================================
+
+  await db.query(`
+    ALTER TABLE transactions
+    ADD COLUMN IF NOT EXISTS bank_account_id UUID REFERENCES bank_accounts(account_id),
+    ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS cheque_number VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS cheque_date DATE,
+    ADD COLUMN IF NOT EXISTS reference_number VARCHAR(100)
+  `);
+
+  await db.query(`
+    ALTER TABLE payment_tracking
+    ADD COLUMN IF NOT EXISTS bank_account_id UUID REFERENCES bank_accounts(account_id),
+    ADD COLUMN IF NOT EXISTS cheque_number VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS cheque_date DATE,
+    ADD COLUMN IF NOT EXISTS reference_number VARCHAR(100)
+  `);
+
+  await db.query(`
+    ALTER TABLE bookings
+    ADD COLUMN IF NOT EXISTS amount_paid DECIMAL(12, 2) DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS amount_quotated DECIMAL(12, 2),
+    ADD COLUMN IF NOT EXISTS last_payment_date TIMESTAMP WITH TIME ZONE
   `);
 
   // =========================================================

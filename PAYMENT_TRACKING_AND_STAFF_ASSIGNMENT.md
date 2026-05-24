@@ -949,14 +949,14 @@ for (const booking of activeBookings) {
 ## Implementation Checklist
 
 ### Backend
-- [ ] Database migration for new tables
-  - [ ] Create `bank_accounts` table
-  - [ ] Create `booking_staff_assignments` table
-  - [ ] Create `payment_tracking` table
-  - [ ] Update `transactions` table with bank details
-  - [ ] Update `bookings` table with payment tracking
-  - [ ] Update `payment_slips` table with payment method
-- [ ] Create `BankAccountController.js`
+- [x] Database migration for new tables
+  - [x] Create `bank_accounts` table
+  - [x] Create `booking_staff_assignments` table
+  - [x] Create `payment_tracking` table
+  - [x] Update `transactions` table with bank details
+  - [x] Update `bookings` table with payment tracking
+  - [x] Update `payment_slips` table with payment method
+- [x] Create `BankAccountController.js`
 - [ ] Create `PaymentTrackingController.js`
 - [ ] Create `StaffAssignmentController.js`
 - [ ] Update `bookingController.js` - separate payment from assignment
