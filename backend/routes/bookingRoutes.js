@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const bookingController = require('../controllers/bookingController');
+const paymentTrackingController = require('../controllers/paymentTrackingController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 
 /**
@@ -24,6 +25,13 @@ router.get('/',protect,
 router.get('/active-bookings', protect, 
     restrictTo('SUPER_ADMIN', 'COORDINATOR'), 
     bookingController.getActiveBookings);
+
+router.get(
+    '/:booking_id/invoice-progress',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    paymentTrackingController.getBookingInvoiceProgress
+);
 
 router.get('/:booking_id', protect,  
     bookingController.getByBookingID);

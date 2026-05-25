@@ -298,6 +298,7 @@ async function runMigration() {
       estimate_date DATE DEFAULT CURRENT_DATE,
       status VARCHAR(20) DEFAULT 'SENT',
       terms_conditions TEXT DEFAULT 'The initial estimated amount is non-refundable.',
+      booking_id UUID REFERENCES bookings(booking_id),
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     );
   `);
@@ -345,7 +346,9 @@ async function runMigration() {
       scheduled_end_time TIMESTAMP,
       actual_end_time TIMESTAMP,
       ot_rate DECIMAL(10,2) DEFAULT 500.00,
-      daily_rate DECIMAL(10,2)
+      daily_rate DECIMAL(10,2),
+      amount_quotated DECIMAL(12,2),
+      amount_paid DECIMAL(12,2) DEFAULT 0.00
     );
   `);
 

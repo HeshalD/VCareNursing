@@ -82,6 +82,39 @@ exports.getQuoteByRequest = async (req, res) => {
     }
 };
 
+exports.getQuotesByRequest = async (req, res) => {
+    const { requestId } = req.params;
+
+    try {
+        const result = await db.query(`
+            SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type,
+                   s.status as request_status, s.active_quote_id,
+                   COALESCE((
+                       SELECT SUM(amount_received)
+                       FROM payment_tracking pt
+                       WHERE pt.quote_id = q.quote_id AND pt.status = 'VERIFIED'
+                   ), 0) as total_paid,
+                   COALESCE((
+                       SELECT COUNT(*)
+                       FROM payment_tracking pt
+                       WHERE pt.quote_id = q.quote_id
+                   ), 0) as payment_count
+            FROM quotations q
+            JOIN service_requests s ON q.request_id = s.request_id
+            WHERE q.request_id = $1
+            ORDER BY q.created_at DESC
+        `, [requestId]);
+
+        res.status(200).json({
+            status: 'success',
+            data: result.rows
+        });
+    } catch (error) {
+        console.error('Get Quotes By Request Error:', error);
+        res.status(500).json({ message: 'Failed to fetch quotes for request' });
+    }
+};
+
 exports.getClientQuotes = async (req, res) => {
     const { client_id } = req.params;
 
@@ -495,5 +528,33 @@ exports.updateQuoteLineItems = async (req, res) => {
         await db.query('ROLLBACK');
         console.error('Update Quote Error:', error);
         res.status(500).json({ message: 'Failed to update quote', error: error.message });
+    }
+};
+
+exports.checkQuoteBooking = async (req, res) => {
+    const { quote_id } = req.params;
+
+    try {
+        const result = await db.query(`
+            SELECT booking_id FROM quotations WHERE quote_id = $1
+        `, [quote_id]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: "Quote not found" });
+        }
+
+        const booking_id = result.rows[0].booking_id;
+        
+        res.status(200).json({
+            status: 'success',
+            data: {
+                has_booking: booking_id !== null && booking_id !== undefined,
+                booking_id: booking_id || null
+            }
+        });
+
+    } catch (error) {
+        console.error('Check Quote Booking Error:', error);
+        res.status(500).json({ message: 'Failed to check quote booking', error: error.message });
     }
 };

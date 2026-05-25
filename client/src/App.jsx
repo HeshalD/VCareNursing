@@ -27,6 +27,7 @@ import ProxyServiceRequest from './modules/admin/service_requests/proxy_service_
 import QuoteBuilder from './modules/admin/service_requests/quote_builder';
 import WorkerVerification from './modules/admin/worker_verifications/worker_verifications';
 import Financials from './modules/admin/financial/financial';
+import BankAccounts from './modules/admin/back_accounts/bank_accounts';
 import Reports from './modules/admin/reports/reports';
 import Settings from './modules/admin/settings/settings';
 import AdminLoginPage from './modules/admin/AdminLoginPage';
@@ -56,6 +57,11 @@ import ClientLayout from './modules/client/components/ClientLayout';
 import WorkerBookings from './modules/public/service_team/WorkerBookings';
 import StaffMyProfile from './modules/public/service_team/StaffMyProfile';
 import StaffSettings from './modules/public/service_team/StaffSettings';
+import QuotationsPage from './modules/admin/service_quotes/quotations';
+import QuotationDetailsPage from './modules/admin/service_quotes/quotation_details';
+import ServiceRequestSummaryPage from './modules/admin/service_requests/service_request_summary';
+import BookingStaffRosterPage from './modules/admin/service_requests/booking_staff_roster';
+import BookingStaffAssignmentPage from './modules/admin/service_requests/booking_staff_assignment';
 
 function App() {
   return (
@@ -124,6 +130,11 @@ function App() {
                 <ServiceRequests />
               </AdminAuthProvider>
             } />
+            <Route path="/admin/service-requests/:requestId/summary" element={
+              <AdminAuthProvider>
+                <ServiceRequestSummaryPage />
+              </AdminAuthProvider>
+            } />
             <Route path="/admin/proxy-service-requests" element={
               <AdminAuthProvider>
                 <ProxyServiceRequest />
@@ -152,6 +163,31 @@ function App() {
             <Route path="/admin/financial" element={
               <AdminAuthProvider>
                 <Financials />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/bank-accounts" element={
+              <AdminAuthProvider>
+                <BankAccounts />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/quotations" element={
+              <AdminAuthProvider>
+                <QuotationsPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/quotations/:quoteId" element={
+              <AdminAuthProvider>
+                <QuotationDetailsPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/bookings/:bookingId/staff-roster" element={
+              <AdminAuthProvider>
+                <BookingStaffRosterPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/bookings/:bookingId/staff-assignment" element={
+              <AdminAuthProvider>
+                <BookingStaffAssignmentPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/reports" element={

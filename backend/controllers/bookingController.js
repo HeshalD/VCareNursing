@@ -17,12 +17,13 @@ exports.uploadPaymentSlip = (req, res, next) => {
     });
 };
 
-// Original convertToBooking function (now internal)
+// Refactored convertToBooking - ONLY creates booking (Step 2B)
+// Payment recording happens separately (Step 2A via paymentTrackingController.recordPayment)
+// Staff assignment happens separately (Step 2C via staffAssignmentController.assignStaffToBooking)
 const convertToBookingInternal = async (req, res) => {
-    // assigned_staff_id is optional - will use preferred_staff_id from request if not provided
-    // quote_id is optional - will use active_quote_id from service_requests if not provided
-    // payment_method is new (optional) - defaults to BANK_TRANSFER since they upload a slip
-    const { request_id, quote_id, slip_url, assigned_staff_id, payment_method = 'BANK_TRANSFER' } = req.body;
+    // Only requires request_id and quote_id
+    // Staff assignment and payment are handled in separate endpoints
+    const { request_id, quote_id } = req.body;
     const client = await db.pool.connect();
 
     try {
@@ -59,14 +60,6 @@ const convertToBookingInternal = async (req, res) => {
         const startDate = new Date(reqData.start_date);
         const scheduledEndTime = new Date(startDate);
         scheduledEndTime.setDate(scheduledEndTime.getDate() + parseInt(quoteData.qty_days));
-
-        // Determine staff assignment: use provided assigned_staff_id, fallback to preferred_staff_id from request
-        const finalStaffId = assigned_staff_id || reqData.preferred_staff_id;
-
-        if (!finalStaffId) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ message: 'No staff assigned and no preferred staff found in request' });
-        }
 
         // 2. SMART CHECK: Create User (Payer) if they don't exist
         let userId;
@@ -134,112 +127,61 @@ const convertToBookingInternal = async (req, res) => {
             patientId = newPatient.rows[0].patient_id;
         }
 
-        // 5. Create Final Booking (UPDATED: Added RETURNING booking_id)
+        // 5. Fetch total amount paid for this quote from payment_tracking
+        const paymentRes = await client.query(`
+            SELECT COALESCE(SUM(amount_received), 0) as total_paid
+            FROM payment_tracking
+            WHERE quote_id = $1 AND status = 'VERIFIED'
+        `, [bookingQuoteId]);
+
+        const amountPaid = parseFloat(paymentRes.rows[0]?.total_paid || 0);
+
+        // 6. Create Booking Record with PENDING status (No staff assignment yet)
+        // NOTE: assigned_staff_id is NULL - staff assignment happens in separate step via staffAssignmentController
         const newBooking = await client.query(
-            `INSERT INTO bookings (client_id, patient_id, service_type, service_model, start_date, assigned_staff_id, status, preferred_gender, request_id, service_mode, scheduled_end_time, actual_end_time, ot_rate, daily_rate) 
-             VALUES ($1, $2, $3, $4::service_model_enum, $5, $6, 'ACTIVE', $7::gender_preference_enum, $8, $9, $10, $11, $12, $13)
+            `INSERT INTO bookings (client_id, patient_id, service_type, service_model, start_date, assigned_staff_id, status, preferred_gender, request_id, service_mode, scheduled_end_time, actual_end_time, ot_rate, daily_rate, amount_quotated, amount_paid) 
+             VALUES ($1, $2, $3, $4::service_model_enum, $5, NULL, 'PENDING', $6::gender_preference_enum, $7, $8, $9, NULL, $10, $11, $12, $13)
              RETURNING booking_id`,
-            [clientProfileId, patientId, reqData.service_type, reqData.service_model || 'SHIFT_BASED', reqData.start_date, finalStaffId, reqData.preferred_gender || 'ANY', request_id, null, scheduledEndTime, null, 500.00, quoteData.daily_rate]
+            [clientProfileId, patientId, reqData.service_type, reqData.service_model || 'SHIFT_BASED', reqData.start_date, reqData.preferred_gender || 'ANY', request_id, null, scheduledEndTime, 500.00, quoteData.daily_rate, quoteData.total_amount, amountPaid]
         );
 
         const bookingId = newBooking.rows[0].booking_id;
 
-        // 6. UPDATE STAFF STATUS (Lock them)
+        // 7. Update Quotation to link booking_id
         await client.query(
-            `UPDATE staff_profiles SET current_status = 'ASSIGNED' WHERE staff_profile_id = $1`,
-            [finalStaffId]
+            `UPDATE quotations SET booking_id = $1 WHERE quote_id = $2`,
+            [bookingId, bookingQuoteId]
         );
 
-        // 7. Finalize Request & Payment Slip
-        await client.query(`UPDATE service_requests SET status = 'ACTIVE' WHERE request_id = $1`, [request_id]);
-        await client.query(`INSERT INTO payment_slips (quote_id, slip_url, verified_at) VALUES ($1, $2, NOW())`, [bookingQuoteId, slip_url]);
-
-        // =========================================================
-        // 7.5 CREATE THE FINANCIAL TRANSACTION RECORD (NEW!)
-        // =========================================================
-
-        // Note: Assuming your admin's ID is available in req.user.user_id from your auth middleware.
-        // If not, you can leave verified_by as NULL for now.
-        const adminId = req.user ? req.user.user_id : null;
-
-        // Note: Assuming your quotations table has a 'total_amount' column. 
-        // Change quoteData.total_amount if your column is named differently.
+        // 8. Update Service Request Status to 'BOOKING_CREATED'
+        // Note: Service request remains open for payment recording phase
         await client.query(
-            `INSERT INTO transactions (
-                client_id, booking_id, quote_id, 
-                category, transaction_type, -- <--- ADDED HERE
-                amount, payment_method, receipt_url, verified_by, status, notes
-            ) VALUES ($1, $2, $3, 'CLIENT_PAYMENT', 'CREDIT', $4, $5, $6, $7, 'COMPLETED', 'Initial payment for quote conversion')`,
-            [
-                clientProfileId,
-                bookingId,
-                bookingQuoteId,
-                quoteData.total_amount,
-                payment_method,
-                slip_url,
-                adminId
-            ]
+            `UPDATE service_requests SET status = 'BOOKING_CREATED' WHERE request_id = $1`,
+            [request_id]
         );
 
-        // =========================================================
-        // 7.6 CREATE REGISTRATION FEE DEBIT TRANSACTION (IF APPLICABLE)
-        // =========================================================
-        if (Number(quoteData.registration_fee) > 0) {
-            await client.query(
-                `INSERT INTO transactions (
-                    client_id, booking_id, quote_id, 
-                    category, transaction_type,
-                    amount, payment_method, receipt_url, verified_by, status, notes
-                ) VALUES ($1, $2, $3, 'AGENCY_FEE', 'DEBIT', $4, $5, $6, $7, 'COMPLETED', 'Registration fee deduction from initial payment')`,
-                [
-                    clientProfileId,
-                    bookingId,
-                    bookingQuoteId,
-                    quoteData.registration_fee,
-                    payment_method,
-                    slip_url,
-                    adminId
-                ]
-            );
-        }
-
-        // 8. Fetch Staff Details (For Notification)
-        const staffRes = await client.query(
-            'SELECT sp.full_name, sp.profile_picture_url, u.mobile_number, u.email FROM staff_profiles sp JOIN users u ON sp.user_id = u.user_id WHERE sp.staff_profile_id = $1',
-            [finalStaffId]
-        );
-
-        if (staffRes.rows.length === 0) {
-            throw new Error('Assigned Staff ID not found');
-        }
-        const staffData = staffRes.rows[0];
-        const staffName = staffData.full_name;
+        // NOTE: Payment recording and staff assignment happen in SEPARATE steps
+        // Step 2A (Payment): POST /api/quotations/:quote_id/record-payment (via paymentTrackingController)
+        // Step 2B (This function): Create booking
+        // Step 2C (Staff Assignment): POST /api/bookings/:booking_id/assign-staff (via staffAssignmentController)
 
         await client.query('COMMIT');
 
-        // 9. Send WhatsApp messages ... (rest of your notification code remains identical)
-        const welcomeMsg = `*Booking Confirmed!* \n` +
-            `Caregiver ${staffName} has been assigned to your service.\n\n` +
-            `You can view their profile by logging in at: vcarenursing.com\n` +
-            (reqData.tempPassword ? `\n*Login:* ${reqData.payer_mobile}\n*Temp Password:* ${reqData.tempPassword}` : ``);
-
-        // Send WhatsApp confirmation to client
-        await sendWhatsAppMessage(reqData.payer_mobile, welcomeMsg);
-
-        const assignmentMsg =
-            `*New Assignment Alert!* 🚨\n\n` +
-            `*Patient:* ${reqData.patient_name}\n` +
-            `*Location:* ${reqData.location_address}\n` +
-            `*Condition:* ${reqData.patient_condition}\n` +
-            `*Start Date:* ${new Date(reqData.start_date).toDateString()}\n\n` +
-            `Please log in to the App for full details.`;
-
-        // Send WhatsApp notification to staff
-        await sendWhatsAppMessage(staffData.mobile_number, assignmentMsg);
-
-        // if (staffData.email) { ... sendEmail ... }
-
-        res.status(200).json({ status: 'success', message: "Booking confirmed, payment recorded, and staff assigned." });
+        // Return success with booking details for next step
+        res.status(201).json({
+            status: 'success',
+            message: "Booking created successfully. Proceed to: (1) Record Payment, (2) Assign Staff.",
+            data: {
+                booking_id: bookingId,
+                status: 'PENDING',
+                quote_id: bookingQuoteId,
+                quotation_amount: parseFloat(quoteData.total_amount),
+                next_steps: {
+                    step_1: "Record client payment(s) via POST /api/quotations/:quote_id/record-payment",
+                    step_2: "Assign staff to booking via POST /api/bookings/:booking_id/assign-staff"
+                }
+            }
+        });
 
     } catch (error) {
         await client.query('ROLLBACK');
@@ -250,28 +192,36 @@ const convertToBookingInternal = async (req, res) => {
     }
 };
 
-// Public convertToBooking function with file upload support
+// Public convertToBooking function - Step 2B of three-step workflow
+// Requires: request_id, quote_id
+// Does NOT handle: Payment recording, Staff assignment
 exports.convertToBooking = async (req, res) => {
     try {
-        // Handle file upload
-        if (req.file) {
-            // File was uploaded, use the Cloudinary URL
-            console.log('Uploaded file:', req.file); // Debug log
-            req.body.slip_url = req.file.secure_url || req.file.path;
-        } else if (!req.body.slip_url) {
-            // No file uploaded and no slip_url provided
-            console.log('No file and no slip_url found. Request body:', req.body); // Debug log
-            return res.status(400).json({ message: "Payment slip file or URL is required" });
+        // Validate required fields
+        const { request_id, quote_id } = req.body;
+        if (!request_id) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'request_id is required'
+            });
         }
 
-        // Call the internal conversion logic
+        // Call the conversion logic (Step 2B)
         await convertToBookingInternal(req, res);
     } catch (error) {
-        console.error("File upload error:", error);
-        res.status(500).json({ message: "Failed to process payment slip upload." });
+        console.error("Booking conversion error:", error);
+        res.status(500).json({
+            status: 'error',
+            message: "Failed to create booking."
+        });
     }
 };
 
+/**
+ * @route   GET /api/bookings/:booking_id
+ * @desc    Get booking details (may include assignment form data for next step)
+ * @access  Private
+ */
 exports.getByBookingID = async (req, res) => {
     const { booking_id } = req.params;
 

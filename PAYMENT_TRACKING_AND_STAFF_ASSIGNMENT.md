@@ -957,15 +957,15 @@ for (const booking of activeBookings) {
   - [x] Update `bookings` table with payment tracking
   - [x] Update `payment_slips` table with payment method
 - [x] Create `BankAccountController.js`
-- [ ] Create `PaymentTrackingController.js`
-- [ ] Create `StaffAssignmentController.js`
-- [ ] Update `bookingController.js` - separate payment from assignment
-- [ ] Update `dailyInvoicing.js` cron
-- [ ] Create validation middleware
-- [ ] Create helper functions for calculations and validations
-- [ ] Add new routes to `bankAccountRoutes.js`
-- [ ] Add new routes to `bookingRoutes.js`
-- [ ] Add new routes to `paymentRoutes.js` or `quoteRoutes.js`
+- [x] Create `PaymentTrackingController.js`
+- [x] Create `StaffAssignmentController.js`
+- [x] Update `bookingController.js` - separate payment from assignment
+- [x] Update `dailyInvoicing.js` cron
+- [x] Create validation middleware
+- [x] Create helper functions for calculations and validations
+- [x] Add new routes to `bankAccountRoutes.js`
+- [x] Add new routes to `bookingRoutes.js`
+- [x] Add new routes to `paymentRoutes.js` or `quoteRoutes.js`
 
 ### Frontend (Admin Dashboard)
 - [ ] Bank Account Management

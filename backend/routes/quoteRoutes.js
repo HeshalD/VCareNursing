@@ -1,7 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const quoteController = require('../controllers/quoteController');
+const paymentTrackingController = require('../controllers/paymentTrackingController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { upload } = require('../config/cloudinaryConfig');
 
 /**
  * @route   POST /api/quotes/create
@@ -25,6 +27,13 @@ router.get(
     protect, 
     restrictTo('SUPER_ADMIN', 'COORDINATOR'), 
     quoteController.getQuoteByRequest
+);
+
+router.get(
+    '/request/:requestId/list',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    quoteController.getQuotesByRequest
 );
 
 /**
@@ -116,6 +125,58 @@ router.put(
     protect,
     restrictTo('SUPER_ADMIN', 'COORDINATOR'),
     quoteController.updateQuoteLineItems
+);
+
+// ==================== PAYMENT TRACKING ROUTES ====================
+
+/**
+ * @route   POST /api/quotes/:quote_id/record-payment
+ * @desc    Record a new payment for a quotation
+ * @access  Private (SUPER_ADMIN, ACCOUNTS, COORDINATOR)
+ * @body    amount_received, payment_method, bank_account_id (conditional), cheque_number (optional), cheque_date (optional), reference_number (optional), slip_url (optional), notes (optional)
+ */
+router.post(
+    '/:quote_id/record-payment',
+    protect,
+    restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'),
+    upload.single('payment_slip'),
+    paymentTrackingController.recordPayment
+);
+
+/**
+ * @route   GET /api/quotes/:quote_id/payments
+ * @desc    Get all payments for a quotation
+ * @access  Private (SUPER_ADMIN, ACCOUNTS, COORDINATOR)
+ */
+router.get(
+    '/:quote_id/payments',
+    protect,
+    restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'),
+    paymentTrackingController.getPaymentsByQuote
+);
+
+/**
+ * @route   GET /api/quotes/:quote_id/payment-progress
+ * @desc    Get payment progress overview for a quotation
+ * @access  Private (SUPER_ADMIN, ACCOUNTS, COORDINATOR)
+ */
+router.get(
+    '/:quote_id/payment-progress',
+    protect,
+    restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'),
+    paymentTrackingController.getPaymentProgress
+);
+
+/**
+ * @route   GET /api/quotes/:quote_id/check-booking
+ * @desc    Check if a quote has an associated booking
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ */
+router.get(
+    '/:quote_id/check-booking',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    quoteController.checkQuoteBooking
 );
 
 module.exports = router;

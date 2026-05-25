@@ -94,34 +94,56 @@ const generateInvoiceNumber = async (client) => {
   return `INV-${datePart}-${sequence}`;
 };
 
+const getActiveBookingBalances = async (client) => {
+  return client.query(
+    `SELECT 
+        b.booking_id,
+        b.client_id,
+        b.daily_rate,
+        cp.full_name as client_name,
+        uc.mobile_number as client_mobile,
+        COALESCE(SUM(CASE WHEN t.category = 'CLIENT_PAYMENT' THEN t.amount ELSE 0 END), 0) as total_paid,
+        COALESCE(SUM(CASE WHEN t.category = 'SERVICE_INVOICE' THEN t.amount ELSE 0 END), 0) as total_invoiced
+     FROM bookings b
+     JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+     JOIN users uc ON cp.user_id = uc.user_id
+     LEFT JOIN transactions t ON b.booking_id = t.booking_id
+     WHERE b.status = 'ACTIVE'
+       AND b.daily_rate IS NOT NULL
+       AND b.daily_rate > 0
+     GROUP BY 
+        b.booking_id, b.client_id, b.daily_rate, 
+        cp.full_name, uc.mobile_number`
+  );
+};
+
 // ─── Overdue Detection ─────────────────────────────────────────────────────────
 
 const flagOverdueBookings = async (client) => {
-  // Find ACTIVE bookings where scheduled_end_time has passed
-  const overdueRes = await client.query(
-    `SELECT booking_id, client_id, assigned_staff_id
-     FROM bookings
-     WHERE status = 'ACTIVE'
-       AND scheduled_end_time IS NOT NULL
-       AND scheduled_end_time < NOW()`
+  // Find ACTIVE bookings where invoiced amount has exceeded paid amount
+  const overdueRes = await getActiveBookingBalances(client);
+  const overdueRows = overdueRes.rows.filter(
+    booking => parseFloat(booking.total_invoiced) > parseFloat(booking.total_paid)
   );
 
-  if (overdueRes.rows.length === 0) return 0;
+  if (overdueRows.length === 0) return 0;
 
-  for (const booking of overdueRes.rows) {
+  for (const booking of overdueRows) {
     // Flag booking as OVERDUE
     await client.query(
       `UPDATE bookings SET status = 'OVERDUE' WHERE booking_id = $1`,
       [booking.booking_id]
     );
 
-    console.log(`⚠️  Booking ${booking.booking_id} flagged as OVERDUE — scheduled end date has passed.`);
+    console.log(
+      `⚠️  Booking ${booking.booking_id} flagged as OVERDUE — charged Rs.${parseFloat(booking.total_invoiced).toFixed(2)} vs paid Rs.${parseFloat(booking.total_paid).toFixed(2)}`
+    );
 
     // TODO: Plug in WhatsApp/SMS admin alert here in Sprint 2
     // await sendWhatsAppMessage(adminNumber, `Booking ${booking.booking_id} has exceeded its paid days. Please extend or terminate.`);
   }
 
-  return overdueRes.rows.length;
+  return overdueRows.length;
 };
 
 // ─── Cron Job ──────────────────────────────────────────────────────────────────
@@ -134,44 +156,138 @@ const startDailyInvoicing = () => {
     try {
       await client.query('BEGIN');
 
+      const businessDateResult = await client.query(
+        `SELECT DATE(NOW() AT TIME ZONE 'Asia/Colombo') AS business_date`
+      );
+      const today = businessDateResult.rows[0].business_date;
+
       // Step 1 — Flag any overdue bookings first
       const overdueCount = await flagOverdueBookings(client);
       if (overdueCount > 0) {
         console.log(`⚠️  ${overdueCount} booking(s) flagged as OVERDUE and skipped from invoicing.`);
       }
 
-      // Step 2 — Fetch all ACTIVE bookings that are NOT overdue
-      // (overdue ones were just updated above so they won't appear here)
+      // Step 2 — Fetch active and overdue bookings, then their active staff assignments
       const activeBookingsRes = await client.query(
-        `SELECT
-          b.booking_id,
-          b.client_id,
-          b.service_model,
-          b.daily_rate,
-          b.ot_rate,
-          b.scheduled_end_time,
-          b.actual_end_time
-         FROM bookings b
-         WHERE b.status = 'ACTIVE'
-           AND b.daily_rate IS NOT NULL`
+        `SELECT booking_id, client_id, service_model, ot_rate, scheduled_end_time, actual_end_time
+         FROM bookings
+        WHERE status IN ('ACTIVE', 'OVERDUE')
+         ORDER BY created_at DESC`
       );
 
-      const activeBookings = activeBookingsRes.rows;
+      const activeBookingIds = activeBookingsRes.rows.map(booking => booking.booking_id);
 
-      if (activeBookings.length === 0) {
-        console.log('No active bookings to invoice today.');
+      if (activeBookingIds.length === 0) {
+        console.log('No active or overdue bookings to process today.');
         await client.query('COMMIT');
         return;
       }
 
-      // Step 3 — Generate invoices
-      let successCount = 0;
+      const activeAssignmentsRes = await client.query(
+        `SELECT
+          bsa.assignment_id,
+          bsa.booking_id,
+          bsa.staff_profile_id,
+          bsa.daily_rate,
+          bsa.service_start_date,
+          bsa.service_end_date,
+          b.client_id,
+          b.service_model,
+          b.ot_rate,
+          b.scheduled_end_time,
+          b.actual_end_time,
+          q.daily_rate as quote_daily_rate,
+          sp.full_name as staff_name,
+          c.full_name as client_name
+         FROM booking_staff_assignments bsa
+         JOIN bookings b ON bsa.booking_id = b.booking_id
+         LEFT JOIN service_requests sr ON b.request_id = sr.request_id
+         LEFT JOIN quotations q ON sr.active_quote_id = q.quote_id
+         JOIN staff_profiles sp ON bsa.staff_profile_id = sp.staff_profile_id
+         JOIN client_profiles c ON b.client_id = c.client_profile_id
+         WHERE bsa.status = 'ACTIVE'
+           AND bsa.booking_id = ANY($1::uuid[])`
+        , [activeBookingIds]
+      );
 
-      for (const booking of activeBookings) {
+      const activeAssignments = activeAssignmentsRes.rows;
+
+      if (activeAssignments.length === 0) {
+        console.log('No active staff assignments to process today.');
+        await client.query('COMMIT');
+        return;
+      }
+
+      // Step 3 — Process staff earnings and client invoices
+      let staffEarningsCount = 0;
+      let clientInvoiceCount = 0;
+
+      // Group assignments by booking for client invoicing
+      const bookingMap = new Map();
+      for (const assignment of activeAssignments) {
+        if (!bookingMap.has(assignment.booking_id)) {
+          bookingMap.set(assignment.booking_id, {
+            booking_id: assignment.booking_id,
+            client_id: assignment.client_id,
+            client_name: assignment.client_name,
+            service_model: assignment.service_model,
+            daily_rate: parseFloat(assignment.quote_daily_rate || assignment.daily_rate),
+            ot_rate: assignment.ot_rate,
+            scheduled_end_time: assignment.scheduled_end_time,
+            actual_end_time: assignment.actual_end_time,
+            total_daily_rate: 0 // Sum of all staff daily rates for this booking
+          });
+        }
+        // Add this assignment's daily rate to the booking total
+        bookingMap.get(assignment.booking_id).total_daily_rate += parseFloat(assignment.daily_rate);
+      }
+
+      // ===== PROCESS STAFF EARNINGS =====
+      // For each active assignment, add daily_rate to staff's current_earnings
+      for (const assignment of activeAssignments) {
         try {
-          const { amount, notes } = getBillingCharge(booking);
+          // 1. Update staff_profiles.current_earnings
+          await client.query(
+            `UPDATE staff_profiles
+             SET current_earnings = current_earnings + $1
+             WHERE staff_profile_id = $2`,
+            [parseFloat(assignment.daily_rate), assignment.staff_profile_id]
+          );
+
+          // 2. Create STAFF_SALARY transaction (CREDIT) for staff wallet tracking
+          await client.query(
+            `INSERT INTO transactions (
+              staff_profile_id,
+              booking_id,
+              category,
+              transaction_type,
+              amount,
+              status,
+              notes,
+              created_at
+            ) VALUES ($1, $2, 'STAFF_SALARY', 'CREDIT', $3, 'COMPLETED', $4, NOW())`,
+            [
+              assignment.staff_profile_id,
+              assignment.booking_id,
+              parseFloat(assignment.daily_rate),
+              `Daily earnings from booking ${assignment.booking_id} for ${assignment.staff_name} (${today})`
+            ]
+          );
+
+          staffEarningsCount++;
+          console.log(`✅ Staff Earnings: ${assignment.staff_name} earned Rs.${assignment.daily_rate} for ${today}`);
+        } catch (staffError) {
+          console.error(`❌ Failed to process earnings for staff ${assignment.staff_profile_id}:`, staffError);
+        }
+      }
+
+      // ===== PROCESS CLIENT INVOICES =====
+      // For each unique booking, create a single SERVICE_INVOICE with sum of all staff rates
+      for (const [bookingId, bookingData] of bookingMap.entries()) {
+        try {
+          const { amount, notes } = getBillingCharge(bookingData);
           const invoiceNumber = await generateInvoiceNumber(client);
-          const fullNotes = `${invoiceNumber} — ${notes}`;
+          const fullNotes = `${invoiceNumber} — ${notes} (${activeAssignments.filter(a => a.booking_id === bookingId).length} staff member(s))`;
 
           await client.query(
             `INSERT INTO transactions (
@@ -181,21 +297,23 @@ const startDailyInvoicing = () => {
               transaction_type,
               amount,
               status,
-              notes
-            ) VALUES ($1, $2, 'SERVICE_INVOICE', 'DEBIT', $3, 'COMPLETED', $4)`,
-            [booking.client_id, booking.booking_id, amount, fullNotes]
+              notes,
+              created_at
+            ) VALUES ($1, $2, 'SERVICE_INVOICE', 'DEBIT', $3, 'COMPLETED', $4, NOW())`,
+            [bookingData.client_id, bookingId, amount, fullNotes]
           );
 
-          successCount++;
-        } catch (bookingError) {
-          console.error(`❌ Failed to invoice booking ${booking.booking_id}:`, bookingError);
+          clientInvoiceCount++;
+          console.log(`✅ Client Invoice: ${bookingData.client_name} charged Rs.${amount} for ${today}`);
+        } catch (invoiceError) {
+          console.error(`❌ Failed to invoice booking ${bookingId}:`, invoiceError);
         }
       }
 
       await client.query('COMMIT');
-      console.log(`✅ Invoiced ${successCount}/${activeBookings.length} active bookings.`);
+      console.log(`✅ Daily Invoicing Complete: ${staffEarningsCount} staff earnings processed, ${clientInvoiceCount} client invoices created.`);
 
-      // Step 3 — Run credit monitor in its own transaction
+      // Step 4 — Run credit monitor in its own transaction
       await client.query('BEGIN');
       const alertsCount = await runCreditMonitor(client);
       await client.query('COMMIT');
@@ -217,26 +335,7 @@ const startDailyInvoicing = () => {
 
 const runCreditMonitor = async (client) => {
   // Get all active bookings with their payment vs invoice totals
-  const result = await client.query(
-    `SELECT 
-        b.booking_id,
-        b.client_id,
-        b.daily_rate,
-        cp.full_name as client_name,
-        uc.mobile_number as client_mobile,
-        COALESCE(SUM(CASE WHEN t.category = 'CLIENT_PAYMENT' THEN t.amount ELSE 0 END), 0) as total_paid,
-        COALESCE(SUM(CASE WHEN t.category = 'SERVICE_INVOICE' THEN t.amount ELSE 0 END), 0) as total_invoiced
-     FROM bookings b
-     JOIN client_profiles cp ON b.client_id = cp.client_profile_id
-     JOIN users uc ON cp.user_id = uc.user_id
-     LEFT JOIN transactions t ON b.booking_id = t.booking_id
-     WHERE b.status = 'ACTIVE'
-       AND b.daily_rate IS NOT NULL
-       AND b.daily_rate > 0
-     GROUP BY 
-        b.booking_id, b.client_id, b.daily_rate, 
-        cp.full_name, uc.mobile_number`
-  );
+  const result = await getActiveBookingBalances(client);
 
   let alertsSent = 0;
 

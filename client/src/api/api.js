@@ -388,6 +388,76 @@ class ApiClient {
     return this.request(`/quotes/request/${requestId}`);
   }
 
+  async getServiceRequestQuoteList(requestId) {
+    return this.request(`/quotes/request/${requestId}/list`);
+  }
+
+  async getQuoteDetails(quoteId) {
+    return this.request(`/quotes/${quoteId}/details`);
+  }
+
+  async getQuotePaymentProgress(quoteId) {
+    return this.request(`/quotes/${quoteId}/payment-progress`);
+  }
+
+  async getQuotePayments(quoteId) {
+    return this.request(`/quotes/${quoteId}/payments`);
+  }
+
+  async getBookingAssignmentFormData(bookingId) {
+    return this.request(`/assignments/${bookingId}/assignment-form`);
+  }
+
+  async assignStaffToBooking(bookingId, assignmentData) {
+    return this.request(`/assignments/${bookingId}/assign-staff`, {
+      method: 'POST',
+      body: JSON.stringify(assignmentData),
+    });
+  }
+
+  async getBookingAssignments(bookingId) {
+    return this.request(`/assignments/${bookingId}/assignments`);
+  }
+
+  async recordQuotePayment(quoteId, paymentData, paymentSlipFile = null) {
+    if (paymentSlipFile) {
+      const formData = new FormData();
+      Object.entries(paymentData).forEach(([key, value]) => {
+        if (value !== null && value !== undefined && value !== '') {
+          formData.append(key, value);
+        }
+      });
+      formData.append('payment_slip', paymentSlipFile);
+
+      return this.request(`/quotes/${quoteId}/record-payment`, {
+        method: 'POST',
+        headers: {
+          ...(this.token && { Authorization: `Bearer ${this.token}` }),
+        },
+        body: formData,
+      });
+    }
+
+    return this.request(`/quotes/${quoteId}/record-payment`, {
+      method: 'POST',
+      body: JSON.stringify(paymentData),
+    });
+  }
+
+  async verifyQuotePayment(paymentId, verification_notes) {
+    return this.request(`/payments/${paymentId}/verify`, {
+      method: 'POST',
+      body: JSON.stringify({ verification_notes }),
+    });
+  }
+
+  async rejectQuotePayment(paymentId, rejection_reason) {
+    return this.request(`/payments/${paymentId}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ rejection_reason }),
+    });
+  }
+
   async convertToBooking(bookingData, paymentSlipFile) {
     const formData = new FormData();
     
@@ -409,6 +479,10 @@ class ApiClient {
       },
       body: formData,
     });
+  }
+
+  async checkQuoteBooking(quoteId) {
+    return this.request(`/quotes/${quoteId}/check-booking`);
   }
 
   async createQuotation(quoteData) {
@@ -842,6 +916,43 @@ class ApiClient {
 
   async getCreditAlertsSummary() {
     return this.request('/finances/credit-alerts-summary');
+  }
+
+  // Bank Account Management endpoints
+  async getBankAccounts() {
+    return this.request('/bank-accounts');
+  }
+
+  async createBankAccount(accountData) {
+    return this.request('/bank-accounts', {
+      method: 'POST',
+      body: JSON.stringify(accountData),
+    });
+  }
+
+  async updateBankAccount(accountId, accountData) {
+    return this.request(`/bank-accounts/${accountId}`, {
+      method: 'PUT',
+      body: JSON.stringify(accountData),
+    });
+  }
+
+  async deactivateBankAccount(accountId) {
+    return this.request(`/bank-accounts/${accountId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getBankAccountTransactions(accountId, filters = {}) {
+    const query = new URLSearchParams(filters).toString();
+    const endpoint = query
+      ? `/bank-accounts/${accountId}/transactions?${query}`
+      : `/bank-accounts/${accountId}/transactions`;
+    return this.request(endpoint);
+  }
+
+  async getBankAccountReconciliation(accountId) {
+    return this.request(`/bank-accounts/${accountId}/reconciliation`);
   }
 
   async getStoreSummary() {

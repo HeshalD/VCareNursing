@@ -2,7 +2,7 @@ import React from 'react';
 import {
   Users, Calendar, DollarSign, Activity,
   Settings, LogOut, Bell, Search,
-  ShieldCheck, FileText, SendHorizontal , Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet
+  ShieldCheck, FileText, SendHorizontal , Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet, Landmark
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 
@@ -87,6 +87,18 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
             label="Financials"
             path="/admin/financial"
             active={isActive('/admin/financial')}
+          />
+          <SidebarItem
+            icon={Landmark}
+            label="Bank Accounts"
+            path="/admin/bank-accounts"
+            active={isActive('/admin/bank-accounts')}
+          />
+          <SidebarItem
+            icon={FileText}
+            label="Quotations"
+            path="/admin/quotations"
+            active={isActive('/admin/quotations')}
           />
           {/*<SidebarItem
             icon={FileText}
