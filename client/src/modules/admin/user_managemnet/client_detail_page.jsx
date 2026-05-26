@@ -184,6 +184,19 @@ const ClientDetailPage = () => {
     loadStatementLedger();
   }, [clientId, activeSection, statementStartDate, statementEndDate]);
 
+  const ledgerTotals = useMemo(() => {
+    const totals = statementRows.reduce(
+      (acc, r) => {
+        acc.total_invoiced += Number(r.amount_invoiced || 0);
+        acc.total_paid += Number(r.amount_paid || 0);
+        return acc;
+      },
+      { total_invoiced: 0, total_paid: 0 }
+    );
+    const final_balance = statementRows.length ? Number(statementRows[statementRows.length - 1].balance || 0) : 0;
+    return { ...totals, final_balance };
+  }, [statementRows]);
+
   const downloadStatement = async () => {
     try {
       setStatementActionLoading('download');
@@ -485,7 +498,18 @@ const ClientDetailPage = () => {
                         </tr>
                       ))
                     )}
-                  </tbody>
+                    </tbody>
+                    <tfoot className="bg-slate-50">
+                      <tr className="font-semibold">
+                        <td className="px-5 py-3">Totals</td>
+                        <td className="px-5 py-3" />
+                        <td className="px-5 py-3" />
+                        <td className="px-5 py-3 text-slate-600">&nbsp;</td>
+                        <td className="px-5 py-3 text-right">{formatMoney(ledgerTotals.total_invoiced || 0)}</td>
+                        <td className="px-5 py-3 text-right text-emerald-700">{formatMoney(ledgerTotals.total_paid || 0)}</td>
+                        <td className="px-5 py-3 text-right text-rose-700">{formatMoney(ledgerTotals.final_balance || 0)}</td>
+                      </tr>
+                    </tfoot>
                 </table>
               </div>
             </div>
