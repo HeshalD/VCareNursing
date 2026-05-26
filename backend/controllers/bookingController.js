@@ -432,8 +432,10 @@ const convertToBookingInternal = async (req, res) => {
         const bookingId = newBooking.rows[0].booking_id;
 
         for (const payment of paymentRes.rows) {
-            await client.query(
+            try {
+                await client.query(
                 `INSERT INTO booking_payment_tracking (
+                   payment_tracking_id,
                    booking_id,
                    quote_id,
                    client_id,
@@ -449,8 +451,25 @@ const convertToBookingInternal = async (req, res) => {
                    notes,
                    payment_date,
                    verified_at
-                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'VERIFIED', $11, $12, $13, $14)`,
+                                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'VERIFIED', $12, $13, $14, $15)
+                                 ON CONFLICT (payment_tracking_id) DO UPDATE SET
+                                     booking_id = EXCLUDED.booking_id,
+                                     quote_id = EXCLUDED.quote_id,
+                                     client_id = EXCLUDED.client_id,
+                                     amount_received = EXCLUDED.amount_received,
+                                     payment_method = EXCLUDED.payment_method,
+                                     bank_account_id = EXCLUDED.bank_account_id,
+                                     cheque_number = EXCLUDED.cheque_number,
+                                     cheque_date = EXCLUDED.cheque_date,
+                                     reference_number = EXCLUDED.reference_number,
+                                     slip_url = EXCLUDED.slip_url,
+                                     status = EXCLUDED.status,
+                                     verified_by = EXCLUDED.verified_by,
+                                     notes = EXCLUDED.notes,
+                                     payment_date = EXCLUDED.payment_date,
+                                     verified_at = EXCLUDED.verified_at`,
                 [
+                    payment.payment_id,
                     bookingId,
                     bookingQuoteId,
                     clientProfileId,
@@ -468,8 +487,9 @@ const convertToBookingInternal = async (req, res) => {
                 ]
             );
 
-            await client.query(
+                await client.query(
                 `INSERT INTO transactions (
+                   payment_tracking_id,
                    client_id,
                    booking_id,
                    quote_id,
@@ -486,8 +506,25 @@ const convertToBookingInternal = async (req, res) => {
                    notes,
                    transaction_type,
                    created_at
-                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'COMPLETED', $13, 'DEBIT', $14)`,
+                                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'COMPLETED', $14, 'DEBIT', NOW())
+                                 ON CONFLICT (payment_tracking_id) DO UPDATE SET
+                                     client_id = EXCLUDED.client_id,
+                                     booking_id = EXCLUDED.booking_id,
+                                     quote_id = EXCLUDED.quote_id,
+                                     category = EXCLUDED.category,
+                                     amount = EXCLUDED.amount,
+                                     payment_method = EXCLUDED.payment_method,
+                                     bank_account_id = EXCLUDED.bank_account_id,
+                                     cheque_number = EXCLUDED.cheque_number,
+                                     cheque_date = EXCLUDED.cheque_date,
+                                     receipt_url = EXCLUDED.receipt_url,
+                                     reference_number = EXCLUDED.reference_number,
+                                     verified_by = EXCLUDED.verified_by,
+                                     status = EXCLUDED.status,
+                                     notes = EXCLUDED.notes,
+                                     transaction_type = EXCLUDED.transaction_type`,
                 [
+                    payment.payment_id,
                     clientProfileId,
                     bookingId,
                     bookingQuoteId,
@@ -500,10 +537,26 @@ const convertToBookingInternal = async (req, res) => {
                     payment.reference_number || null,
                     payment.slip_url || null,
                     payment.verified_by || null,
-                    payment.notes || null,
-                    payment.payment_date || new Date()
+                    payment.notes || null
                 ]
             );
+            } catch (paymentMirrorError) {
+                console.error('Payment mirror debug:', {
+                    request_id,
+                    bookingQuoteId,
+                    payment_id: payment.payment_id,
+                    payment_method: payment.payment_method,
+                    payment_method_length: payment.payment_method ? String(payment.payment_method).length : 0,
+                    cheque_number_length: payment.cheque_number ? String(payment.cheque_number).length : 0,
+                    reference_number_length: payment.reference_number ? String(payment.reference_number).length : 0,
+                    slip_url_length: payment.slip_url ? String(payment.slip_url).length : 0,
+                    verified_by_length: payment.verified_by ? String(payment.verified_by).length : 0,
+                    notes_length: payment.notes ? String(payment.notes).length : 0,
+                    error_code: paymentMirrorError.code,
+                    error_message: paymentMirrorError.message
+                });
+                throw paymentMirrorError;
+            }
         }
 
         if (amountPaid > 0) {

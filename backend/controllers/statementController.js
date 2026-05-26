@@ -1,65 +1,139 @@
 const db = require('../config/db');
 const { generateStatementPDF } = require('../utils/statement');
+const cloudinary = require('cloudinary').v2;
+const { sendWhatsAppMessage } = require('../utils/whatsapp');
+
+const normalizeDateRange = (req) => {
+    const rawStart = req.query.start_date || req.body?.start_date;
+    const rawEnd = req.query.end_date || req.body?.end_date;
+
+    return {
+        start_date: rawStart || '1970-01-01T00:00:00Z',
+        end_date: rawEnd || new Date().toISOString()
+    };
+};
+
+const buildStatementPayload = async (client_id, start_date, end_date) => {
+    // Compute opening sums separately so balance = payments - invoices
+    const openingSumsRes = await db.query(`
+        SELECT
+            COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' THEN amount ELSE 0 END), 0) AS opening_payments,
+            COALESCE(SUM(CASE WHEN transaction_type = 'DEBIT' THEN amount ELSE 0 END), 0) AS opening_invoices
+        FROM transactions
+        WHERE client_id = $1 AND created_at < $2
+    `, [client_id, start_date]);
+
+    const openingPayments = parseFloat(openingSumsRes.rows[0].opening_payments || 0);
+    const openingInvoices = parseFloat(openingSumsRes.rows[0].opening_invoices || 0);
+    // Opening balance defined as payments - invoices
+    const openingBalance = openingPayments - openingInvoices;
+    let runningBalance = openingBalance;
+
+    const periodTransRes = await db.query(`
+        SELECT
+            transaction_id,
+            created_at as date,
+            category,
+            notes,
+            transaction_type,
+            amount,
+            booking_id
+        FROM transactions
+        WHERE client_id = $1 AND created_at >= $2 AND created_at <= $3
+        ORDER BY created_at ASC
+    `, [client_id, start_date, end_date]);
+
+    const transactions = periodTransRes.rows || [];
+    let totalInvoiced = 0;
+    let totalPaid = 0;
+
+    const statementLines = transactions.map((t) => {
+        const amt = parseFloat(t.amount || 0);
+        let invoiceAmount = 0;
+        let paymentAmount = 0;
+        let rowType = 'UNKNOWN';
+
+        if (t.category === 'SERVICE_INVOICE' || t.transaction_type === 'DEBIT') {
+            invoiceAmount = amt;
+            totalInvoiced += invoiceAmount;
+            runningBalance -= invoiceAmount; // payments - invoices
+            rowType = 'INVOICE';
+        } else if (t.category === 'BOOKING_PAYMENT' || t.transaction_type === 'CREDIT') {
+            paymentAmount = amt;
+            totalPaid += paymentAmount;
+            runningBalance += paymentAmount;
+            rowType = 'PAYMENT';
+        }
+
+        return {
+            transaction_id: t.transaction_id,
+            date: t.date,
+            row_type: rowType,
+            transactions: t.category,
+            details: t.notes,
+            booking_id: t.booking_id || null,
+            amount_invoiced: invoiceAmount || 0,
+            amount_paid: paymentAmount || 0,
+            balance: runningBalance
+        };
+    });
+
+    const clientRes = await db.query(
+        `SELECT cp.full_name, u.mobile_number
+         FROM client_profiles cp
+         JOIN users u ON cp.user_id = u.user_id
+         WHERE cp.client_profile_id = $1`,
+        [client_id]
+    );
+
+    if (!clientRes.rows.length) {
+        throw new Error('Client not found.');
+    }
+
+    const clientRow = clientRes.rows[0];
+    const currentBalance = runningBalance;
+
+    const pdfData = {
+        clientName: clientRow.full_name,
+        periodStart: new Date(start_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        periodEnd: new Date(end_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        summary: {
+            openingBalance: parseFloat(openingBalance || 0).toFixed(2),
+            invoicedAmount: parseFloat(totalInvoiced || 0).toFixed(2),
+            amountPaid: parseFloat(totalPaid || 0).toFixed(2),
+            balance: parseFloat(currentBalance || 0).toFixed(2)
+        },
+        ledger: statementLines.map((line) => ({
+            date: new Date(line.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+            transactions: line.transactions,
+            details: line.details || '',
+            amount: line.amount_invoiced ? parseFloat(line.amount_invoiced).toFixed(2) : '',
+            payments: line.amount_paid ? parseFloat(line.amount_paid).toFixed(2) : '',
+            balance: parseFloat(line.balance).toFixed(2),
+            booking_id: line.booking_id,
+            transaction_id: line.transaction_id,
+            row_type: line.row_type
+        }))
+    };
+
+    return {
+        clientName: clientRow.full_name,
+        clientMobile: clientRow.mobile_number,
+        openingBalance,
+        totalInvoiced,
+        totalPaid,
+        currentBalance,
+        statementLines,
+        pdfData
+    };
+};
 
 exports.getClientStatement = async (req, res) => {
     const { client_id } = req.params;
-    const { start_date, end_date } = req.body; 
+    const { start_date, end_date } = normalizeDateRange(req);
 
     try {
-        // 1. Get Opening Balance (All records before start_date)
-        const openingBalRes = await db.query(`
-            SELECT 
-                COALESCE(SUM(CASE WHEN transaction_type = 'DEBIT' THEN amount ELSE 0 END), 0) -
-                COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' THEN amount ELSE 0 END), 0) AS opening_balance
-            FROM transactions
-            WHERE client_id = $1 AND created_at < $2
-        `, [client_id, start_date]);
-        
-        const openingBalance = parseFloat(openingBalRes.rows[0].opening_balance);
-
-        // 2. Get Transactions for the period
-        const periodTransRes = await db.query(`
-            SELECT 
-                created_at as date,
-                category as transactions, -- e.g., 'Invoice' or 'Payment Received'
-                notes as details,
-                transaction_type,
-                amount
-            FROM transactions
-            WHERE client_id = $1 AND created_at >= $2 AND created_at <= $3
-            ORDER BY created_at ASC
-        `, [client_id, start_date, end_date]);
-
-        const transactions = periodTransRes.rows;
-
-        // 3. Process the Running Balance (Matching the PDF exactly)
-        let currentBalance = openingBalance;
-        let totalInvoiced = 0;
-        let totalPaid = 0;
-
-        const statementLines = transactions.map(t => {
-            let debitAmount = 0;
-            let creditAmount = 0;
-
-            if (t.transaction_type === 'DEBIT') {
-                debitAmount = t.amount;
-                totalInvoiced += t.amount;
-                currentBalance += t.amount; // Balance goes up when invoiced
-            } else {
-                creditAmount = t.amount;
-                totalPaid += t.amount;
-                currentBalance -= t.amount; // Balance goes down when paid
-            }
-
-            return {
-                date: t.date,
-                transactions: t.transactions,
-                details: t.details,
-                amount: debitAmount > 0 ? debitAmount : null,
-                payments: creditAmount > 0 ? creditAmount : null,
-                balance: currentBalance
-            };
-        });
+        const { openingBalance, totalInvoiced, totalPaid, currentBalance, statementLines } = await buildStatementPayload(client_id, start_date, end_date);
 
         // 4. Send formatted data to frontend or PDF generator
         res.status(200).json({
@@ -80,7 +154,7 @@ exports.getClientStatement = async (req, res) => {
 
 exports.downloadClientStatement = async (req, res) => {
     const { client_id } = req.params;
-    const { start_date, end_date } = req.body;
+    const { start_date, end_date } = normalizeDateRange(req);
 
     // Set a timeout for the entire request
     const requestTimeout = setTimeout(() => {
@@ -94,95 +168,8 @@ exports.downloadClientStatement = async (req, res) => {
         console.log("🚀 Starting PDF generation for client:", client_id);
         console.time("database-queries");
         
-        // 1. Get Opening Balance (All records before start_date)
-        const openingBalRes = await db.query(`
-            SELECT 
-                COALESCE(SUM(CASE WHEN transaction_type = 'DEBIT' THEN amount ELSE 0 END), 0) -
-                COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' THEN amount ELSE 0 END), 0) AS opening_balance
-            FROM transactions
-            WHERE client_id = $1 AND created_at < $2
-        `, [client_id, start_date]);
-        
-        const openingBalance = parseFloat(openingBalRes.rows[0].opening_balance);
-
-        // 2. Get Transactions for the period
-        const periodTransRes = await db.query(`
-            SELECT 
-                created_at as date,
-                category as transactions,
-                notes as details,
-                transaction_type,
-                amount
-            FROM transactions
-            WHERE client_id = $1 AND created_at >= $2 AND created_at <= $3
-            ORDER BY created_at ASC
-        `, [client_id, start_date, end_date]);
-
-        const transactions = periodTransRes.rows;
+        const { clientName, clientMobile, openingBalance, totalInvoiced, totalPaid, currentBalance, statementLines, pdfData } = await buildStatementPayload(client_id, start_date, end_date);
         console.timeEnd("database-queries");
-        console.log("📊 Found", transactions.length, "transactions");
-
-        // 3. Process the Running Balance
-        let currentBalance = openingBalance || 0;
-        let totalInvoiced = 0;
-        let totalPaid = 0;
-
-        const statementLines = (transactions || []).map(t => {
-            let debitAmount = 0;
-            let creditAmount = 0;
-
-            if (t.transaction_type === 'DEBIT') {
-                debitAmount = parseFloat(t.amount) || 0;
-                totalInvoiced += debitAmount;
-                currentBalance += debitAmount;
-            } else {
-                creditAmount = parseFloat(t.amount) || 0;
-                totalPaid += creditAmount;
-                currentBalance -= creditAmount;
-            }
-
-            return {
-                date: t.date,
-                transactions: t.transactions,
-                details: t.details,
-                amount: debitAmount > 0 ? debitAmount : null,
-                payments: creditAmount > 0 ? creditAmount : null,
-                balance: currentBalance
-            };
-        });
-        
-        console.time("client-query");
-        // 1. Fetch Client Name
-        const clientRes = await db.query('SELECT full_name FROM client_profiles WHERE client_profile_id = $1', [client_id]);
-        if (!clientRes.rows.length) {
-            clearTimeout(requestTimeout);
-            return res.status(404).json({ message: "Client not found." });
-        }
-        const clientName = clientRes.rows[0].full_name;
-        console.timeEnd("client-query");
-
-        console.time("data-formatting");
-        // 2. Format the data perfectly for Handlebars
-        const pdfData = {
-            clientName: clientName,
-            periodStart: new Date(start_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-            periodEnd: new Date(end_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-            summary: {
-                openingBalance: parseFloat(openingBalance).toFixed(2),
-                invoicedAmount: parseFloat(totalInvoiced).toFixed(2),
-                amountPaid: parseFloat(totalPaid).toFixed(2),
-                balanceDue: parseFloat(currentBalance).toFixed(2)
-            },
-            ledger: statementLines.map(line => ({
-                date: new Date(line.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-                transactions: line.transactions,
-                details: line.details || '',
-                amount: line.amount ? parseFloat(line.amount).toFixed(2) : '',
-                payments: line.payments ? parseFloat(line.payments).toFixed(2) : '',
-                balance: parseFloat(line.balance).toFixed(2)
-            }))
-        };
-        console.timeEnd("data-formatting");
 
         console.time("pdf-generation");
         console.log("📄 Starting PDF generation...");
@@ -219,5 +206,52 @@ exports.downloadClientStatement = async (req, res) => {
                 res.status(500).json({ message: "Failed to generate statement PDF." });
             }
         }
+    }
+};
+
+exports.sendClientStatementToWhatsApp = async (req, res) => {
+    const { client_id } = req.params;
+    const { start_date, end_date } = normalizeDateRange(req);
+
+    try {
+        const { clientName, clientMobile, pdfData } = await buildStatementPayload(client_id, start_date, end_date);
+
+        const pdfBuffer = await generateStatementPDF(pdfData);
+        const pdfUpload = await new Promise((resolve, reject) => {
+            cloudinary.uploader.upload(
+                `data:application/pdf;base64,${pdfBuffer.toString('base64')}`,
+                {
+                    resource_type: 'raw',
+                    folder: 'statements',
+                    public_id: `Statement_${client_id}_${Date.now()}`
+                },
+                (error, result) => {
+                    if (error) return reject(error);
+                    resolve(result);
+                }
+            );
+        });
+
+        const message = await sendWhatsAppMessage(
+            clientMobile,
+            `Hi ${clientName}, your statement for ${pdfData.periodStart} to ${pdfData.periodEnd} is attached.`,
+            {
+                type: 'document',
+                link: pdfUpload.secure_url,
+                filename: `Statement_${clientName.replace(/\s+/g, '_')}.pdf`
+            }
+        );
+
+        return res.status(200).json({
+            status: 'success',
+            message: 'Statement generated and sent via WhatsApp',
+            data: {
+                pdf_link: pdfUpload.secure_url,
+                whatsapp_message_sid: message.sid
+            }
+        });
+    } catch (error) {
+        console.error('Error sending statement via WhatsApp:', error);
+        return res.status(500).json({ message: 'Failed to send statement via WhatsApp' });
     }
 };

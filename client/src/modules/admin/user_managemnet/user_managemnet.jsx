@@ -188,6 +188,10 @@ const UserManagement = () => {
     setExpandedRows(newExpanded);
   };
 
+  const openClientDetail = (clientId) => {
+    navigate(`/admin/users/${clientId}/detail`);
+  };
+
   return (
     <AdminLayout
       title="User Management"
@@ -321,7 +325,10 @@ const UserManagement = () => {
               ) : (
                 displayData.map((user) => (
                   <React.Fragment key={user.id}>
-                    <tr className="hover:bg-slate-50 transition-colors">
+                    <tr
+                      className={`transition-colors ${activeTab === 'clients' ? 'cursor-pointer hover:bg-slate-50' : 'hover:bg-slate-50'}`}
+                      onClick={activeTab === 'clients' ? () => openClientDetail(user.id) : undefined}
+                    >
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
                           {user.profile_picture_url ? (
@@ -383,6 +390,19 @@ const UserManagement = () => {
                     )}
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center gap-2 justify-end">
+                        {activeTab === 'clients' && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openClientDetail(user.id);
+                            }}
+                            className="text-blue-600 hover:text-blue-800 p-1 rounded-lg hover:bg-blue-50 transition-colors mr-1"
+                            title="View Client Details"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                        )}
                         {activeTab === 'workers' && (
                           <button
                             onClick={() => handleUpdateThreshold(user)}

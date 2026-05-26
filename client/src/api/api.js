@@ -273,6 +273,14 @@ class ApiClient {
 
   }
 
+  async getAdminClientDetail(clientId) {
+    return this.request(`/client/${clientId}/detail`);
+  }
+
+  async getAdminClientBookings(clientId) {
+    return this.request(`/client/${clientId}/bookings`);
+  }
+
   async getClientProfileByUserId(userId) {
     try {
       return this.request(`/client/profile/user/${userId}`);
@@ -879,6 +887,13 @@ class ApiClient {
       console.error('PDF Download Error:', error);
       throw error;
     }
+  }
+
+  async sendClientStatementToWhatsApp(clientId, dateRange) {
+    return this.request(`/statement/whatsapp/${clientId}`, {
+      method: 'POST',
+      body: JSON.stringify(dateRange),
+    });
   }
 
   // Admin Staff Management endpoints

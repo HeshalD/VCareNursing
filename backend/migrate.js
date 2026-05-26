@@ -26,7 +26,8 @@ async function migrate(retries = 5, delay = 3000) {
 async function runMigration() {
   console.log('Starting database migration...');
 
-  // Check if migration is needed by checking if users table exists
+  // Keep running idempotent schema reconciliation even on existing databases.
+  // This ensures older deployments receive enum updates and new columns.
   const tableCheck = await db.query(`
     SELECT EXISTS (
       SELECT FROM information_schema.tables 
@@ -36,8 +37,7 @@ async function runMigration() {
   `);
 
   if (tableCheck.rows[0].exists) {
-    console.log('Database already migrated. Skipping...');
-    return;
+    console.log('Database already contains users table. Running reconciliation steps...');
   }
 
   // =========================================================
@@ -100,6 +100,19 @@ async function runMigration() {
       CREATE TYPE payment_method AS ENUM (
         'BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE', 'WALLET', 'ONLINE_GATEWAY'
       );
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE payment_method ADD VALUE IF NOT EXISTS 'BANK_TRANSFER';
+      ALTER TYPE payment_method ADD VALUE IF NOT EXISTS 'CASH_DEPOSIT';
+      ALTER TYPE payment_method ADD VALUE IF NOT EXISTS 'CASH';
+      ALTER TYPE payment_method ADD VALUE IF NOT EXISTS 'CHEQUE';
+      ALTER TYPE payment_method ADD VALUE IF NOT EXISTS 'WALLET';
+      ALTER TYPE payment_method ADD VALUE IF NOT EXISTS 'ONLINE_GATEWAY';
     EXCEPTION
       WHEN duplicate_object THEN null;
     END $$;
@@ -332,6 +345,7 @@ async function runMigration() {
   await db.query(`
     CREATE TABLE IF NOT EXISTS booking_payment_tracking (
       booking_payment_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      payment_tracking_id UUID REFERENCES payment_tracking(payment_id),
       booking_id UUID NOT NULL REFERENCES bookings(booking_id) ON DELETE CASCADE,
       quote_id UUID REFERENCES quotations(quote_id),
       client_id UUID NOT NULL REFERENCES client_profiles(client_profile_id),
@@ -427,6 +441,7 @@ async function runMigration() {
   await db.query(`
     CREATE TABLE IF NOT EXISTS transactions (
       transaction_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      payment_tracking_id UUID REFERENCES payment_tracking(payment_id),
       client_id UUID REFERENCES client_profiles(client_profile_id),
       staff_profile_id UUID REFERENCES staff_profiles(staff_profile_id),
       booking_id UUID REFERENCES bookings(booking_id),
@@ -579,10 +594,16 @@ async function runMigration() {
 
   await db.query(`
     ALTER TABLE booking_payment_tracking
+    ADD COLUMN IF NOT EXISTS payment_tracking_id UUID REFERENCES payment_tracking(payment_id),
     ADD COLUMN IF NOT EXISTS bank_account_id UUID REFERENCES bank_accounts(account_id),
     ADD COLUMN IF NOT EXISTS cheque_number VARCHAR(50),
     ADD COLUMN IF NOT EXISTS cheque_date DATE,
     ADD COLUMN IF NOT EXISTS reference_number VARCHAR(100)
+  `);
+
+  await db.query(`
+    ALTER TABLE transactions
+    ADD COLUMN IF NOT EXISTS payment_tracking_id UUID REFERENCES payment_tracking(payment_id)
   `);
 
   await db.query(`
@@ -651,8 +672,18 @@ async function runMigration() {
   `);
 
   await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_booking_payment_tracking_payment_tracking_id
+    ON booking_payment_tracking(payment_tracking_id);
+  `);
+
+  await db.query(`
     CREATE INDEX IF NOT EXISTS idx_booking_payment_tracking_status
     ON booking_payment_tracking(status);
+  `);
+
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_payment_tracking_id
+    ON transactions(payment_tracking_id);
   `);
 
   await db.query(`

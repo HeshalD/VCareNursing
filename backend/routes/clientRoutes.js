@@ -13,6 +13,13 @@ router.get('/active-bookings', clientController.getActiveBookingByClientID);
 router.get('/all-bookings/:client_id', clientController.getAllBookingsForClient);
 router.get('/all-bookings', clientController.getAllBookingsForClient);
 router.get('/service-history/:client_id', clientController.getClientServiceHistory);
+// Admin: enriched booking history for dashboard
+router.get('/:client_id/bookings', protect, restrictTo('SUPER_ADMIN'), clientController.getAdminClientBookings);
+router.get('/:client_id/detail', restrictTo('SUPER_ADMIN'), clientController.getAdminClientDetail);
+// Admin consolidated client detail (admin-only) - keep before generic '/:client_id' route
+router.get('/:client_id/detail', restrictTo('SUPER_ADMIN'), clientController.getAdminClientDetail);
+router.patch('/:client_id/deactivate', protect, restrictTo('SUPER_ADMIN'), clientController.deactivateClientProfile);
+router.patch('/:client_id/reactivate', protect, restrictTo('SUPER_ADMIN'), clientController.reactivateClientProfile);
 
 // Payment and financial endpoints
 router.get('/payment-history/:client_id', clientController.getClientPaymentHistory);

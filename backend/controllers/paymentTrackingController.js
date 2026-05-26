@@ -211,6 +211,7 @@ const recordPayment = async (req, res) => {
     }
 
     const quotation = quoteCheck.rows[0];
+    const transactionCategory = quotation.booking_id ? 'BOOKING_PAYMENT' : 'CLIENT_PAYMENT';
 
     // Bootstrap a client profile if this quotation belongs to a brand-new customer
     const clientBootstrap = await getOrCreateClientProfileForQuotation(client, quotation);
@@ -290,6 +291,7 @@ const recordPayment = async (req, res) => {
     if (quotation.booking_id) {
       const mirroredResult = await client.query(
         `INSERT INTO booking_payment_tracking (
+           payment_tracking_id,
            booking_id,
            quote_id,
            client_id,
@@ -305,9 +307,26 @@ const recordPayment = async (req, res) => {
            notes,
            payment_date,
            verified_at
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'VERIFIED', $11, $12, $13, $14)
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'VERIFIED', $12, $13, $14, $15)
+         ON CONFLICT (payment_tracking_id) DO UPDATE SET
+           booking_id = EXCLUDED.booking_id,
+           quote_id = EXCLUDED.quote_id,
+           client_id = EXCLUDED.client_id,
+           amount_received = EXCLUDED.amount_received,
+           payment_method = EXCLUDED.payment_method,
+           bank_account_id = EXCLUDED.bank_account_id,
+           cheque_number = EXCLUDED.cheque_number,
+           cheque_date = EXCLUDED.cheque_date,
+           reference_number = EXCLUDED.reference_number,
+           slip_url = EXCLUDED.slip_url,
+           status = EXCLUDED.status,
+           verified_by = EXCLUDED.verified_by,
+           notes = EXCLUDED.notes,
+           payment_date = EXCLUDED.payment_date,
+           verified_at = EXCLUDED.verified_at
          RETURNING booking_payment_id, booking_id, quote_id, amount_received, payment_method, reference_number, status, payment_date, verified_at`,
         [
+          payment.payment_id,
           quotation.booking_id,
           quote_id,
           client_id,
@@ -365,6 +384,8 @@ const recordPayment = async (req, res) => {
     // Create transaction record for audit trail
     await client.query(`
       INSERT INTO transactions (
+        payment_tracking_id,
+        booking_id,
         quote_id,
         client_id,
         category,
@@ -380,11 +401,29 @@ const recordPayment = async (req, res) => {
         notes,
         transaction_type,
         created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
-    `, [
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
+      ON CONFLICT (payment_tracking_id) DO UPDATE SET
+        booking_id = EXCLUDED.booking_id,
+        quote_id = EXCLUDED.quote_id,
+        client_id = EXCLUDED.client_id,
+        category = EXCLUDED.category,
+        amount = EXCLUDED.amount,
+        payment_method = EXCLUDED.payment_method,
+        bank_account_id = EXCLUDED.bank_account_id,
+        cheque_number = EXCLUDED.cheque_number,
+        cheque_date = EXCLUDED.cheque_date,
+        receipt_url = EXCLUDED.receipt_url,
+        reference_number = EXCLUDED.reference_number,
+        verified_by = EXCLUDED.verified_by,
+        status = EXCLUDED.status,
+        notes = EXCLUDED.notes,
+        transaction_type = EXCLUDED.transaction_type
+      `, [
+      payment.payment_id,
+      quotation.booking_id || null,
       quote_id,
       client_id,
-      'CLIENT_PAYMENT',
+      transactionCategory,
       amount_received,
       payment_method,
       bank_account_id || null,
