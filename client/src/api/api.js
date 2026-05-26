@@ -444,6 +444,31 @@ class ApiClient {
     });
   }
 
+  async recordBookingPayment(bookingId, paymentData, paymentSlipFile = null) {
+    if (paymentSlipFile) {
+      const formData = new FormData();
+      Object.entries(paymentData).forEach(([key, value]) => {
+        if (value !== null && value !== undefined && value !== '') {
+          formData.append(key, value);
+        }
+      });
+      formData.append('payment_slip', paymentSlipFile);
+
+      return this.request(`/bookings/${bookingId}/record-payment`, {
+        method: 'POST',
+        headers: {
+          ...(this.token && { Authorization: `Bearer ${this.token}` }),
+        },
+        body: formData,
+      });
+    }
+
+    return this.request(`/bookings/${bookingId}/record-payment`, {
+      method: 'POST',
+      body: JSON.stringify(paymentData),
+    });
+  }
+
   async verifyQuotePayment(paymentId, verification_notes) {
     return this.request(`/payments/${paymentId}/verify`, {
       method: 'POST',
@@ -746,6 +771,43 @@ class ApiClient {
 
   async getBookingById(bookingId) {
     return this.request(`/bookings/${bookingId}`);
+  }
+
+  async getAdminBookingDetail(bookingId) {
+    return this.request(`/bookings/${bookingId}/admin-detail`);
+  }
+
+  async getBookingTerminationHistory(bookingId) {
+    return this.request(`/bookings/${bookingId}/termination-requests`);
+  }
+
+  async getBookingInvoiceBreakdown(bookingId) {
+    return this.request(`/bookings/${bookingId}/invoice-breakdown`);
+  }
+
+  async getBookingStaffAllocationHistory(bookingId) {
+    return this.request(`/bookings/${bookingId}/staff-allocation-history`);
+  }
+
+  async completeBooking(bookingId, bookingData) {
+    return this.request(`/bookings/${bookingId}/complete`, {
+      method: 'POST',
+      body: JSON.stringify(bookingData),
+    });
+  }
+
+  async adminTerminateBooking(bookingId, bookingData) {
+    return this.request(`/bookings/${bookingId}/admin-terminate`, {
+      method: 'POST',
+      body: JSON.stringify(bookingData),
+    });
+  }
+
+  async swapBookingStaff(bookingId, swapData) {
+    return this.request(`/bookings/${bookingId}/swap-staff`, {
+      method: 'POST',
+      body: JSON.stringify(swapData),
+    });
   }
 
   async getActiveBookingByClientID(clientId = '') {

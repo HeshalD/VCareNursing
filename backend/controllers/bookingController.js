@@ -17,6 +17,277 @@ exports.uploadPaymentSlip = (req, res, next) => {
     });
 };
 
+const getBookingSettlementSnapshot = async (client, booking_id) => {
+    const bookingResult = await client.query(
+        `SELECT
+            b.booking_id,
+            b.status,
+            b.assigned_staff_id,
+            b.client_id,
+            b.start_date,
+            b.scheduled_end_time,
+            b.actual_end_time,
+            b.daily_rate,
+            b.ot_rate,
+            c.full_name as client_name,
+            c.wallet_balance,
+            sr.active_quote_id as quote_id,
+            q.total_amount,
+            q.daily_rate as quote_daily_rate
+         FROM bookings b
+         LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
+         LEFT JOIN service_requests sr ON b.request_id = sr.request_id
+         LEFT JOIN quotations q ON sr.active_quote_id = q.quote_id
+         WHERE b.booking_id = $1
+         FOR UPDATE OF b`,
+        [booking_id]
+    );
+
+    if (bookingResult.rows.length === 0) {
+        return null;
+    }
+
+    const booking = bookingResult.rows[0];
+
+    const [paymentSummaryResult, invoiceSummaryResult] = await Promise.all([
+        booking.quote_id
+            ? client.query(
+                `SELECT COALESCE(SUM(amount_received), 0) as total_paid
+                 FROM payment_tracking
+                 WHERE quote_id = $1 AND status = 'VERIFIED'`,
+                [booking.quote_id]
+            )
+            : Promise.resolve({ rows: [{ total_paid: 0 }] }),
+        client.query(
+            `SELECT COALESCE(SUM(amount), 0) as total_invoiced
+             FROM transactions
+             WHERE booking_id = $1
+               AND category = 'SERVICE_INVOICE'
+               AND transaction_type = 'DEBIT'
+               AND status = 'COMPLETED'`,
+            [booking_id]
+        )
+    ]);
+
+    const totalPaid = parseFloat(paymentSummaryResult.rows[0]?.total_paid || 0);
+    const totalInvoiced = parseFloat(invoiceSummaryResult.rows[0]?.total_invoiced || 0);
+
+    return {
+        ...booking,
+        total_paid: totalPaid,
+        total_invoiced: totalInvoiced,
+        remaining_balance: Math.max(totalPaid - totalInvoiced, 0),
+        amount_owed: Math.max(totalInvoiced - totalPaid, 0)
+    };
+};
+
+const applyBookingSettlement = async (client, booking, settlementAction, settlementNote, reason, actorLabel) => {
+    const remainingBalance = parseFloat(booking.remaining_balance || 0);
+    let walletDepositedAmount = 0;
+
+    if (settlementAction === 'WALLET_DEPOSIT' && remainingBalance > 0) {
+        walletDepositedAmount = remainingBalance;
+
+        await client.query(
+            `UPDATE client_profiles
+             SET wallet_balance = wallet_balance + $1
+             WHERE client_profile_id = $2`,
+            [walletDepositedAmount, booking.client_id]
+        );
+    }
+
+    const settlementNotes = [
+        `${actorLabel}`,
+        reason ? `Reason: ${reason}` : null,
+        settlementAction ? `Settlement action: ${settlementAction}` : null,
+        remainingBalance > 0 ? `Remaining balance: Rs.${remainingBalance.toFixed(2)}` : 'No remaining balance',
+        settlementNote ? `Note: ${settlementNote}` : null
+    ].filter(Boolean).join(' | ');
+
+    await client.query(
+        `INSERT INTO transactions (
+            client_id,
+            booking_id,
+            category,
+            transaction_type,
+            amount,
+            status,
+            notes,
+            created_at
+        ) VALUES ($1, $2, $3, 'CREDIT', $4, 'COMPLETED', $5, NOW())`,
+        [
+            booking.client_id,
+            booking.booking_id,
+            'BOOKING_SETTLEMENT',
+            walletDepositedAmount,
+            settlementNotes
+        ]
+    );
+
+    return {
+        remaining_balance: remainingBalance,
+        wallet_deposited_amount: walletDepositedAmount,
+        settlement_notes: settlementNotes
+    };
+};
+
+const finalizeBookingState = async (req, res, nextStatus, actorLabel, includeTerminationLog = false) => {
+    const { booking_id } = req.params;
+    const {
+        actual_end_time,
+        settlement_action,
+        settlement_note,
+        reason
+    } = req.body || {};
+
+    const client = await db.pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        const booking = await getBookingSettlementSnapshot(client, booking_id);
+
+        if (!booking) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({
+                status: 'error',
+                message: 'Booking not found'
+            });
+        }
+
+        if (['COMPLETED', 'TERMINATED'].includes(booking.status)) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                status: 'error',
+                message: `Booking is already ${booking.status}`
+            });
+        }
+
+        const endTime = actual_end_time ? new Date(actual_end_time) : new Date();
+        const remainingBalance = parseFloat(booking.remaining_balance || 0);
+
+        if (remainingBalance > 0 && !settlement_action) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                status: 'error',
+                message: 'settlement_action is required when there is a remaining balance',
+                remaining_balance: remainingBalance,
+                allowed_actions: ['WALLET_DEPOSIT', 'NO_REFUND']
+            });
+        }
+
+        if (remainingBalance > 0 && settlement_action === 'NO_REFUND' && !settlement_note) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                status: 'error',
+                message: 'settlement_note is required when choosing NO_REFUND',
+                remaining_balance: remainingBalance
+            });
+        }
+
+        await client.query(
+            `UPDATE bookings
+             SET status = $1,
+                 actual_end_time = $2
+             WHERE booking_id = $3`,
+            [nextStatus, endTime, booking_id]
+        );
+
+        if (booking.assigned_staff_id) {
+            await client.query(
+                `UPDATE staff_profiles
+                 SET current_status = 'AVAILABLE'
+                 WHERE staff_profile_id = $1`,
+                [booking.assigned_staff_id]
+            );
+        }
+
+        if (includeTerminationLog) {
+            const pendingTermRes = await client.query(
+                `SELECT termination_id
+                 FROM service_terminations
+                 WHERE booking_id = $1 AND status = 'PENDING'
+                 FOR UPDATE`,
+                [booking_id]
+            );
+
+            const terminationReason = reason || settlement_note || `${actorLabel} booking end`;
+
+            if (pendingTermRes.rows.length > 0) {
+                await client.query(
+                    `UPDATE service_terminations
+                     SET status = 'APPROVED',
+                         end_date = $1,
+                         reason = COALESCE($2, reason)
+                     WHERE termination_id = $3`,
+                    [endTime, terminationReason, pendingTermRes.rows[0].termination_id]
+                );
+            } else {
+                await client.query(
+                    `INSERT INTO service_terminations (
+                        booking_id,
+                        requested_by,
+                        urgency,
+                        requested_end_date,
+                        end_date,
+                        reason,
+                        status
+                    ) VALUES ($1, 'ADMIN', 'IMMEDIATE', $2, $3, $4, 'APPROVED')`,
+                    [booking_id, endTime, endTime, terminationReason]
+                );
+            }
+        }
+
+        const settlementResult = await applyBookingSettlement(
+            client,
+            booking,
+            settlement_action || 'NO_REFUND',
+            settlement_note || null,
+            reason || null,
+            actorLabel
+        );
+
+        await client.query('COMMIT');
+
+        return res.status(200).json({
+            status: 'success',
+            message: nextStatus === 'COMPLETED'
+                ? 'Booking completed successfully.'
+                : 'Booking terminated successfully.',
+            data: {
+                booking_id,
+                status: nextStatus,
+                actual_end_time: endTime,
+                assigned_staff_id: booking.assigned_staff_id,
+                client_id: booking.client_id,
+                client_name: booking.client_name,
+                remaining_balance: settlementResult.remaining_balance,
+                wallet_deposited_amount: settlementResult.wallet_deposited_amount,
+                settlement_action: settlement_action || 'NO_REFUND',
+                settlement_note: settlement_note || null,
+                reason: reason || null
+            }
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error(`${actorLabel} error:`, error);
+        return res.status(500).json({
+            status: 'error',
+            message: `Failed to ${nextStatus === 'COMPLETED' ? 'complete' : 'terminate'} booking`
+        });
+    } finally {
+        client.release();
+    }
+};
+
+exports.completeBooking = async (req, res) => {
+    return finalizeBookingState(req, res, 'COMPLETED', 'Admin complete booking', false);
+};
+
+exports.adminTerminateBooking = async (req, res) => {
+    return finalizeBookingState(req, res, 'TERMINATED', 'Admin terminate booking', true);
+};
+
 // Refactored convertToBooking - ONLY creates booking (Step 2B)
 // Payment recording happens separately (Step 2A via paymentTrackingController.recordPayment)
 // Staff assignment happens separately (Step 2C via staffAssignmentController.assignStaffToBooking)
@@ -127,14 +398,27 @@ const convertToBookingInternal = async (req, res) => {
             patientId = newPatient.rows[0].patient_id;
         }
 
-        // 5. Fetch total amount paid for this quote from payment_tracking
+        // 5. Fetch verified payments for this quote and mirror them into the booking payment ledger
         const paymentRes = await client.query(`
-            SELECT COALESCE(SUM(amount_received), 0) as total_paid
+            SELECT
+                payment_id,
+                amount_received,
+                payment_method,
+                bank_account_id,
+                cheque_number,
+                cheque_date,
+                reference_number,
+                slip_url,
+                verified_by,
+                notes,
+                payment_date,
+                verified_at
             FROM payment_tracking
             WHERE quote_id = $1 AND status = 'VERIFIED'
+            ORDER BY payment_date ASC
         `, [bookingQuoteId]);
 
-        const amountPaid = parseFloat(paymentRes.rows[0]?.total_paid || 0);
+        const amountPaid = paymentRes.rows.reduce((sum, payment) => sum + parseFloat(payment.amount_received || 0), 0);
 
         // 6. Create Booking Record with PENDING status (No staff assignment yet)
         // NOTE: assigned_staff_id is NULL - staff assignment happens in separate step via staffAssignmentController
@@ -142,10 +426,99 @@ const convertToBookingInternal = async (req, res) => {
             `INSERT INTO bookings (client_id, patient_id, service_type, service_model, start_date, assigned_staff_id, status, preferred_gender, request_id, service_mode, scheduled_end_time, actual_end_time, ot_rate, daily_rate, amount_quotated, amount_paid) 
              VALUES ($1, $2, $3, $4::service_model_enum, $5, NULL, 'PENDING', $6::gender_preference_enum, $7, $8, $9, NULL, $10, $11, $12, $13)
              RETURNING booking_id`,
-            [clientProfileId, patientId, reqData.service_type, reqData.service_model || 'SHIFT_BASED', reqData.start_date, reqData.preferred_gender || 'ANY', request_id, null, scheduledEndTime, 500.00, quoteData.daily_rate, quoteData.total_amount, amountPaid]
+            [clientProfileId, patientId, reqData.service_type, reqData.service_model || 'SHIFT_BASED', reqData.start_date, reqData.preferred_gender || 'ANY', request_id, null, scheduledEndTime, 500.00, quoteData.daily_rate, quoteData.total_amount, 0]
         );
 
         const bookingId = newBooking.rows[0].booking_id;
+
+        for (const payment of paymentRes.rows) {
+            await client.query(
+                `INSERT INTO booking_payment_tracking (
+                   booking_id,
+                   quote_id,
+                   client_id,
+                   amount_received,
+                   payment_method,
+                   bank_account_id,
+                   cheque_number,
+                   cheque_date,
+                   reference_number,
+                   slip_url,
+                   status,
+                   verified_by,
+                   notes,
+                   payment_date,
+                   verified_at
+                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'VERIFIED', $11, $12, $13, $14)`,
+                [
+                    bookingId,
+                    bookingQuoteId,
+                    clientProfileId,
+                    payment.amount_received,
+                    payment.payment_method,
+                    payment.bank_account_id || null,
+                    payment.cheque_number || null,
+                    payment.cheque_date || null,
+                    payment.reference_number || null,
+                    payment.slip_url || null,
+                    payment.verified_by || null,
+                    payment.notes || null,
+                    payment.payment_date || new Date(),
+                    payment.verified_at || payment.payment_date || new Date()
+                ]
+            );
+
+            await client.query(
+                `INSERT INTO transactions (
+                   client_id,
+                   booking_id,
+                   quote_id,
+                   category,
+                   amount,
+                   payment_method,
+                   bank_account_id,
+                   cheque_number,
+                   cheque_date,
+                   reference_number,
+                   receipt_url,
+                   verified_by,
+                   status,
+                   notes,
+                   transaction_type,
+                   created_at
+                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'COMPLETED', $13, 'DEBIT', $14)`,
+                [
+                    clientProfileId,
+                    bookingId,
+                    bookingQuoteId,
+                    'BOOKING_PAYMENT',
+                    payment.amount_received,
+                    payment.payment_method,
+                    payment.bank_account_id || null,
+                    payment.cheque_number || null,
+                    payment.cheque_date || null,
+                    payment.reference_number || null,
+                    payment.slip_url || null,
+                    payment.verified_by || null,
+                    payment.notes || null,
+                    payment.payment_date || new Date()
+                ]
+            );
+        }
+
+        if (amountPaid > 0) {
+            await client.query(
+                `UPDATE bookings
+                 SET amount_paid = $1,
+                     last_payment_date = (
+                        SELECT MAX(COALESCE(verified_at, payment_date))
+                        FROM booking_payment_tracking
+                        WHERE booking_id = $2 AND status = 'VERIFIED'
+                     )
+                 WHERE booking_id = $2`,
+                [amountPaid, bookingId]
+            );
+        }
 
         // 7. Update Quotation to link booking_id
         await client.query(
@@ -284,6 +657,528 @@ exports.getByBookingID = async (req, res) => {
         console.error("Get Booking by ID Error:", error);
         console.error("Error details:", error.message);
         res.status(500).json({ message: 'Failed to fetch booking details' });
+    }
+};
+
+/**
+ * @route   GET /api/bookings/:booking_id/admin-detail
+ * @desc    Get a consolidated admin view for one booking
+ * @access  Private (SUPER_ADMIN, ADMIN, COORDINATOR, ACCOUNTS)
+ */
+exports.getAdminBookingDetail = async (req, res) => {
+    const { booking_id } = req.params;
+
+    const bookingQuery = `
+        SELECT 
+            b.booking_id,
+            b.request_id,
+            b.client_id,
+            b.patient_id,
+            b.service_type,
+            b.service_model,
+            b.service_mode,
+            b.status,
+            b.preferred_gender,
+            b.start_date,
+            b.scheduled_end_time,
+            b.actual_end_time,
+            b.created_at,
+            b.assigned_staff_id,
+            b.daily_rate,
+            b.ot_rate,
+            b.amount_quotated,
+            b.amount_paid,
+            c.client_profile_id,
+            c.full_name as client_name,
+            c.primary_address as client_address,
+            uc.mobile_number as client_mobile,
+            uc.email as client_email,
+            p.patient_id as resolved_patient_id,
+            p.full_name as patient_name,
+            p.age as patient_age,
+            p.relationship_to_client,
+            p.medical_condition,
+            p.residential_address as patient_address,
+            s.staff_profile_id,
+            s.full_name as staff_name,
+            us.mobile_number as staff_mobile,
+            us.email as staff_email,
+            s.profile_picture_url,
+            sr.active_quote_id as quote_id,
+            q.estimate_number,
+            q.total_amount,
+            q.daily_rate as quote_daily_rate,
+            q.qty_days,
+            q.registration_fee
+        FROM bookings b
+        LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
+        LEFT JOIN users uc ON c.user_id = uc.user_id
+        LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+        LEFT JOIN staff_profiles s ON b.assigned_staff_id = s.staff_profile_id
+        LEFT JOIN users us ON s.user_id = us.user_id
+        LEFT JOIN service_requests sr ON b.request_id = sr.request_id
+        LEFT JOIN quotations q ON sr.active_quote_id = q.quote_id
+        WHERE b.booking_id = $1
+    `;
+
+    try {
+        const bookingResult = await db.query(bookingQuery, [booking_id]);
+
+        if (bookingResult.rows.length === 0) {
+            return res.status(404).json({
+                status: 'error',
+                message: 'Booking not found'
+            });
+        }
+
+        const booking = bookingResult.rows[0];
+        const quoteId = booking.quote_id;
+        const clientId = booking.client_id;
+
+        const [paymentHistoryResult, paymentSummaryResult, assignmentHistoryResult, swapHistoryResult, terminationHistoryResult, invoiceSummaryResult] = await Promise.all([
+            db.query(
+                quoteId
+                    ? `SELECT payment_id, source_type, amount_received, payment_method, bank_account_id, cheque_number, reference_number, slip_url, status, payment_date, verified_at, verified_by, notes
+                       FROM (
+                         SELECT payment_id, 'QUOTE'::text as source_type, amount_received, payment_method, bank_account_id, cheque_number, reference_number, slip_url, status, payment_date, verified_at, verified_by, notes
+                         FROM payment_tracking
+                         WHERE quote_id = $1
+                         UNION ALL
+                         SELECT booking_payment_id as payment_id, 'BOOKING'::text as source_type, amount_received, payment_method, bank_account_id, cheque_number, reference_number, slip_url, status, payment_date, verified_at, verified_by, notes
+                         FROM booking_payment_tracking
+                         WHERE booking_id = $2
+                       ) payment_history
+                       ORDER BY payment_date DESC`
+                    : `SELECT booking_payment_id as payment_id, 'BOOKING'::text as source_type, amount_received, payment_method, bank_account_id, cheque_number, reference_number, slip_url, status, payment_date, verified_at, verified_by, notes
+                       FROM booking_payment_tracking
+                       WHERE booking_id = $1
+                       ORDER BY payment_date DESC`,
+                quoteId ? [quoteId, booking_id] : [booking_id]
+            ),
+            db.query(
+                quoteId
+                    ? `SELECT
+                         COUNT(*) as payment_count,
+                         COALESCE(SUM(amount_received), 0) as total_paid
+                       FROM (
+                         SELECT amount_received
+                         FROM payment_tracking
+                         WHERE quote_id = $1 AND status = 'VERIFIED'
+                         UNION ALL
+                         SELECT amount_received
+                         FROM booking_payment_tracking
+                         WHERE booking_id = $2 AND status = 'VERIFIED'
+                       ) payment_totals`
+                    : `SELECT
+                         COUNT(*) as payment_count,
+                         COALESCE(SUM(amount_received), 0) as total_paid
+                       FROM booking_payment_tracking
+                       WHERE booking_id = $1 AND status = 'VERIFIED'`,
+                quoteId ? [quoteId, booking_id] : [booking_id]
+            ),
+            db.query(
+                `SELECT
+                    bsa.assignment_id,
+                    bsa.booking_id,
+                    bsa.staff_profile_id,
+                    bsa.daily_rate,
+                    bsa.service_start_date,
+                    bsa.service_end_date,
+                    bsa.amount_allocated,
+                    bsa.status,
+                    bsa.notes,
+                    sp.full_name,
+                    sp.designation,
+                    sp.current_status
+                 FROM booking_staff_assignments bsa
+                 JOIN staff_profiles sp ON bsa.staff_profile_id = sp.staff_profile_id
+                 WHERE bsa.booking_id = $1
+                 ORDER BY bsa.service_start_date ASC`,
+                [booking_id]
+            ),
+            db.query(
+                `SELECT
+                    ss.swap_id,
+                    ss.swapped_at,
+                    ss.swap_reason,
+                    ss.arrival_time,
+                    ss.billing_gap,
+                    old_sp.full_name as old_staff_name,
+                    new_sp.full_name as new_staff_name,
+                    u.mobile_number as swapped_by_mobile
+                 FROM staff_swaps ss
+                 JOIN staff_profiles old_sp ON ss.old_staff_id = old_sp.staff_profile_id
+                 JOIN staff_profiles new_sp ON ss.new_staff_id = new_sp.staff_profile_id
+                 JOIN users u ON ss.swapped_by = u.user_id
+                 WHERE ss.booking_id = $1
+                 ORDER BY ss.swapped_at DESC`,
+                [booking_id]
+            ),
+            db.query(
+                `SELECT
+                    st.termination_id,
+                    st.requested_by,
+                    st.urgency,
+                    st.requested_end_date,
+                    st.end_date,
+                    st.reason,
+                    st.status,
+                    st.created_at,
+                    st.end_date - CURRENT_DATE as days_until_end
+                 FROM service_terminations st
+                 WHERE st.booking_id = $1
+                 ORDER BY st.created_at DESC`,
+                [booking_id]
+            ),
+            quoteId
+                ? db.query(
+                    `SELECT
+                        COUNT(*) as invoice_count,
+                        COALESCE(SUM(amount), 0) as total_invoiced,
+                        MAX(created_at) as last_invoice_at
+                     FROM transactions
+                     WHERE booking_id = $1
+                       AND category = 'SERVICE_INVOICE'
+                       AND transaction_type = 'DEBIT'
+                       AND status = 'COMPLETED'`,
+                    [booking_id]
+                )
+                : Promise.resolve({ rows: [{ invoice_count: 0, total_invoiced: 0, last_invoice_at: null }] })
+        ]);
+
+        const verifiedPaid = parseFloat(paymentSummaryResult.rows[0]?.total_paid || 0);
+        const totalInvoiced = parseFloat(invoiceSummaryResult.rows[0]?.total_invoiced || 0);
+        const totalAmount = parseFloat(booking.total_amount || 0);
+        const remainingToInvoice = Math.max(verifiedPaid - totalInvoiced, 0);
+        const balanceRemaining = Math.max(totalAmount - verifiedPaid, 0);
+        const overdueAmount = Math.max(totalInvoiced - verifiedPaid, 0);
+
+        let daysRemaining = null;
+        let overdueDays = null;
+        if (booking.quote_daily_rate) {
+            const rate = parseFloat(booking.quote_daily_rate);
+            if (rate > 0) {
+                const daySpan = balanceRemaining / rate;
+                if (verifiedPaid >= totalInvoiced) {
+                    daysRemaining = daySpan > 0 ? daySpan : 0;
+                } else {
+                    overdueDays = Math.ceil(overdueAmount / rate);
+                }
+            }
+        }
+
+        res.status(200).json({
+            status: 'success',
+            data: {
+                booking_summary: {
+                    booking_id: booking.booking_id,
+                    request_id: booking.request_id,
+                    status: booking.status,
+                    service_type: booking.service_type,
+                    service_model: booking.service_model,
+                    service_mode: booking.service_mode,
+                    preferred_gender: booking.preferred_gender,
+                    start_date: booking.start_date,
+                    scheduled_end_time: booking.scheduled_end_time,
+                    actual_end_time: booking.actual_end_time,
+                    created_at: booking.created_at,
+                    daily_rate: booking.daily_rate,
+                    ot_rate: booking.ot_rate,
+                    amount_quotated: booking.amount_quotated,
+                    amount_paid: booking.amount_paid,
+                    quote_id: booking.quote_id,
+                    estimate_number: booking.estimate_number,
+                    quote_daily_rate: booking.quote_daily_rate,
+                    quote_total_amount: booking.total_amount,
+                    qty_days: booking.qty_days,
+                    registration_fee: booking.registration_fee,
+                    auto_complete_when_paid: false
+                },
+                client_details: {
+                    client_profile_id: booking.client_profile_id,
+                    client_name: booking.client_name,
+                    client_address: booking.client_address,
+                    client_mobile: booking.client_mobile,
+                    client_email: booking.client_email
+                },
+                patient_details: {
+                    patient_id: booking.resolved_patient_id || booking.patient_id,
+                    patient_name: booking.patient_name,
+                    patient_age: booking.patient_age,
+                    relationship_to_client: booking.relationship_to_client,
+                    medical_condition: booking.medical_condition,
+                    patient_address: booking.patient_address
+                },
+                current_staff: booking.staff_profile_id ? {
+                    staff_profile_id: booking.staff_profile_id,
+                    staff_name: booking.staff_name,
+                    staff_mobile: booking.staff_mobile,
+                    staff_email: booking.staff_email,
+                    profile_picture_url: booking.profile_picture_url
+                } : null,
+                payment_summary: {
+                    payment_count: parseInt(paymentSummaryResult.rows[0]?.payment_count || 0, 10),
+                    total_paid: verifiedPaid,
+                    remaining_amount: Math.max(totalAmount - verifiedPaid, 0)
+                },
+                invoice_summary: {
+                    invoice_count: parseInt(invoiceSummaryResult.rows[0]?.invoice_count || 0, 10),
+                    total_invoiced: totalInvoiced,
+                    remaining_to_invoice: remainingToInvoice,
+                    overdue_amount: overdueAmount,
+                    days_remaining: daysRemaining,
+                    overdue_days: overdueDays,
+                    last_invoice_at: invoiceSummaryResult.rows[0]?.last_invoice_at || null
+                },
+                payment_history: paymentHistoryResult.rows,
+                staff_assignment_history: assignmentHistoryResult.rows,
+                swap_history: swapHistoryResult.rows,
+                termination_requests: terminationHistoryResult.rows
+            }
+        });
+    } catch (error) {
+        console.error('Admin booking detail error:', error);
+        res.status(500).json({
+            status: 'error',
+            message: 'Failed to fetch admin booking details'
+        });
+    }
+};
+
+/**
+ * @route   GET /api/bookings/:booking_id/termination-requests
+ * @desc    Get all termination requests for a booking
+ * @access  Private (SUPER_ADMIN, ADMIN, COORDINATOR, ACCOUNTS)
+ */
+exports.getBookingTerminationRequests = async (req, res) => {
+    const { booking_id } = req.params;
+
+    try {
+        const result = await db.query(
+            `SELECT
+                termination_id,
+                requested_by,
+                urgency,
+                requested_end_date,
+                end_date,
+                reason,
+                status,
+                created_at
+             FROM service_terminations
+             WHERE booking_id = $1
+             ORDER BY created_at DESC`,
+            [booking_id]
+        );
+
+        res.status(200).json({
+            status: 'success',
+            count: result.rowCount,
+            data: result.rows
+        });
+    } catch (error) {
+        console.error('Booking termination history error:', error);
+        res.status(500).json({
+            status: 'error',
+            message: 'Failed to fetch booking termination history'
+        });
+    }
+};
+
+/**
+ * @route   GET /api/bookings/:booking_id/invoice-breakdown
+ * @desc    Get daily invoicing vs payment breakdown for a booking
+ * @access  Private (SUPER_ADMIN, ADMIN, COORDINATOR, ACCOUNTS)
+ */
+exports.getBookingInvoiceBreakdown = async (req, res) => {
+    const { booking_id } = req.params;
+
+    try {
+        const bookingResult = await db.query(
+            `SELECT
+                b.booking_id,
+                b.status,
+                b.client_id,
+                b.assigned_staff_id,
+                b.start_date,
+                b.scheduled_end_time,
+                b.actual_end_time,
+                b.daily_rate,
+                b.amount_paid,
+                b.amount_quotated,
+                c.full_name as client_name,
+                q.quote_id,
+                q.total_amount,
+                q.daily_rate as quote_daily_rate,
+                q.qty_days
+             FROM bookings b
+             LEFT JOIN service_requests sr ON b.request_id = sr.request_id
+             LEFT JOIN quotations q ON sr.active_quote_id = q.quote_id
+             LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
+             WHERE b.booking_id = $1`,
+            [booking_id]
+        );
+
+        if (bookingResult.rows.length === 0) {
+            return res.status(404).json({
+                status: 'error',
+                message: 'Booking not found'
+            });
+        }
+
+        const booking = bookingResult.rows[0];
+        const rate = parseFloat(booking.quote_daily_rate || booking.daily_rate || 0);
+
+        const [paymentSummaryResult, invoiceSummaryResult, recentPaymentResult, recentInvoiceResult] = await Promise.all([
+            booking.quote_id
+                ? db.query(
+                    `SELECT
+                        COUNT(*) as payment_count,
+                        COALESCE(SUM(amount_received), 0) as total_paid,
+                        MAX(payment_date) as last_payment_at
+                     FROM payment_tracking
+                     WHERE quote_id = $1 AND status = 'VERIFIED'`,
+                    [booking.quote_id]
+                )
+                : Promise.resolve({ rows: [{ payment_count: 0, total_paid: 0, last_payment_at: null }] }),
+            db.query(
+                `SELECT
+                    COUNT(*) as invoice_count,
+                    COALESCE(SUM(amount), 0) as total_invoiced,
+                    MAX(created_at) as last_invoice_at
+                 FROM transactions
+                 WHERE booking_id = $1
+                   AND category = 'SERVICE_INVOICE'
+                   AND transaction_type = 'DEBIT'
+                   AND status = 'COMPLETED'`,
+                [booking_id]
+            ),
+            booking.quote_id
+                ? db.query(
+                    `SELECT payment_id, amount_received, payment_method, payment_date, status, verified_at
+                     FROM payment_tracking
+                     WHERE quote_id = $1
+                     ORDER BY payment_date DESC
+                     LIMIT 5`,
+                    [booking.quote_id]
+                )
+                : Promise.resolve({ rows: [] }),
+            db.query(
+                `SELECT transaction_id, amount, notes, created_at
+                 FROM transactions
+                 WHERE booking_id = $1
+                   AND category = 'SERVICE_INVOICE'
+                   AND transaction_type = 'DEBIT'
+                   AND status = 'COMPLETED'
+                 ORDER BY created_at DESC
+                 LIMIT 5`,
+                [booking_id]
+            )
+        ]);
+
+        const totalPaid = parseFloat(paymentSummaryResult.rows[0]?.total_paid || 0);
+        const totalInvoiced = parseFloat(invoiceSummaryResult.rows[0]?.total_invoiced || 0);
+        const remainingToInvoice = Math.max(totalPaid - totalInvoiced, 0);
+        const overdueAmount = Math.max(totalInvoiced - totalPaid, 0);
+        const remainingDays = rate > 0 ? Math.max(Math.floor(remainingToInvoice / rate), 0) : null;
+        const overdueDays = rate > 0 ? Math.max(Math.ceil(overdueAmount / rate), 0) : null;
+
+        res.status(200).json({
+            status: 'success',
+            data: {
+                booking_id: booking.booking_id,
+                booking_status: booking.status,
+                client_id: booking.client_id,
+                client_name: booking.client_name,
+                quote_id: booking.quote_id,
+                quote_daily_rate: rate,
+                quote_total_amount: parseFloat(booking.total_amount || 0),
+                payment_summary: {
+                    payment_count: parseInt(paymentSummaryResult.rows[0]?.payment_count || 0, 10),
+                    total_paid: totalPaid,
+                    last_payment_at: paymentSummaryResult.rows[0]?.last_payment_at || null
+                },
+                invoice_summary: {
+                    invoice_count: parseInt(invoiceSummaryResult.rows[0]?.invoice_count || 0, 10),
+                    total_invoiced: totalInvoiced,
+                    last_invoice_at: invoiceSummaryResult.rows[0]?.last_invoice_at || null,
+                    remaining_to_invoice: remainingToInvoice,
+                    overdue_amount: overdueAmount,
+                    remaining_days: remainingDays,
+                    overdue_days: overdueDays
+                },
+                recent_payments: recentPaymentResult.rows,
+                recent_invoices: recentInvoiceResult.rows
+            }
+        });
+    } catch (error) {
+        console.error('Booking invoice breakdown error:', error);
+        res.status(500).json({
+            status: 'error',
+            message: 'Failed to fetch booking invoice breakdown'
+        });
+    }
+};
+
+/**
+ * @route   GET /api/bookings/:booking_id/staff-allocation-history
+ * @desc    Get staff assignment and allocation history for a booking
+ * @access  Private (SUPER_ADMIN, ADMIN, COORDINATOR, ACCOUNTS)
+ */
+exports.getBookingStaffAllocationHistory = async (req, res) => {
+    const { booking_id } = req.params;
+
+    try {
+        const result = await db.query(
+            `SELECT
+                bsa.assignment_id,
+                bsa.booking_id,
+                bsa.staff_profile_id,
+                bsa.daily_rate,
+                bsa.service_start_date,
+                bsa.service_end_date,
+                bsa.amount_allocated,
+                bsa.status,
+                bsa.notes,
+                sp.full_name as staff_name,
+                sp.designation,
+                sp.current_status,
+                COALESCE(salary_totals.total_salary_paid, 0) as total_salary_paid
+             FROM booking_staff_assignments bsa
+             JOIN staff_profiles sp ON bsa.staff_profile_id = sp.staff_profile_id
+             LEFT JOIN (
+                 SELECT staff_profile_id, booking_id, COALESCE(SUM(amount), 0) as total_salary_paid
+                 FROM transactions
+                 WHERE category = 'STAFF_SALARY'
+                   AND transaction_type = 'CREDIT'
+                   AND status = 'COMPLETED'
+                 GROUP BY staff_profile_id, booking_id
+             ) salary_totals
+               ON salary_totals.staff_profile_id = bsa.staff_profile_id
+              AND salary_totals.booking_id = bsa.booking_id
+             WHERE bsa.booking_id = $1
+             ORDER BY bsa.service_start_date ASC`,
+            [booking_id]
+        );
+
+        const totalAllocated = result.rows.reduce((sum, row) => sum + parseFloat(row.amount_allocated || 0), 0);
+        const totalSalaryPaid = result.rows.reduce((sum, row) => sum + parseFloat(row.total_salary_paid || 0), 0);
+
+        res.status(200).json({
+            status: 'success',
+            booking_id,
+            summary: {
+                assignment_count: result.rowCount,
+                total_allocated: totalAllocated,
+                total_salary_paid: totalSalaryPaid
+            },
+            data: result.rows
+        });
+    } catch (error) {
+        console.error('Booking staff allocation history error:', error);
+        res.status(500).json({
+            status: 'error',
+            message: 'Failed to fetch booking staff allocation history'
+        });
     }
 };
 
@@ -911,7 +1806,22 @@ exports.swapStaff = async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        // 1. Fetch the current booking
+        // 1. Lock the booking row first, then fetch related display fields separately.
+        const bookingLockRes = await client.query(
+            `SELECT booking_id, status, assigned_staff_id, client_id, patient_id
+             FROM bookings
+             WHERE booking_id = $1
+             FOR UPDATE`,
+            [booking_id]
+        );
+
+        if (!bookingLockRes.rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Booking not found' });
+        }
+
+        const booking = bookingLockRes.rows[0];
+
         const bookingRes = await client.query(
             `SELECT b.*, 
                     sp.full_name as old_staff_name,
@@ -920,21 +1830,46 @@ exports.swapStaff = async (req, res) => {
                     uc.mobile_number as client_mobile,
                     p.full_name as patient_name
              FROM bookings b
-             JOIN staff_profiles sp ON b.assigned_staff_id = sp.staff_profile_id
-             JOIN users u ON sp.user_id = u.user_id
-             JOIN client_profiles cp ON b.client_id = cp.client_profile_id
-             JOIN users uc ON cp.user_id = uc.user_id
-             JOIN patient_profiles p ON b.patient_id = p.patient_id
-             WHERE b.booking_id = $1 FOR UPDATE`,
+             LEFT JOIN staff_profiles sp ON b.assigned_staff_id = sp.staff_profile_id
+             LEFT JOIN users u ON sp.user_id = u.user_id
+             LEFT JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+             LEFT JOIN users uc ON cp.user_id = uc.user_id
+             LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+             WHERE b.booking_id = $1`,
             [booking_id]
         );
 
-        if (!bookingRes.rows.length) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ status: 'error', message: 'Booking not found' });
-        }
+        const bookingDetail = bookingRes.rows[0] || booking;
 
-        const booking = bookingRes.rows[0];
+        const activeAssignmentRes = await client.query(
+            `SELECT
+                bsa.staff_profile_id,
+                sp.full_name as staff_name,
+                sp.designation,
+                bsa.service_start_date,
+                bsa.service_end_date,
+                bsa.assignment_id
+             FROM booking_staff_assignments bsa
+             JOIN staff_profiles sp ON bsa.staff_profile_id = sp.staff_profile_id
+             WHERE bsa.booking_id = $1
+               AND bsa.status = 'ACTIVE'
+             ORDER BY bsa.assigned_on DESC
+             LIMIT 1
+             FOR UPDATE`,
+            [booking_id]
+        );
+
+        const activeAssignment = activeAssignmentRes.rows[0] || null;
+        const currentStaffId = booking.assigned_staff_id || activeAssignment?.staff_profile_id || null;
+        const currentStaffName = bookingDetail.old_staff_name || activeAssignment?.staff_name || null;
+
+        if (!currentStaffId) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                status: 'error',
+                message: 'No staff is currently assigned to this booking, so a swap cannot be performed yet.'
+            });
+        }
 
         if (!['ACTIVE', 'OVERDUE'].includes(booking.status)) {
             await client.query('ROLLBACK');
@@ -979,7 +1914,7 @@ exports.swapStaff = async (req, res) => {
             billingGap = diffHours > 4;
         }
 
-        const oldStaffId = booking.assigned_staff_id;
+        const oldStaffId = currentStaffId;
 
         // 4. Log the swap
         await client.query(
@@ -1061,10 +1996,10 @@ exports.swapStaff = async (req, res) => {
 
         res.status(200).json({
             status: 'success',
-            message: `Staff swapped successfully. ${booking.old_staff_name} replaced by ${newStaff.full_name}.`,
+            message: `Staff swapped successfully. ${currentStaffName || 'Current staff'} replaced by ${newStaff.full_name}.`,
             data: {
                 booking_id,
-                old_staff: booking.old_staff_name,
+                old_staff: currentStaffName,
                 new_staff: newStaff.full_name,
                 billing_gap: billingGap,
                 billing_note: billingGap

@@ -62,6 +62,7 @@ import QuotationDetailsPage from './modules/admin/service_quotes/quotation_detai
 import ServiceRequestSummaryPage from './modules/admin/service_requests/service_request_summary';
 import BookingStaffRosterPage from './modules/admin/service_requests/booking_staff_roster';
 import BookingStaffAssignmentPage from './modules/admin/service_requests/booking_staff_assignment';
+import BookingDetailPage from './modules/admin/bookings/BookingDetailPage';
 
 function App() {
   return (
@@ -188,6 +189,11 @@ function App() {
             <Route path="/admin/bookings/:bookingId/staff-assignment" element={
               <AdminAuthProvider>
                 <BookingStaffAssignmentPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/bookings/:bookingId/detail" element={
+              <AdminAuthProvider>
+                <BookingDetailPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/reports" element={

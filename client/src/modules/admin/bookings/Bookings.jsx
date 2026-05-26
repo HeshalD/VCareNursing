@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Eye, XCircle, Loader2, Calendar, User, Activity, Clock, CheckCircle, AlertCircle, DollarSign,Stethoscope, Baby, Heart, ToggleLeft, ToggleRight } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -6,6 +7,7 @@ import { useAdminAuth } from '../../../context/AdminAuthContext';
 
 const Bookings = () => {
   const { adminToken } = useAdminAuth();
+  const navigate = useNavigate();
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -311,12 +313,12 @@ const Bookings = () => {
                       </td>
                       <td className="px-6 py-4 text-right">
                         <button
-                          onClick={() => setSelectedBooking(b)}
+                          onClick={() => navigate(`/admin/bookings/${b.booking_id}/detail`)}
                           className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-all"
-                          title="View details"
+                          title="Open booking detail page"
                         >
                           <Eye className="w-4 h-4" />
-                          View
+                          Open
                         </button>
                       </td>
                     </tr>

@@ -3,6 +3,7 @@ const router = express.Router();
 const bookingController = require('../controllers/bookingController');
 const paymentTrackingController = require('../controllers/paymentTrackingController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { upload } = require('../config/cloudinaryConfig');
 
 /**
  * @route   POST /api/bookings/convert
@@ -27,10 +28,67 @@ router.get('/active-bookings', protect,
     bookingController.getActiveBookings);
 
 router.get(
+    '/:booking_id/admin-detail',
+    protect,
+    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    bookingController.getAdminBookingDetail
+);
+
+router.get(
+    '/:booking_id/termination-requests',
+    protect,
+    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    bookingController.getBookingTerminationRequests
+);
+
+router.get(
+    '/:booking_id/invoice-breakdown',
+    protect,
+    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    bookingController.getBookingInvoiceBreakdown
+);
+
+router.get(
+    '/:booking_id/staff-allocation-history',
+    protect,
+    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    bookingController.getBookingStaffAllocationHistory
+);
+
+router.post(
+    '/:booking_id/complete',
+    protect,
+    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR'),
+    bookingController.completeBooking
+);
+
+router.post(
+    '/:booking_id/admin-terminate',
+    protect,
+    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR'),
+    bookingController.adminTerminateBooking
+);
+
+router.get(
     '/:booking_id/invoice-progress',
     protect,
     restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
     paymentTrackingController.getBookingInvoiceProgress
+);
+
+router.post(
+    '/:booking_id/record-payment',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    upload.single('payment_slip'),
+    paymentTrackingController.recordBookingPayment
+);
+
+router.get(
+    '/:booking_id/payments',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    paymentTrackingController.getPaymentsByBooking
 );
 
 router.get('/:booking_id', protect,  

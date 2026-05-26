@@ -37,6 +37,7 @@ const BookingStaffRosterPage = () => {
   const [genderFilter, setGenderFilter] = useState('all');
   const [liveInFilter, setLiveInFilter] = useState('all');
   const [roleFilter, setRoleFilter] = useState('all');
+  const preferredStaffId = booking?.preferred_staff_id || booking?.preferred_staff?.staff_profile_id || null;
 
   const fetchData = async () => {
     try {
@@ -164,7 +165,10 @@ const BookingStaffRosterPage = () => {
       ) : (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {filteredStaff.map((member) => (
-            <div key={member.staff_profile_id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div
+              key={member.staff_profile_id}
+              className={`rounded-2xl border bg-white p-5 shadow-sm transition-all ${member.staff_profile_id === preferredStaffId ? 'border-amber-300 ring-2 ring-amber-200' : 'border-slate-200'}`}
+            >
               <div className="flex items-start justify-between gap-4">
                 <div className="flex items-start gap-3">
                   <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100">
@@ -177,6 +181,11 @@ const BookingStaffRosterPage = () => {
                       <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 ${getStatusColor(member.current_status)}`}>
                         {getStatusIcon(member.current_status)} {member.current_status}
                       </span>
+                      {member.staff_profile_id === preferredStaffId && (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-2 py-1 text-amber-800">
+                          Prefered by client.
+                        </span>
+                      )}
                       {member.willing_to_live_in && (
                         <span className="inline-flex items-center gap-1 rounded-full border border-green-200 bg-green-100 px-2 py-1 text-green-800">
                           <Home className="h-3 w-3" /> Live-in

@@ -194,6 +194,7 @@ const recordPayment = async (req, res) => {
     const quoteCheck = await client.query(`
       SELECT 
         quote_id,
+        booking_id,
         total_amount,
         request_id,
         status
@@ -285,19 +286,81 @@ const recordPayment = async (req, res) => {
 
     const payment = paymentResult.rows[0];
 
-    // Update bookings table with payment info (if booking exists for this quote)
-    await client.query(`
-      UPDATE bookings
-      SET 
-        amount_paid = (
-          SELECT COALESCE(SUM(amount_received), 0)
-          FROM payment_tracking
-          WHERE quote_id = $1 AND status = 'VERIFIED'
-        ),
-        amount_quotated = $2,
-        last_payment_date = NOW()
-      WHERE request_id = (SELECT request_id FROM quotations WHERE quote_id = $1)
-    `, [quote_id, quotation.total_amount]);
+    let mirroredBookingPayment = null;
+    if (quotation.booking_id) {
+      const mirroredResult = await client.query(
+        `INSERT INTO booking_payment_tracking (
+           booking_id,
+           quote_id,
+           client_id,
+           amount_received,
+           payment_method,
+           bank_account_id,
+           cheque_number,
+           cheque_date,
+           reference_number,
+           slip_url,
+           status,
+           verified_by,
+           notes,
+           payment_date,
+           verified_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'VERIFIED', $11, $12, $13, $14)
+         RETURNING booking_payment_id, booking_id, quote_id, amount_received, payment_method, reference_number, status, payment_date, verified_at`,
+        [
+          quotation.booking_id,
+          quote_id,
+          client_id,
+          amount_received,
+          payment_method,
+          bank_account_id || null,
+          cheque_number || null,
+          cheque_date || null,
+          reference_number || null,
+          paymentSlipUrl,
+          verified_by,
+          notes || null,
+          payment.payment_date,
+          payment.verified_at
+        ]
+      );
+
+      mirroredBookingPayment = mirroredResult.rows[0];
+
+      await client.query(
+        `UPDATE bookings
+         SET
+           amount_paid = (
+             SELECT COALESCE(SUM(amount_received), 0)
+             FROM booking_payment_tracking
+             WHERE booking_id = $1 AND status = 'VERIFIED'
+           ),
+           last_payment_date = (
+             SELECT MAX(COALESCE(verified_at, payment_date))
+             FROM booking_payment_tracking
+             WHERE booking_id = $1 AND status = 'VERIFIED'
+           ),
+           amount_quotated = $2
+         WHERE booking_id = $1`,
+        [quotation.booking_id, quotation.total_amount]
+      );
+    }
+
+    // Keep legacy quote-linked bookings in sync only when the booking ledger does not exist yet.
+    if (!quotation.booking_id) {
+      await client.query(`
+        UPDATE bookings
+        SET 
+          amount_paid = (
+            SELECT COALESCE(SUM(amount_received), 0)
+            FROM payment_tracking
+            WHERE quote_id = $1 AND status = 'VERIFIED'
+          ),
+          amount_quotated = $2,
+          last_payment_date = NOW()
+        WHERE request_id = (SELECT request_id FROM quotations WHERE quote_id = $1)
+      `, [quote_id, quotation.total_amount]);
+    }
 
     // Create transaction record for audit trail
     await client.query(`
@@ -359,6 +422,7 @@ const recordPayment = async (req, res) => {
       data: {
         payment_id: payment.payment_id,
         quote_id: payment.quote_id,
+          booking_payment_id: mirroredBookingPayment?.booking_payment_id || null,
         amount_received: parseFloat(payment.amount_received),
         payment_method: payment.payment_method,
         bank_account: bank_account,
@@ -386,6 +450,250 @@ const recordPayment = async (req, res) => {
     res.status(500).json({
       status: 'error',
       message: 'Failed to record payment',
+      error: error.message
+    });
+  } finally {
+    client.release();
+  }
+};
+
+/**
+ * Record a payment directly against a booking
+ * POST /api/bookings/:booking_id/record-payment
+ */
+const recordBookingPayment = async (req, res) => {
+  const client = await db.pool.connect();
+
+  try {
+    const { booking_id } = req.params;
+    const uploadedSlipUrl = req.file?.path || null;
+    const {
+      amount_received,
+      payment_method,
+      bank_account_id,
+      cheque_number,
+      cheque_date,
+      reference_number,
+      slip_url,
+      notes
+    } = req.body;
+    const paymentSlipUrl = uploadedSlipUrl || slip_url || null;
+
+    await client.query('BEGIN');
+
+    if (!booking_id || !uuidRegex.test(booking_id)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ status: 'error', message: 'Invalid booking ID format' });
+    }
+
+    if (!amount_received || amount_received <= 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ status: 'error', message: 'amount_received is required and must be greater than 0' });
+    }
+
+    if (!payment_method) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ status: 'error', message: 'payment_method is required (BANK_TRANSFER, CASH_DEPOSIT, CASH, CHEQUE)' });
+    }
+
+    const validMethods = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
+    if (!validMethods.includes(payment_method)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ status: 'error', message: `Invalid payment_method. Must be one of: ${validMethods.join(', ')}` });
+    }
+
+    if (['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(payment_method) && !bank_account_id) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ status: 'error', message: `bank_account_id is required for ${payment_method}` });
+    }
+
+    if (payment_method === 'CHEQUE' && (!cheque_number || !cheque_date)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ status: 'error', message: 'cheque_number and cheque_date are required for CHEQUE payments' });
+    }
+
+    if (bank_account_id) {
+      const bankCheck = await client.query(
+        `SELECT account_id, is_active FROM bank_accounts WHERE account_id = $1`,
+        [bank_account_id]
+      );
+
+      if (bankCheck.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ status: 'error', message: 'Bank account not found' });
+      }
+
+      if (!bankCheck.rows[0].is_active) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ status: 'error', message: 'Bank account is not active' });
+      }
+    }
+
+    const bookingCheck = await client.query(
+      `SELECT
+         b.booking_id,
+         b.client_id,
+         sr.active_quote_id as quote_id,
+         COALESCE(q.total_amount, b.amount_quotated, 0) as total_amount
+       FROM bookings b
+       LEFT JOIN service_requests sr ON sr.request_id = b.request_id
+       LEFT JOIN quotations q ON q.quote_id = sr.active_quote_id
+       WHERE b.booking_id = $1`,
+      [booking_id]
+    );
+
+    if (bookingCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ status: 'error', message: 'Booking not found' });
+    }
+
+    const booking = bookingCheck.rows[0];
+    const totalPaidResult = await client.query(
+      `SELECT COALESCE(SUM(amount_received), 0) as total_paid
+       FROM booking_payment_tracking
+       WHERE booking_id = $1 AND status = 'VERIFIED'`,
+      [booking_id]
+    );
+
+    const total_paid_so_far = parseFloat(totalPaidResult.rows[0].total_paid || 0);
+    const new_total = total_paid_so_far + parseFloat(amount_received);
+
+    const verified_by = req.user?.user_id || null;
+
+    const paymentResult = await client.query(
+      `INSERT INTO booking_payment_tracking (
+         booking_id,
+         quote_id,
+         client_id,
+         amount_received,
+         payment_method,
+         bank_account_id,
+         cheque_number,
+         cheque_date,
+         reference_number,
+         slip_url,
+         status,
+         verified_by,
+         notes,
+         payment_date,
+         verified_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+       RETURNING
+         booking_payment_id,
+         booking_id,
+         quote_id,
+         amount_received,
+         payment_method,
+         reference_number,
+         status,
+         payment_date,
+         verified_at`,
+      [
+        booking_id,
+        booking.quote_id || null,
+        booking.client_id,
+        amount_received,
+        payment_method,
+        bank_account_id || null,
+        cheque_number || null,
+        cheque_date || null,
+        reference_number || null,
+        paymentSlipUrl,
+        'VERIFIED',
+        verified_by,
+        notes || null
+      ]
+    );
+
+    const payment = paymentResult.rows[0];
+
+    await client.query(
+      `UPDATE bookings
+       SET
+         amount_paid = (
+           SELECT COALESCE(SUM(amount_received), 0)
+           FROM booking_payment_tracking
+           WHERE booking_id = $1 AND status = 'VERIFIED'
+         ),
+         last_payment_date = NOW()
+       WHERE booking_id = $1`,
+      [booking_id]
+    );
+
+    await client.query(
+      `INSERT INTO transactions (
+         client_id,
+         booking_id,
+         quote_id,
+         category,
+         amount,
+         payment_method,
+         bank_account_id,
+         cheque_number,
+         cheque_date,
+         reference_number,
+         receipt_url,
+         verified_by,
+         status,
+         notes,
+         transaction_type,
+         created_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())`,
+      [
+        booking.client_id,
+        booking_id,
+        booking.quote_id || null,
+        'BOOKING_PAYMENT',
+        amount_received,
+        payment_method,
+        bank_account_id || null,
+        cheque_number || null,
+        cheque_date || null,
+        reference_number || null,
+        paymentSlipUrl,
+        verified_by,
+        'COMPLETED',
+        notes || null,
+        'DEBIT'
+      ]
+    );
+
+    const remaining_balance = parseFloat(booking.total_amount || 0) - new_total;
+
+    await client.query('COMMIT');
+
+    res.status(201).json({
+      status: 'success',
+      message: 'Booking payment recorded successfully',
+      data: {
+        booking_payment_id: payment.booking_payment_id,
+        booking_id: payment.booking_id,
+        quote_id: payment.quote_id,
+        amount_received: parseFloat(payment.amount_received),
+        payment_method: payment.payment_method,
+        reference_number: payment.reference_number,
+        slip_url: paymentSlipUrl,
+        status: payment.status,
+        verified_at: payment.verified_at,
+        created_at: payment.payment_date
+      },
+      payment_summary: {
+        total_amount: parseFloat(booking.total_amount || 0),
+        total_paid: new_total,
+        remaining_balance: remaining_balance,
+        percent_paid: booking.total_amount ? ((new_total / booking.total_amount) * 100).toFixed(2) : '0.00'
+      }
+    });
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      console.error('Rollback error while recording booking payment:', rollbackError);
+    }
+    console.error('Error recording booking payment:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to record booking payment',
       error: error.message
     });
   } finally {
@@ -675,6 +983,105 @@ const getBookingInvoiceProgress = async (req, res) => {
 };
 
 /**
+ * Get all payments for a booking
+ * GET /api/bookings/:booking_id/payments
+ */
+const getPaymentsByBooking = async (req, res) => {
+  try {
+    const { booking_id } = req.params;
+
+    if (!booking_id || !uuidRegex.test(booking_id)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Invalid booking ID format'
+      });
+    }
+
+    const bookingCheck = await db.query(
+      `SELECT b.booking_id, sr.active_quote_id as quote_id, COALESCE(q.total_amount, b.amount_quotated, 0) as total_amount
+       FROM bookings b
+       LEFT JOIN service_requests sr ON sr.request_id = b.request_id
+       LEFT JOIN quotations q ON q.quote_id = sr.active_quote_id
+       WHERE b.booking_id = $1`,
+      [booking_id]
+    );
+
+    if (bookingCheck.rows.length === 0) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Booking not found'
+      });
+    }
+
+    const total_amount = parseFloat(bookingCheck.rows[0].total_amount || 0);
+
+    const paymentsResult = await db.query(
+      `SELECT
+         booking_payment_id as payment_id,
+         amount_received,
+         payment_method,
+         bank_account_id,
+         cheque_number,
+         reference_number,
+         slip_url,
+         status,
+         payment_date,
+         verified_at,
+         verified_by,
+         notes
+       FROM booking_payment_tracking
+       WHERE booking_id = $1
+       ORDER BY payment_date DESC`,
+      [booking_id]
+    );
+
+    const payments = [];
+    let total_paid = 0;
+
+    for (const payment of paymentsResult.rows) {
+      const amount = parseFloat(payment.amount_received);
+      total_paid += amount;
+
+      payments.push({
+        payment_id: payment.payment_id,
+        amount,
+        payment_method: payment.payment_method,
+        bank_account: null,
+        cheque_number: payment.cheque_number,
+        reference_number: payment.reference_number,
+        slip_url: payment.slip_url,
+        status: payment.status,
+        payment_date: payment.payment_date,
+        verified_at: payment.verified_at,
+        verified_by: payment.verified_by,
+        notes: payment.notes
+      });
+    }
+
+    const remaining_amount = total_amount - total_paid;
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Booking payments retrieved successfully',
+      booking_id,
+      total_amount,
+      total_paid,
+      remaining_amount,
+      percent_paid: total_amount > 0 ? ((total_paid / total_amount) * 100).toFixed(2) : '0.00',
+      payment_count: payments.length,
+      payments
+    });
+  } catch (error) {
+    console.error('Error fetching booking payments:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch booking payments',
+      error: error.message
+    });
+  }
+};
+
+/**
  * Verify/approve a payment
  * POST /api/payments/:payment_id/verify
  */
@@ -849,7 +1256,9 @@ const rejectPayment = async (req, res) => {
 
 module.exports = {
   recordPayment,
+  recordBookingPayment,
   getPaymentsByQuote,
+  getPaymentsByBooking,
   getPaymentProgress,
   getBookingInvoiceProgress,
   verifyPayment,

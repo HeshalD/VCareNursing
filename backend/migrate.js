@@ -108,8 +108,8 @@ async function runMigration() {
   await db.query(`
     DO $$ BEGIN
       CREATE TYPE transaction_category AS ENUM (
-        'CLIENT_PAYMENT', 'WALLET_REFUND', 'STAFF_SALARY', 
-        'AGENCY_FEE', 'SERVICE_INVOICE'
+        'CLIENT_PAYMENT', 'BOOKING_PAYMENT', 'WALLET_REFUND', 'STAFF_SALARY', 
+        'AGENCY_FEE', 'SERVICE_INVOICE', 'BOOKING_SETTLEMENT'
       );
     EXCEPTION
       WHEN duplicate_object THEN null;
@@ -326,6 +326,28 @@ async function runMigration() {
       verified_by UUID REFERENCES users(user_id),
       status VARCHAR(20) DEFAULT 'PENDING',
       notes TEXT
+    );
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS booking_payment_tracking (
+      booking_payment_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      booking_id UUID NOT NULL REFERENCES bookings(booking_id) ON DELETE CASCADE,
+      quote_id UUID REFERENCES quotations(quote_id),
+      client_id UUID NOT NULL REFERENCES client_profiles(client_profile_id),
+      amount_received DECIMAL(12, 2) NOT NULL,
+      payment_method VARCHAR(50),
+      bank_account_id UUID REFERENCES bank_accounts(account_id),
+      cheque_number VARCHAR(50),
+      cheque_date DATE,
+      reference_number VARCHAR(100),
+      slip_url TEXT,
+      payment_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      verified_at TIMESTAMP WITH TIME ZONE,
+      verified_by UUID REFERENCES users(user_id),
+      status VARCHAR(20) DEFAULT 'VERIFIED',
+      notes TEXT,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
@@ -556,6 +578,14 @@ async function runMigration() {
   `);
 
   await db.query(`
+    ALTER TABLE booking_payment_tracking
+    ADD COLUMN IF NOT EXISTS bank_account_id UUID REFERENCES bank_accounts(account_id),
+    ADD COLUMN IF NOT EXISTS cheque_number VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS cheque_date DATE,
+    ADD COLUMN IF NOT EXISTS reference_number VARCHAR(100)
+  `);
+
+  await db.query(`
     ALTER TABLE bookings
     ADD COLUMN IF NOT EXISTS amount_paid DECIMAL(12, 2) DEFAULT 0,
     ADD COLUMN IF NOT EXISTS amount_quotated DECIMAL(12, 2),
@@ -613,6 +643,16 @@ async function runMigration() {
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_quote_line_items_quote_id 
     ON quote_line_items(quote_id);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_booking_payment_tracking_booking_id
+    ON booking_payment_tracking(booking_id);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_booking_payment_tracking_status
+    ON booking_payment_tracking(status);
   `);
 
   await db.query(`
