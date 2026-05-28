@@ -86,7 +86,7 @@ const generateInvoiceNumber = async (client) => {
   const result = await client.query(
     `SELECT COUNT(*) as count 
      FROM transactions 
-     WHERE category = 'SERVICE_INVOICE' 
+      WHERE category IN ('SERVICE_INVOICE', 'REGISTRATION_FEE') 
      AND DATE(created_at) = CURRENT_DATE`
   );
 
@@ -102,8 +102,10 @@ const getActiveBookingBalances = async (client) => {
         b.daily_rate,
         cp.full_name as client_name,
         uc.mobile_number as client_mobile,
-        COALESCE(SUM(CASE WHEN t.category = 'CLIENT_PAYMENT' THEN t.amount ELSE 0 END), 0) as total_paid,
-        COALESCE(SUM(CASE WHEN t.category = 'SERVICE_INVOICE' THEN t.amount ELSE 0 END), 0) as total_invoiced
+        COALESCE(SUM(CASE WHEN t.transaction_type = 'CREDIT' AND COALESCE(t.category, '') != 'STAFF_SALARY' THEN t.amount ELSE 0 END), 0) as total_paid,
+        COALESCE(SUM(CASE WHEN t.transaction_type = 'DEBIT' THEN t.amount ELSE 0 END), 0) as total_invoiced,
+        COALESCE(SUM(CASE WHEN t.transaction_type = 'DEBIT' THEN t.amount ELSE 0 END), 0) as total_debits,
+        COALESCE(SUM(CASE WHEN t.transaction_type = 'CREDIT' THEN t.amount ELSE 0 END), 0) as total_credits
      FROM bookings b
      JOIN client_profiles cp ON b.client_id = cp.client_profile_id
      JOIN users uc ON cp.user_id = uc.user_id
@@ -120,10 +122,10 @@ const getActiveBookingBalances = async (client) => {
 // ─── Overdue Detection ─────────────────────────────────────────────────────────
 
 const flagOverdueBookings = async (client) => {
-  // Find ACTIVE bookings where invoiced amount has exceeded paid amount
+  // Find ACTIVE bookings where total DEBITs exceed total CREDITs (new rule)
   const overdueRes = await getActiveBookingBalances(client);
   const overdueRows = overdueRes.rows.filter(
-    booking => parseFloat(booking.total_invoiced) > parseFloat(booking.total_paid)
+    booking => parseFloat(booking.total_debits) > parseFloat(booking.total_credits)
   );
 
   if (overdueRows.length === 0) return 0;
@@ -136,7 +138,7 @@ const flagOverdueBookings = async (client) => {
     );
 
     console.log(
-      `⚠️  Booking ${booking.booking_id} flagged as OVERDUE — charged Rs.${parseFloat(booking.total_invoiced).toFixed(2)} vs paid Rs.${parseFloat(booking.total_paid).toFixed(2)}`
+      `⚠️  Booking ${booking.booking_id} flagged as OVERDUE — debits Rs.${parseFloat(booking.total_debits).toFixed(2)} vs credits Rs.${parseFloat(booking.total_credits).toFixed(2)}`
     );
 
     // TODO: Plug in WhatsApp/SMS admin alert here in Sprint 2
@@ -345,7 +347,14 @@ const runCreditMonitor = async (client) => {
     const dailyRate = parseFloat(booking.daily_rate);
 
     const remainingBalance = totalPaid - totalInvoiced;
-    const remainingDays = remainingBalance / dailyRate;
+    const remainingDays = dailyRate > 0 ? remainingBalance / dailyRate : null;
+
+    // Log remainingDays for visibility
+    console.log(`ℹ️  Booking ${booking.booking_id} remainingDays: ${remainingDays === null ? 'N/A' : remainingDays.toFixed(2)}`);
+
+    // Determine alert type based on strict totals comparison per new rule
+    const isNegative = totalPaid < totalInvoiced;
+    const alertType = isNegative ? 'NEGATIVE_BALANCE' : 'EXPIRING_SOON';
 
     // Check if we already sent an alert today to avoid duplicates
     const alertCheck = await client.query(
@@ -353,13 +362,13 @@ const runCreditMonitor = async (client) => {
        WHERE booking_id = $1
          AND alert_type = $2
          AND DATE(sent_at) = CURRENT_DATE`,
-      [booking.booking_id, remainingDays <= 0 ? 'NEGATIVE_BALANCE' : 'EXPIRING_SOON']
+      [booking.booking_id, alertType]
     );
 
     if (alertCheck.rows.length > 0) continue; // Already alerted today
 
-    if (remainingDays <= 0) {
-      // Day +1 — balance has gone negative
+    if (isNegative) {
+      // Negative balance — total_paid < total_invoiced
       console.log(`🔴 NEGATIVE BALANCE: Booking ${booking.booking_id} — Client ${booking.client_name} owes Rs.${Math.abs(remainingBalance).toFixed(2)}`);
 
       // Log the alert
@@ -373,16 +382,9 @@ const runCreditMonitor = async (client) => {
         ]
       );
 
-      // TODO: Uncomment when WhatsApp is live
-      // await sendCreditAlert(
-      //   booking.client_mobile,
-      //   booking.client_name,
-      //   'our office number here'
-      // );
-
       alertsSent++;
 
-    } else if (remainingDays <= 1) {
+    } else if (remainingDays !== null && remainingDays <= 1) {
       // Day -1 — balance runs out tomorrow
       console.log(`🟡 EXPIRING SOON: Booking ${booking.booking_id} — Client ${booking.client_name} has ~${remainingDays.toFixed(1)} days left (Rs.${remainingBalance.toFixed(2)})`);
 
@@ -396,13 +398,6 @@ const runCreditMonitor = async (client) => {
           `Balance expiring soon. Approximately ${remainingDays.toFixed(1)} days remaining (Rs.${remainingBalance.toFixed(2)}).`
         ]
       );
-
-      // TODO: Uncomment when WhatsApp is live
-      // await sendCreditAlert(
-      //   booking.client_mobile,
-      //   booking.client_name,
-      //   'our office number here'
-      // );
 
       alertsSent++;
     }

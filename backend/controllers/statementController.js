@@ -128,6 +128,80 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
     };
 };
 
+exports.getClientTransactions = async (req, res) => {
+    const { client_id } = req.params;
+
+    try {
+        const clientRes = await db.query(
+            `SELECT cp.full_name, u.mobile_number
+             FROM client_profiles cp
+             JOIN users u ON cp.user_id = u.user_id
+             WHERE cp.client_profile_id = $1`,
+            [client_id]
+        );
+
+        if (!clientRes.rows.length) {
+            return res.status(404).json({ message: 'Client not found.' });
+        }
+
+        const transactionsRes = await db.query(
+            `SELECT
+                transaction_id,
+                payment_tracking_id,
+                booking_id,
+                quote_id,
+                category,
+                transaction_type,
+                amount,
+                payment_method,
+                bank_account_id,
+                cheque_number,
+                cheque_date,
+                reference_number,
+                receipt_url,
+                verified_by,
+                status,
+                notes,
+                created_at
+             FROM transactions
+             WHERE client_id = $1
+             ORDER BY created_at DESC, transaction_id DESC`,
+            [client_id]
+        );
+
+        const totalCredits = transactionsRes.rows.reduce((sum, row) => {
+            return row.transaction_type === 'CREDIT' ? sum + parseFloat(row.amount || 0) : sum;
+        }, 0);
+
+        const totalDebits = transactionsRes.rows.reduce((sum, row) => {
+            return row.transaction_type === 'DEBIT' ? sum + parseFloat(row.amount || 0) : sum;
+        }, 0);
+
+        return res.status(200).json({
+            status: 'success',
+            client: {
+                client_id,
+                full_name: clientRes.rows[0].full_name,
+                mobile_number: clientRes.rows[0].mobile_number
+            },
+            summary: {
+                transaction_count: transactionsRes.rowCount,
+                total_credits: totalCredits,
+                total_debits: totalDebits,
+                net_balance: totalCredits - totalDebits
+            },
+            data: transactionsRes.rows
+        });
+    } catch (error) {
+        console.error('Client transactions fetch error:', {
+            client_id,
+            error_message: error.message,
+            error_code: error.code
+        });
+        return res.status(500).json({ message: 'Failed to fetch client transactions.' });
+    }
+};
+
 exports.getClientStatement = async (req, res) => {
     const { client_id } = req.params;
     const { start_date, end_date } = normalizeDateRange(req);

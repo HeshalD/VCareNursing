@@ -17,6 +17,22 @@ exports.uploadPaymentSlip = (req, res, next) => {
     });
 };
 
+const getBookingFinancialTotals = async (client, booking_id) => {
+    const result = await client.query(
+        `SELECT
+            COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' AND COALESCE(category::text, '') <> 'STAFF_SALARY' THEN amount ELSE 0 END), 0) as total_paid,
+            COALESCE(SUM(CASE WHEN transaction_type = 'DEBIT' THEN amount ELSE 0 END), 0) as total_invoiced
+         FROM transactions
+         WHERE booking_id = $1`,
+        [booking_id]
+    );
+
+    return {
+        total_paid: parseFloat(result.rows[0]?.total_paid || 0),
+        total_invoiced: parseFloat(result.rows[0]?.total_invoiced || 0)
+    };
+};
+
 const getBookingSettlementSnapshot = async (client, booking_id) => {
     const bookingResult = await client.query(
         `SELECT
@@ -49,28 +65,7 @@ const getBookingSettlementSnapshot = async (client, booking_id) => {
 
     const booking = bookingResult.rows[0];
 
-    const [paymentSummaryResult, invoiceSummaryResult] = await Promise.all([
-        booking.quote_id
-            ? client.query(
-                `SELECT COALESCE(SUM(amount_received), 0) as total_paid
-                 FROM payment_tracking
-                 WHERE quote_id = $1 AND status = 'VERIFIED'`,
-                [booking.quote_id]
-            )
-            : Promise.resolve({ rows: [{ total_paid: 0 }] }),
-        client.query(
-            `SELECT COALESCE(SUM(amount), 0) as total_invoiced
-             FROM transactions
-             WHERE booking_id = $1
-               AND category = 'SERVICE_INVOICE'
-               AND transaction_type = 'DEBIT'
-               AND status = 'COMPLETED'`,
-            [booking_id]
-        )
-    ]);
-
-    const totalPaid = parseFloat(paymentSummaryResult.rows[0]?.total_paid || 0);
-    const totalInvoiced = parseFloat(invoiceSummaryResult.rows[0]?.total_invoiced || 0);
+    const { total_paid: totalPaid, total_invoiced: totalInvoiced } = await getBookingFinancialTotals(client, booking_id);
 
     return {
         ...booking,
@@ -327,6 +322,7 @@ const convertToBookingInternal = async (req, res) => {
         }
 
         const quoteData = quoteRes.rows[0];
+        const registrationFeeAmount = parseFloat(quoteData.registration_fee || 0);
         // Calculate scheduled end time from start date + qty_days
         const startDate = new Date(reqData.start_date);
         const scheduledEndTime = new Date(startDate);
@@ -431,6 +427,47 @@ const convertToBookingInternal = async (req, res) => {
 
         const bookingId = newBooking.rows[0].booking_id;
 
+        if (registrationFeeAmount > 0) {
+            const regFeeCategoryResult = await client.query(
+                `SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_enum e
+                    JOIN pg_type t ON t.oid = e.enumtypid
+                    WHERE t.typname = 'transaction_category'
+                      AND e.enumlabel = 'REGISTRATION_FEE'
+                 ) as exists`
+            );
+            const registrationFeeCategory = regFeeCategoryResult.rows[0]?.exists
+                ? 'REGISTRATION_FEE'
+                : 'SERVICE_INVOICE';
+
+            await client.query(
+                `INSERT INTO transactions (
+                   booking_id,
+                   quote_id,
+                   client_id,
+                   category,
+                   amount,
+                   status,
+                   notes,
+                   transaction_type,
+                   reference_number,
+                   created_at
+                 ) VALUES ($1, $2, $3, $4, $5, 'COMPLETED', $6, 'DEBIT', $7, NOW())`,
+                [
+                    bookingId,
+                    bookingQuoteId,
+                    clientProfileId,
+                    registrationFeeCategory,
+                    registrationFeeAmount,
+                    registrationFeeCategory === 'REGISTRATION_FEE'
+                        ? 'Registration fee charged during booking conversion'
+                        : 'Registration fee charged during booking conversion (stored as SERVICE_INVOICE for compatibility)',
+                    quoteData.estimate_number || bookingQuoteId
+                ]
+            );
+        }
+
         for (const payment of paymentRes.rows) {
             try {
                 await client.query(
@@ -506,7 +543,7 @@ const convertToBookingInternal = async (req, res) => {
                    notes,
                    transaction_type,
                    created_at
-                                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'COMPLETED', $14, 'DEBIT', NOW())
+                                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'COMPLETED', $14, 'CREDIT', NOW())
                                  ON CONFLICT (payment_tracking_id) DO UPDATE SET
                                      client_id = EXCLUDED.client_id,
                                      booking_id = EXCLUDED.booking_id,
@@ -788,47 +825,15 @@ exports.getAdminBookingDetail = async (req, res) => {
         const quoteId = booking.quote_id;
         const clientId = booking.client_id;
 
-        const [paymentHistoryResult, paymentSummaryResult, assignmentHistoryResult, swapHistoryResult, terminationHistoryResult, invoiceSummaryResult] = await Promise.all([
+        const [paymentHistoryResult, financialTotalsResult, assignmentHistoryResult, swapHistoryResult, terminationHistoryResult, invoiceSummaryResult] = await Promise.all([
             db.query(
-                quoteId
-                    ? `SELECT payment_id, source_type, amount_received, payment_method, bank_account_id, cheque_number, reference_number, slip_url, status, payment_date, verified_at, verified_by, notes
-                       FROM (
-                         SELECT payment_id, 'QUOTE'::text as source_type, amount_received, payment_method, bank_account_id, cheque_number, reference_number, slip_url, status, payment_date, verified_at, verified_by, notes
-                         FROM payment_tracking
-                         WHERE quote_id = $1
-                         UNION ALL
-                         SELECT booking_payment_id as payment_id, 'BOOKING'::text as source_type, amount_received, payment_method, bank_account_id, cheque_number, reference_number, slip_url, status, payment_date, verified_at, verified_by, notes
-                         FROM booking_payment_tracking
-                         WHERE booking_id = $2
-                       ) payment_history
-                       ORDER BY payment_date DESC`
-                    : `SELECT booking_payment_id as payment_id, 'BOOKING'::text as source_type, amount_received, payment_method, bank_account_id, cheque_number, reference_number, slip_url, status, payment_date, verified_at, verified_by, notes
-                       FROM booking_payment_tracking
-                       WHERE booking_id = $1
-                       ORDER BY payment_date DESC`,
-                quoteId ? [quoteId, booking_id] : [booking_id]
+                `SELECT booking_payment_id as payment_id, 'BOOKING'::text as source_type, amount_received, payment_method, bank_account_id, cheque_number, reference_number, slip_url, status, payment_date, verified_at, verified_by, notes
+                 FROM booking_payment_tracking
+                 WHERE booking_id = $1
+                 ORDER BY payment_date DESC`,
+                [booking_id]
             ),
-            db.query(
-                quoteId
-                    ? `SELECT
-                         COUNT(*) as payment_count,
-                         COALESCE(SUM(amount_received), 0) as total_paid
-                       FROM (
-                         SELECT amount_received
-                         FROM payment_tracking
-                         WHERE quote_id = $1 AND status = 'VERIFIED'
-                         UNION ALL
-                         SELECT amount_received
-                         FROM booking_payment_tracking
-                         WHERE booking_id = $2 AND status = 'VERIFIED'
-                       ) payment_totals`
-                    : `SELECT
-                         COUNT(*) as payment_count,
-                         COALESCE(SUM(amount_received), 0) as total_paid
-                       FROM booking_payment_tracking
-                       WHERE booking_id = $1 AND status = 'VERIFIED'`,
-                quoteId ? [quoteId, booking_id] : [booking_id]
-            ),
+                        getBookingFinancialTotals(db, booking_id),
             db.query(
                 `SELECT
                     bsa.assignment_id,
@@ -891,32 +896,26 @@ exports.getAdminBookingDetail = async (req, res) => {
                         MAX(created_at) as last_invoice_at
                      FROM transactions
                      WHERE booking_id = $1
-                       AND category = 'SERVICE_INVOICE'
-                       AND transaction_type = 'DEBIT'
-                       AND status = 'COMPLETED'`,
+                       AND transaction_type = 'DEBIT'`,
                     [booking_id]
                 )
                 : Promise.resolve({ rows: [{ invoice_count: 0, total_invoiced: 0, last_invoice_at: null }] })
         ]);
 
-        const verifiedPaid = parseFloat(paymentSummaryResult.rows[0]?.total_paid || 0);
-        const totalInvoiced = parseFloat(invoiceSummaryResult.rows[0]?.total_invoiced || 0);
+        const verifiedPaid = parseFloat(financialTotalsResult.total_paid || 0);
+        const totalInvoiced = parseFloat(financialTotalsResult.total_invoiced || 0);
         const totalAmount = parseFloat(booking.total_amount || 0);
-        const remainingToInvoice = Math.max(verifiedPaid - totalInvoiced, 0);
-        const balanceRemaining = Math.max(totalAmount - verifiedPaid, 0);
-        const overdueAmount = Math.max(totalInvoiced - verifiedPaid, 0);
+        const remainingBalance = verifiedPaid - totalInvoiced;
+        const remainingToInvoice = Math.max(remainingBalance, 0);
+        const overdueAmount = verifiedPaid > totalInvoiced ? 0 : totalInvoiced - verifiedPaid;
 
         let daysRemaining = null;
         let overdueDays = null;
         if (booking.quote_daily_rate) {
             const rate = parseFloat(booking.quote_daily_rate);
             if (rate > 0) {
-                const daySpan = balanceRemaining / rate;
-                if (verifiedPaid >= totalInvoiced) {
-                    daysRemaining = daySpan > 0 ? daySpan : 0;
-                } else {
-                    overdueDays = Math.ceil(overdueAmount / rate);
-                }
+                daysRemaining = remainingBalance / rate;
+                overdueDays = overdueAmount > 0 ? Math.ceil(overdueAmount / rate) : 0;
             }
         }
 
@@ -970,7 +969,7 @@ exports.getAdminBookingDetail = async (req, res) => {
                     profile_picture_url: booking.profile_picture_url
                 } : null,
                 payment_summary: {
-                    payment_count: parseInt(paymentSummaryResult.rows[0]?.payment_count || 0, 10),
+                    payment_count: paymentHistoryResult.rows.length,
                     total_paid: verifiedPaid,
                     remaining_amount: Math.max(totalAmount - verifiedPaid, 0)
                 },
@@ -1081,30 +1080,8 @@ exports.getBookingInvoiceBreakdown = async (req, res) => {
         const booking = bookingResult.rows[0];
         const rate = parseFloat(booking.quote_daily_rate || booking.daily_rate || 0);
 
-        const [paymentSummaryResult, invoiceSummaryResult, recentPaymentResult, recentInvoiceResult] = await Promise.all([
-            booking.quote_id
-                ? db.query(
-                    `SELECT
-                        COUNT(*) as payment_count,
-                        COALESCE(SUM(amount_received), 0) as total_paid,
-                        MAX(payment_date) as last_payment_at
-                     FROM payment_tracking
-                     WHERE quote_id = $1 AND status = 'VERIFIED'`,
-                    [booking.quote_id]
-                )
-                : Promise.resolve({ rows: [{ payment_count: 0, total_paid: 0, last_payment_at: null }] }),
-            db.query(
-                `SELECT
-                    COUNT(*) as invoice_count,
-                    COALESCE(SUM(amount), 0) as total_invoiced,
-                    MAX(created_at) as last_invoice_at
-                 FROM transactions
-                 WHERE booking_id = $1
-                   AND category = 'SERVICE_INVOICE'
-                   AND transaction_type = 'DEBIT'
-                   AND status = 'COMPLETED'`,
-                [booking_id]
-            ),
+        const [financialTotalsResult, recentPaymentResult, recentInvoiceResult] = await Promise.all([
+            getBookingFinancialTotals(db, booking_id),
             booking.quote_id
                 ? db.query(
                     `SELECT payment_id, amount_received, payment_method, payment_date, status, verified_at
@@ -1119,20 +1096,18 @@ exports.getBookingInvoiceBreakdown = async (req, res) => {
                 `SELECT transaction_id, amount, notes, created_at
                  FROM transactions
                  WHERE booking_id = $1
-                   AND category = 'SERVICE_INVOICE'
                    AND transaction_type = 'DEBIT'
-                   AND status = 'COMPLETED'
                  ORDER BY created_at DESC
                  LIMIT 5`,
                 [booking_id]
             )
         ]);
 
-        const totalPaid = parseFloat(paymentSummaryResult.rows[0]?.total_paid || 0);
-        const totalInvoiced = parseFloat(invoiceSummaryResult.rows[0]?.total_invoiced || 0);
-        const remainingToInvoice = Math.max(totalPaid - totalInvoiced, 0);
-        const overdueAmount = Math.max(totalInvoiced - totalPaid, 0);
-        const remainingDays = rate > 0 ? Math.max(Math.floor(remainingToInvoice / rate), 0) : null;
+        const totalPaid = parseFloat(financialTotalsResult.total_paid || 0);
+        const totalInvoiced = parseFloat(financialTotalsResult.total_invoiced || 0);
+        const remainingBalance = totalPaid - totalInvoiced;
+        const overdueAmount = totalPaid > totalInvoiced ? 0 : totalInvoiced - totalPaid;
+        const remainingDays = rate > 0 ? remainingBalance / rate : null;
         const overdueDays = rate > 0 ? Math.max(Math.ceil(overdueAmount / rate), 0) : null;
 
         res.status(200).json({
@@ -1146,15 +1121,15 @@ exports.getBookingInvoiceBreakdown = async (req, res) => {
                 quote_daily_rate: rate,
                 quote_total_amount: parseFloat(booking.total_amount || 0),
                 payment_summary: {
-                    payment_count: parseInt(paymentSummaryResult.rows[0]?.payment_count || 0, 10),
+                    payment_count: recentPaymentResult.rows.length,
                     total_paid: totalPaid,
-                    last_payment_at: paymentSummaryResult.rows[0]?.last_payment_at || null
+                    last_payment_at: recentPaymentResult.rows[0]?.payment_date || null
                 },
                 invoice_summary: {
-                    invoice_count: parseInt(invoiceSummaryResult.rows[0]?.invoice_count || 0, 10),
+                    invoice_count: recentInvoiceResult.rows.length,
                     total_invoiced: totalInvoiced,
-                    last_invoice_at: invoiceSummaryResult.rows[0]?.last_invoice_at || null,
-                    remaining_to_invoice: remainingToInvoice,
+                    last_invoice_at: recentInvoiceResult.rows[0]?.created_at || null,
+                    remaining_to_invoice: Math.max(remainingBalance, 0),
                     overdue_amount: overdueAmount,
                     remaining_days: remainingDays,
                     overdue_days: overdueDays

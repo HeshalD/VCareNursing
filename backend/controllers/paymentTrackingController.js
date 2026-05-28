@@ -434,7 +434,7 @@ const recordPayment = async (req, res) => {
       verified_by,
       'COMPLETED',
       notes || null,
-      'DEBIT'
+      'CREDIT'
     ]);
 
     // Fetch bank account details if provided
@@ -693,7 +693,7 @@ const recordBookingPayment = async (req, res) => {
         verified_by,
         'COMPLETED',
         notes || null,
-        'DEBIT'
+        'CREDIT'
       ]
     );
 
@@ -985,7 +985,7 @@ const getBookingInvoiceProgress = async (req, res) => {
         COALESCE(SUM(amount), 0) as total_invoiced
       FROM transactions
       WHERE booking_id = $1
-        AND category = 'SERVICE_INVOICE'
+        AND category IN ('SERVICE_INVOICE', 'REGISTRATION_FEE')
         AND transaction_type = 'DEBIT'
         AND status = 'COMPLETED'
     `, [booking_id]);

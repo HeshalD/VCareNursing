@@ -861,6 +861,10 @@ class ApiClient {
     });
   }
 
+  async getClientTransactions(clientId) {
+    return this.request(`/statement/transactions/${clientId}`);
+  }
+
   async downloadClientStatement(clientId, dateRange) {
     const url = `${this.baseURL}/statement/download/${clientId}`;
     

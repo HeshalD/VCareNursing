@@ -968,31 +968,31 @@ for (const booking of activeBookings) {
 - [x] Add new routes to `paymentRoutes.js` or `quoteRoutes.js`
 
 ### Frontend (Admin Dashboard)
-- [ ] Bank Account Management
-  - [ ] View all bank accounts
-  - [ ] Create/Edit bank account form
-  - [ ] Deactivate bank account UI
-  - [ ] View transactions per account
-  - [ ] Account reconciliation report
-- [ ] Payment Tracking Section
-  - [ ] View payment progress for each quotation
-  - [ ] Record new payment form (with payment method selection)
-  - [ ] Conditional bank account dropdown
-  - [ ] Cheque number/date fields (conditional)
-  - [ ] Verify payment slips
-- [ ] Staff Assignment Form (with auto-calculations)
-  - [ ] Select available staff
-  - [ ] Auto-calculate dates based on daily rate and payment
-  - [ ] Submit and confirm assignment
-- [ ] Assignment History View
-- [ ] Remaining Balance Display
-- [ ] Transaction History (filtered by payment method, account, etc.)
+- [x] Bank Account Management
+  - [x] View all bank accounts
+  - [x] Create/Edit bank account form
+  - [x] Deactivate bank account UI
+  - [x] View transactions per account
+  - [x] Account reconciliation report
+- [x] Payment Tracking Section
+  - [x] View payment progress for each quotation
+  - [x] Record new payment form (with payment method selection)
+  - [x] Conditional bank account dropdown
+  - [x] Cheque number/date fields (conditional)
+  - [x] Verify payment slips
+- [x] Staff Assignment Form (with auto-calculations)
+  - [x] Select available staff
+  - [x] Auto-calculate dates based on daily rate and payment
+  - [x] Submit and confirm assignment
+- [x] Assignment History View
+- [x] Remaining Balance Display
+- [x] Transaction History (filtered by payment method, account, etc.)
 
 ### Testing
-- [ ] Unit tests for payment calculations
-- [ ] Integration tests for assignment workflow
-- [ ] End-to-end tests for daily invoicing
-- [ ] Edge cases: multiple staff, partial payments, cancellations
+- [x] Unit tests for payment calculations
+- [x] Integration tests for assignment workflow
+- [x] End-to-end tests for daily invoicing
+- [x] Edge cases: multiple staff, partial payments, cancellations
 
 ---
 

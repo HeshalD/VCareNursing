@@ -13,6 +13,18 @@ async function getClientUserAccount(clientId) {
 }
 
 async function getClientOverdueBreakdown(clientId) {
+  const totalsResult = await db.query(
+    `SELECT
+       COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' THEN amount ELSE 0 END), 0) as total_paid,
+       COALESCE(SUM(CASE WHEN transaction_type = 'DEBIT' THEN amount ELSE 0 END), 0) as total_invoiced
+     FROM transactions
+     WHERE client_id = $1`,
+    [clientId]
+  );
+
+  const totalPaid = parseFloat(totalsResult.rows[0]?.total_paid || 0);
+  const totalInvoiced = parseFloat(totalsResult.rows[0]?.total_invoiced || 0);
+
   const result = await db.query(
     `SELECT
        b.booking_id,
@@ -64,7 +76,7 @@ async function getClientOverdueBreakdown(clientId) {
     is_fully_paid: parseFloat(row.balance_due || 0) <= 0
   }));
 
-  const totalOverdue = overduePayments.reduce((sum, payment) => sum + payment.balance_due, 0);
+  const totalOverdue = totalPaid - totalInvoiced;
   const overdueCount = overduePayments.filter((payment) => payment.is_overdue).length;
 
   return {
@@ -224,27 +236,28 @@ exports.getAdminClientDetail = async (req, res) => {
 
     const paymentHistoryQuery = db.query(
       `SELECT
-         t.transaction_id,
-         t.booking_id,
-         t.quote_id,
-         t.category,
-         t.amount,
-         t.payment_method,
-         t.status,
-         t.notes,
-         t.transaction_type,
-         t.created_at,
+         bpt.booking_payment_id as transaction_id,
+         bpt.payment_tracking_id,
+         bpt.booking_id,
+         bpt.quote_id,
+         'BOOKING_PAYMENT' as category,
+         bpt.amount_received as amount,
+         bpt.payment_method,
+         bpt.status,
+         bpt.notes,
+         'CREDIT' as transaction_type,
+         bpt.payment_date as created_at,
+         bpt.reference_number,
+         bpt.slip_url,
+         bpt.verified_by,
+         bpt.verified_at,
          b.service_type,
          b.start_date,
-         CASE
-           WHEN t.transaction_type = 'DEBIT' THEN 'Invoice'
-           WHEN t.transaction_type = 'CREDIT' THEN 'Payment'
-           ELSE 'Other'
-         END as transaction_description
-       FROM transactions t
-       LEFT JOIN bookings b ON t.booking_id = b.booking_id
-       WHERE t.client_id = $1
-       ORDER BY t.created_at DESC`,
+         'Booking payment' as transaction_description
+       FROM booking_payment_tracking bpt
+       LEFT JOIN bookings b ON bpt.booking_id = b.booking_id
+       WHERE bpt.client_id = $1
+       ORDER BY COALESCE(bpt.verified_at, bpt.payment_date) DESC`,
       [client_id]
     );
 
@@ -388,10 +401,10 @@ exports.getAdminClientDetail = async (req, res) => {
     );
 
     const clientPaymentsSummaryQuery = db.query(
-      `SELECT COALESCE(SUM(amount_received), 0) as total_paid
-       FROM booking_payment_tracking
+      `SELECT COALESCE(SUM(amount), 0) as total_paid
+       FROM transactions
        WHERE client_id = $1
-         AND status = 'VERIFIED'`,
+         AND transaction_type = 'CREDIT'`,
       [client_id]
     );
 
@@ -399,8 +412,7 @@ exports.getAdminClientDetail = async (req, res) => {
       `SELECT COALESCE(SUM(amount), 0) as total_invoiced
        FROM transactions
        WHERE client_id = $1
-         AND category = 'SERVICE_INVOICE'
-         AND status = 'COMPLETED'`,
+         AND transaction_type = 'DEBIT'`,
       [client_id]
     );
 

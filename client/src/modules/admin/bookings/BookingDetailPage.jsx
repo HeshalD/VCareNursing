@@ -223,8 +223,10 @@ const BookingDetailPage = () => {
 
   const totalPaid = Number(paymentSummary.total_paid ?? 0);
   const totalInvoiced = Number(invoiceSummary.total_invoiced ?? 0);
-  const remainingBalance = Math.max(totalPaid - totalInvoiced, 0);
-  const overdueAmount = Math.max(totalInvoiced - totalPaid, 0);
+  const dailyRate = Number(bookingSummary.quote_daily_rate || bookingSummary.daily_rate || 0);
+  const remainingBalance = totalPaid - totalInvoiced;
+  const remainingDays = dailyRate > 0 ? remainingBalance / dailyRate : null;
+  const overdueAmount = totalPaid > totalInvoiced ? 0 : totalInvoiced - totalPaid;
   const statementClientId = clientDetails.client_profile_id || bookingSummary.client_profile_id || bookingSummary.client_id;
   const lastInvoiceDate = invoiceSummary.last_invoice_at || invoiceSummary.last_invoice_date || null;
   const lastPaymentDate = paymentSummary.last_payment_at || paymentSummary.last_payment_date || null;
@@ -669,6 +671,7 @@ const BookingDetailPage = () => {
                     <div className="flex items-center justify-between gap-4"><span className="text-sm text-slate-600">Total invoiced</span><span className="font-semibold text-slate-900">{formatMoney(totalInvoiced)}</span></div>
                     <div className="flex items-center justify-between gap-4"><span className="text-sm text-slate-600">Remaining balance</span><span className="font-semibold text-slate-900">{formatMoney(remainingBalance)}</span></div>
                     <div className="flex items-center justify-between gap-4"><span className="text-sm text-slate-600">Overdue amount</span><span className="font-semibold text-slate-900">{formatMoney(overdueAmount)}</span></div>
+                    <div className="flex items-center justify-between gap-4"><span className="text-sm text-slate-600">Remaining days</span><span className="font-semibold text-slate-900">{remainingDays === null ? '-' : remainingDays.toFixed(2)}</span></div>
                   </div>
                 </div>
               </div>
@@ -707,7 +710,7 @@ const BookingDetailPage = () => {
           )}
 
           {activeSection === 'payments' && (
-            <div className="grid gap-6 lg:grid-cols-2">
+            <div className="space-y-6">
               <div>
                 <div className="mb-4 flex items-center gap-3">
                   <div className="rounded-full bg-blue-100 p-2 text-blue-600"><DollarSign className="h-4 w-4" /></div>
@@ -716,7 +719,7 @@ const BookingDetailPage = () => {
                 {paymentHistory.length === 0 ? (
                   <EmptyState icon={DollarSign} text="No payment records are available for this booking." />
                 ) : (
-                  <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                  <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
                     <table className="min-w-full text-sm">
                       <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                         <tr>

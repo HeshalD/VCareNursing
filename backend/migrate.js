@@ -122,8 +122,16 @@ async function runMigration() {
     DO $$ BEGIN
       CREATE TYPE transaction_category AS ENUM (
         'CLIENT_PAYMENT', 'BOOKING_PAYMENT', 'WALLET_REFUND', 'STAFF_SALARY', 
-        'AGENCY_FEE', 'SERVICE_INVOICE', 'BOOKING_SETTLEMENT'
+        'AGENCY_FEE', 'SERVICE_INVOICE', 'REGISTRATION_FEE', 'BOOKING_SETTLEMENT'
       );
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'REGISTRATION_FEE';
     EXCEPTION
       WHEN duplicate_object THEN null;
     END $$;

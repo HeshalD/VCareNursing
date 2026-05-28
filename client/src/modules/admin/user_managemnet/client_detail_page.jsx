@@ -114,8 +114,8 @@ const ClientDetailPage = () => {
   const [statementStartDate, setStatementStartDate] = useState(toDateInputValue(addDays(new Date(), -30)));
   const [statementEndDate, setStatementEndDate] = useState(toDateInputValue(new Date()));
   const [statementActionLoading, setStatementActionLoading] = useState('');
-  const [statementRows, setStatementRows] = useState([]);
-  const [statementLoading, setStatementLoading] = useState(false);
+  const [clientTransactions, setClientTransactions] = useState([]);
+  const [transactionsLoading, setTransactionsLoading] = useState(false);
 
   useEffect(() => {
     const loadDetail = async () => {
@@ -132,8 +132,22 @@ const ClientDetailPage = () => {
       }
     };
 
+    const loadTransactions = async () => {
+      try {
+        setTransactionsLoading(true);
+        const response = await apiClient.getClientTransactions(clientId);
+        setClientTransactions(response.data || []);
+      } catch (err) {
+        console.error('Error loading client transactions:', err);
+        setClientTransactions([]);
+      } finally {
+        setTransactionsLoading(false);
+      }
+    };
+
     if (clientId) {
       loadDetail();
+      loadTransactions();
     }
   }, [clientId]);
 
@@ -151,7 +165,6 @@ const ClientDetailPage = () => {
   const activeBookings = useMemo(() => recentActivity.bookings || [], [recentActivity.bookings]);
   const recentPayments = useMemo(() => recentActivity.payments || [], [recentActivity.payments]);
   const recentQuotes = useMemo(() => recentActivity.quotations || [], [recentActivity.quotations]);
-  const recentTransactions = useMemo(() => recentActivity.transactions || [], [recentActivity.transactions]);
   const recentAssignments = useMemo(() => recentActivity.staff_assignments || [], [recentActivity.staff_assignments]);
   const recentReviews = useMemo(() => recentActivity.reviews || [], [recentActivity.reviews]);
   const patients = Array.isArray(patientSummary.data) ? patientSummary.data : [];
@@ -160,42 +173,6 @@ const ClientDetailPage = () => {
     start_date: statementStartDate,
     end_date: statementEndDate,
   }), [statementStartDate, statementEndDate]);
-
-  useEffect(() => {
-    const loadStatementLedger = async () => {
-      if (!clientId || activeSection !== 'statement') return;
-      try {
-        setStatementLoading(true);
-        setStatementRows([]);
-        const qs = new URLSearchParams({ start_date: statementStartDate, end_date: statementEndDate });
-        const resp = await fetch(`/api/clients/${clientId}/statement?${qs.toString()}`, { credentials: 'same-origin' });
-        if (!resp.ok) throw new Error(`Failed to fetch statement: ${resp.status}`);
-        const json = await resp.json();
-        // backend returns { account_summary, ledger }
-        const ledger = json.ledger || [];
-        setStatementRows(ledger);
-      } catch (err) {
-        console.error('Error loading statement ledger:', err);
-      } finally {
-        setStatementLoading(false);
-      }
-    };
-
-    loadStatementLedger();
-  }, [clientId, activeSection, statementStartDate, statementEndDate]);
-
-  const ledgerTotals = useMemo(() => {
-    const totals = statementRows.reduce(
-      (acc, r) => {
-        acc.total_invoiced += Number(r.amount_invoiced || 0);
-        acc.total_paid += Number(r.amount_paid || 0);
-        return acc;
-      },
-      { total_invoiced: 0, total_paid: 0 }
-    );
-    const final_balance = statementRows.length ? Number(statementRows[statementRows.length - 1].balance || 0) : 0;
-    return { ...totals, final_balance };
-  }, [statementRows]);
 
   const downloadStatement = async () => {
     try {
@@ -247,6 +224,8 @@ const ClientDetailPage = () => {
     { icon: ShieldAlert, label: 'Overdue / Remaining Balance', value: formatMoney(overdueSummary.total_overdue_amount), tone: 'rose' },
     { icon: CalendarDays, label: 'Bookings', value: bookingSummary.total_bookings || 0, tone: 'violet' },
   ];
+
+  const transactionSummary = detail?.transaction_summary || {};
 
   const renderSection = () => {
     switch (activeSection) {
@@ -438,78 +417,74 @@ const ClientDetailPage = () => {
               <StatCard icon={Wallet} label="Payments Made By Client" value={formatMoney(paymentSummary.total_paid)} tone="blue" />
               <StatCard icon={BadgeDollarSign} label="Invoiced Through Daily Invoicing" value={formatMoney(statementSummary.total_invoiced)} tone="emerald" />
               <StatCard icon={FileText} label="Overdue / Remaining Balance" value={formatMoney(overdueSummary.total_overdue_amount)} tone="rose" />
+              <StatCard icon={Activity} label="Net Transaction Balance" value={formatMoney(transactionSummary.net_balance)} tone="violet" />
             </div>
 
             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
               <div className="border-b border-slate-200 px-5 py-4">
-                <h3 className="text-base font-bold text-slate-900">Transactions by Booking</h3>
-                <p className="text-sm text-slate-500">Daily invoices and client payments grouped by booking date</p>
+                <h3 className="text-base font-bold text-slate-900">All Client Transactions</h3>
+                <p className="text-sm text-slate-500">Fetched from the statement transaction endpoint for this client</p>
               </div>
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-slate-200 text-sm">
                   <thead className="bg-slate-50">
                     <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      <th className="px-5 py-3">Booking</th>
+                      <th className="px-5 py-3">Transaction ID</th>
                       <th className="px-5 py-3">Date</th>
-                      <th className="px-5 py-3">Type</th>
-                      <th className="px-5 py-3">Booking Details</th>
-                      <th className="px-5 py-3 text-right">Invoice</th>
-                      <th className="px-5 py-3 text-right">Payment</th>
-                      <th className="px-5 py-3 text-right">Balance</th>
+                      <th className="px-5 py-3">Category</th>
+                      <th className="px-5 py-3">Reference</th>
+                      <th className="px-5 py-3 text-right">Debit</th>
+                      <th className="px-5 py-3 text-right">Credit</th>
+                      <th className="px-5 py-3 text-right">Amount</th>
                     </tr>
                   </thead>
-                    <tbody className="divide-y divide-slate-100 bg-white">
-                    {statementLoading ? (
+                  <tbody className="divide-y divide-slate-100 bg-white">
+                    {transactionsLoading ? (
                       <tr>
                         <td colSpan="7" className="px-5 py-10 text-center text-slate-500">
-                          Loading statement...
+                          Loading transactions...
                         </td>
                       </tr>
-                    ) : statementRows.length === 0 ? (
+                    ) : clientTransactions.length === 0 ? (
                       <tr>
                         <td colSpan="7" className="px-5 py-10 text-center text-slate-500">
                           No transaction rows available yet
                         </td>
                       </tr>
                     ) : (
-                      statementRows.map((line, index) => (
-                        <tr key={`${index}-${line.transaction_id || index}`} className="align-top hover:bg-slate-50/60">
+                      clientTransactions.map((transaction, index) => {
+                        const isDebit = transaction.transaction_type === 'DEBIT';
+                        const isCredit = transaction.transaction_type === 'CREDIT';
+                        const reference = transaction.booking_id || transaction.quote_id || transaction.payment_tracking_id || '-';
+
+                        return (
+                        <tr key={transaction.transaction_id || index} className="align-top hover:bg-slate-50/60">
                           <td className="px-5 py-4 font-medium text-slate-900">
                             <div className="space-y-1">
-                              <p>{line.booking_id || '-'}</p>
-                              <p className="text-xs text-slate-500">{line.booking_id ? formatDate(line.date) : '-'}</p>
+                              <p>{transaction.transaction_id || '-'}</p>
+                              <p className="text-xs text-slate-500">{transaction.status || '-'}</p>
                             </div>
                           </td>
-                          <td className="px-5 py-4 text-slate-600">{formatDate(line.date)}</td>
+                          <td className="px-5 py-4 text-slate-600">{formatDateTime(transaction.created_at)}</td>
                           <td className="px-5 py-4">
-                            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${line.row_type === 'INVOICE' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                              {line.row_type === 'INVOICE' ? 'Daily Invoice' : 'Client Payment'}
+                            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${isDebit ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                              {transaction.category || transaction.transaction_type || 'Transaction'}
                             </span>
                           </td>
                           <td className="px-5 py-4 text-slate-600">
                             <div className="space-y-1">
-                              <p>{line.transactions || '-'}</p>
-                              <p className="text-xs text-slate-500">{line.details || '-'}</p>
+                              <p>{reference}</p>
+                              <p className="text-xs text-slate-500">{transaction.notes || '-'}</p>
                             </div>
                           </td>
-                          <td className="px-5 py-4 text-right font-semibold text-slate-900">{formatMoney(line.amount_invoiced || 0)}</td>
-                          <td className="px-5 py-4 text-right font-semibold text-emerald-700">{formatMoney(line.amount_paid || 0)}</td>
-                          <td className="px-5 py-4 text-right font-semibold text-rose-700">{formatMoney(line.balance || 0)}</td>
+                          <td className="px-5 py-4 text-right font-semibold text-slate-900">{formatMoney(isDebit ? transaction.amount : 0)}</td>
+                          <td className="px-5 py-4 text-right font-semibold text-emerald-700">{formatMoney(isCredit ? transaction.amount : 0)}</td>
+                          <td className="px-5 py-4 text-right font-semibold text-rose-700">{formatMoney(transaction.amount)}</td>
                         </tr>
-                      ))
+                        );
+                      })
                     )}
-                    </tbody>
-                    <tfoot className="bg-slate-50">
-                      <tr className="font-semibold">
-                        <td className="px-5 py-3">Totals</td>
-                        <td className="px-5 py-3" />
-                        <td className="px-5 py-3" />
-                        <td className="px-5 py-3 text-slate-600">&nbsp;</td>
-                        <td className="px-5 py-3 text-right">{formatMoney(ledgerTotals.total_invoiced || 0)}</td>
-                        <td className="px-5 py-3 text-right text-emerald-700">{formatMoney(ledgerTotals.total_paid || 0)}</td>
-                        <td className="px-5 py-3 text-right text-rose-700">{formatMoney(ledgerTotals.final_balance || 0)}</td>
-                      </tr>
-                    </tfoot>
+                  </tbody>
                 </table>
               </div>
             </div>
