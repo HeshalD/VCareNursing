@@ -64,6 +64,7 @@ import ServiceRequestSummaryPage from './modules/admin/service_requests/service_
 import BookingStaffRosterPage from './modules/admin/service_requests/booking_staff_roster';
 import BookingStaffAssignmentPage from './modules/admin/service_requests/booking_staff_assignment';
 import BookingDetailPage from './modules/admin/bookings/BookingDetailPage';
+import StaffDetailPage from './modules/admin/staff_detail/staff_detail_page';
 
 function App() {
   return (
@@ -160,6 +161,11 @@ function App() {
             <Route path="/admin/staff-roster" element={
               <AdminAuthProvider>
                 <StaffRoster />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/staff/:staffProfileId/detail" element={
+              <AdminAuthProvider>
+                <StaffDetailPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/workers" element={

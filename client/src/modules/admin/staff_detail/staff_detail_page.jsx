@@ -1,0 +1,1 @@
+export { default } from '../user_managemnet/staff_detail_page';

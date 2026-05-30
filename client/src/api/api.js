@@ -755,6 +755,63 @@ class ApiClient {
     return this.request(url);
   }
 
+  async getAdminStaffDetail(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/admin-detail`);
+  }
+
+  async getStaffCurrentBooking(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/current-booking`);
+  }
+
+  async getStaffBookingHistory(staffProfileId, filters = {}) {
+    const queryParams = new URLSearchParams(filters).toString();
+    const url = queryParams ? `/staff/${staffProfileId}/booking-history?${queryParams}` : `/staff/${staffProfileId}/booking-history`;
+    return this.request(url);
+  }
+
+  async getStaffEarningsSummary(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/earnings-summary`);
+  }
+
+  async getStaffEarningsTransactions(staffProfileId, filters = {}) {
+    const queryParams = new URLSearchParams(filters).toString();
+    const url = queryParams ? `/staff/${staffProfileId}/earnings-transactions?${queryParams}` : `/staff/${staffProfileId}/earnings-transactions`;
+    return this.request(url);
+  }
+
+  async getStaffPayoutsSummary(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/payouts/summary`);
+  }
+
+  async getStaffPayouts(staffProfileId, filters = {}) {
+    const queryParams = new URLSearchParams(filters).toString();
+    const url = queryParams ? `/staff/${staffProfileId}/payouts?${queryParams}` : `/staff/${staffProfileId}/payouts`;
+    return this.request(url);
+  }
+
+  async createStaffPayout(staffProfileId, payoutData) {
+    return this.request(`/staff/${staffProfileId}/payouts`, {
+      method: 'POST',
+      body: JSON.stringify(payoutData),
+    });
+  }
+
+  async getStaffBankAccounts(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/bank-accounts`);
+  }
+
+  async deactivateStaffAccount(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/deactivate`, {
+      method: 'PATCH',
+    });
+  }
+
+  async reactivateStaffAccount(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/reactivate`, {
+      method: 'PATCH',
+    });
+  }
+
   // Booking endpoints
   async createBooking(bookingData) {
     return this.request('/bookings', {

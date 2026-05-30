@@ -772,6 +772,21 @@ const StaffRoster = () => {
                   <p className="text-sm text-slate-900">{selectedStaff.home_address}</p>
                 </div>
               )}
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  onClick={() => navigate(`/admin/staff/${selectedStaff.staff_profile_id}/detail`)}
+                  className="px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg"
+                >
+                  Open full detail page
+                </button>
+                <button
+                  onClick={() => setSelectedStaff(null)}
+                  className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>

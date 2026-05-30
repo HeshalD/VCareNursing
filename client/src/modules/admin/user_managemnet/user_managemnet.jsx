@@ -192,6 +192,10 @@ const UserManagement = () => {
     navigate(`/admin/users/${clientId}/detail`);
   };
 
+  const openStaffDetail = (staffProfileId) => {
+    navigate(`/admin/staff/${staffProfileId}/detail`);
+  };
+
   return (
     <AdminLayout
       title="User Management"
@@ -326,8 +330,14 @@ const UserManagement = () => {
                 displayData.map((user) => (
                   <React.Fragment key={user.id}>
                     <tr
-                      className={`transition-colors ${activeTab === 'clients' ? 'cursor-pointer hover:bg-slate-50' : 'hover:bg-slate-50'}`}
-                      onClick={activeTab === 'clients' ? () => openClientDetail(user.id) : undefined}
+                      className={`transition-colors ${activeTab === 'clients' || activeTab === 'workers' ? 'cursor-pointer hover:bg-slate-50' : 'hover:bg-slate-50'}`}
+                      onClick={
+                        activeTab === 'clients'
+                          ? () => openClientDetail(user.id)
+                          : activeTab === 'workers'
+                            ? () => openStaffDetail(user.id)
+                            : undefined
+                      }
                     >
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
@@ -405,7 +415,10 @@ const UserManagement = () => {
                         )}
                         {activeTab === 'workers' && (
                           <button
-                            onClick={() => handleUpdateThreshold(user)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleUpdateThreshold(user);
+                            }}
                             className="text-blue-600 hover:text-blue-800 p-1 rounded-lg hover:bg-blue-50 transition-colors mr-2"
                             title="Update Advance Threshold"
                           >
@@ -413,13 +426,19 @@ const UserManagement = () => {
                           </button>
                         )}
                         <button
-                          onClick={() => toggleRowExpansion(user.id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleRowExpansion(user.id);
+                          }}
                           className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors"
                           title="View Details"
                         >
                           {expandedRows.has(user.id) ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                         </button>
-                        <button className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors">
+                        <button
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors"
+                        >
                           <MoreHorizontal className="w-5 h-5" />
                         </button>
                       </div>

@@ -137,6 +137,15 @@ async function runMigration() {
     END $$;
   `);
 
+  // Ensure STAFF_SALARY_PAID exists for payout/debit transactions
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'STAFF_SALARY_PAID';
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
   await db.query(`
     DO $$ BEGIN
       CREATE TYPE transaction_type_enum AS ENUM (
@@ -469,6 +478,53 @@ async function runMigration() {
       transaction_type transaction_type_enum
     );
   `);
+
+    // =========================================================
+    // STAFF PAYMENTS / BANK ACCOUNTS
+    // =========================================================
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS staff_bank_accounts (
+        staff_bank_account_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        staff_profile_id UUID NOT NULL REFERENCES staff_profiles(staff_profile_id) ON DELETE CASCADE,
+        account_holder_name VARCHAR(255) NOT NULL,
+        bank_name VARCHAR(100) NOT NULL,
+        branch_name VARCHAR(100),
+        account_number VARCHAR(50) NOT NULL,
+        currency VARCHAR(5) DEFAULT 'LKR',
+        is_verified BOOLEAN DEFAULT false,
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await db.query(`
+      CREATE INDEX IF NOT EXISTS idx_staff_bank_accounts_staff_profile_id
+      ON staff_bank_accounts(staff_profile_id);
+    `);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS staff_payments_tracking (
+        staff_payment_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        staff_profile_id UUID NOT NULL REFERENCES staff_profiles(staff_profile_id) ON DELETE CASCADE,
+        company_bank_account_id UUID REFERENCES bank_accounts(account_id),
+        staff_bank_account_id UUID REFERENCES staff_bank_accounts(staff_bank_account_id),
+        transaction_id UUID REFERENCES transactions(transaction_id),
+        amount_paid NUMERIC(12,2) NOT NULL,
+        payment_method VARCHAR(50),
+        reference_number VARCHAR(100),
+        notes TEXT,
+        paid_by UUID REFERENCES users(user_id),
+        paid_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        status VARCHAR(20) DEFAULT 'COMPLETED',
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await db.query(`
+      CREATE INDEX IF NOT EXISTS idx_staff_payments_staff_profile_id
+      ON staff_payments_tracking(staff_profile_id);
+    `);
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS products (

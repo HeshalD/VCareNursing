@@ -71,6 +71,112 @@ router.get(
     staffController.getStaffAssignments
 );
 
+// Admin: aggregated staff detail for admin UI
+router.get(
+  '/:staff_profile_id/admin-detail',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getAdminStaffDetail
+);
+
+// Get current active booking for staff (admin view)
+router.get(
+  '/:staff_profile_id/current-booking',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getCurrentBooking
+);
+
+// Booking history (assignment-centric) for staff (admin view)
+router.get(
+  '/:staff_profile_id/booking-history',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getBookingHistory
+);
+
+// Soft deactivate/reactivate staff account
+router.patch(
+  '/:staff_profile_id/deactivate',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.deactivateStaffAccount
+);
+
+router.patch(
+  '/:staff_profile_id/reactivate',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.reactivateStaffAccount
+);
+
+// Staff bank accounts management (list/create/update/delete)
+router.get(
+  '/:staff_profile_id/bank-accounts',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'NANNY', 'NURSE', 'CARETAKER'),
+  staffController.getStaffBankAccounts
+);
+
+router.post(
+  '/:staff_profile_id/bank-accounts',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'NANNY', 'NURSE', 'CARETAKER'),
+  staffController.createStaffBankAccount
+);
+
+router.put(
+  '/:staff_profile_id/bank-accounts/:staff_bank_account_id',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'NANNY', 'NURSE', 'CARETAKER'),
+  staffController.updateStaffBankAccount
+);
+
+router.delete(
+  '/:staff_profile_id/bank-accounts/:staff_bank_account_id',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'NANNY', 'NURSE', 'CARETAKER'),
+  staffController.deleteStaffBankAccount
+);
+
+// Payouts history and summary for staff (admin view)
+router.get(
+  '/:staff_profile_id/payouts/summary',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getPayoutsSummary
+);
+
+router.get(
+  '/:staff_profile_id/payouts',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getPayouts
+);
+
+// Earnings summary and transactions for staff (admin view)
+router.get(
+  '/:staff_profile_id/earnings-summary',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getEarningsSummary
+);
+
+router.get(
+  '/:staff_profile_id/earnings-transactions',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getEarningsTransactions
+);
+
+// Admin: Record a payout to a staff member (company -> staff personal bank)
+router.post(
+  '/:staff_profile_id/payouts',
+  protect,
+  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  staffController.createStaffPayout
+);
+
 // Update staff status to unavailable
 router.put('/:staff_profile_id/unavailable', protect, staffController.updateStaffToUnavailable);
 

@@ -119,6 +119,622 @@ exports.getStaffByUserID = async (req, res) => {
     }
 };
 
+// Admin: Aggregate staff detail (profile + earnings + current/previous bookings + reviews + payout summary)
+exports.getAdminStaffDetail = async (req, res) => {
+    const { staff_profile_id } = req.params;
+
+    try {
+        // 1) Profile + user
+        const profileQuery = `
+            SELECT sp.*, u.user_id, u.email, u.mobile_number, u.role, u.is_active
+            FROM staff_profiles sp
+            JOIN users u ON sp.user_id = u.user_id
+            WHERE sp.staff_profile_id = $1
+        `;
+        const profileRes = await db.query(profileQuery, [staff_profile_id]);
+        if (profileRes.rows.length === 0) {
+            return res.status(404).json({ status: 'error', message: 'Staff not found' });
+        }
+        const profile = profileRes.rows[0];
+
+        // 2) Earnings summary
+        const totalEarnedRes = await db.query(`
+            SELECT COALESCE(SUM(amount), 0) as total_earned
+            FROM transactions
+            WHERE staff_profile_id = $1 AND category = 'STAFF_SALARY' AND transaction_type = 'CREDIT' AND status = 'COMPLETED'
+        `, [staff_profile_id]);
+
+        const totalPaidRes = await db.query(`
+            SELECT COALESCE(SUM(amount), 0) as total_paid_out
+            FROM transactions
+            WHERE staff_profile_id = $1 AND category = 'STAFF_SALARY_PAID' AND transaction_type = 'DEBIT' AND status = 'COMPLETED'
+        `, [staff_profile_id]);
+
+        const currentEarnings = parseFloat(profile.current_earnings || 0);
+        const totalEarned = parseFloat(totalEarnedRes.rows[0].total_earned || 0);
+        const totalPaidOut = parseFloat(totalPaidRes.rows[0].total_paid_out || 0);
+        const outstanding = currentEarnings; // current_earnings reflects unpaid balance
+
+        // 3) Current active assignment / booking
+        const currentAssignRes = await db.query(`
+            SELECT bsa.*, b.booking_id, b.status as booking_status, b.start_date, b.daily_rate as booking_daily_rate,
+                   c.full_name as client_name, p.full_name as patient_name
+            FROM booking_staff_assignments bsa
+            LEFT JOIN bookings b ON bsa.booking_id = b.booking_id
+            LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
+            LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+            WHERE bsa.staff_profile_id = $1 AND bsa.status = 'ACTIVE'
+            ORDER BY bsa.service_start_date ASC
+            LIMIT 1
+        `, [staff_profile_id]);
+
+        const current_assignment = currentAssignRes.rows[0] || null;
+
+        // 4) Previous assignments / booking history (recent)
+        const historyRes = await db.query(`
+            SELECT bsa.assignment_id, bsa.booking_id, bsa.service_start_date, bsa.service_end_date, bsa.daily_rate, bsa.amount_allocated, bsa.status,
+                   b.client_id, c.full_name as client_name, p.full_name as patient_name,
+                   COALESCE(salary_totals.total_salary_paid, 0) as total_salary_paid
+            FROM booking_staff_assignments bsa
+            LEFT JOIN bookings b ON bsa.booking_id = b.booking_id
+            LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
+            LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+            LEFT JOIN (
+                SELECT staff_profile_id, booking_id, COALESCE(SUM(amount),0) as total_salary_paid
+                FROM transactions
+                WHERE category = 'STAFF_SALARY' OR category = 'STAFF_SALARY_PAID'
+                GROUP BY staff_profile_id, booking_id
+            ) salary_totals ON salary_totals.staff_profile_id = bsa.staff_profile_id AND salary_totals.booking_id = bsa.booking_id
+            WHERE bsa.staff_profile_id = $1
+            ORDER BY bsa.service_start_date DESC
+            LIMIT 20
+        `, [staff_profile_id]);
+
+        const booking_history = historyRes.rows;
+
+        // 5) Reviews summary & recent reviews
+        const reviewsRes = await db.query(`
+            SELECT sr.review_id, sr.rating, sr.review_text, sr.created_at, cp.full_name as client_name
+            FROM staff_reviews sr
+            LEFT JOIN client_profiles cp ON sr.client_profile_id = cp.client_profile_id
+            WHERE sr.staff_profile_id = $1 AND sr.is_visible = true
+            ORDER BY sr.created_at DESC
+            LIMIT 20
+        `, [staff_profile_id]);
+
+        const distributionRes = await db.query(`
+            SELECT rating, COUNT(*) as count
+            FROM staff_reviews
+            WHERE staff_profile_id = $1 AND is_visible = true
+            GROUP BY rating
+            ORDER BY rating DESC
+        `, [staff_profile_id]);
+
+        // 6) Payout summary (paid totals)
+        const payoutsRes = await db.query(`
+            SELECT COALESCE(SUM(amount),0) as total_payouts, COUNT(*) as payouts_count
+            FROM transactions
+            WHERE staff_profile_id = $1 AND category = 'STAFF_SALARY_PAID' AND transaction_type = 'DEBIT' AND status = 'COMPLETED'
+        `, [staff_profile_id]);
+
+        const payout_summary = payoutsRes.rows[0] || { total_payouts: 0, payouts_count: 0 };
+
+        return res.status(200).json({
+            status: 'success',
+            data: {
+                profile,
+                earnings: {
+                    current_earnings: currentEarnings,
+                    total_earned: totalEarned,
+                    total_paid_out: totalPaidOut,
+                    outstanding: outstanding
+                },
+                current_assignment,
+                booking_history,
+                reviews: {
+                    recent: reviewsRes.rows,
+                    distribution: distributionRes.rows
+                },
+                payout_summary
+            }
+        });
+
+    } catch (error) {
+        console.error('getAdminStaffDetail Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error while fetching admin staff detail' });
+    }
+};
+
+// Earnings summary for admin/staff views
+exports.getEarningsSummary = async (req, res) => {
+    const { staff_profile_id } = req.params;
+
+    try {
+        const profileRes = await db.query(`SELECT current_earnings FROM staff_profiles WHERE staff_profile_id = $1`, [staff_profile_id]);
+        if (profileRes.rows.length === 0) {
+            return res.status(404).json({ status: 'error', message: 'Staff not found' });
+        }
+
+        const currentEarnings = parseFloat(profileRes.rows[0].current_earnings || 0);
+
+        const totalEarnedRes = await db.query(`
+            SELECT COALESCE(SUM(amount),0) as total_earned
+            FROM transactions
+            WHERE staff_profile_id = $1 AND category = 'STAFF_SALARY' AND transaction_type = 'CREDIT' AND status = 'COMPLETED'
+        `, [staff_profile_id]);
+
+        const totalPaidRes = await db.query(`
+            SELECT COALESCE(SUM(amount),0) as total_paid_out
+            FROM transactions
+            WHERE staff_profile_id = $1 AND category = 'STAFF_SALARY_PAID' AND transaction_type = 'DEBIT' AND status = 'COMPLETED'
+        `, [staff_profile_id]);
+
+        const totalEarned = parseFloat(totalEarnedRes.rows[0].total_earned || 0);
+        const totalPaidOut = parseFloat(totalPaidRes.rows[0].total_paid_out || 0);
+        const outstanding = currentEarnings;
+
+        return res.status(200).json({
+            status: 'success',
+            data: {
+                current_earnings: currentEarnings,
+                total_earned: totalEarned,
+                total_paid_out: totalPaidOut,
+                outstanding_payable: outstanding
+            }
+        });
+
+    } catch (error) {
+        console.error('getEarningsSummary Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error while fetching earnings summary' });
+    }
+};
+
+// Paginated earnings transactions (STAFF_SALARY and STAFF_SALARY_PAID)
+exports.getEarningsTransactions = async (req, res) => {
+    const { staff_profile_id } = req.params;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
+
+    try {
+        const countRes = await db.query(`
+            SELECT COUNT(*) as total_count
+            FROM transactions
+            WHERE staff_profile_id = $1 AND (category = 'STAFF_SALARY' OR category = 'STAFF_SALARY_PAID')
+        `, [staff_profile_id]);
+
+        const totalCount = parseInt(countRes.rows[0].total_count || 0);
+
+        const dataRes = await db.query(`
+            SELECT transaction_id, category, amount, transaction_type, payment_method, bank_account_id, reference_number, status, created_at
+            FROM transactions
+            WHERE staff_profile_id = $1 AND (category = 'STAFF_SALARY' OR category = 'STAFF_SALARY_PAID')
+            ORDER BY created_at DESC
+            LIMIT $2 OFFSET $3
+        `, [staff_profile_id, limit, offset]);
+
+        return res.status(200).json({
+            status: 'success',
+            data: dataRes.rows,
+            pagination: {
+                current_page: page,
+                per_page: limit,
+                total_count: totalCount,
+                total_pages: Math.ceil(totalCount / limit)
+            }
+        });
+
+    } catch (error) {
+        console.error('getEarningsTransactions Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error while fetching earnings transactions' });
+    }
+};
+
+// Get current active booking/assignment for a staff member
+exports.getCurrentBooking = async (req, res) => {
+    const { staff_profile_id } = req.params;
+
+    try {
+        const currentAssignRes = await db.query(`
+            SELECT bsa.assignment_id, bsa.booking_id, bsa.assigned_on, bsa.service_start_date, bsa.service_end_date, bsa.daily_rate, bsa.amount_allocated, bsa.status,
+                         b.booking_id as booking_id, b.status as booking_status, b.start_date as booking_start_date, b.daily_rate as booking_daily_rate,
+                         c.client_profile_id, c.full_name as client_name,
+                         p.patient_id, p.full_name as patient_name
+            FROM booking_staff_assignments bsa
+            LEFT JOIN bookings b ON bsa.booking_id = b.booking_id
+            LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
+            LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+            WHERE bsa.staff_profile_id = $1 AND bsa.status = 'ACTIVE'
+            ORDER BY bsa.assigned_on DESC
+            LIMIT 1
+        `, [staff_profile_id]);
+
+        const current = currentAssignRes.rows[0] || null;
+        return res.status(200).json({ status: 'success', data: current });
+
+    } catch (error) {
+        console.error('getCurrentBooking Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error while fetching current booking' });
+    }
+};
+
+// Paginated booking history (assignment-centric) for a staff member
+exports.getBookingHistory = async (req, res) => {
+    const { staff_profile_id } = req.params;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const status = req.query.status; // optional filter by assignment status
+    const offset = (page - 1) * limit;
+
+    try {
+        // Count
+        const countQuery = status ?
+            `SELECT COUNT(*) as total_count FROM booking_staff_assignments WHERE staff_profile_id = $1 AND status = $2` :
+            `SELECT COUNT(*) as total_count FROM booking_staff_assignments WHERE staff_profile_id = $1`;
+
+        const countParams = status ? [staff_profile_id, status] : [staff_profile_id];
+        const countRes = await db.query(countQuery, countParams);
+        const totalCount = parseInt(countRes.rows[0].total_count || 0);
+
+        // Data query with salary totals per booking
+        const dataQuery = `
+            SELECT bsa.assignment_id, bsa.booking_id, bsa.service_start_date, bsa.service_end_date, bsa.daily_rate, bsa.amount_allocated, bsa.status,
+                         b.client_id, c.full_name as client_name, p.full_name as patient_name,
+                         COALESCE(salary_totals.total_salary, 0) as total_salary
+            FROM booking_staff_assignments bsa
+            LEFT JOIN bookings b ON bsa.booking_id = b.booking_id
+            LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
+            LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+            LEFT JOIN (
+                SELECT staff_profile_id, booking_id, COALESCE(SUM(amount),0) as total_salary
+                FROM transactions
+                WHERE category = 'STAFF_SALARY' OR category = 'STAFF_SALARY_PAID'
+                GROUP BY staff_profile_id, booking_id
+            ) salary_totals ON salary_totals.staff_profile_id = bsa.staff_profile_id AND salary_totals.booking_id = bsa.booking_id
+            WHERE bsa.staff_profile_id = $1
+            ${status ? "AND bsa.status = $2" : ''}
+            ORDER BY bsa.service_start_date DESC
+            LIMIT $${status ? 3 : 2} OFFSET $${status ? 4 : 3}
+        `;
+
+        const dataParams = status ? [staff_profile_id, status, limit, offset] : [staff_profile_id, limit, offset];
+
+        const dataRes = await db.query(dataQuery, dataParams);
+
+        return res.status(200).json({
+            status: 'success',
+            data: dataRes.rows,
+            pagination: {
+                current_page: page,
+                per_page: limit,
+                total_count: totalCount,
+                total_pages: Math.ceil(totalCount / limit)
+            }
+        });
+
+    } catch (error) {
+        console.error('getBookingHistory Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error while fetching booking history' });
+    }
+};
+
+// Paginated payouts history for a staff member
+exports.getPayouts = async (req, res) => {
+    const { staff_profile_id } = req.params;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const status = req.query.status;
+    const offset = (page - 1) * limit;
+
+    try {
+        const countQuery = status ? 
+            `SELECT COUNT(*) as total_count FROM staff_payments_tracking WHERE staff_profile_id = $1 AND status = $2` :
+            `SELECT COUNT(*) as total_count FROM staff_payments_tracking WHERE staff_profile_id = $1`;
+
+        const countParams = status ? [staff_profile_id, status] : [staff_profile_id];
+        const countRes = await db.query(countQuery, countParams);
+        const totalCount = parseInt(countRes.rows[0].total_count || 0);
+
+        const dataQuery = `
+            SELECT spt.staff_payment_id, spt.transaction_id, spt.amount_paid, spt.payment_method, spt.reference_number, spt.notes,
+                         spt.paid_by, u.email as paid_by_email, u.mobile_number as paid_by_mobile,
+                         spt.company_bank_account_id, ba.account_nickname as company_account_name,
+                         spt.staff_bank_account_id, spt.paid_at, spt.status, spt.created_at
+            FROM staff_payments_tracking spt
+            LEFT JOIN users u ON spt.paid_by = u.user_id
+            LEFT JOIN bank_accounts ba ON spt.company_bank_account_id = ba.account_id
+            WHERE spt.staff_profile_id = $1
+            ${status ? 'AND spt.status = $2' : ''}
+            ORDER BY spt.paid_at DESC
+            LIMIT $${status ? 3 : 2} OFFSET $${status ? 4 : 3}
+        `;
+
+        const dataParams = status ? [staff_profile_id, status, limit, offset] : [staff_profile_id, limit, offset];
+        const dataRes = await db.query(dataQuery, dataParams);
+
+        return res.status(200).json({
+            status: 'success',
+            data: dataRes.rows,
+            pagination: {
+                current_page: page,
+                per_page: limit,
+                total_count: totalCount,
+                total_pages: Math.ceil(totalCount / limit)
+            }
+        });
+
+    } catch (error) {
+        console.error('getPayouts Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error while fetching payouts' });
+    }
+};
+
+// Payouts summary: all-time paid, paid this month, outstanding
+exports.getPayoutsSummary = async (req, res) => {
+    const { staff_profile_id } = req.params;
+
+    try {
+        const allTimeRes = await db.query(`
+            SELECT COALESCE(SUM(amount_paid),0) as all_time_paid, COALESCE(COUNT(*),0) as payouts_count
+            FROM staff_payments_tracking
+            WHERE staff_profile_id = $1 AND status = 'COMPLETED'
+        `, [staff_profile_id]);
+
+        const monthRes = await db.query(`
+            SELECT COALESCE(SUM(amount_paid),0) as paid_this_month
+            FROM staff_payments_tracking
+            WHERE staff_profile_id = $1 AND status = 'COMPLETED' AND paid_at >= date_trunc('month', now())
+        `, [staff_profile_id]);
+
+        const earningsRes = await db.query(`SELECT COALESCE(current_earnings,0) as current_earnings FROM staff_profiles WHERE staff_profile_id = $1`, [staff_profile_id]);
+        if (earningsRes.rows.length === 0) {
+            return res.status(404).json({ status: 'error', message: 'Staff not found' });
+        }
+
+        const all_time_paid = parseFloat(allTimeRes.rows[0].all_time_paid || 0);
+        const payouts_count = parseInt(allTimeRes.rows[0].payouts_count || 0);
+        const paid_this_month = parseFloat(monthRes.rows[0].paid_this_month || 0);
+        const current_earnings = parseFloat(earningsRes.rows[0].current_earnings || 0);
+
+        return res.status(200).json({
+            status: 'success',
+            data: {
+                all_time_paid,
+                paid_this_month,
+                payouts_count,
+                outstanding: current_earnings
+            }
+        });
+
+    } catch (error) {
+        console.error('getPayoutsSummary Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error while fetching payouts summary' });
+    }
+};
+
+// --- Staff bank account management ---
+// List staff bank accounts
+exports.getStaffBankAccounts = async (req, res) => {
+    const { staff_profile_id } = req.params;
+    try {
+        const resDb = await db.query(
+            `SELECT * FROM staff_bank_accounts WHERE staff_profile_id = $1 AND is_active = true ORDER BY created_at DESC`,
+            [staff_profile_id]
+        );
+        return res.status(200).json({ status: 'success', data: resDb.rows });
+    } catch (error) {
+        console.error('getStaffBankAccounts Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error fetching staff bank accounts' });
+    }
+};
+
+// Create a staff bank account (owner or admin)
+exports.createStaffBankAccount = async (req, res) => {
+    const { staff_profile_id } = req.params;
+    const { account_holder_name, bank_name, branch_name, account_number, currency } = req.body;
+
+    if (!account_holder_name || !bank_name || !account_number) {
+        return res.status(400).json({ status: 'error', message: 'Missing required bank account fields' });
+    }
+
+    try {
+        // Verify staff exists and ownership when user is not admin
+        const staffRes = await db.query('SELECT user_id FROM staff_profiles WHERE staff_profile_id = $1', [staff_profile_id]);
+        if (staffRes.rows.length === 0) return res.status(404).json({ status: 'error', message: 'Staff not found' });
+
+        const ownerUserId = staffRes.rows[0].user_id;
+        const userRoles = Array.isArray(req.user.role) ? req.user.role : [req.user.role];
+
+        const isAdmin = userRoles.some(r => ['SUPER_ADMIN','COORDINATOR','ACCOUNTS'].includes(r));
+        if (!isAdmin && req.user.user_id !== ownerUserId) {
+            return res.status(403).json({ status: 'error', message: 'Not authorized to add bank account for this staff' });
+        }
+
+        const insertRes = await db.query(
+            `INSERT INTO staff_bank_accounts (staff_profile_id, account_holder_name, bank_name, branch_name, account_number, currency, is_verified, is_active)
+             VALUES ($1,$2,$3,$4,$5,$6,false,true) RETURNING *`,
+            [staff_profile_id, account_holder_name, bank_name, branch_name || null, account_number, currency || 'LKR']
+        );
+
+        return res.status(201).json({ status: 'success', data: insertRes.rows[0] });
+
+    } catch (error) {
+        console.error('createStaffBankAccount Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error creating bank account' });
+    }
+};
+
+// Update a staff bank account (owner or admin)
+exports.updateStaffBankAccount = async (req, res) => {
+    const { staff_profile_id, staff_bank_account_id } = req.params;
+    const { account_holder_name, bank_name, branch_name, account_number, currency, is_verified, is_active } = req.body;
+
+    try {
+        const acctRes = await db.query('SELECT staff_profile_id FROM staff_bank_accounts WHERE staff_bank_account_id = $1', [staff_bank_account_id]);
+        if (acctRes.rows.length === 0) return res.status(404).json({ status: 'error', message: 'Bank account not found' });
+
+        // confirm it belongs to the provided staff_profile_id
+        if (acctRes.rows[0].staff_profile_id !== staff_profile_id) {
+            return res.status(400).json({ status: 'error', message: 'Bank account does not belong to the specified staff' });
+        }
+
+        // ownership/admin check
+        const staffRes = await db.query('SELECT user_id FROM staff_profiles WHERE staff_profile_id = $1', [staff_profile_id]);
+        const ownerUserId = staffRes.rows[0].user_id;
+        const userRoles = Array.isArray(req.user.role) ? req.user.role : [req.user.role];
+        const isAdmin = userRoles.some(r => ['SUPER_ADMIN','COORDINATOR','ACCOUNTS'].includes(r));
+        if (!isAdmin && req.user.user_id !== ownerUserId) {
+            return res.status(403).json({ status: 'error', message: 'Not authorized to update this bank account' });
+        }
+
+        const updateQuery = `
+            UPDATE staff_bank_accounts SET
+                account_holder_name = COALESCE($1, account_holder_name),
+                bank_name = COALESCE($2, bank_name),
+                branch_name = COALESCE($3, branch_name),
+                account_number = COALESCE($4, account_number),
+                currency = COALESCE($5, currency),
+                is_verified = COALESCE($6, is_verified),
+                is_active = COALESCE($7, is_active)
+            WHERE staff_bank_account_id = $8
+            RETURNING *
+        `;
+
+        const updateRes = await db.query(updateQuery, [account_holder_name, bank_name, branch_name, account_number, currency, is_verified, is_active, staff_bank_account_id]);
+        return res.status(200).json({ status: 'success', data: updateRes.rows[0] });
+
+    } catch (error) {
+        console.error('updateStaffBankAccount Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error updating bank account' });
+    }
+};
+
+// Soft-delete a staff bank account (owner or admin)
+exports.deleteStaffBankAccount = async (req, res) => {
+    const { staff_profile_id, staff_bank_account_id } = req.params;
+
+    try {
+        const acctRes = await db.query('SELECT staff_profile_id FROM staff_bank_accounts WHERE staff_bank_account_id = $1', [staff_bank_account_id]);
+        if (acctRes.rows.length === 0) return res.status(404).json({ status: 'error', message: 'Bank account not found' });
+        if (acctRes.rows[0].staff_profile_id !== staff_profile_id) {
+            return res.status(400).json({ status: 'error', message: 'Bank account does not belong to the specified staff' });
+        }
+
+        const staffRes = await db.query('SELECT user_id FROM staff_profiles WHERE staff_profile_id = $1', [staff_profile_id]);
+        const ownerUserId = staffRes.rows[0].user_id;
+        const userRoles = Array.isArray(req.user.role) ? req.user.role : [req.user.role];
+        const isAdmin = userRoles.some(r => ['SUPER_ADMIN','COORDINATOR','ACCOUNTS'].includes(r));
+        if (!isAdmin && req.user.user_id !== ownerUserId) {
+            return res.status(403).json({ status: 'error', message: 'Not authorized to delete this bank account' });
+        }
+
+        await db.query('UPDATE staff_bank_accounts SET is_active = false WHERE staff_bank_account_id = $1', [staff_bank_account_id]);
+        return res.status(200).json({ status: 'success', message: 'Bank account deactivated' });
+
+    } catch (error) {
+        console.error('deleteStaffBankAccount Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error deleting bank account' });
+    }
+};
+
+// Soft deactivate a staff account by disabling the linked user and marking the staff unavailable
+exports.deactivateStaffAccount = async (req, res) => {
+    const { staff_profile_id } = req.params;
+    const client = await db.pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        const staffRes = await client.query(
+            'SELECT user_id, is_active FROM staff_profiles WHERE staff_profile_id = $1 FOR UPDATE',
+            [staff_profile_id]
+        );
+
+        if (staffRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Staff not found' });
+        }
+
+        const userId = staffRes.rows[0].user_id;
+
+        await client.query(
+            'UPDATE users SET is_active = false WHERE user_id = $1',
+            [userId]
+        );
+
+        const updateRes = await client.query(
+            `UPDATE staff_profiles
+             SET current_status = 'UNAVAILABLE'
+             WHERE staff_profile_id = $1
+             RETURNING staff_profile_id, full_name, current_status, is_active`,
+            [staff_profile_id]
+        );
+
+        await client.query('COMMIT');
+
+        return res.status(200).json({
+            status: 'success',
+            message: 'Staff account deactivated successfully',
+            data: updateRes.rows[0]
+        });
+    } catch (error) {
+        try { await client.query('ROLLBACK'); } catch (rollbackError) { /* ignore */ }
+        console.error('deactivateStaffAccount Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error while deactivating staff account' });
+    } finally {
+        client.release();
+    }
+};
+
+// Reactivate a staff account by enabling the linked user and restoring availability
+exports.reactivateStaffAccount = async (req, res) => {
+    const { staff_profile_id } = req.params;
+    const client = await db.pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        const staffRes = await client.query(
+            'SELECT user_id FROM staff_profiles WHERE staff_profile_id = $1 FOR UPDATE',
+            [staff_profile_id]
+        );
+
+        if (staffRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Staff not found' });
+        }
+
+        const userId = staffRes.rows[0].user_id;
+
+        await client.query(
+            'UPDATE users SET is_active = true WHERE user_id = $1',
+            [userId]
+        );
+
+        const updateRes = await client.query(
+            `UPDATE staff_profiles
+             SET current_status = 'AVAILABLE'
+             WHERE staff_profile_id = $1
+             RETURNING staff_profile_id, full_name, current_status, is_active`,
+            [staff_profile_id]
+        );
+
+        await client.query('COMMIT');
+
+        return res.status(200).json({
+            status: 'success',
+            message: 'Staff account reactivated successfully',
+            data: updateRes.rows[0]
+        });
+    } catch (error) {
+        try { await client.query('ROLLBACK'); } catch (rollbackError) { /* ignore */ }
+        console.error('reactivateStaffAccount Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error while reactivating staff account' });
+    } finally {
+        client.release();
+    }
+};
+
 // Get all staff members with optional filtering
 exports.getAllStaff = async (req, res) => {
     try {
@@ -352,6 +968,78 @@ exports.updateStaffStatus = async (req, res) => {
             message: 'Server error while updating staff member status' 
         });
     }
+};
+
+// Record a payout to a staff member (company -> staff personal account)
+exports.createStaffPayout = async (req, res) => {
+        const { staff_profile_id } = req.params;
+        const {
+            amount,
+            company_bank_account_id,
+            staff_bank_account_id,
+            payment_method,
+            reference_number,
+            notes
+        } = req.body;
+
+        if (!amount || isNaN(amount) || Number(amount) <= 0) {
+            return res.status(400).json({ status: 'error', message: 'Invalid amount' });
+        }
+
+        const client = await db.pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            // Lock staff profile row to prevent race conditions
+            const sel = await client.query(
+                `SELECT current_earnings FROM staff_profiles WHERE staff_profile_id = $1 FOR UPDATE`,
+                [staff_profile_id]
+            );
+
+            if (sel.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({ status: 'error', message: 'Staff profile not found' });
+            }
+
+            const currentEarnings = parseFloat(sel.rows[0].current_earnings || 0);
+            const payoutAmount = parseFloat(amount);
+
+            if (payoutAmount > currentEarnings) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ status: 'error', message: 'Insufficient staff balance for payout' });
+            }
+
+            const newEarnings = (currentEarnings - payoutAmount).toFixed(2);
+
+            await client.query(`UPDATE staff_profiles SET current_earnings = $1 WHERE staff_profile_id = $2`, [newEarnings, staff_profile_id]);
+
+            // Insert into transactions ledger
+            const insertTrans = await client.query(
+                `INSERT INTO transactions (staff_profile_id, category, amount, transaction_type, bank_account_id, payment_method, reference_number, verified_by, status, created_at)
+                 VALUES ($1, 'STAFF_SALARY_PAID', $2, 'DEBIT', $3, $4, $5, $6, 'COMPLETED', NOW()) RETURNING transaction_id`,
+                [staff_profile_id, payoutAmount, company_bank_account_id || null, payment_method || null, reference_number || null, req.user.user_id]
+            );
+
+            const transaction_id = insertTrans.rows[0].transaction_id;
+
+            // Insert into staff_payments_tracking for audit
+            await client.query(
+                `INSERT INTO staff_payments_tracking (staff_profile_id, company_bank_account_id, staff_bank_account_id, transaction_id, amount_paid, payment_method, reference_number, notes, paid_by, paid_at, status, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'COMPLETED', NOW())`,
+                [staff_profile_id, company_bank_account_id || null, staff_bank_account_id || null, transaction_id, payoutAmount, payment_method || null, reference_number || null, notes || null, req.user.user_id]
+            );
+
+            await client.query('COMMIT');
+
+            return res.status(201).json({ status: 'success', message: 'Payout recorded', data: { transaction_id } });
+
+        } catch (error) {
+            console.error('createStaffPayout Error:', error);
+            try { await client.query('ROLLBACK'); } catch (e) { /* ignore */ }
+            return res.status(500).json({ status: 'error', message: 'Server error while recording payout' });
+        } finally {
+            client.release();
+        }
 };
 
 // Get staff members by their role
