@@ -4,7 +4,7 @@ import { Plus, Search, Edit2, Trash2, CheckCircle, XCircle, Briefcase, DollarSig
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 
-const API_BASE = 'http://localhost:5001/api/internal-staff'; // Adjust if needed or use apiClient wrapper
+const API_BASE = 'http://localhost:5000/api/internal-staff'; // Adjust if needed or use apiClient wrapper
 
 const InternalStaffDashboard = () => {
   const [staffList, setStaffList] = useState([]);
