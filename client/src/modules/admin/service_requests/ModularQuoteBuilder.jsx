@@ -21,7 +21,7 @@ import PresetItemSelector from '../service_quotes/PresetItemSelector';
 import QuoteSummary from '../service_quotes/QuoteSummary';
 import PresetManager from '../service_quotes/PresetManager';
 
-const QuoteBuilder = () => {
+const ModularQuoteBuilder = () => {
   const { requestId } = useParams();
   const navigate = useNavigate();
   
@@ -86,7 +86,7 @@ const QuoteBuilder = () => {
         setError('No new leads found');
       } else {
         setServiceRequest(leads[0]);
-        navigate(`/admin/quote-builder/${leads[0].request_id}`, { replace: true });
+        navigate(`/admin/modular-quote-builder/${leads[0].request_id}`, { replace: true });
       }
     } catch (err) {
       setError('Failed to fetch new leads');
@@ -136,6 +136,7 @@ const QuoteBuilder = () => {
 
   const deleteLineItem = (index) => {
     const newItems = lineItems.filter((_, i) => i !== index);
+    // Reorder remaining items
     const reorderedItems = newItems.map((item, i) => ({
       ...item,
       sort_order: i
@@ -149,8 +150,10 @@ const QuoteBuilder = () => {
     
     if (targetIndex < 0 || targetIndex >= lineItems.length) return;
     
+    // Swap items
     [newItems[index], newItems[targetIndex]] = [newItems[targetIndex], newItems[index]];
     
+    // Update sort orders
     const reorderedItems = newItems.map((item, i) => ({
       ...item,
       sort_order: i
@@ -582,4 +585,4 @@ const QuoteBuilder = () => {
   );
 };
 
-export default QuoteBuilder;
+export default ModularQuoteBuilder;

@@ -1,6 +1,8 @@
 const db = require('../config/db');
 const { sendWhatsAppMessage } = require('../utils/whatsapp');
 
+const getUploadedFileUrl = (files, fieldName) => (files && files[fieldName] && files[fieldName][0]) ? files[fieldName][0].path : null;
+
 // Get staff member by ID
 exports.getStaffByID = async (req, res) => {
     const { staff_id } = req.params;
@@ -174,6 +176,9 @@ exports.getAllStaff = async (req, res) => {
                 sp.date_of_birth,
                 sp.created_at,
                 sp.advance_threshold_amount,
+                sp.nic_number,
+                sp.nic_front_url,
+                sp.nic_back_url,
                 CAST(sp.average_rating AS FLOAT) as average_rating,
                 u.user_id,
                 u.email,
@@ -794,12 +799,15 @@ exports.updateStaffProfile = async (req, res) => {
         date_of_birth,
         email,
         mobile_number,
-        role
+        role,
+        nic_number
     } = req.body;
 
     // Extract file URLs from multer/Cloudinary
     const uploadedDocuments = req.files && req.files.documents ? req.files.documents.map(file => file.path) : [];
     const uploadedProfilePicture = req.files && req.files.profile_picture ? req.files.profile_picture[0].path : null;
+    const uploadedNicFront = getUploadedFileUrl(req.files, 'nic_front');
+    const uploadedNicBack = getUploadedFileUrl(req.files, 'nic_back');
 
     try {
         // Validate staff exists
@@ -997,10 +1005,10 @@ exports.createStaffProfile = async (req, res) => {
 
     try {
         // Validate required fields
-        if (!full_name || !designation || !gender || !date_of_birth) {
+        if (!full_name || !designation || !gender || !date_of_birth || !nic_number || !uploadedNicFront || !uploadedNicBack) {
             return res.status(400).json({
                 status: 'error',
-                message: 'Missing required fields: full_name, designation, gender, date_of_birth'
+                message: 'Missing required fields: full_name, designation, gender, date_of_birth, nic_number, nic_front, nic_back'
             });
         }
 
@@ -1103,6 +1111,9 @@ exports.createStaffProfile = async (req, res) => {
                 home_address,
                 location,
                 profile_picture_url,
+                nic_number,
+                nic_front_url,
+                nic_back_url,
                 gender,
                 willing_to_live_in,
                 date_of_birth,
@@ -1110,7 +1121,7 @@ exports.createStaffProfile = async (req, res) => {
                 verification_status,
                 created_at
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'AVAILABLE', 'VERIFIED', NOW()
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'AVAILABLE', 'VERIFIED', NOW()
             )
             RETURNING 
                 staff_profile_id,
@@ -1122,6 +1133,9 @@ exports.createStaffProfile = async (req, res) => {
                 home_address,
                 location,
                 profile_picture_url,
+                nic_number,
+                nic_front_url,
+                nic_back_url,
                 gender,
                 willing_to_live_in,
                 date_of_birth,
@@ -1139,6 +1153,9 @@ exports.createStaffProfile = async (req, res) => {
             home_address || null,
             location || null,
             uploadedProfilePicture || null,
+            nic_number,
+            uploadedNicFront,
+            uploadedNicBack,
             gender.toUpperCase(),
             willing_to_live_in || false,
             date_of_birth

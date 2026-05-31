@@ -4,6 +4,8 @@ const jwt = require('jsonwebtoken');
 const sendEmail = require('../utils/email');
 const { sendWhatsAppOtp, sendWhatsAppMessage } = require('../utils/whatsapp');
 
+const getUploadedFileUrl = (files, fieldName) => (files && files[fieldName] && files[fieldName][0]) ? files[fieldName][0].path : null;
+
 exports.submitApplication = async (req, res) => {
   try {
     const { 
@@ -16,6 +18,7 @@ exports.submitApplication = async (req, res) => {
       location, 
       latitude, 
       longitude,
+      nic_number,
       gender,
       date_of_birth
     } = req.body;
@@ -53,17 +56,25 @@ exports.submitApplication = async (req, res) => {
     console.log('Files received:', req.files);
     const document_urls = req.files && req.files.documents ? req.files.documents.map(file => file.path) : [];
     const profile_picture_url = req.files && req.files.profile_picture ? req.files.profile_picture[0].path : null;
+    const nic_front_url = getUploadedFileUrl(req.files, 'nic_front');
+    const nic_back_url = getUploadedFileUrl(req.files, 'nic_back');
     console.log('Document URLs:', document_urls);
     console.log('Profile picture URL:', profile_picture_url);
 
+    if (!nic_number || !nic_front_url || !nic_back_url) {
+      return res.status(400).json({
+        message: 'NIC number, NIC front photo, and NIC back photo are required.'
+      });
+    }
+
     const query = `
       INSERT INTO staff_applications 
-      (full_name, email, mobile_number, applied_roles, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, gender, date_of_birth)
+      (full_name, email, mobile_number, applied_roles, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, date_of_birth)
       VALUES ($1, $2, $3, $4::user_role_enum[], $5, $6, $7, $8,
         CASE WHEN $9::float IS NOT NULL AND $10::float IS NOT NULL 
              THEN point($10::float, $9::float) 
              ELSE NULL 
-        END, $11, $12::gender_enum, $13)
+        END, $11, $12, $13, $14, $15::gender_enum, $16)
       RETURNING *;
     `;
 
@@ -80,6 +91,9 @@ exports.submitApplication = async (req, res) => {
       (latitude && latitude !== "") ? latitude : null,
       (longitude && longitude !== "") ? longitude : null,
       profile_picture_url,
+      nic_number,
+      nic_front_url,
+      nic_back_url,
       gender,
       date_of_birth
     ]);
@@ -255,8 +269,8 @@ exports.acceptApplication = async (req, res) => {
         }
 
         const profileInsertQuery = `
-          INSERT INTO staff_profiles (user_id, full_name, designation,verification_status, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, gender, willing_to_live_in, date_of_birth)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::gender_enum, $12, $13)
+          INSERT INTO staff_profiles (user_id, full_name, designation,verification_status, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, willing_to_live_in, date_of_birth)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::gender_enum, $15, $16)
           RETURNING staff_profile_id
         `;
         const profileResult = await client.query(profileInsertQuery, [
@@ -270,6 +284,9 @@ exports.acceptApplication = async (req, res) => {
           app.location,
           app.gps_coordinates,
           app.profile_picture_url,
+          app.nic_number,
+          app.nic_front_url,
+          app.nic_back_url,
           app.gender,
           app.willing_to_live_in || false,
           app.date_of_birth
@@ -286,6 +303,18 @@ exports.acceptApplication = async (req, res) => {
     } else {
         // Optional: Update existing profile if needed, or just log it
         console.log(`Staff profile already exists for User ${userId}. Skipping creation.`);
+
+        if (app.nic_number || app.nic_front_url || app.nic_back_url) {
+          const existingProfile = staffProfileCheck.rows[0];
+          await client.query(
+            `UPDATE staff_profiles
+             SET nic_number = COALESCE(nic_number, $1),
+                 nic_front_url = COALESCE(nic_front_url, $2),
+                 nic_back_url = COALESCE(nic_back_url, $3)
+             WHERE staff_profile_id = $4`,
+            [app.nic_number, app.nic_front_url, app.nic_back_url, existingProfile.staff_profile_id]
+          );
+        }
         
         // Ensure wallet exists for existing staff profile
         const existingProfile = staffProfileCheck.rows[0];

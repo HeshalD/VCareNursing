@@ -28,6 +28,12 @@ router.get('/active-bookings', protect,
 router.get('/:booking_id', protect,  
     bookingController.getByBookingID);
 
+// Client-specific routes
+router.get('/client/:client_id', protect, bookingController.getClientBookings);
+
+// Staff-specific routes
+router.get('/staff/:staff_id', protect, bookingController.getStaffBookings);
+
 router.post(
     '/terminate/:booking_id', 
     protect,

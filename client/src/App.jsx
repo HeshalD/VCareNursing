@@ -26,6 +26,7 @@ import ServiceRequests from './modules/admin/service_requests/service_requests';
 import ProxyServiceRequest from './modules/admin/service_requests/proxy_service_request';
 import QuoteBuilder from './modules/admin/service_requests/quote_builder';
 import WorkerVerification from './modules/admin/worker_verifications/worker_verifications';
+import InternalStaffDashboard from './modules/admin/internal_staff/InternalStaffDashboard';
 import Financials from './modules/admin/financial/financial';
 import Reports from './modules/admin/reports/reports';
 import Settings from './modules/admin/settings/settings';
@@ -48,6 +49,12 @@ import ResetPasswordPage from './modules/auth/ResetPasswordPage';
 import ViewStaffPage from './modules/public/ViewStaffPage';
 import StaffProfile from './modules/public/StaffProfile';
 import ClientProfile from './modules/client/ClientProfile';
+import ClientServiceRequests from './modules/client/ClientServiceRequests';
+import ClientPatients from './modules/client/ClientPatients';
+import ClientFinancial from './modules/client/ClientFinancial';
+import ClientReviews from './modules/client/ClientReviews';
+import ClientLayout from './modules/client/components/ClientLayout';
+import WorkerBookings from './modules/public/service_team/WorkerBookings';
 import StaffMyProfile from './modules/public/service_team/StaffMyProfile';
 import StaffSettings from './modules/public/service_team/StaffSettings';
 
@@ -86,11 +93,17 @@ function App() {
             <Route path="/services/apply" element={<WorkerRegistrationPage />} />
             <Route path="/worker-registration-success" element={<WorkerRegistrationSuccessPage />} />
             <Route path="/services/provider-dashboard" element={<WorkerDashboardDemo />} />
-            <Route path="/services/earnings" element={<Earnings />} />
+            <Route path="/services/bookings" element={<WorkerBookings />} />
             <Route path="/services/my-profile" element={<StaffMyProfile />} />
-          <Route path="/services/settings" element={<StaffSettings />} />
-            <Route path="/client/bookings" element={<ClientBookings/>}/>
-            <Route path="/client/profile" element={<ClientProfile/>}/>
+            <Route path="/services/settings" element={<StaffSettings />} />
+            <Route element={<ClientLayout />}>
+              <Route path="/client/profile" element={<ClientProfile />} />
+              <Route path="/client/bookings" element={<ClientBookings />} />
+              <Route path="/client/service-requests" element={<ClientServiceRequests />} />
+              <Route path="/client/patients" element={<ClientPatients />} />
+              <Route path="/client/financial" element={<ClientFinancial />} />
+              <Route path="/client/reviews" element={<ClientReviews />} />
+            </Route>
             <Route path="/admin/dashboard" element={
               <AdminAuthProvider>
                 <AdminDashboard />
@@ -99,6 +112,11 @@ function App() {
             <Route path="/admin/users" element={
               <AdminAuthProvider>
                 <UserManagement />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/internal-staff" element={
+              <AdminAuthProvider>
+                <InternalStaffDashboard />
               </AdminAuthProvider>
             } />
             <Route path="/admin/proxy-user-management" element={

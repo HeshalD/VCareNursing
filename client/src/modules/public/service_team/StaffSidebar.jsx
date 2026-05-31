@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { 
-  LayoutDashboard, User, DollarSign, Settings, LogOut, Briefcase 
+  LayoutDashboard, User, DollarSign, Settings, LogOut, Briefcase, Calendar 
 } from 'lucide-react';
 
 const NavItem = ({ icon: Icon, label, to, active }) => {
@@ -42,6 +42,12 @@ const StaffSidebar = ({ staffProfileId }) => {
           label="Earnings" 
           to="/services/earnings" 
           active={location.pathname === '/services/earnings'} 
+        />
+        <NavItem 
+          icon={Calendar}
+          label="Bookings"
+          to="/services/bookings"
+          active={location.pathname === '/services/bookings'}
         />
         <NavItem 
           icon={User} 

@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   Users, Calendar, DollarSign, Activity,
-  Settings, LogOut, Bell, Search,
+  Settings, LogOut, Bell, Search, Briefcase,
   ShieldCheck, FileText, SendHorizontal , Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -87,6 +87,12 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
             label="Financials"
             path="/admin/financial"
             active={isActive('/admin/financial')}
+          />
+          <SidebarItem
+            icon={Briefcase}
+            label="Internal Staff"
+            path="/admin/internal-staff"
+            active={isActive('/admin/internal-staff')}
           />
           {/*<SidebarItem
             icon={FileText}

@@ -439,7 +439,7 @@ class ApiClient {
 
   // Staff endpoints
 
-  async submitApplication(applicationData, documentFiles, profilePictureFile) {
+  async submitApplication(applicationData, documentFiles, profilePictureFile, nicFrontFile, nicBackFile) {
 
     const formData = new FormData();
 
@@ -480,6 +480,18 @@ class ApiClient {
     if (profilePictureFile) {
 
       formData.append('profile_picture', profilePictureFile);
+
+    }
+
+    if (nicFrontFile) {
+
+      formData.append('nic_front', nicFrontFile);
+
+    }
+
+    if (nicBackFile) {
+
+      formData.append('nic_back', nicBackFile);
 
     }
 
@@ -816,6 +828,10 @@ class ApiClient {
     });
   }
 
+  async getClientReviews(clientProfileId, page = 1, limit = 10) {
+    return this.request(`/staff-reviews/client/${clientProfileId}?page=${page}&limit=${limit}`);
+  }
+
   // Finances endpoints
   async getFinancesOverview() {
     return this.request('/finances/overview');
@@ -851,6 +867,109 @@ class ApiClient {
 
   async getTransactionCategoriesChart() {
     return this.request('/finances/transaction-categories-chart');
+  }
+
+  // Client-specific endpoints
+  async getClientProfileByUserId(userId) {
+    return this.request(`/client/profile/user/${userId}`);
+  }
+
+  async getClientServiceHistory(clientId) {
+    return this.request(`/client/service-history/${clientId}`);
+  }
+
+  async getClientServiceRequests(clientId) {
+    return this.request(`/service-requests/client/${clientId}`);
+  }
+
+  async getClientServiceRequestsWithQuotes(clientId) {
+    return this.request(`/service-requests/client/${clientId}/with-quotes`);
+  }
+
+  async getClientServiceRequestsWithPayments(clientId) {
+    return this.request(`/service-requests/client/${clientId}/with-payments`);
+  }
+
+  async getClientQuotes(clientId) {
+    return this.request(`/quotes/client/${clientId}`);
+  }
+
+  async getClientPaymentSlips(clientId) {
+    return this.request(`/payment-slips/client/${clientId}`);
+  }
+
+  async getClientBookings(clientId) {
+    return this.request(`/bookings/client/${clientId}`);
+  }
+
+  async getStaffBookings(staffId) {
+    return this.request(`/bookings/staff/${staffId}`);
+  }
+
+  // Financial endpoints
+  async getClientWalletBalance(clientId) {
+    return this.request(`/client/wallet-balance/${clientId}`);
+  }
+
+  async getClientPaymentHistory(clientId, queryParams = {}) {
+    const queryString = new URLSearchParams(queryParams).toString();
+    const url = queryString ? `/client/payment-history/${clientId}?${queryString}` : `/client/payment-history/${clientId}`;
+    return this.request(url);
+  }
+
+  async getClientOverduePayments(clientId) {
+    return this.request(`/client/overdue-payments/${clientId}`);
+  }
+
+  // ==================== MODULAR QUOTE ENDPOINTS ====================
+
+  // Preset Items Management
+  async getPresetItems() {
+    return this.request('/quotes/presets');
+  }
+
+  async createPresetItem(presetData) {
+    return this.request('/quotes/presets', {
+      method: 'POST',
+      body: JSON.stringify(presetData),
+    });
+  }
+
+  async updatePresetItem(presetId, presetData) {
+    return this.request(`/quotes/presets/${presetId}`, {
+      method: 'PUT',
+      body: JSON.stringify(presetData),
+    });
+  }
+
+  async deletePresetItem(presetId) {
+    return this.request(`/quotes/presets/${presetId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Modular Quote Operations
+  async createModularQuotation(quoteData) {
+    return this.request('/quotes/create-modular', {
+      method: 'POST',
+      body: JSON.stringify(quoteData),
+    });
+  }
+
+  async getQuoteWithLineItems(quoteId) {
+    return this.request(`/quotes/${quoteId}/details`);
+  }
+
+  async updateQuoteLineItems(quoteId, lineItemsData) {
+    return this.request(`/quotes/${quoteId}/line-items`, {
+      method: 'PUT',
+      body: JSON.stringify(lineItemsData),
+    });
+  }
+
+  // Patient endpoints
+  async getPatientsByClient(clientId) {
+    return this.request(`/patients/client/${clientId}`);
   }
 }
 

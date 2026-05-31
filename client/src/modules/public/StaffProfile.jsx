@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ArrowLeft, MapPin, Clock, Star, Shield, Award, ChevronRight, Calendar, Heart, CheckCircle, Quote, Phone, MessageSquare, Plus, X } from "lucide-react";
+import { ArrowLeft, MapPin, Clock, Star, Shield, Award, ChevronRight, Calendar, Heart, CheckCircle, Quote, Phone, MessageSquare } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import apiClient from "../../api/api";
@@ -234,16 +234,17 @@ export default function StaffProfile() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [bookClicked, setBookClicked] = useState(false);
-  const [showReviewForm, setShowReviewForm] = useState(false);
+  const [relatedStaff, setRelatedStaff] = useState([]);
+  const [relatedLoading, setRelatedLoading] = useState(false);
+  const [checkingOwnership, setCheckingOwnership] = useState(true);
+  const [isOwnProfile, setIsOwnProfile] = useState(false);
+  
+  // Review states
   const [reviewRating, setReviewRating] = useState(5);
   const [reviewText, setReviewText] = useState('');
   const [submittingReview, setSubmittingReview] = useState(false);
-  const [reviewError, setReviewError] = useState(null);
   const [reviewSuccess, setReviewSuccess] = useState(false);
-  const [relatedStaff, setRelatedStaff] = useState([]);
-  const [relatedLoading, setRelatedLoading] = useState(false);
-  const [isOwnProfile, setIsOwnProfile] = useState(false);
-  const [checkingOwnership, setCheckingOwnership] = useState(false);
+  const [reviewError, setReviewError] = useState(null);
 
   // Fetch staff data and reviews
   useEffect(() => {
@@ -423,7 +424,6 @@ export default function StaffProfile() {
       setSubmittingReview(false);
     }
   };
-
   if (loading) {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#f8f9fc" }}>
@@ -953,10 +953,6 @@ export default function StaffProfile() {
               </div>
             )}
           </Section>
-        </div>
-
-        {/* ── RIGHT COLUMN ── */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
 
           {/* Book Card */}
           <div style={{

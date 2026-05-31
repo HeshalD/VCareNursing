@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Menu, X, User, LogOut, Briefcase, Calendar, ChevronDown } from 'lucide-react';
+import { Menu, X, User, LogOut, Briefcase, Calendar, ChevronDown, Users, Wallet, Star } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import logoUrl from '../../assets/Logo/VCareLogo.png';
 const Navbar = () => {
@@ -95,20 +95,13 @@ const Navbar = () => {
               <div className="w-20 h-8 bg-slate-200 rounded-full animate-pulse"></div>
             ) : isAuthenticated ? (
               <div className="flex items-center gap-3">
-                <Link
-                  to="/client/bookings"
-                  className="flex items-center gap-2 px-3 py-2 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-full text-sm font-medium transition-all"
-                  title="My Bookings"
-                >
-                  <Calendar className="w-4 h-4" />
-                </Link>
                 {isStaffUser() && (
                   <Link
                     to="/services/provider-dashboard"
                     className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full text-sm font-medium transition-all"
                   >
                     <Briefcase className="w-4 h-4" />
-                    <span className="hidden sm:inline">Dashboard</span>
+                    
                   </Link>
                 )}
                 <div className="relative" ref={dropdownRef}>
@@ -143,6 +136,38 @@ const Navbar = () => {
                       >
                         <Calendar className="w-4 h-4 text-slate-400" />
                         My Bookings
+                      </Link>
+                      <Link
+                        to="/client/service-requests"
+                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                        onClick={() => setIsDropdownOpen(false)}
+                      >
+                        <Briefcase className="w-4 h-4 text-slate-400" />
+                        Service Requests
+                      </Link>
+                      <Link
+                        to="/client/patients"
+                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                        onClick={() => setIsDropdownOpen(false)}
+                      >
+                        <Users className="w-4 h-4 text-slate-400" />
+                        Patients
+                      </Link>
+                      <Link
+                        to="/client/financial"
+                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                        onClick={() => setIsDropdownOpen(false)}
+                      >
+                        <Wallet className="w-4 h-4 text-slate-400" />
+                        Financial
+                      </Link>
+                      <Link
+                        to="/client/reviews"
+                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                        onClick={() => setIsDropdownOpen(false)}
+                      >
+                        <Star className="w-4 h-4 text-slate-400" />
+                        Reviews
                       </Link>
                       {isStaffUser() && (
                         <Link
@@ -249,6 +274,30 @@ const Navbar = () => {
                       >
                         <Calendar className="w-4 h-4 text-slate-400" />
                         My Bookings
+                      </Link>
+                      <Link
+                        to="/client/patients"
+                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                        onClick={() => { setIsDropdownOpen(false); setIsOpen(false); }}
+                      >
+                        <Users className="w-4 h-4 text-slate-400" />
+                        Patients
+                      </Link>
+                      <Link
+                        to="/client/financial"
+                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                        onClick={() => { setIsDropdownOpen(false); setIsOpen(false); }}
+                      >
+                        <Wallet className="w-4 h-4 text-slate-400" />
+                        Financial
+                      </Link>
+                      <Link
+                        to="/client/reviews"
+                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                        onClick={() => { setIsDropdownOpen(false); setIsOpen(false); }}
+                      >
+                        <Star className="w-4 h-4 text-slate-400" />
+                        Reviews
                       </Link>
                       {isStaffUser() && (
                         <Link

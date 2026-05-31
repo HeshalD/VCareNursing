@@ -216,6 +216,8 @@ const WorkerVerification = () => {
                   <th className="text-left px-6 py-4 text-sm font-semibold text-slate-700">Address</th>
                   <th className="text-left px-6 py-4 text-sm font-semibold text-slate-700">Gender</th>
                   <th className="text-left px-6 py-4 text-sm font-semibold text-slate-700">Date of Birth</th>
+                  <th className="text-left px-6 py-4 text-sm font-semibold text-slate-700">NIC Number</th>
+                  <th className="text-left px-6 py-4 text-sm font-semibold text-slate-700">NIC Photos</th>
                   <th className="text-left px-6 py-4 text-sm font-semibold text-slate-700">Status</th>
                   <th className="text-left px-6 py-4 text-sm font-semibold text-slate-700">Rejection Reason</th>
                   <th className="text-left px-6 py-4 text-sm font-semibold text-slate-700">Documents</th>
@@ -271,6 +273,38 @@ const WorkerVerification = () => {
                       <p className="text-sm text-slate-700">
                         {application.date_of_birth ? new Date(application.date_of_birth).toLocaleDateString() : 'N/A'}
                       </p>
+                    </td>
+                    <td className="px-6 py-4">
+                      <p className="text-sm text-slate-700">{application.nic_number || 'N/A'}</p>
+                    </td>
+                    <td className="px-6 py-4">
+                      {application.nic_front_url || application.nic_back_url ? (
+                        <div className="flex items-center gap-2">
+                          {application.nic_front_url && (
+                            <button
+                              onClick={() => window.open(application.nic_front_url, '_blank')}
+                              className="p-1 text-slate-400 hover:text-blue-500 transition-colors"
+                              title="View NIC front"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                          )}
+                          {application.nic_back_url && (
+                            <button
+                              onClick={() => window.open(application.nic_back_url, '_blank')}
+                              className="p-1 text-slate-400 hover:text-blue-500 transition-colors"
+                              title="View NIC back"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                          )}
+                          {application.nic_front_url && application.nic_back_url && (
+                            <span className="text-xs text-slate-500">2 photos</span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-sm text-slate-400">No photos</span>
+                      )}
                     </td>
                     <td className="px-6 py-4">
                       <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${
@@ -414,6 +448,49 @@ const WorkerVerification = () => {
                       </p>
                     </div>
                   </div>
+
+                  {(application.nic_number || application.nic_front_url || application.nic_back_url) && (
+                    <div className="p-3 bg-slate-50 rounded-lg">
+                      <p className="text-sm font-medium text-slate-700 mb-2">NIC Details</p>
+                      {application.nic_number && (
+                        <p className="text-xs text-slate-500 mb-2">
+                          <span className="font-medium">NIC Number:</span> {application.nic_number}
+                        </p>
+                      )}
+                      {(application.nic_front_url || application.nic_back_url) && (
+                        <div className="space-y-2">
+                          {application.nic_front_url && (
+                            <div className="p-2 bg-white rounded flex items-center justify-between hover:bg-blue-50 transition-colors cursor-pointer group">
+                              <div className="flex items-center gap-2">
+                                <FileText className="w-4 h-4 text-slate-400 group-hover:text-blue-500" />
+                                <span className="text-xs text-slate-600 group-hover:text-blue-700">NIC Front</span>
+                              </div>
+                              <button
+                                onClick={() => window.open(application.nic_front_url, '_blank')}
+                                className="p-1 text-slate-400 hover:text-blue-500 transition-colors"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
+                          {application.nic_back_url && (
+                            <div className="p-2 bg-white rounded flex items-center justify-between hover:bg-blue-50 transition-colors cursor-pointer group">
+                              <div className="flex items-center gap-2">
+                                <FileText className="w-4 h-4 text-slate-400 group-hover:text-blue-500" />
+                                <span className="text-xs text-slate-600 group-hover:text-blue-700">NIC Back</span>
+                              </div>
+                              <button
+                                onClick={() => window.open(application.nic_back_url, '_blank')}
+                                className="p-1 text-slate-400 hover:text-blue-500 transition-colors"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {application.document_urls && application.document_urls.length > 0 && (
                     <div className="space-y-2">

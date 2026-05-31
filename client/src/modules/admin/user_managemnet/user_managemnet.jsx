@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Filter, MoreHorizontal, User, Mail, Phone, MapPin, CheckCircle, XCircle, DollarSign, ChevronDown, ChevronUp, FileText, Calendar, Home, Briefcase, UserCircle, Shield, ShieldOff } from 'lucide-react';
+import { Search, Filter, MoreHorizontal, User, Mail, Phone, MapPin, CheckCircle, XCircle, DollarSign, ChevronDown, ChevronUp, FileText, Calendar, Home, Briefcase, UserCircle, Shield, ShieldOff, Eye } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 
@@ -120,7 +120,11 @@ const UserManagement = () => {
     gender: staff.gender || 'N/A',
     willing_to_live_in: staff.willing_to_live_in || false,
     date_of_birth: staff.date_of_birth || null,
-    location_city: staff.location || 'N/A'
+    location_city: staff.location || 'N/A',
+    // NIC fields
+    nic_number: staff.nic_number || null,
+    nic_front_url: staff.nic_front_url || null,
+    nic_back_url: staff.nic_back_url || null
   });
 
   // Apply filters and sorting
@@ -407,15 +411,6 @@ const UserManagement = () => {
                     <tr className="bg-slate-50">
                       <td colSpan={activeTab === 'workers' ? "7" : "5"} className="px-6 py-4">
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                          {/* Qualifications */}
-                          <div className="bg-white p-3 rounded-lg border border-slate-200">
-                            <div className="flex items-center gap-2 mb-2">
-                              <Briefcase className="w-4 h-4 text-blue-600" />
-                              <h4 className="text-sm font-semibold text-slate-700">Qualifications</h4>
-                            </div>
-                            <p className="text-xs text-slate-600">{user.qualifications}</p>
-                          </div>
-                          
                           {/* Personal Details */}
                           <div className="bg-white p-3 rounded-lg border border-slate-200">
                             <div className="flex items-center gap-2 mb-2">
@@ -433,6 +428,57 @@ const UserManagement = () => {
                                 <span className="font-medium">Willing to Live In:</span> {user.willing_to_live_in ? 'Yes' : 'No'}
                               </p>
                             </div>
+                          </div>
+
+                          {(user.nic_number || user.nic_front_url || user.nic_back_url) && (
+                            <div className="bg-white p-3 rounded-lg border border-slate-200 md:col-span-2 lg:col-span-1">
+                              <div className="flex items-center gap-2 mb-2">
+                                <Shield className="w-4 h-4 text-red-600" />
+                                <h4 className="text-sm font-semibold text-slate-700">NIC Details</h4>
+                              </div>
+                              {user.nic_number && (
+                                <p className="text-xs text-slate-600 mb-2 font-medium">
+                                  NIC: {user.nic_number}
+                                </p>
+                              )}
+                              {(user.nic_front_url || user.nic_back_url) && (
+                                <div className="space-y-1">
+                                  {user.nic_front_url && (
+                                    <button
+                                      onClick={() => window.open(user.nic_front_url, '_blank')}
+                                      className="w-full text-left p-2 bg-blue-50 rounded hover:bg-blue-100 transition-colors flex items-center justify-between group"
+                                    >
+                                      <span className="text-xs text-slate-600 group-hover:text-blue-700">
+                                        <FileText className="w-3 h-3 inline mr-1" />
+                                        NIC Front
+                                      </span>
+                                      <Eye className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600" />
+                                    </button>
+                                  )}
+                                  {user.nic_back_url && (
+                                    <button
+                                      onClick={() => window.open(user.nic_back_url, '_blank')}
+                                      className="w-full text-left p-2 bg-blue-50 rounded hover:bg-blue-100 transition-colors flex items-center justify-between group"
+                                    >
+                                      <span className="text-xs text-slate-600 group-hover:text-blue-700">
+                                        <FileText className="w-3 h-3 inline mr-1" />
+                                        NIC Back
+                                      </span>
+                                      <Eye className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600" />
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Qualifications */}
+                          <div className="bg-white p-3 rounded-lg border border-slate-200">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Briefcase className="w-4 h-4 text-blue-600" />
+                              <h4 className="text-sm font-semibold text-slate-700">Qualifications</h4>
+                            </div>
+                            <p className="text-xs text-slate-600">{user.qualifications}</p>
                           </div>
                           
                           {/* Location Details */}

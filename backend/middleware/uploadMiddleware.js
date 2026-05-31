@@ -18,6 +18,12 @@ const storage = new CloudinaryStorage({
         allowed_formats: ['jpg', 'png', 'jpeg'],
         transformation: [{ width: 300, height: 300, crop: 'fill', gravity: 'face' }]
       };
+    } else if (file.fieldname === 'nic_front' || file.fieldname === 'nic_back') {
+      return {
+        folder: 'vcare_nic_cards',
+        allowed_formats: ['jpg', 'png', 'jpeg'],
+        transformation: [{ width: 1000, height: 1000, crop: 'limit' }]
+      };
     } else if (file.fieldname === 'documents') {
       return {
         folder: 'vcare_documents',
@@ -37,7 +43,7 @@ const uploadApplicationFiles = multer({
   storage: storage,
   fileFilter: (req, file, cb) => {
     console.log('Processing file:', file.fieldname, file.originalname, file.mimetype);
-    if (file.fieldname === 'documents' || file.fieldname === 'profile_picture') {
+    if (file.fieldname === 'documents' || file.fieldname === 'profile_picture' || file.fieldname === 'nic_front' || file.fieldname === 'nic_back') {
       console.log('File accepted:', file.fieldname);
       cb(null, true);
     } else {
@@ -47,7 +53,9 @@ const uploadApplicationFiles = multer({
   }
 }).fields([
   { name: 'documents', maxCount: 5 },
-  { name: 'profile_picture', maxCount: 1 }
+  { name: 'profile_picture', maxCount: 1 },
+  { name: 'nic_front', maxCount: 1 },
+  { name: 'nic_back', maxCount: 1 }
 ]);
 
 module.exports = { uploadApplicationFiles };

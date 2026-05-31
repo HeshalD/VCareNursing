@@ -82,6 +82,39 @@ exports.getQuoteByRequest = async (req, res) => {
     }
 };
 
+exports.getClientQuotes = async (req, res) => {
+    const { client_id } = req.params;
+
+    try {
+        const result = await db.query(`
+            SELECT q.*, 
+                   sr.payer_name, 
+                   sr.payer_mobile, 
+                   sr.patient_name, 
+                   sr.service_type,
+                   sr.status as request_status,
+                   sr.created_at as request_created_at,
+                   cp.full_name as client_name,
+                   u.mobile_number as client_mobile
+            FROM quotations q
+            JOIN service_requests sr ON q.request_id = sr.request_id
+            LEFT JOIN client_profiles cp ON sr.client_id = cp.client_profile_id
+            LEFT JOIN users u ON cp.user_id = u.user_id
+            WHERE sr.client_id = $1
+            ORDER BY q.created_at DESC
+        `, [client_id]);
+
+        res.status(200).json({
+            status: 'success',
+            data: result.rows
+        });
+
+    } catch (error) {
+        console.error("Get Client Quotes Error:", error);
+        res.status(500).json({ message: "Failed to fetch client quotes" });
+    }
+};
+
 exports.generateAndSendPDF = async (req, res) => {
     const { quote_id } = req.params;
 
@@ -175,5 +208,292 @@ exports.generateAndSendPDF = async (req, res) => {
     } catch (error) {
         console.error("PDF/WhatsApp Error:", error);
         res.status(500).json({ message: "Failed to process and send estimate", error: error.message });
+    }
+};
+
+// ==================== PRESET ITEMS MANAGEMENT ====================
+
+exports.getPresetItems = async (req, res) => {
+    try {
+        const result = await db.query(`
+            SELECT * FROM quote_preset_items 
+            WHERE is_active = true 
+            ORDER BY sort_order, name
+        `);
+        res.status(200).json({ status: 'success', data: result.rows });
+    } catch (error) {
+        console.error('Get Preset Items Error:', error);
+        res.status(500).json({ message: 'Failed to fetch preset items' });
+    }
+};
+
+exports.createPresetItem = async (req, res) => {
+    const { name, item_type, description, default_quantity, default_unit_price, sort_order } = req.body;
+
+    try {
+        const result = await db.query(`
+            INSERT INTO quote_preset_items (name, item_type, description, default_quantity, default_unit_price, sort_order)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING *
+        `, [name, item_type, description, default_quantity || 1, default_unit_price, sort_order || 0]);
+
+        res.status(201).json({ status: 'success', data: result.rows[0] });
+    } catch (error) {
+        console.error('Create Preset Item Error:', error);
+        res.status(500).json({ message: 'Failed to create preset item' });
+    }
+};
+
+exports.updatePresetItem = async (req, res) => {
+    const { preset_id } = req.params;
+    const { name, item_type, description, default_quantity, default_unit_price, is_active, sort_order } = req.body;
+
+    try {
+        const result = await db.query(`
+            UPDATE quote_preset_items 
+            SET name = $1, item_type = $2, description = $3, default_quantity = $4, 
+                default_unit_price = $5, is_active = $6, sort_order = $7, updated_at = CURRENT_TIMESTAMP
+            WHERE preset_id = $8
+            RETURNING *
+        `, [name, item_type, description, default_quantity, default_unit_price, is_active, sort_order, preset_id]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: 'Preset item not found' });
+        }
+
+        res.status(200).json({ status: 'success', data: result.rows[0] });
+    } catch (error) {
+        console.error('Update Preset Item Error:', error);
+        res.status(500).json({ message: 'Failed to update preset item' });
+    }
+};
+
+exports.deletePresetItem = async (req, res) => {
+    const { preset_id } = req.params;
+
+    try {
+        const result = await db.query(`
+            UPDATE quote_preset_items SET is_active = false WHERE preset_id = $1 RETURNING *
+        `, [preset_id]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: 'Preset item not found' });
+        }
+
+        res.status(200).json({ status: 'success', message: 'Preset item deactivated' });
+    } catch (error) {
+        console.error('Delete Preset Item Error:', error);
+        res.status(500).json({ message: 'Failed to delete preset item' });
+    }
+};
+
+// ==================== MODULAR QUOTE OPERATIONS ====================
+
+exports.createModularQuotation = async (req, res) => {
+    const { request_id, line_items, terms_conditions } = req.body;
+
+    try {
+        if (!line_items || !Array.isArray(line_items) || line_items.length === 0) {
+            return res.status(400).json({ message: 'At least one line item is required' });
+        }
+
+        // Calculate totals and process line items
+        let sub_total = 0;
+        const processedItems = line_items.map((item, index) => {
+            const quantity = parseFloat(item.quantity) || 1;
+            const unit_price = parseFloat(item.unit_price) || 0;
+            const amount = item.item_type === 'DISCOUNT'
+                ? -(Math.abs(quantity * unit_price))
+                : quantity * unit_price;
+
+            sub_total += amount;
+
+            return {
+                ...item,
+                quantity,
+                unit_price,
+                amount,
+                sort_order: item.sort_order !== undefined ? item.sort_order : index
+            };
+        });
+
+        // Generate estimate number
+        const estimateNumber = `EST-${Math.floor(1000 + Math.random() * 9000)}`;
+
+        // Extract legacy values for backwards compatibility
+        const registration_fee = processedItems.find(i =>
+            i.description.toLowerCase().includes('registration')
+        )?.amount || 0;
+
+        const dailyRateItem = processedItems.find(i =>
+            i.description.toLowerCase().includes('daily') || i.description.toLowerCase().includes('care rate')
+        );
+        const daily_rate = dailyRateItem?.unit_price || 0;
+        const qty_days = dailyRateItem?.quantity || 1;
+
+        const transport_fee = processedItems.find(i =>
+            i.description.toLowerCase().includes('transport')
+        )?.amount || 0;
+
+        // Insert quotation
+        const quoteQuery = `
+            INSERT INTO quotations (
+                estimate_number, request_id, registration_fee, daily_rate, qty_days, transport_fee,
+                sub_total, total_amount, terms_conditions
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING *;
+        `;
+
+        const quoteResult = await db.query(quoteQuery, [
+            estimateNumber, request_id, registration_fee, daily_rate, qty_days, transport_fee,
+            sub_total, sub_total, terms_conditions || 'The initial estimated amount is non-refundable.'
+        ]);
+
+        const quote_id = quoteResult.rows[0].quote_id;
+
+        // Insert line items
+        for (const item of processedItems) {
+            await db.query(`
+                INSERT INTO quote_line_items (quote_id, item_type, description, quantity, unit_price, amount, sort_order)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+            `, [quote_id, item.item_type, item.description, item.quantity, item.unit_price, item.amount, item.sort_order]);
+        }
+
+        // Return complete quote with line items
+        const completeQuote = await db.query(`
+            SELECT q.*, 
+                COALESCE(json_agg(
+                    json_build_object(
+                        'line_item_id', li.line_item_id,
+                        'item_type', li.item_type,
+                        'description', li.description,
+                        'quantity', li.quantity,
+                        'unit_price', li.unit_price,
+                        'amount', li.amount,
+                        'sort_order', li.sort_order
+                    ) ORDER BY li.sort_order
+                ) FILTER (WHERE li.line_item_id IS NOT NULL), '[]') as line_items
+            FROM quotations q
+            LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
+            WHERE q.quote_id = $1
+            GROUP BY q.quote_id
+        `, [quote_id]);
+
+        res.status(201).json({
+            status: 'success',
+            data: completeQuote.rows[0]
+        });
+
+    } catch (error) {
+        console.error('Modular Quote Error:', error);
+        res.status(500).json({ message: 'Failed to generate quotation', error: error.message });
+    }
+};
+
+exports.getQuoteWithLineItems = async (req, res) => {
+    const { quote_id } = req.params;
+
+    try {
+        const result = await db.query(`
+            SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type,
+                COALESCE(json_agg(
+                    json_build_object(
+                        'line_item_id', li.line_item_id,
+                        'item_type', li.item_type,
+                        'description', li.description,
+                        'quantity', li.quantity,
+                        'unit_price', li.unit_price,
+                        'amount', li.amount,
+                        'sort_order', li.sort_order
+                    ) ORDER BY li.sort_order
+                ) FILTER (WHERE li.line_item_id IS NOT NULL), '[]') as line_items
+            FROM quotations q
+            JOIN service_requests s ON q.request_id = s.request_id
+            LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
+            WHERE q.quote_id = $1
+            GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type
+        `, [quote_id]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: 'Quote not found' });
+        }
+
+        res.status(200).json({
+            status: 'success',
+            data: result.rows[0]
+        });
+
+    } catch (error) {
+        console.error('Get Quote with Line Items Error:', error);
+        res.status(500).json({ message: 'Failed to fetch quote' });
+    }
+};
+
+exports.updateQuoteLineItems = async (req, res) => {
+    const { quote_id } = req.params;
+    const { line_items, terms_conditions } = req.body;
+
+    try {
+        await db.query('BEGIN');
+
+        // Delete existing line items
+        await db.query('DELETE FROM quote_line_items WHERE quote_id = $1', [quote_id]);
+
+        // Recalculate and insert new line items
+        let sub_total = 0;
+        for (let i = 0; i < line_items.length; i++) {
+            const item = line_items[i];
+            const quantity = parseFloat(item.quantity) || 1;
+            const unit_price = parseFloat(item.unit_price) || 0;
+            const amount = item.item_type === 'DISCOUNT'
+                ? -(Math.abs(quantity * unit_price))
+                : quantity * unit_price;
+
+            sub_total += amount;
+
+            await db.query(`
+                INSERT INTO quote_line_items (quote_id, item_type, description, quantity, unit_price, amount, sort_order)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+            `, [quote_id, item.item_type, item.description, quantity, unit_price, amount, item.sort_order || i]);
+        }
+
+        // Update quotation totals
+        await db.query(`
+            UPDATE quotations 
+            SET sub_total = $1, total_amount = $1, terms_conditions = $2, updated_at = CURRENT_TIMESTAMP
+            WHERE quote_id = $3
+        `, [sub_total, terms_conditions, quote_id]);
+
+        await db.query('COMMIT');
+
+        // Return updated quote
+        const result = await db.query(`
+            SELECT q.*, 
+                COALESCE(json_agg(
+                    json_build_object(
+                        'line_item_id', li.line_item_id,
+                        'item_type', li.item_type,
+                        'description', li.description,
+                        'quantity', li.quantity,
+                        'unit_price', li.unit_price,
+                        'amount', li.amount,
+                        'sort_order', li.sort_order
+                    ) ORDER BY li.sort_order
+                ) FILTER (WHERE li.line_item_id IS NOT NULL), '[]') as line_items
+            FROM quotations q
+            LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
+            WHERE q.quote_id = $1
+            GROUP BY q.quote_id
+        `, [quote_id]);
+
+        res.status(200).json({
+            status: 'success',
+            data: result.rows[0]
+        });
+
+    } catch (error) {
+        await db.query('ROLLBACK');
+        console.error('Update Quote Error:', error);
+        res.status(500).json({ message: 'Failed to update quote', error: error.message });
     }
 };
