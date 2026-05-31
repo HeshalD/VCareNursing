@@ -3,19 +3,20 @@ import { Link, useLocation } from 'react-router-dom';
 import { 
   LayoutDashboard, User, DollarSign, Settings, LogOut, Briefcase, Calendar 
 } from 'lucide-react';
+import logoUrl from '../../../assets/Logo/VCareLogo.png';
 
 const NavItem = ({ icon: Icon, label, to, active }) => {
   return (
     <Link
       to={to}
-      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
-        active 
-          ? 'bg-indigo-800 text-white shadow-lg shadow-indigo-900/50' 
-          : 'text-indigo-200 hover:bg-white/10 hover:text-white'
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+        active
+          ? 'bg-blue-50 text-blue-700'
+          : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
       }`}
     >
-      <Icon className="w-5 h-5" />
-      <span className="font-medium">{label}</span>
+      <Icon className="w-5 h-5 flex-shrink-0" />
+      <span className="truncate">{label}</span>
     </Link>
   );
 };
@@ -24,13 +25,26 @@ const StaffSidebar = ({ staffProfileId }) => {
   const location = useLocation();
 
   return (
-    <aside className="hidden md:flex flex-col w-72 bg-indigo-900 text-white p-6 sticky top-0 h-screen shadow-2xl">
-      <div className="flex items-center gap-3 mb-10 text-emerald-400">
-        <Briefcase className="w-8 h-8" />
-        <span className="text-2xl font-bold text-white tracking-tight">VCare<span className="text-indigo-300">Pro</span></span>
+    <aside className="hidden md:flex flex-col w-60 bg-white border-r border-slate-200 flex-shrink-0 sticky top-0 h-screen">
+      <div className="h-16 flex items-center border-b border-slate-200 px-5">
+        <Link to="/services/provider-dashboard" className="flex-shrink-0 flex items-center">
+          <img src={logoUrl} alt="VCare Nursing" className="h-10 w-auto object-contain" />
+        </Link>
       </div>
 
-      <nav className="flex-1 space-y-2">
+      <div className="px-5 py-4 border-b border-slate-100">
+        <div className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-50 text-blue-600">
+            <Briefcase className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-slate-900">Provider Portal</p>
+            <p className="text-xs text-slate-500 truncate">Manage bookings and earnings</p>
+          </div>
+        </div>
+      </div>
+
+      <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
         <NavItem 
           icon={LayoutDashboard} 
           label="Dashboard" 
@@ -63,9 +77,9 @@ const StaffSidebar = ({ staffProfileId }) => {
         />
       </nav>
 
-      <div className="pt-6 border-t border-indigo-800">
-        <button className="flex items-center gap-3 text-indigo-300 hover:text-white transition-colors w-full px-4 py-3 rounded-xl hover:bg-white/10">
-          <LogOut className="w-5 h-5" />
+      <div className="p-3 border-t border-slate-200 space-y-1">
+        <button className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-all w-full">
+          <LogOut className="w-5 h-5 flex-shrink-0" />
           <span>Sign Out</span>
         </button>
       </div>

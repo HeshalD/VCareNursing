@@ -102,7 +102,7 @@ const getActiveBookingBalances = async (client) => {
         b.daily_rate,
         cp.full_name as client_name,
         uc.mobile_number as client_mobile,
-        COALESCE(SUM(CASE WHEN t.transaction_type = 'CREDIT' AND COALESCE(t.category, '') != 'STAFF_SALARY' THEN t.amount ELSE 0 END), 0) as total_paid,
+        COALESCE(SUM(CASE WHEN t.transaction_type = 'CREDIT' AND COALESCE(t.category::text, '') != 'STAFF_SALARY' THEN t.amount ELSE 0 END), 0) as total_paid,
         COALESCE(SUM(CASE WHEN t.transaction_type = 'DEBIT' THEN t.amount ELSE 0 END), 0) as total_invoiced,
         COALESCE(SUM(CASE WHEN t.transaction_type = 'DEBIT' THEN t.amount ELSE 0 END), 0) as total_debits,
         COALESCE(SUM(CASE WHEN t.transaction_type = 'CREDIT' THEN t.amount ELSE 0 END), 0) as total_credits
@@ -248,16 +248,18 @@ const startDailyInvoicing = () => {
       // For each active assignment, add daily_rate to staff's current_earnings
       for (const assignment of activeAssignments) {
         try {
+          const salaryAmount = parseFloat(assignment.daily_rate);
+
           // 1. Update staff_profiles.current_earnings
           await client.query(
             `UPDATE staff_profiles
              SET current_earnings = current_earnings + $1
              WHERE staff_profile_id = $2`,
-            [parseFloat(assignment.daily_rate), assignment.staff_profile_id]
+            [salaryAmount, assignment.staff_profile_id]
           );
 
           // 2. Create STAFF_SALARY transaction (CREDIT) for staff wallet tracking
-          await client.query(
+          const salaryTransactionResult = await client.query(
             `INSERT INTO transactions (
               staff_profile_id,
               booking_id,
@@ -267,13 +269,39 @@ const startDailyInvoicing = () => {
               status,
               notes,
               created_at
-            ) VALUES ($1, $2, 'STAFF_SALARY', 'CREDIT', $3, 'COMPLETED', $4, NOW())`,
+            ) VALUES ($1, $2, 'STAFF_SALARY', 'CREDIT', $3, 'COMPLETED', $4, NOW())
+            RETURNING transaction_id`,
             [
               assignment.staff_profile_id,
               assignment.booking_id,
-              parseFloat(assignment.daily_rate),
+              salaryAmount,
               `Daily earnings from booking ${assignment.booking_id} for ${assignment.staff_name} (${today})`
             ]
+          );
+
+          const salaryTransactionId = salaryTransactionResult.rows[0].transaction_id;
+
+          // 3. Credit the staff wallet so advance eligibility uses the updated balance
+          await client.query(
+            `INSERT INTO staff_wallet (staff_profile_id, balance, updated_at)
+             VALUES ($1, $2, NOW())
+             ON CONFLICT (staff_profile_id)
+             DO UPDATE SET balance = staff_wallet.balance + EXCLUDED.balance,
+                           updated_at = NOW()`,
+            [assignment.staff_profile_id, salaryAmount]
+          );
+
+          // 4. Record the wallet movement for audit/history
+          await client.query(
+            `INSERT INTO staff_wallet_transactions (
+              staff_profile_id,
+              type,
+              amount,
+              reason,
+              reference_id,
+              created_at
+            ) VALUES ($1, 'CREDIT', $2, 'DAILY_SALARY', $3, NOW())`,
+            [assignment.staff_profile_id, salaryAmount, salaryTransactionId]
           );
 
           staffEarningsCount++;

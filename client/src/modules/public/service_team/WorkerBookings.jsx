@@ -240,11 +240,12 @@ const WorkerBookings = () => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {bookings.map((booking) => {
                 const ServiceIcon = getServiceTypeIcon(booking.service_type);
-                const isExpanded = expandedBooking === booking.booking_id;
+                const rowId = booking.assignment_id || booking.booking_id;
+                const isExpanded = expandedBooking === rowId;
 
                 return (
                   <div
-                    key={booking.booking_id}
+                    key={rowId}
                     style={{
                       background: 'white',
                       borderRadius: '0.5rem',
@@ -255,7 +256,7 @@ const WorkerBookings = () => {
                   >
                     {/* Card Header */}
                     <div
-                      onClick={() => toggleExpand(booking.booking_id)}
+                      onClick={() => toggleExpand(rowId)}
                       style={{
                         padding: '1rem',
                         cursor: 'pointer',
@@ -404,7 +405,7 @@ const WorkerBookings = () => {
                           }}>
                             <div>
                               <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Daily Rate</div>
-                              <div style={{ fontWeight: 500, color: '#1f2937' }}>₹{booking.daily_rate || '—'}</div>
+                              <div style={{ fontWeight: 500, color: '#1f2937' }}>LKR{booking.daily_rate || '—'}</div>
                             </div>
                             <div>
                               <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Duration</div>
@@ -412,7 +413,7 @@ const WorkerBookings = () => {
                             </div>
                             <div>
                               <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>OT Rate</div>
-                              <div style={{ fontWeight: 500, color: '#1f2937' }}>₹{booking.ot_rate || '500'}/hr</div>
+                              <div style={{ fontWeight: 500, color: '#1f2937' }}>LKR{booking.ot_rate || '500'}/hr</div>
                             </div>
                           </div>
                         </div>

@@ -416,6 +416,112 @@ exports.assignStaffToBooking = async (req, res) => {
 };
 
 /**
+ * Get bookings for a specific staff member from assignment records
+ * @desc    Returns assignment-centric booking list for worker app screens
+ * @access  Private
+ * @route   GET /api/assignments/staff/:staff_profile_id/bookings
+ */
+exports.getStaffAssignmentBookings = async (req, res) => {
+  try {
+    const { staff_profile_id } = req.params;
+
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(staff_profile_id)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Invalid staff profile ID format'
+      });
+    }
+
+    const staffResult = await db.query(
+      `SELECT staff_profile_id FROM staff_profiles WHERE staff_profile_id = $1`,
+      [staff_profile_id]
+    );
+
+    if (staffResult.rows.length === 0) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Staff profile not found'
+      });
+    }
+
+    const query = `
+      SELECT
+        bsa.assignment_id,
+        bsa.booking_id,
+        bsa.staff_profile_id,
+        bsa.daily_rate,
+        bsa.service_start_date,
+        bsa.service_end_date,
+        bsa.amount_allocated,
+        bsa.notes as assignment_notes,
+        bsa.status as assignment_status,
+        b.status as booking_status,
+        CASE
+          WHEN st.status = 'PENDING' THEN 'PENDING_TERMINATION'
+          WHEN st.status = 'APPROVED' THEN 'TERMINATED'
+          ELSE b.status
+        END as status,
+        b.start_date,
+        b.scheduled_end_time,
+        b.actual_end_time,
+        b.service_model,
+        COALESCE(b.service_type, sr.service_type) as service_type,
+        b.ot_rate,
+        cp.full_name as client_name,
+        uc.mobile_number as client_mobile,
+        COALESCE(pp.full_name, sr.patient_name) as patient_name,
+        pp.full_name as patient_full_name,
+        pp.age as patient_age,
+        pp.gender as patient_gender,
+        pp.medical_condition,
+        pp.residential_address as patient_address,
+        pp.emergency_contact_name,
+        pp.emergency_contact_number,
+        sr.payer_name,
+        sr.payer_mobile,
+        sr.location_address,
+        sr.gps_coordinates,
+        sr.remarks as service_remarks,
+        st.status as termination_status,
+        st.requested_end_date,
+        st.reason as termination_reason,
+        GREATEST((bsa.service_end_date - bsa.service_start_date), 0) as duration_days
+      FROM booking_staff_assignments bsa
+      JOIN bookings b ON bsa.booking_id = b.booking_id
+      LEFT JOIN service_requests sr ON b.request_id = sr.request_id
+      LEFT JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+      LEFT JOIN users uc ON cp.user_id = uc.user_id
+      LEFT JOIN patient_profiles pp ON b.patient_id = pp.patient_id
+      LEFT JOIN LATERAL (
+        SELECT status, requested_end_date, reason
+        FROM service_terminations
+        WHERE booking_id = b.booking_id
+        ORDER BY created_at DESC
+        LIMIT 1
+      ) st ON true
+      WHERE bsa.staff_profile_id = $1
+      ORDER BY bsa.assigned_on DESC, bsa.service_start_date DESC
+    `;
+
+    const result = await db.query(query, [staff_profile_id]);
+
+    return res.status(200).json({
+      status: 'success',
+      count: result.rowCount,
+      data: result.rows
+    });
+  } catch (error) {
+    console.error('Error in getStaffAssignmentBookings:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Error retrieving staff assignment bookings',
+      error: error.message
+    });
+  }
+};
+
+/**
  * Get all staff assignments for a booking
  * @desc    Retrieves assignment history with staff details and status
  * @access  Private

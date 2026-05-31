@@ -81,235 +81,282 @@ const StaffMyProfile = () => {
     }
   };
 
+  const handleToggleEdit = () => {
+    if (isEditing) {
+      setFormData({
+        qualifications: staffData?.qualifications || '',
+        designation: staffData?.designation || '',
+        location: staffData?.location || '',
+        full_name: staffData?.full_name || '',
+      });
+      setProfilePic(null);
+    }
+    setIsEditing(!isEditing);
+  };
+
+  const initials = staffData?.full_name
+    ? staffData.full_name.split(' ').map((part) => part[0]).join('').toUpperCase().slice(0, 2)
+    : '—';
+
   if (authLoading || dataLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-rose-50 via-sky-50 to-violet-50 flex items-center justify-center">
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="text-center flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-violet-200 border-t-violet-600 rounded-full animate-spin"></div>
-          <div className="text-violet-600 font-semibold tracking-wide">Loading premium profile...</div>
+          <div className="w-12 h-12 border-4 border-slate-200 border-t-slate-700 rounded-full animate-spin"></div>
+          <div className="text-slate-600 font-medium tracking-wide">Loading profile...</div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-rose-50/50 via-sky-50/50 to-violet-50/50 font-sans flex text-slate-800 selection:bg-violet-200 selection:text-violet-900">
+    <div className="min-h-screen bg-slate-50 font-sans flex text-slate-900 overflow-hidden selection:bg-slate-200 selection:text-slate-900">
       <StaffSidebar staffProfileId={staffData?.staff_profile_id} />
 
       {/* Main Content */}
-      <main className="flex-1 p-8 overflow-y-auto">
-        <div className="max-w-4xl mx-auto space-y-8 pb-12">
-          
-          {/* Header Card */}
-          <div className="bg-white/60 backdrop-blur-2xl rounded-[2rem] p-8 shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-white/80 flex flex-col md:flex-row gap-8 items-center md:items-start relative overflow-hidden group">
-            <div className="absolute -top-24 -right-24 w-64 h-64 bg-gradient-to-bl from-rose-200/40 via-fuchsia-200/40 to-violet-200/40 rounded-full blur-3xl -z-0 group-hover:scale-110 transition-transform duration-700"></div>
-            <div className="absolute -bottom-24 -left-24 w-64 h-64 bg-gradient-to-tr from-sky-200/40 to-indigo-200/40 rounded-full blur-3xl -z-0 group-hover:scale-110 transition-transform duration-700 delay-100"></div>
-            
-            <div className="relative z-10 flex-shrink-0">
-              <div className="w-36 h-36 rounded-full p-1.5 bg-gradient-to-tr from-rose-400 via-fuchsia-500 to-violet-500 shadow-xl shadow-fuchsia-200/50 relative">
-                <div className="w-full h-full rounded-full border-4 border-white overflow-hidden bg-slate-50 relative group/pic">
+      <main className="flex-1 p-6 md:p-8 overflow-y-auto">
+        <div className="max-w-6xl mx-auto space-y-6 pb-12">
+          <header className="flex items-end justify-between gap-4 flex-wrap border-b border-slate-200 bg-white px-6 py-6">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400 mb-1">Provider Portal</p>
+              <h1 className="text-3xl md:text-4xl font-semibold text-slate-900 tracking-tight">Profile</h1>
+            </div>
+            {!isEditing ? (
+              <button
+                onClick={handleToggleEdit}
+                className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-800"
+              >
+                <Edit3 size={14} />
+                Edit Profile
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleToggleEdit}
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50"
+                >
+                  <X size={14} />
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={saveLoading}
+                  className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-800 disabled:opacity-50"
+                >
+                  <Save size={14} />
+                  {saveLoading ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            )}
+          </header>
+
+          {staffData?.verification_status && (
+            <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${staffData.verification_status === 'VERIFIED' ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-amber-100 bg-amber-50 text-amber-700'}`}>
+              <CheckCircle size={15} className="flex-shrink-0" />
+              <span className="text-sm font-medium">
+                {staffData.verification_status === 'VERIFIED' ? 'Your profile is verified.' : 'Your profile is pending verification.'}
+              </span>
+            </div>
+          )}
+
+          <section className="bg-white border border-slate-200 rounded-2xl p-6 md:p-8 shadow-sm">
+            <div className="flex flex-col md:flex-row md:items-center gap-6">
+              <div className="relative flex-shrink-0">
+                <div className="w-24 h-24 rounded-2xl bg-slate-900 text-white flex items-center justify-center text-2xl font-semibold overflow-hidden">
                   {profilePic ? (
-                    <img src={URL.createObjectURL(profilePic)} alt="Preview" className="w-full h-full object-cover transition-transform duration-500 group-hover/pic:scale-110" />
+                    <img src={URL.createObjectURL(profilePic)} alt="Preview" className="w-full h-full object-cover" />
                   ) : staffData?.profile_picture_url ? (
-                    <img src={staffData.profile_picture_url} alt="Profile" className="w-full h-full object-cover transition-transform duration-500 group-hover/pic:scale-110" />
+                    <img src={staffData.profile_picture_url} alt="Profile" className="w-full h-full object-cover" />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-violet-50 to-fuchsia-50 text-violet-300">
-                      <User size={64} />
+                    initials
+                  )}
+                </div>
+                <label className="absolute -bottom-2 -right-2 inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-900">
+                  <Camera size={16} />
+                  <input type="file" className="hidden" onChange={(e) => setProfilePic(e.target.files[0])} accept="image/*" />
+                </label>
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-col gap-3">
+                  {isEditing ? (
+                    <input
+                      className="w-full max-w-xl rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-3xl font-semibold tracking-tight text-slate-900 outline-none focus:border-slate-900 focus:bg-white"
+                      value={formData.full_name}
+                      onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+                      placeholder="Enter your full name"
+                    />
+                  ) : (
+                    <h2 className="text-3xl font-semibold tracking-tight text-slate-900">{staffData?.full_name}</h2>
+                  )}
+
+                  {isEditing ? (
+                    <input
+                      className="w-full max-w-lg rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 outline-none focus:border-slate-900 focus:bg-white"
+                      value={formData.designation}
+                      onChange={(e) => setFormData({ ...formData, designation: e.target.value })}
+                      placeholder="Professional designation"
+                    />
+                  ) : (
+                    <p className="text-sm font-medium text-slate-500">{staffData?.designation || 'Staff Member'}</p>
+                  )}
+
+                  <div className="flex flex-wrap gap-3 pt-1 text-sm text-slate-500">
+                    {isEditing ? (
+                      <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5">
+                        <MapPin size={16} className="text-slate-400" />
+                        <input
+                          className="w-full bg-transparent outline-none text-slate-700"
+                          value={formData.location}
+                          onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                          placeholder="Location"
+                        />
+                      </div>
+                    ) : (
+                      <span className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5">
+                        <MapPin size={16} className="text-slate-400" />
+                        {staffData?.location || 'Location Pending'}
+                      </span>
+                    )}
+                    <span className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5">
+                      <Calendar size={16} className="text-slate-400" />
+                      Member since {staffData?.created_at ? new Date(staffData.created_at).getFullYear() : new Date().getFullYear()}
+                    </span>
+                    <span className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 ${staffData?.current_status === 'AVAILABLE' ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+                      <Shield size={16} />
+                      {staffData?.current_status || 'OFFLINE'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 space-y-6">
+              <section className="bg-white border border-slate-200 rounded-2xl p-6 md:p-8 shadow-sm">
+                <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-200">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600">
+                    <FileText size={18} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">Professional Summary</h3>
+                    <p className="text-sm text-slate-500">This mirrors the cleaner client profile presentation.</p>
+                  </div>
+                </div>
+
+                {isEditing ? (
+                  <textarea
+                    className="min-h-[180px] w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700 outline-none transition-colors focus:border-slate-900 focus:bg-white"
+                    value={formData.qualifications}
+                    onChange={(e) => setFormData({ ...formData, qualifications: e.target.value })}
+                    placeholder="Tell clients about your experience, care style, and qualifications..."
+                  />
+                ) : (
+                  <p className="text-sm leading-7 text-slate-600">
+                    {staffData?.qualifications || 'No professional summary added yet. Click edit to add one.'}
+                  </p>
+                )}
+              </section>
+
+              <section className="bg-white border border-slate-200 rounded-2xl p-6 md:p-8 shadow-sm">
+                <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-200">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600">
+                    <Award size={18} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">Documents & Certifications</h3>
+                    <p className="text-sm text-slate-500">Uploaded documents remain visible in a simple gallery.</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                  {staffData?.document_urls?.length ? (
+                    staffData.document_urls.map((doc, idx) => (
+                      <div key={idx} className="group relative aspect-[3/4] overflow-hidden rounded-2xl border border-slate-200 bg-slate-100">
+                        <img src={doc} alt="Document" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" />
+                        <div className="absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/10" />
+                      </div>
+                    ))
+                  ) : (
+                    <div className="col-span-full rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center text-sm text-slate-500">
+                      No documents uploaded yet.
                     </div>
                   )}
-                  <label className="absolute inset-0 bg-black/40 opacity-0 group-hover/pic:opacity-100 transition-opacity flex items-center justify-center cursor-pointer">
-                    <div className="bg-white/20 backdrop-blur-sm p-3 rounded-full text-white transform translate-y-4 group-hover/pic:translate-y-0 transition-all duration-300">
-                      <Camera size={24} />
-                    </div>
-                    <input type="file" className="hidden" onChange={(e) => setProfilePic(e.target.files[0])} accept="image/*" />
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex-1 text-center md:text-left z-10 pt-4">
-              <div className="flex items-center justify-center md:justify-start gap-3 mb-2">
-                {isEditing ? (
-                  <input 
-                    className="text-3xl font-extrabold text-slate-800 bg-white/50 backdrop-blur-sm border-2 border-violet-200 rounded-2xl px-4 py-2 outline-none focus:border-violet-500 focus:ring-4 focus:ring-violet-500/20 w-full max-w-md transition-all placeholder:text-slate-400"
-                    value={formData.full_name}
-                    onChange={(e) => setFormData({...formData, full_name: e.target.value})}
-                    placeholder="Enter your full name"
-                  />
-                ) : (
-                  <>
-                    <h1 className="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-violet-900 to-fuchsia-800 tracking-tight">{staffData?.full_name}</h1>
-                    {staffData?.verification_status === 'VERIFIED' && (
-                      <div className="bg-emerald-100/80 backdrop-blur-sm p-1 rounded-full text-emerald-600 shadow-sm">
-                        <CheckCircle className="w-6 h-6" />
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-              
-              {isEditing ? (
-                <input 
-                  className="text-violet-600 font-bold mb-5 bg-white/50 backdrop-blur-sm border-2 border-violet-200 rounded-xl px-4 py-2 outline-none focus:border-violet-500 focus:ring-4 focus:ring-violet-500/20 w-full max-w-sm transition-all"
-                  value={formData.designation}
-                  onChange={(e) => setFormData({...formData, designation: e.target.value})}
-                  placeholder="Professional Designation"
-                />
-              ) : (
-                <p className="text-violet-600 font-bold text-lg mb-5 tracking-wide">{staffData?.designation || 'Staff Member'}</p>
-              )}
-              
-              <div className="flex flex-wrap justify-center md:justify-start gap-6 text-sm font-medium text-slate-500">
-                {isEditing ? (
-                  <div className="flex items-center gap-2 bg-white/50 backdrop-blur-sm border-2 border-violet-200 rounded-xl px-4 py-2 focus-within:border-violet-500 focus-within:ring-4 focus-within:ring-violet-500/20 transition-all">
-                    <MapPin size={18} className="text-violet-400" />
-                    <input 
-                      className="bg-transparent outline-none w-full text-slate-700"
-                      value={formData.location}
-                      onChange={(e) => setFormData({...formData, location: e.target.value})}
-                      placeholder="Location"
-                    />
-                  </div>
-                ) : (
-                  <span className="flex items-center gap-2 bg-white/60 px-4 py-2 rounded-xl shadow-sm border border-slate-100/50"><MapPin size={18} className="text-violet-400" /> {staffData?.location || 'Location Pending'}</span>
-                )}
-                <span className="flex items-center gap-2 bg-white/60 px-4 py-2 rounded-xl shadow-sm border border-slate-100/50"><Calendar size={18} className="text-sky-400" /> Member since {new Date(staffData?.created_at).getFullYear() || new Date().getFullYear()}</span>
-              </div>
-            </div>
-
-            <button 
-              onClick={() => setIsEditing(!isEditing)}
-              className={`md:absolute top-8 right-8 flex items-center gap-2 px-6 py-3 rounded-2xl font-bold transition-all duration-300 border-2 z-20 ${
-                isEditing 
-                  ? 'bg-rose-50 text-rose-600 border-rose-200 hover:bg-rose-100 hover:border-rose-300 shadow-sm shadow-rose-100' 
-                  : 'bg-white text-slate-700 border-slate-100 hover:border-violet-300 hover:text-violet-600 shadow-[0_4px_20px_rgb(0,0,0,0.04)] hover:shadow-violet-100'
-              }`}
-            >
-              {isEditing ? <><X size={18} strokeWidth={2.5} /> Cancel Edit</> : <><Edit3 size={18} strokeWidth={2.5} /> Edit Profile</>}
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {/* Left Column: Details */}
-            <div className="md:col-span-2 space-y-8">
-              <section className="bg-white/60 backdrop-blur-2xl rounded-[2rem] p-8 shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-white/80 relative overflow-hidden group">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-sky-100/50 to-transparent rounded-bl-full -z-0"></div>
-                <h3 className="text-2xl font-extrabold text-slate-800 mb-6 flex items-center gap-3 relative z-10">
-                  <div className="p-2.5 bg-sky-100 text-sky-600 rounded-xl">
-                    <FileText size={22} strokeWidth={2.5} />
-                  </div>
-                  Professional Summary
-                </h3>
-                {isEditing ? (
-                  <textarea 
-                    className="w-full min-h-[180px] p-5 rounded-2xl bg-white/80 border-2 border-violet-100 focus:border-violet-500 focus:ring-4 focus:ring-violet-500/20 outline-none text-slate-700 leading-relaxed transition-all resize-y text-lg placeholder:text-slate-400 font-medium"
-                    value={formData.qualifications}
-                    onChange={(e) => setFormData({...formData, qualifications: e.target.value})}
-                    placeholder="Tell clients about your experience, care style, and unique qualifications..."
-                  />
-                ) : (
-                  <div className="space-y-4 relative z-10">
-                    <p className="text-slate-600 leading-relaxed font-medium text-lg">
-                      {staffData?.qualifications || 'No professional summary added yet. Click edit to tell your story.'}
-                    </p>
-                  </div>
-                )}
-              </section>
-
-              <section className="bg-white/60 backdrop-blur-2xl rounded-[2rem] p-8 shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-white/80 relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-fuchsia-100/50 to-transparent rounded-bl-full -z-0"></div>
-                <h3 className="text-2xl font-extrabold text-slate-800 mb-6 flex items-center gap-3 relative z-10">
-                  <div className="p-2.5 bg-fuchsia-100 text-fuchsia-600 rounded-xl">
-                    <Award size={22} strokeWidth={2.5} />
-                  </div>
-                  Documents & Certifications
-                </h3>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-5 relative z-10">
-                  {staffData?.document_urls?.map((doc, idx) => (
-                    <div key={idx} className="group relative aspect-[3/4] rounded-2xl border-2 border-white overflow-hidden bg-slate-100 shadow-md hover:shadow-xl hover:shadow-fuchsia-200/50 transition-all duration-300 cursor-pointer">
-                      <img src={doc} alt="Document" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end justify-center pb-4">
-                        <span className="text-white text-sm font-bold px-4 py-1.5 bg-white/20 backdrop-blur-md rounded-full border border-white/30">View Document</span>
-                      </div>
-                    </div>
-                  ))}
-                  <button className="aspect-[3/4] rounded-2xl border-2 border-dashed border-violet-200 bg-violet-50/50 flex flex-col items-center justify-center text-violet-400 hover:border-violet-400 hover:text-violet-600 hover:bg-violet-50 transition-all duration-300 group">
-                    <div className="w-12 h-12 rounded-full bg-white shadow-sm flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
-                      <span className="text-2xl font-light">+</span>
-                    </div>
-                    <span className="text-xs font-bold uppercase tracking-widest">Upload New</span>
-                  </button>
                 </div>
               </section>
             </div>
 
-            {/* Right Column: Identity & Account */}
-            <div className="space-y-8">
-              <section className="bg-white/60 backdrop-blur-2xl rounded-[2rem] p-8 shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-white/80">
-                <h3 className="text-xl font-extrabold text-slate-800 mb-6 flex items-center gap-3">
-                  <div className="p-2 bg-emerald-100 text-emerald-600 rounded-xl">
-                    <Shield size={20} strokeWidth={2.5} />
+            <aside className="space-y-6">
+              <section className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+                <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-200">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600">
+                    <Shield size={18} />
                   </div>
-                  Account Status
-                </h3>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between p-4 bg-white/80 rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-shadow">
-                    <span className="text-sm text-slate-500 font-bold tracking-wide">Verification</span>
-                    <span className={`text-xs font-black tracking-widest uppercase px-3 py-1.5 rounded-xl border ${staffData?.verification_status === 'VERIFIED' ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-amber-50 text-amber-600 border-amber-200'}`}>
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">Account Details</h3>
+                    <p className="text-sm text-slate-500">Verification and availability.</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <span className="text-sm font-medium text-slate-500">Verification</span>
+                    <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.08em] ${staffData?.verification_status === 'VERIFIED' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
                       {staffData?.verification_status || 'PENDING'}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between p-4 bg-white/80 rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-shadow">
-                    <span className="text-sm text-slate-500 font-bold tracking-wide">Availability</span>
-                    <span className="text-xs font-black tracking-widest uppercase px-3 py-1.5 rounded-xl border bg-violet-50 text-violet-600 border-violet-200">
+                  <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <span className="text-sm font-medium text-slate-500">Availability</span>
+                    <span className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold uppercase tracking-[0.08em] text-white">
                       {staffData?.current_status || 'OFFLINE'}
                     </span>
                   </div>
                 </div>
               </section>
 
-              <section className="bg-white/60 backdrop-blur-2xl rounded-[2rem] p-8 shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-white/80">
-                <h3 className="text-xl font-extrabold text-slate-800 mb-6 flex items-center gap-3">
-                  <div className="p-2 bg-rose-100 text-rose-600 rounded-xl">
-                    <Phone size={20} strokeWidth={2.5} />
+              <section className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+                <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-200">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600">
+                    <Phone size={18} />
                   </div>
-                  Contact Info
-                </h3>
-                <div className="space-y-6">
-                  <div className="flex gap-4 items-center p-2 rounded-2xl hover:bg-white/50 transition-colors">
-                    <div className="p-3 bg-white shadow-sm rounded-xl border border-slate-100 text-slate-400">
-                      <Mail className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mb-1">Email Address</p>
-                      <p className="text-sm text-slate-700 font-bold truncate">{user?.email}</p>
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">Contact Info</h3>
+                    <p className="text-sm text-slate-500">Account contact details.</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3 rounded-xl bg-slate-50 px-4 py-3">
+                    <div className="mt-0.5 text-slate-400"><Mail className="w-5 h-5" /></div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">Email Address</p>
+                      <p className="truncate text-sm font-medium text-slate-700">{user?.email || 'Not provided'}</p>
                     </div>
                   </div>
-                  <div className="flex gap-4 items-center p-2 rounded-2xl hover:bg-white/50 transition-colors">
-                    <div className="p-3 bg-white shadow-sm rounded-xl border border-slate-100 text-slate-400">
-                      <Phone className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mb-1">Mobile Number</p>
-                      <p className="text-sm text-slate-700 font-bold">{staffData?.mobile_number || 'Not added'}</p>
+                  <div className="flex items-start gap-3 rounded-xl bg-slate-50 px-4 py-3">
+                    <div className="mt-0.5 text-slate-400"><Phone className="w-5 h-5" /></div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">Mobile Number</p>
+                      <p className="text-sm font-medium text-slate-700">{staffData?.mobile_number || 'Not added'}</p>
                     </div>
                   </div>
                 </div>
               </section>
-
-              {isEditing && (
-                <div className="sticky bottom-8 z-50 animate-in fade-in slide-in-from-bottom-4 duration-300">
-                  <button 
-                    onClick={handleSave}
-                    disabled={saveLoading}
-                    className="w-full bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white p-5 rounded-[1.5rem] font-bold text-lg shadow-[0_8px_30px_rgb(139,92,246,0.4)] hover:shadow-[0_8px_40px_rgb(139,92,246,0.6)] hover:-translate-y-1 transition-all duration-300 flex items-center justify-center gap-3 disabled:opacity-50 disabled:hover:translate-y-0"
-                  >
-                    {saveLoading ? 'Saving Changes...' : <><Save size={22} strokeWidth={2.5} /> Save All Changes</>}
-                  </button>
-                </div>
-              )}
-            </div>
+            </aside>
           </div>
+
+          {isEditing && (
+            <div className="lg:hidden sticky bottom-4 z-50">
+              <button
+                onClick={handleSave}
+                disabled={saveLoading}
+                className="w-full rounded-2xl bg-slate-900 px-5 py-4 text-sm font-medium text-white shadow-lg shadow-slate-900/10 transition-colors hover:bg-slate-800 disabled:opacity-50"
+              >
+                {saveLoading ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          )}
         </div>
       </main>
     </div>

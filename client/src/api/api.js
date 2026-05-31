@@ -986,11 +986,19 @@ class ApiClient {
     });
   }
 
+  async getMyWallet() {
+    return this.request('/staff-wallet/my-wallet');
+  }
+
   async requestAdvance(advanceData) {
     return this.request('/staff-wallet/request-advance', {
       method: 'POST',
       body: JSON.stringify(advanceData),
     });
+  }
+
+  async getMyAdvances() {
+    return this.request('/staff-wallet/my-advances');
   }
 
   async getAllAdvances() {
@@ -1141,7 +1149,7 @@ class ApiClient {
   }
 
   async getStaffBookings(staffId) {
-    return this.request(`/bookings/staff/${staffId}`);
+    return this.request(`/assignments/staff/${staffId}/bookings`);
   }
 
   // Financial endpoints

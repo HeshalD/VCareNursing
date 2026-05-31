@@ -47,6 +47,18 @@ router.get(
 );
 
 /**
+ * @route   GET /api/assignments/staff/:staff_profile_id/bookings
+ * @desc    Get assignment-based bookings for a staff profile
+ * @access  Private (staff and admin roles)
+ */
+router.get(
+  '/staff/:staff_profile_id/bookings',
+  protect,
+  restrictTo('STAFF', 'NURSE', 'CARETAKER', 'NANNY', 'SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffAssignmentController.getStaffAssignmentBookings
+);
+
+/**
  * @route   PUT /api/assignments/:assignment_id
  * @desc    Update assignment details (dates, rate, notes)
  * @access  Private (SUPER_ADMIN, COORDINATOR only)

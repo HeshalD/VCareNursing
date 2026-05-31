@@ -3,6 +3,7 @@ const router = express.Router();
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const {
   getMyWallet,
+  getMyAdvances,
   requestAdvance,
   approveAdvance,
   rejectAdvance,
@@ -13,6 +14,7 @@ const {
 
 // Staff routes
 router.get('/my-wallet', protect, restrictTo('STAFF', 'NURSE', 'CARETAKER', 'NANNY'), getMyWallet);
+router.get('/my-advances', protect, restrictTo('STAFF', 'NURSE', 'CARETAKER', 'NANNY'), getMyAdvances);
 router.post('/request-advance', protect, restrictTo('STAFF', 'NURSE', 'CARETAKER', 'NANNY'), requestAdvance);
 
 // Admin routes

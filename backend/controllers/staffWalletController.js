@@ -26,6 +26,38 @@ const getMyWallet = async (req, res) => {
   }
 };
 
+// GET /api/staff-wallet/my-advances
+// Staff views their own advance request history
+const getMyAdvances = async (req, res) => {
+  try {
+    const staffResult = await pool.query(
+      `SELECT staff_profile_id
+       FROM staff_profiles
+       WHERE user_id = $1`,
+      [req.user.user_id]
+    );
+
+    if (!staffResult.rows.length) {
+      return res.status(404).json({ status: 'error', message: 'Staff profile not found' });
+    }
+
+    const { staff_profile_id } = staffResult.rows[0];
+
+    const advancesResult = await pool.query(
+      `SELECT advance_id, staff_profile_id, amount_requested, status, requested_at, approved_at, rejected_reason
+       FROM staff_advances
+       WHERE staff_profile_id = $1
+       ORDER BY requested_at DESC`,
+      [staff_profile_id]
+    );
+
+    return res.json({ status: 'success', data: advancesResult.rows });
+  } catch (err) {
+    console.error('getMyAdvances error:', err);
+    return res.status(500).json({ status: 'error', message: 'Server error' });
+  }
+};
+
 // POST /api/staff-wallet/request-advance
 // Staff requests an advance
 const requestAdvance = async (req, res) => {
@@ -263,6 +295,7 @@ const getPendingAdvances = async (req, res) => {
 
 module.exports = {
   getMyWallet,
+  getMyAdvances,
   requestAdvance,
   approveAdvance,
   rejectAdvance,
