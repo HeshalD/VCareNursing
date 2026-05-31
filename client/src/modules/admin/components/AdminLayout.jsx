@@ -119,12 +119,14 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
             active={isActive('/admin/quotations')}
             collapsed={collapsed}
           />
-          {/*<SidebarItem
+          <SidebarItem
             icon={FileText}
             label="Reports"
             path="/admin/reports"
-            active={isActive('/admin/reports')}
+            active={location.pathname.startsWith('/admin/reports')}
+            collapsed={collapsed}
           />
+          {/*
           <SidebarItem
             icon={Settings}
             label="Settings"

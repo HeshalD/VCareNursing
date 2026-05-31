@@ -1,9 +1,12 @@
 import React from 'react';
-import { FileText, Download, TrendingUp, Users, Calendar } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Download, TrendingUp, Users, Calendar, ReceiptText, PieChart, Wallet, ArrowRight, ClipboardList } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import AdminLayout from '../components/AdminLayout';
 
 const Reports = () => {
+  const navigate = useNavigate();
+
   const data = [
     { name: 'Jan', revenue: 4000, bookings: 240 },
     { name: 'Feb', revenue: 3000, bookings: 139 },
@@ -31,6 +34,13 @@ const Reports = () => {
         </div>
       }
     >
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        <ReportStatCard icon={TrendingUp} label="Revenue Reports" value="12" tone="emerald" />
+        <ReportStatCard icon={Users} label="Customer Reports" value="08" tone="blue" />
+        <ReportStatCard icon={Calendar} label="Booking Reports" value="06" tone="amber" />
+        <ReportStatCard icon={Wallet} label="Financial Reports" value="10" tone="violet" />
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
           <h3 className="font-bold text-lg text-slate-900 mb-6">Revenue Growth</h3>
@@ -65,32 +75,93 @@ const Reports = () => {
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm">
         <div className="p-6 border-b border-slate-200">
-          <h3 className="font-bold text-lg text-slate-900">Available Reports</h3>
-        </div>
-        <div className="divide-y divide-slate-100">
-          {[
-            { title: 'Monthly Financial Summary', desc: 'Detailed breakdown of all earnings and payouts for Oct 2024.', icon: TrendingUp, color: 'text-green-600 bg-green-50' },
-            { title: 'User Registration Analytics', desc: 'New user signups and retention metrics.', icon: Users, color: 'text-blue-600 bg-blue-50' },
-            { title: 'Booking Performance', desc: 'Completion rates, cancellations, and average ratings.', icon: Calendar, color: 'text-amber-600 bg-amber-50' },
-          ].map((report, i) => (
-            <div key={i} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
-              <div className="flex items-center gap-4">
-                <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${report.color}`}>
-                  <report.icon className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="font-bold text-slate-900">{report.title}</h4>
-                  <p className="text-sm text-slate-500">{report.desc}</p>
-                </div>
-              </div>
-              <button className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
-                <Download className="w-5 h-5" />
-              </button>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h3 className="font-bold text-lg text-slate-900">Available Reports</h3>
+              <p className="text-sm text-slate-500 mt-1">Open a report to review client, booking, and financial breakdowns.</p>
             </div>
-          ))}
+            <Link
+              to="/admin/reports/sales-by-customer"
+              className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 transition-colors"
+            >
+              Sales by Customer
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <th className="px-6 py-3">Report</th>
+                <th className="px-6 py-3">Description</th>
+                <th className="px-6 py-3">Category</th>
+                <th className="px-6 py-3 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 bg-white">
+              {[
+                { title: 'Sales by Customer', desc: 'See each customer and their sales contribution.', icon: Users, color: 'text-blue-600 bg-blue-50', category: 'Customers', action: () => navigate('/admin/reports/sales-by-customer') },
+                { title: 'Monthly Financial Summary', desc: 'Detailed breakdown of earnings and payouts for the selected period.', icon: TrendingUp, color: 'text-emerald-600 bg-emerald-50', category: 'Finance' },
+                { title: 'Booking Performance', desc: 'Review completion rates, cancellations, and average durations.', icon: Calendar, color: 'text-amber-600 bg-amber-50', category: 'Operations' },
+                { title: 'Payment Tracking', desc: 'Monitor payments, balances, and overdue amounts across clients.', icon: ReceiptText, color: 'text-violet-600 bg-violet-50', category: 'Finance' },
+                { title: 'Service Mix', desc: 'Understand which services are generating the most activity.', icon: PieChart, color: 'text-sky-600 bg-sky-50', category: 'Operations' },
+                { title: 'Customer Statement Activity', desc: 'Review statement generation and transaction patterns.', icon: ClipboardList, color: 'text-slate-600 bg-slate-100', category: 'Customers' },
+              ].map((report) => (
+                <tr key={report.title} className="hover:bg-slate-50/70 transition-colors">
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-4">
+                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${report.color}`}>
+                        <report.icon className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-slate-900">{report.title}</h4>
+                        <p className="text-xs text-slate-500 mt-1">Ready for detailed review</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-slate-600">{report.desc}</td>
+                  <td className="px-6 py-4">
+                    <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">
+                      {report.category}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    <button
+                      type="button"
+                      onClick={report.action || (() => {})}
+                      className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 transition-colors"
+                    >
+                      <Download className="w-4 h-4" />
+                      View
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     </AdminLayout>
+  );
+};
+
+const ReportStatCard = ({ icon: Icon, label, value, tone }) => {
+  const toneMap = {
+    emerald: 'bg-emerald-50 text-emerald-700',
+    blue: 'bg-blue-50 text-blue-700',
+    amber: 'bg-amber-50 text-amber-700',
+    violet: 'bg-violet-50 text-violet-700',
+  };
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className={`inline-flex h-11 w-11 items-center justify-center rounded-xl ${toneMap[tone] || toneMap.blue}`}>
+        <Icon className="h-5 w-5" />
+      </div>
+      <p className="mt-4 text-sm font-medium text-slate-500">{label}</p>
+      <p className="mt-1 text-2xl font-bold text-slate-900">{value}</p>
+    </div>
   );
 };
 

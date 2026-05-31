@@ -30,6 +30,7 @@ import WorkerVerification from './modules/admin/worker_verifications/worker_veri
 import Financials from './modules/admin/financial/financial';
 import BankAccounts from './modules/admin/back_accounts/bank_accounts';
 import Reports from './modules/admin/reports/reports';
+import SalesByCustomer from './modules/admin/reports/sales_by_customer';
 import Settings from './modules/admin/settings/settings';
 import AdminLoginPage from './modules/admin/AdminLoginPage';
 import { AdminAuthProvider } from './context/AdminAuthContext';
@@ -64,7 +65,7 @@ import ServiceRequestSummaryPage from './modules/admin/service_requests/service_
 import BookingStaffRosterPage from './modules/admin/service_requests/booking_staff_roster';
 import BookingStaffAssignmentPage from './modules/admin/service_requests/booking_staff_assignment';
 import BookingDetailPage from './modules/admin/bookings/BookingDetailPage';
-import StaffDetailPage from './modules/admin/staff_detail/staff_detail_page';
+import StaffDetailPage from './modules/admin/user_managemnet/staff_detail_page';
 
 function App() {
   return (
@@ -212,6 +213,14 @@ function App() {
               <AdminAuthProvider>
                 <Reports />
               </AdminAuthProvider>
+            } />
+            <Route path="/admin/reports/sales-by-customer" element={
+              <AdminAuthProvider>
+                <SalesByCustomer />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/reports/sales_by_customer" element={
+              <Navigate to="/admin/reports/sales-by-customer" replace />
             } />
             <Route path="/admin/bookings" element={
               <AdminAuthProvider>
