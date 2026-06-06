@@ -20,6 +20,8 @@ const staffAssignmentRoutes = require('./routes/staffAssignmentRoutes');
 
 const startDailyInvoicing = require('./cron/dailyInvoicing');
 
+const VERIFY_TOKEN = "nursing_verify_token";
+
 require('dotenv').config();
 
 // Auto-run database migration in production (only if not already migrated)
@@ -68,6 +70,12 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json()); // Body parser
 
+// Request Logger
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  next();
+});
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/client', clientRoutes);
@@ -83,6 +91,7 @@ app.use('/api/payment-slips', paymentSlipRoutes);
 app.use('/api/migrate', migrateRoutes); 
 app.use('/api/staff-wallet', staffWalletRoutes);
 app.use('/api/staff-reviews', staffReviewRoutes);
+
 app.use('/api/finances', financesRoutes);
 app.use('/api/bank-accounts', bankAccountRoutes);
 app.use('/api/assignments', staffAssignmentRoutes);
@@ -94,6 +103,40 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime()
   });
+});
+
+app.get("/webhook", (req, res) => {
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  console.log("Webhook verification request received");
+
+  // Check token matches
+  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+    console.log("Webhook verified successfully");
+
+    return res.status(200).send(challenge);
+  }
+
+  console.log("Webhook verification failed");
+
+  return res.sendStatus(403);
+});
+
+app.post("/webhook", (req, res) => {
+  console.log("Incoming WhatsApp event:");
+
+  console.dir(req.body, { depth: null });
+
+  /*
+    Example payload structure you will receive:
+    - messages
+    - statuses (delivered/read)
+  */
+
+  // IMPORTANT: Always respond 200 quickly
+  res.sendStatus(200);
 });
 
 // Global Error Handler

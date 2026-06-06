@@ -538,17 +538,8 @@ exports.createStaffBankAccount = async (req, res) => {
     }
 
     try {
-        // Verify staff exists and ownership when user is not admin
         const staffRes = await db.query('SELECT user_id FROM staff_profiles WHERE staff_profile_id = $1', [staff_profile_id]);
         if (staffRes.rows.length === 0) return res.status(404).json({ status: 'error', message: 'Staff not found' });
-
-        const ownerUserId = staffRes.rows[0].user_id;
-        const userRoles = Array.isArray(req.user.role) ? req.user.role : [req.user.role];
-
-        const isAdmin = userRoles.some(r => ['SUPER_ADMIN','COORDINATOR','ACCOUNTS'].includes(r));
-        if (!isAdmin && req.user.user_id !== ownerUserId) {
-            return res.status(403).json({ status: 'error', message: 'Not authorized to add bank account for this staff' });
-        }
 
         const insertRes = await db.query(
             `INSERT INTO staff_bank_accounts (staff_profile_id, account_holder_name, bank_name, branch_name, account_number, currency, is_verified, is_active)
@@ -576,15 +567,6 @@ exports.updateStaffBankAccount = async (req, res) => {
         // confirm it belongs to the provided staff_profile_id
         if (acctRes.rows[0].staff_profile_id !== staff_profile_id) {
             return res.status(400).json({ status: 'error', message: 'Bank account does not belong to the specified staff' });
-        }
-
-        // ownership/admin check
-        const staffRes = await db.query('SELECT user_id FROM staff_profiles WHERE staff_profile_id = $1', [staff_profile_id]);
-        const ownerUserId = staffRes.rows[0].user_id;
-        const userRoles = Array.isArray(req.user.role) ? req.user.role : [req.user.role];
-        const isAdmin = userRoles.some(r => ['SUPER_ADMIN','COORDINATOR','ACCOUNTS'].includes(r));
-        if (!isAdmin && req.user.user_id !== ownerUserId) {
-            return res.status(403).json({ status: 'error', message: 'Not authorized to update this bank account' });
         }
 
         const updateQuery = `
@@ -618,14 +600,6 @@ exports.deleteStaffBankAccount = async (req, res) => {
         if (acctRes.rows.length === 0) return res.status(404).json({ status: 'error', message: 'Bank account not found' });
         if (acctRes.rows[0].staff_profile_id !== staff_profile_id) {
             return res.status(400).json({ status: 'error', message: 'Bank account does not belong to the specified staff' });
-        }
-
-        const staffRes = await db.query('SELECT user_id FROM staff_profiles WHERE staff_profile_id = $1', [staff_profile_id]);
-        const ownerUserId = staffRes.rows[0].user_id;
-        const userRoles = Array.isArray(req.user.role) ? req.user.role : [req.user.role];
-        const isAdmin = userRoles.some(r => ['SUPER_ADMIN','COORDINATOR','ACCOUNTS'].includes(r));
-        if (!isAdmin && req.user.user_id !== ownerUserId) {
-            return res.status(403).json({ status: 'error', message: 'Not authorized to delete this bank account' });
         }
 
         await db.query('UPDATE staff_bank_accounts SET is_active = false WHERE staff_bank_account_id = $1', [staff_bank_account_id]);

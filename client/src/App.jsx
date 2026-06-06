@@ -16,6 +16,7 @@ import BookingSuccessPage from './modules/public/BookingSuccessPage';
 import WorkersTeamPage from './modules/public/service_team/WorkersTeamPage';
 import WorkerRegistrationPage from './modules/public/service_team/WorkerRegistrationPage';
 import WorkerRegistrationSuccessPage from './modules/public/service_team/WorkerRegistrationSuccessPage';
+import VerifyStaffOTP from './modules/public/service_team/VerifyStaffOTP';
 import WorkerDashboardDemo from './modules/public/service_team/WorkerDashboardDemo';
 import ClientDashboardDemo from './modules/public/ClientDashboardDemo';
 import ClientProfileDemo from './modules/public/ClientProfileDemo';
@@ -27,6 +28,7 @@ import ServiceRequests from './modules/admin/service_requests/service_requests';
 import ProxyServiceRequest from './modules/admin/service_requests/proxy_service_request';
 import QuoteBuilder from './modules/admin/service_requests/quote_builder';
 import WorkerVerification from './modules/admin/worker_verifications/worker_verifications';
+import WorkerVerificationDetailsPage from './modules/admin/worker_verifications/WorkerVerificationDetailsPage';
 import Financials from './modules/admin/financial/financial';
 import BankAccounts from './modules/admin/back_accounts/bank_accounts';
 import Reports from './modules/admin/reports/reports';
@@ -100,6 +102,7 @@ function App() {
             <Route path="/booking-success" element={<BookingSuccessPage />} />
             <Route path="/services/join-team" element={<WorkersTeamPage />} />
             <Route path="/services/apply" element={<WorkerRegistrationPage />} />
+            <Route path="/verify-staff-otp" element={<VerifyStaffOTP />} />
             <Route path="/worker-registration-success" element={<WorkerRegistrationSuccessPage />} />
             <Route path="/services/provider-dashboard" element={<WorkerDashboardDemo />} />
             <Route path="/services/earnings" element={<Earnings />} />
@@ -172,6 +175,11 @@ function App() {
             <Route path="/admin/workers" element={
               <AdminAuthProvider>
                 <WorkerVerification />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/workers/:applicationId" element={
+              <AdminAuthProvider>
+                <WorkerVerificationDetailsPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/financial" element={

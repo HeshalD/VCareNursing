@@ -603,7 +603,7 @@ const UserManagement = () => {
                   <div>
                     <h4 className="font-semibold text-blue-800">Worker Information</h4>
                     <p className="text-blue-700 text-sm mt-1">
-                      {selectedWorker.full_name || `Worker #${selectedWorker.staff_profile_id}`}
+                      {selectedWorker.full_name || `Worker #${selectedWorker.staff_code || selectedWorker.staff_profile_id}`}
                     </p>
                     <p className="text-blue-600 text-xs mt-1">
                       Current Threshold: Rs. {selectedWorker.advance_threshold_amount?.toLocaleString('en-IN') || '0'}

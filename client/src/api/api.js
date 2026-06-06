@@ -621,6 +621,20 @@ class ApiClient {
 
 
 
+  async verifyStaffApplicationOtp(applicationId, otpCode) {
+    return this.request('/staff/verify-otp', {
+      method: 'POST',
+      body: JSON.stringify({ application_id: applicationId, otp_code: otpCode }),
+    });
+  }
+
+  async resendStaffApplicationOtp(applicationId) {
+    return this.request('/staff/resend-otp', {
+      method: 'POST',
+      body: JSON.stringify({ application_id: applicationId }),
+    });
+  }
+
   async getApplications() {
 
     return this.request('/staff/applications');
@@ -629,13 +643,24 @@ class ApiClient {
 
 
 
-  async acceptApplication(applicationId) {
+  async getApplication(applicationId) {
+    return this.request(`/staff/applications/${applicationId}`);
+  }
+
+  async updateApplicationDetails(applicationId, data) {
+    return this.request(`/staff/applications/${applicationId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async acceptApplication(applicationId, extras = {}) {
 
     return this.request('/staff/accept', {
 
       method: 'POST',
 
-      body: JSON.stringify({ application_id: applicationId }),
+      body: JSON.stringify({ application_id: applicationId, ...extras }),
 
     });
 
@@ -798,6 +823,26 @@ class ApiClient {
 
   async getStaffBankAccounts(staffProfileId) {
     return this.request(`/staff/${staffProfileId}/bank-accounts`);
+  }
+
+  async createStaffBankAccount(staffProfileId, data) {
+    return this.request(`/staff/${staffProfileId}/bank-accounts`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateStaffBankAccount(staffProfileId, bankAccountId, data) {
+    return this.request(`/staff/${staffProfileId}/bank-accounts/${bankAccountId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteStaffBankAccount(staffProfileId, bankAccountId) {
+    return this.request(`/staff/${staffProfileId}/bank-accounts/${bankAccountId}`, {
+      method: 'DELETE',
+    });
   }
 
   async deactivateStaffAccount(staffProfileId) {

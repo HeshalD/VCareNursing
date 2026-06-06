@@ -264,10 +264,10 @@ const AdvanceRequests = () => {
                         </div>
                         <div>
                           <span className="text-sm font-medium text-slate-900">
-                            {request.staff_name || `Staff #${request.staff_profile_id || 'Unknown'}`}
+                            {request.staff_name || `Staff #${request.staff_code || request.staff_profile_id || 'Unknown'}`}
                           </span>
                           <div className="text-xs text-slate-500">
-                            ID: {request.staff_profile_id || 'N/A'}
+                            ID: {request.staff_code || request.staff_profile_id || 'N/A'}
                           </div>
                         </div>
                       </div>
@@ -397,9 +397,9 @@ const AdvanceRequests = () => {
                   </div>
                   <div>
                     <p className="font-medium">
-                      {selectedRequest.staff_name || `Staff #${selectedRequest.staff_profile_id || 'Unknown'}`}
+                      {selectedRequest.staff_name || `Staff #${selectedRequest.staff_code || selectedRequest.staff_profile_id || 'Unknown'}`}
                     </p>
-                    <p className="text-sm text-slate-500">ID: {selectedRequest.staff_profile_id || 'N/A'}</p>
+                    <p className="text-sm text-slate-500">ID: {selectedRequest.staff_code || selectedRequest.staff_profile_id || 'N/A'}</p>
                   </div>
                 </div>
               </div>

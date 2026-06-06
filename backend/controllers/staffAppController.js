@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const sendEmail = require('../utils/email');
 const { sendWhatsAppOtp, sendWhatsAppMessage } = require('../utils/whatsapp');
+const { sendSmsOtp, sendSms } = require('../utils/sms');
 
 const getUploadedFileUrl = (files, fieldName) => (files && files[fieldName] && files[fieldName][0]) ? files[fieldName][0].path : null;
 
@@ -98,7 +99,35 @@ exports.submitApplication = async (req, res) => {
       date_of_birth
     ]);
 
-    res.status(201).json({ status: 'success', data: result.rows[0] });
+    const application = result.rows[0];
+
+    // Generate OTP for phone verification
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60000);
+
+    await db.query(
+      'INSERT INTO staff_app_otps (application_id, otp_code, expires_at) VALUES ($1, $2, $3)',
+      [application.application_id, otp, expiresAt]
+    );
+
+    // Send OTP via WhatsApp and SMS in parallel
+    const [wpResult, smsResult] = await Promise.allSettled([
+      sendWhatsAppOtp(mobile_number, otp),
+      sendSmsOtp(mobile_number, otp)
+    ]);
+
+    if (wpResult.status === 'rejected') console.error('WhatsApp OTP failed:', wpResult.reason?.message);
+    if (smsResult.status === 'rejected') console.error('SMS OTP failed:', smsResult.reason?.message);
+
+    console.log(`[DEV ONLY] Staff application OTP for ${mobile_number}: ${otp}`);
+
+    res.status(201).json({
+      status: 'success',
+      data: {
+        application_id: application.application_id,
+        mobile_number: mobile_number
+      }
+    });
 
   } catch (error) {
     console.error("Submission Error:", error);
@@ -106,10 +135,118 @@ exports.submitApplication = async (req, res) => {
   }
 };
 
-exports.acceptApplication = async (req, res) => {
+exports.verifyStaffApplicationOtp = async (req, res) => {
+  const { application_id, otp_code } = req.body;
+
+  if (!application_id || !otp_code) {
+    return res.status(400).json({ message: 'Application ID and OTP code are required.' });
+  }
+
+  try {
+    const result = await db.query(
+      `SELECT * FROM staff_app_otps
+       WHERE application_id = $1 AND otp_code = $2 AND expires_at > NOW()`,
+      [application_id, otp_code]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(400).json({ message: 'Invalid or expired OTP.' });
+    }
+
+    // Delete OTP so it can't be reused
+    await db.query('DELETE FROM staff_app_otps WHERE application_id = $1', [application_id]);
+
+    // Fetch application details for the success response
+    const appResult = await db.query(
+      'SELECT full_name, mobile_number, applied_roles FROM staff_applications WHERE application_id = $1',
+      [application_id]
+    );
+
+    const app = appResult.rows[0];
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Phone number verified successfully.',
+      data: {
+        application_id,
+        full_name: app.full_name,
+        mobile_number: app.mobile_number,
+        applied_roles: app.applied_roles
+      }
+    });
+
+  } catch (error) {
+    console.error('Verify Staff OTP Error:', error);
+    res.status(500).json({ message: 'Verification failed.' });
+  }
+};
+
+exports.resendStaffApplicationOtp = async (req, res) => {
   const { application_id } = req.body;
-  
-  const client = await db.pool.connect(); 
+
+  if (!application_id) {
+    return res.status(400).json({ message: 'Application ID is required.' });
+  }
+
+  try {
+    const appResult = await db.query(
+      'SELECT mobile_number FROM staff_applications WHERE application_id = $1',
+      [application_id]
+    );
+
+    if (appResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Application not found.' });
+    }
+
+    const { mobile_number } = appResult.rows[0];
+
+    // Rate limiting: 60-second cooldown
+    const lastOtp = await db.query(
+      'SELECT created_at FROM staff_app_otps WHERE application_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [application_id]
+    );
+
+    if (lastOtp.rows.length > 0) {
+      const secondsAgo = (new Date() - new Date(lastOtp.rows[0].created_at)) / 1000;
+      if (secondsAgo < 60) {
+        return res.status(429).json({
+          message: `Please wait ${Math.round(60 - secondsAgo)} seconds before requesting a new code.`
+        });
+      }
+    }
+
+    const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60000);
+
+    await db.query('DELETE FROM staff_app_otps WHERE application_id = $1', [application_id]);
+    await db.query(
+      'INSERT INTO staff_app_otps (application_id, otp_code, expires_at) VALUES ($1, $2, $3)',
+      [application_id, newOtp, expiresAt]
+    );
+
+    await Promise.allSettled([
+      sendWhatsAppOtp(mobile_number, newOtp),
+      sendSmsOtp(mobile_number, newOtp)
+    ]);
+
+    console.log(`[DEV ONLY] Resent staff OTP for ${application_id}: ${newOtp}`);
+
+    res.status(200).json({ status: 'success', message: 'A new verification code has been sent.' });
+
+  } catch (error) {
+    console.error('Resend Staff OTP Error:', error);
+    res.status(500).json({ message: 'Failed to resend OTP.' });
+  }
+};
+
+exports.acceptApplication = async (req, res) => {
+  const { application_id, custom_staff_id, admin_remarks } = req.body;
+
+  if (!custom_staff_id || !custom_staff_id.trim()) {
+    return res.status(400).json({ message: 'A Staff ID must be assigned before approving.' });
+  }
+
+  const client = await db.pool.connect();
 
   try {
     await client.query('BEGIN');
@@ -269,15 +406,16 @@ exports.acceptApplication = async (req, res) => {
         }
 
         const profileInsertQuery = `
-          INSERT INTO staff_profiles (user_id, full_name, designation,verification_status, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, willing_to_live_in, date_of_birth)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::gender_enum, $15, $16)
+          INSERT INTO staff_profiles (staff_code, user_id, full_name, designation, verification_status, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, willing_to_live_in, date_of_birth, admin_remarks)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18)
           RETURNING staff_profile_id
         `;
         const profileResult = await client.query(profileInsertQuery, [
+          custom_staff_id.trim(),
           userId,
           app.full_name,
           designation,
-          'VERIFIED', // verification_status
+          'VERIFIED',
           app.qualifications,
           app.document_urls,
           app.home_address,
@@ -289,7 +427,8 @@ exports.acceptApplication = async (req, res) => {
           app.nic_back_url,
           app.gender,
           app.willing_to_live_in || false,
-          app.date_of_birth
+          app.date_of_birth,
+          admin_remarks || null
         ]);
 
         // Auto-create staff wallet on approval
@@ -337,16 +476,15 @@ exports.acceptApplication = async (req, res) => {
     // 5. Send Appropriate Notification
     let messageBody = '';
     if (isNewUser) {
-        messageBody = ` Congratulations ${app.full_name}! Welcome to the VCare Family! \n\nYour staff application has been approved! Here's what you need to do:\n\nSTEP 1: Go to the VCare website\nSTEP 2: Click "Login" \nSTEP 3: Enter your EMAIL: ${app.email}\nSTEP 4: Enter your temporary password: ${tempPassword}\nSTEP 5: You'll be automatically prompted to set your own permanent password\n\nIMPORTANT: Use your EMAIL address (not phone number) to login the first time!\n\nWe're excited to have you join our team of dedicated healthcare professionals!\n\nWith love,\nThe VCare Team `;
+        messageBody = ` Congratulations ${app.full_name}! Welcome to the VCare Family! \n\nYour staff application has been approved! Here's what you need to do:\n\nSTEP 1: Go to the VCare website\nSTEP 2: Click "Login" \nSTEP 3: Enter your PHONE NUMBER: ${app.mobile_number}\nSTEP 4: Enter your temporary password: ${tempPassword}\nSTEP 5: You'll be automatically prompted to set your own permanent password\n\nWe're excited to have you join our team of dedicated healthcare professionals!\n\nWith love,\nThe VCare Team `;
     } else {
-        messageBody = ` Congratulations ${app.full_name}! Welcome to the VCare Staff Team! \n\nGreat news! Your staff application has been approved and your account has been upgraded with staff privileges.\n\nYou can now log in with your existing credentials and access the Staff Dashboard to manage your schedule and services.\n\nIf you normally login with your phone number, try using your email address: ${app.email}\n\nWe're thrilled to have you as part of our healthcare team!\n\nWith love,\nThe VCare Team `;
+        messageBody = ` Congratulations ${app.full_name}! Welcome to the VCare Staff Team! \n\nGreat news! Your staff application has been approved and your account has been upgraded with staff privileges.\n\nYou can now log in with your existing credentials and access the Staff Dashboard to manage your schedule and services.\n\nWe're thrilled to have you as part of our healthcare team!\n\nWith love,\nThe VCare Team `;
     }
 
     Promise.allSettled([
         // email notification temporarily disabled
         /* sendEmail({ email: app.email, subject: 'VCare Staff Application Accepted', message: messageBody }), */
-        // use WhatsApp for acceptance message
-        sendWhatsAppMessage(app.mobile_number, messageBody)
+        sendSms(app.mobile_number, messageBody)
     ]);
 
     res.status(200).json({
@@ -419,6 +557,66 @@ exports.rejectApplication = async (req, res) => {
   } catch (error) {
     console.error("Reject Application Error:", error);
     res.status(500).json({ message: "Internal server error processing rejection." });
+  }
+};
+
+exports.updateApplication = async (req, res) => {
+  const { applicationId } = req.params;
+  const {
+    full_name, email, mobile_number, applied_roles, qualifications,
+    home_address, location, nic_number, gender, date_of_birth
+  } = req.body;
+
+  try {
+    const appResult = await db.query(
+      'SELECT status FROM staff_applications WHERE application_id = $1',
+      [applicationId]
+    );
+
+    if (appResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Application not found' });
+    }
+
+    if (appResult.rows[0].status !== 'PENDING') {
+      return res.status(400).json({ message: 'Only PENDING applications can be edited' });
+    }
+
+    let rolesArray = [];
+    if (applied_roles) {
+      if (Array.isArray(applied_roles)) {
+        rolesArray = applied_roles.map(r => r.replace(/\{|\}/g, '').trim());
+      } else if (typeof applied_roles === 'string') {
+        try {
+          const parsed = JSON.parse(applied_roles);
+          rolesArray = Array.isArray(parsed)
+            ? parsed.map(r => r.replace(/\{|\}/g, '').trim())
+            : [applied_roles.replace(/\{|\}/g, '').trim()];
+        } catch {
+          rolesArray = applied_roles.split(',').map(r => r.replace(/\{|\}/g, '').trim());
+        }
+      }
+      rolesArray = rolesArray.filter(r => r.length > 0);
+    }
+
+    await db.query(
+      `UPDATE staff_applications
+       SET full_name = $1, email = $2, mobile_number = $3,
+           applied_roles = $4::user_role_enum[], qualifications = $5,
+           home_address = $6, location = $7, nic_number = $8,
+           gender = $9::gender_enum, date_of_birth = $10
+       WHERE application_id = $11`,
+      [full_name, email, mobile_number, rolesArray, qualifications,
+       home_address, location, nic_number, gender, date_of_birth, applicationId]
+    );
+
+    const updated = await db.query(
+      'SELECT * FROM staff_applications WHERE application_id = $1', [applicationId]
+    );
+
+    res.status(200).json({ status: 'success', data: updated.rows[0] });
+  } catch (error) {
+    console.error('Update Application Error:', error);
+    res.status(500).json({ message: 'Error updating application', error: error.message });
   }
 };
 

@@ -267,7 +267,7 @@ const TerminationRequests = () => {
                         </div>
                         <div>
                           <span className="text-sm font-medium text-slate-900">
-                            {request.staff_name || `Staff #${request.staff_profile_id || 'Not assigned'}`}
+                            {request.staff_name || `Staff #${request.staff_code || request.staff_profile_id || 'Not assigned'}`}
                           </span>
                         </div>
                       </div>
@@ -389,9 +389,9 @@ const TerminationRequests = () => {
                   </div>
                   <div>
                     <p className="font-medium">
-                      {selectedRequest.staff_name || `Staff #${selectedRequest.staff_profile_id || 'Not assigned'}`}
+                      {selectedRequest.staff_name || `Staff #${selectedRequest.staff_code || selectedRequest.staff_profile_id || 'Not assigned'}`}
                     </p>
-                    <p className="text-sm text-slate-500">ID: {selectedRequest.staff_profile_id || 'Not assigned'}</p>
+                    <p className="text-sm text-slate-500">ID: {selectedRequest.staff_code || selectedRequest.staff_profile_id || 'Not assigned'}</p>
                   </div>
                 </div>
               </div>

@@ -170,7 +170,7 @@ const BookingDetailPage = () => {
   const normalizedCurrentStaff = currentStaff?.staff_name || currentStaff?.full_name || currentStaff?.name
     ? {
         name: currentStaff.staff_name || currentStaff.full_name || currentStaff.name || '-',
-        id: currentStaff.staff_profile_id || currentStaff.staff_id || currentStaff.id || '-',
+        id: currentStaff.staff_code || currentStaff.staff_profile_id || currentStaff.staff_id || currentStaff.id || '-',
         mobile: currentStaff.staff_mobile || currentStaff.mobile || '-',
         email: currentStaff.staff_email || currentStaff.email || '-',
         designation: currentStaff.designation || currentStaff.staff_designation || '-',
@@ -178,7 +178,7 @@ const BookingDetailPage = () => {
     : activeStaffRow
       ? {
           name: activeStaffRow.full_name || activeStaffRow.staff_name || '-',
-          id: activeStaffRow.staff_profile_id || activeStaffRow.staff_id || '-',
+          id: activeStaffRow.staff_code || activeStaffRow.staff_profile_id || activeStaffRow.staff_id || '-',
           mobile: activeStaffRow.staff_mobile || activeStaffRow.mobile || '-',
           email: activeStaffRow.staff_email || activeStaffRow.email || '-',
           designation: activeStaffRow.designation || '-',
@@ -199,7 +199,7 @@ const BookingDetailPage = () => {
   const normalizedStaffHistory = staffHistory.map((row) => ({
     id: row.assignment_id || row.booking_staff_assignment_id || row.id,
     name: row.full_name || row.staff_name || '-',
-    staffId: row.staff_profile_id || row.staff_id || '-',
+    staffId: row.staff_code || row.staff_profile_id || row.staff_id || '-',
     designation: row.designation || '-',
     currentStatus: row.current_status || row.status || '-',
     startDate: row.service_start_date || row.assigned_at || row.created_at,

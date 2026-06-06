@@ -215,9 +215,7 @@ const WorkerRegistrationPage = () => {
         }
         break;
       case 'email':
-        if (!value || value.trim() === '') {
-          error = 'Email address is required';
-        } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+        if (value && value.trim() !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
           error = 'Valid email address is required';
         }
         break;
@@ -323,7 +321,6 @@ const WorkerRegistrationPage = () => {
   const isFormValid = () => {
     const requiredFields = {
       full_name: formData.full_name,
-      email: formData.email,
       mobile_number: formData.mobile_number,
       applied_roles: formData.applied_roles,
       qualifications: formData.qualifications,
@@ -430,16 +427,11 @@ const WorkerRegistrationPage = () => {
       console.log('Application submitted successfully:', response);
       
       // Navigate to success page with application data
-      navigate('/worker-registration-success', { 
-        state: { 
-          applicationData: {
-            application_id: response.application_id || 'APP' + Date.now(),
-            full_name: formData.full_name,
-            email: formData.email,
-            mobile_number: formData.mobile_number,
-            applied_roles: formData.applied_roles
-          }
-        } 
+      navigate('/verify-staff-otp', {
+        state: {
+          applicationId: response.data?.application_id,
+          mobileNumber: formData.mobile_number
+        }
       });
       
     } catch (error) {
@@ -558,7 +550,7 @@ const WorkerRegistrationPage = () => {
                       <div className="grid md:grid-cols-2 gap-6">
                         <div className="md:col-span-2">
                           <label className="text-sm font-semibold text-slate-600 block mb-1">
-                            Full Name
+                            Name With Initials
                             {hasAutoCompletedFullName() && (
                               <span className="ml-2 text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full">From account</span>
                             )}
@@ -584,6 +576,7 @@ const WorkerRegistrationPage = () => {
                         <div>
                           <label className="text-sm font-semibold text-slate-600 block mb-1">
                             Email Address
+                            <span className="ml-2 text-xs text-slate-400 font-normal">(Optional)</span>
                             {hasAutoCompletedEmail() && (
                               <span className="ml-2 text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full">From account</span>
                             )}
@@ -591,16 +584,15 @@ const WorkerRegistrationPage = () => {
                           <input
                             type="email"
                             className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 placeholder:text-slate-400 ${
-                              hasAutoCompletedEmail() 
-                                ? 'bg-emerald-50 border-emerald-200' 
-                                : fieldErrors.email 
-                                  ? 'bg-red-50 border-red-300' 
+                              hasAutoCompletedEmail()
+                                ? 'bg-emerald-50 border-emerald-200'
+                                : fieldErrors.email
+                                  ? 'bg-red-50 border-red-300'
                                   : 'bg-slate-50 border-slate-200'
                             }`}
                             value={formData.email}
                             onChange={e => handleInputChange('email', e.target.value)}
                             placeholder="e.g. saman@example.com"
-                            required
                           />
                           {fieldErrors.email && (
                             <p className="text-xs text-red-500 mt-1">{fieldErrors.email}</p>
@@ -679,7 +671,7 @@ const WorkerRegistrationPage = () => {
                         <div>
                           <label className="text-sm font-semibold text-slate-600 block mb-1">Applied Roles</label>
                           <div className="grid grid-cols-2 gap-3">
-                            {['NURSE', 'CARETAKER', 'NANNY', 'COORDINATOR'].map((role) => (
+                            {['NURSE', 'CARETAKER', 'NANNY'].map((role) => (
                               <button
                                 key={role}
                                 type="button"
@@ -1246,7 +1238,6 @@ const WorkerRegistrationPage = () => {
                             </p>
                             <ul className="text-xs text-amber-600 space-y-1">
                               {!formData.full_name && <li>• Full Name</li>}
-                              {!formData.email && <li>• Email Address</li>}
                               {!formData.mobile_number && <li>• Mobile Number</li>}
                               {!formData.nic_number && <li>• NIC Number</li>}
                               {!formData.nic_front && <li>• NIC Front Photo</li>}
@@ -1277,6 +1268,30 @@ const WorkerRegistrationPage = () => {
                         </div>
                       )}
 
+                      {/* Terms and Conditions */}
+                      <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl">
+                        <div className="flex items-start gap-3">
+                          <div className="w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                            <FileText className="w-4 h-4 text-indigo-600" />
+                          </div>
+                          <div className="flex-1">
+                            <p className="text-sm font-semibold text-slate-800 mb-1">Terms & Conditions</p>
+                            <p className="text-xs text-slate-500 mb-2">
+                              By submitting this application, you agree to VCare's terms of service and privacy policy.
+                            </p>
+                            <a
+                              href="https://res.cloudinary.com/dohaktkth/image/upload/v1780652809/INDEPENDENT_CONTRACTOR_AGREEMENT_knloa6.pdf"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-800 hover:underline transition-colors"
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                              Read full Terms &amp; Conditions (PDF)
+                            </a>
+                          </div>
+                        </div>
+                      </div>
+
                       {/* Confirmation Checkbox */}
                       <div className="space-y-4">
                         <label className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl cursor-pointer hover:bg-amber-100 transition-colors">
@@ -1288,7 +1303,16 @@ const WorkerRegistrationPage = () => {
                           />
                           <div className="text-sm">
                             <p className="font-semibold text-amber-900">
-                              I confirm that all the information provided above is accurate and complete.
+                              I confirm that all the information provided above is accurate and complete, and I have read and agree to the{' '}
+                              <a
+                                href="https://res.cloudinary.com/dohaktkth/image/upload/v1780648957/vcare_terms___conditions_temp_qf9uzl.pdf"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-indigo-600 hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                Terms &amp; Conditions
+                              </a>.
                             </p>
                             <p className="text-amber-700 mt-1">
                               I understand that VCare will contact me within 24 hours regarding my application.

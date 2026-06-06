@@ -290,6 +290,16 @@ async function runMigration() {
   `);
 
   await db.query(`
+    CREATE TABLE IF NOT EXISTS staff_app_otps (
+      id SERIAL PRIMARY KEY,
+      application_id UUID REFERENCES staff_applications(application_id) ON DELETE CASCADE,
+      otp_code VARCHAR(6) NOT NULL,
+      expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  await db.query(`
     CREATE TABLE IF NOT EXISTS service_requests (
       request_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
       client_id UUID REFERENCES client_profiles(client_profile_id),
@@ -636,6 +646,104 @@ async function runMigration() {
   `);
 
   // =========================================================
+  // INTERNAL STAFF TABLES
+  // =========================================================
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS internal_staff (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      full_name VARCHAR(255) NOT NULL,
+      role VARCHAR(50) NOT NULL,
+      email VARCHAR(255) UNIQUE NOT NULL,
+      phone VARCHAR(20),
+      base_salary DECIMAL(10,2) DEFAULT 0.00,
+      joined_date DATE DEFAULT CURRENT_DATE,
+      status VARCHAR(20) DEFAULT 'Active',
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS internal_staff_tasks (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      staff_id UUID REFERENCES internal_staff(id) ON DELETE CASCADE,
+      task_type VARCHAR(100) NOT NULL,
+      description TEXT,
+      status VARCHAR(50) DEFAULT 'Pending',
+      assigned_date DATE DEFAULT CURRENT_DATE,
+      completed_date DATE,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS internal_staff_payroll (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      staff_id UUID REFERENCES internal_staff(id) ON DELETE CASCADE,
+      amount DECIMAL(10,2) NOT NULL,
+      payment_month VARCHAR(20) NOT NULL,
+      status VARCHAR(20) DEFAULT 'Pending',
+      paid_on TIMESTAMP WITH TIME ZONE,
+      notes TEXT,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // =========================================================
+  // STAFF CHANGE REQUESTS
+  // =========================================================
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS staff_change_requests (
+      request_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      staff_profile_id UUID NOT NULL REFERENCES staff_profiles(staff_profile_id) ON DELETE CASCADE,
+      request_type VARCHAR(50) NOT NULL,
+      requested_changes JSONB NOT NULL,
+      target_bank_account_id UUID REFERENCES staff_bank_accounts(staff_bank_account_id),
+      status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+      reviewer_user_id UUID REFERENCES users(user_id),
+      reviewer_name VARCHAR(255),
+      reviewed_at TIMESTAMP WITH TIME ZONE,
+      review_notes TEXT,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS staff_change_request_logs (
+      log_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      request_id UUID NOT NULL REFERENCES staff_change_requests(request_id) ON DELETE CASCADE,
+      staff_profile_id UUID NOT NULL REFERENCES staff_profiles(staff_profile_id),
+      action VARCHAR(50) NOT NULL,
+      performed_by_user_id UUID REFERENCES users(user_id),
+      performed_by_name VARCHAR(255) NOT NULL,
+      changes_snapshot JSONB,
+      notes TEXT,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // =========================================================
+  // ACTIVITY LOG
+  // =========================================================
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS activity_log (
+      log_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      actor_user_id UUID REFERENCES users(user_id),
+      actor_name VARCHAR(255) NOT NULL,
+      actor_role VARCHAR(50) NOT NULL,
+      action_type VARCHAR(100) NOT NULL,
+      entity_type VARCHAR(50),
+      entity_id UUID,
+      details JSONB,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // =========================================================
   // ALTER TABLE: Add payment tracking columns
   // =========================================================
 
@@ -751,8 +859,38 @@ async function runMigration() {
   `);
 
   await db.query(`
-    CREATE INDEX IF NOT EXISTS idx_quote_preset_items_active 
+    CREATE INDEX IF NOT EXISTS idx_quote_preset_items_active
     ON quote_preset_items(is_active);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_staff_change_requests_staff
+    ON staff_change_requests(staff_profile_id);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_staff_change_requests_status
+    ON staff_change_requests(status);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_staff_change_request_logs_request
+    ON staff_change_request_logs(request_id);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_activity_log_actor
+    ON activity_log(actor_user_id);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_activity_log_entity
+    ON activity_log(entity_type, entity_id);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_activity_log_created
+    ON activity_log(created_at DESC);
   `);
 
   // =========================================================
@@ -767,6 +905,28 @@ async function runMigration() {
     EXCEPTION
       WHEN duplicate_object THEN null;
     END $$;
+  `);
+
+  // =========================================================
+  // COLUMN ADDITIONS (safe to re-run)
+  // =========================================================
+
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TABLE staff_profiles ADD COLUMN admin_remarks TEXT;
+    EXCEPTION WHEN duplicate_column THEN null;
+    END $$;
+  `);
+
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TABLE staff_profiles ADD COLUMN staff_code VARCHAR(50) UNIQUE;
+    EXCEPTION WHEN duplicate_column THEN null;
+    END $$;
+  `);
+
+  await db.query(`
+    ALTER TABLE internal_staff ADD COLUMN IF NOT EXISTS address TEXT;
   `);
 
   // =========================================================

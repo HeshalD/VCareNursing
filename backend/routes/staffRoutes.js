@@ -9,11 +9,37 @@ const db = require('../config/db');
 // Public: Apply to join VCare
 router.post('/apply', uploadApplicationFiles, staffAppController.submitApplication);
 
+// Public: Verify phone OTP after application submission
+router.post('/verify-otp', staffAppController.verifyStaffApplicationOtp);
+
+// Public: Resend phone OTP for application
+router.post('/resend-otp', staffAppController.resendStaffApplicationOtp);
+
 // Admin Only: View all applications
 router.get('/applications', protect, restrictTo('SUPER_ADMIN'), async (req, res) => {
   const apps = await db.query('SELECT * FROM staff_applications ORDER BY applied_at DESC');
   res.status(200).json(apps.rows);
 });
+
+// Admin Only: Get single application by ID (includes staff_profile_id if accepted)
+router.get('/applications/:applicationId', protect, restrictTo('SUPER_ADMIN'), async (req, res) => {
+  try {
+    const result = await db.query(`
+      SELECT sa.*, sp.staff_profile_id
+      FROM staff_applications sa
+      LEFT JOIN users u ON u.mobile_number = sa.mobile_number
+      LEFT JOIN staff_profiles sp ON sp.user_id = u.user_id
+      WHERE sa.application_id = $1
+    `, [req.params.applicationId]);
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Application not found' });
+    res.status(200).json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching application' });
+  }
+});
+
+// Admin Only: Update application details
+router.put('/applications/:applicationId', protect, restrictTo('SUPER_ADMIN'), staffAppController.updateApplication);
 
 // Admin Only: Accept Application
 router.post(

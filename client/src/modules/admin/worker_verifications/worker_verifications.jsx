@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Check, X, FileText, Download, Eye, ShieldAlert, Loader2, LayoutGrid, List, AlertCircle } from 'lucide-react';
+import { Check, X, FileText, Eye, ShieldAlert, Loader2, LayoutGrid, List, AlertCircle, ExternalLink } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 
 const WorkerVerification = () => {
   const { adminToken } = useAdminAuth();
+  const navigate = useNavigate();
   const [applications, setApplications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -14,6 +16,13 @@ const WorkerVerification = () => {
     isOpen: false,
     applicationId: null,
     reason: '',
+    fullName: ''
+  });
+  const [approveModal, setApproveModal] = useState({
+    isOpen: false,
+    applicationId: null,
+    staffId: '',
+    adminRemarks: '',
     fullName: ''
   });
 
@@ -67,18 +76,34 @@ const WorkerVerification = () => {
     }
   };
 
-  const handleAccept = async (applicationId) => {
+  const openApproveModal = (application) => {
+    setApproveModal({
+      isOpen: true,
+      applicationId: application.application_id,
+      staffId: '',
+      adminRemarks: '',
+      fullName: application.full_name || 'Unknown'
+    });
+  };
+
+  const closeApproveModal = () => {
+    setApproveModal({ isOpen: false, applicationId: null, staffId: '', adminRemarks: '', fullName: '' });
+  };
+
+  const handleAccept = async () => {
+    if (!approveModal.staffId.trim()) {
+      alert('Please enter a Staff ID before approving.');
+      return;
+    }
     try {
-      // Use admin token for API calls
       const originalToken = apiClient.token;
       apiClient.setToken(adminToken);
-      
-      await apiClient.acceptApplication(applicationId);
-      
-      // Restore original token
+      await apiClient.acceptApplication(approveModal.applicationId, {
+        custom_staff_id: approveModal.staffId.trim(),
+        admin_remarks: approveModal.adminRemarks.trim() || null,
+      });
       apiClient.setToken(originalToken);
-      
-      // Refresh the applications list
+      closeApproveModal();
       fetchApplications();
     } catch (err) {
       setError(err.message || 'Error accepting application');
@@ -222,6 +247,7 @@ const WorkerVerification = () => {
                   <th className="text-left px-6 py-4 text-sm font-semibold text-slate-700">Rejection Reason</th>
                   <th className="text-left px-6 py-4 text-sm font-semibold text-slate-700">Documents</th>
                   <th className="text-right px-6 py-4 text-sm font-semibold text-slate-700">Actions</th>
+                  <th className="px-6 py-4 text-sm font-semibold text-slate-700"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
@@ -352,7 +378,7 @@ const WorkerVerification = () => {
                               <X className="w-3.5 h-3.5" /> Reject
                             </button>
                             <button
-                              onClick={() => handleAccept(application.application_id)}
+                              onClick={() => openApproveModal(application)}
                               className="flex items-center gap-1 px-3 py-1.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-500 transition-all"
                             >
                               <Check className="w-3.5 h-3.5" /> Approve
@@ -362,6 +388,14 @@ const WorkerVerification = () => {
                           <span className="text-sm text-slate-400">No actions</span>
                         )}
                       </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <button
+                        onClick={() => navigate(`/admin/workers/${application.application_id}`)}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-blue-50 border border-blue-200 text-blue-700 text-sm font-medium rounded-lg hover:bg-blue-100 transition-all"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" /> Review
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -535,24 +569,99 @@ const WorkerVerification = () => {
                 )}
               </div>
 
-              {application.status === 'PENDING' && (
-                <div className="p-4 bg-slate-50 border-t border-slate-200 grid grid-cols-2 gap-3">
+              <div className={`p-4 bg-slate-50 border-t border-slate-200 ${application.status === 'PENDING' ? 'grid grid-cols-3 gap-2' : 'flex justify-center'}`}>
+                {application.status === 'PENDING' && (
+                  <>
+                    <button
+                      onClick={() => openRejectModal(application)}
+                      className="flex items-center justify-center gap-1 px-3 py-2 bg-white border border-slate-200 text-slate-700 font-bold rounded-xl hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all text-sm"
+                    >
+                      <X className="w-4 h-4" /> Reject
+                    </button>
+                    <button
+                      onClick={() => navigate(`/admin/workers/${application.application_id}`)}
+                      className="flex items-center justify-center gap-1 px-3 py-2 bg-blue-50 border border-blue-200 text-blue-700 font-bold rounded-xl hover:bg-blue-100 transition-all text-sm"
+                    >
+                      <ExternalLink className="w-4 h-4" /> Review
+                    </button>
+                    <button
+                      onClick={() => openApproveModal(application)}
+                      className="flex items-center justify-center gap-1 px-3 py-2 bg-green-600 text-white font-bold rounded-xl hover:bg-green-500 shadow-lg shadow-green-600/20 transition-all text-sm"
+                    >
+                      <Check className="w-4 h-4" /> Approve
+                    </button>
+                  </>
+                )}
+                {application.status !== 'PENDING' && (
                   <button
-                    onClick={() => openRejectModal(application)}
-                    className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-700 font-bold rounded-xl hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all"
+                    onClick={() => navigate(`/admin/workers/${application.application_id}`)}
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-50 border border-blue-200 text-blue-700 font-bold rounded-xl hover:bg-blue-100 transition-all"
                   >
-                    <X className="w-4 h-4" /> Reject
+                    <ExternalLink className="w-4 h-4" /> View Details
                   </button>
-                  <button 
-                    onClick={() => handleAccept(application.application_id)}
-                    className="flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white font-bold rounded-xl hover:bg-green-500 shadow-lg shadow-green-600/20 transition-all"
-                  >
-                    <Check className="w-4 h-4" /> Approve
-                  </button>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           ))}
+        </div>
+      )}
+      {/* Approve Modal */}
+      {approveModal.isOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="p-2 bg-green-100 rounded-lg">
+                <Check className="w-6 h-6 text-green-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">Approve Application</h3>
+                <p className="text-sm text-slate-500">
+                  Approving <span className="font-medium text-slate-700">{approveModal.fullName}</span>'s application.
+                </p>
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                Staff ID <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={approveModal.staffId}
+                onChange={(e) => setApproveModal({ ...approveModal, staffId: e.target.value })}
+                placeholder="e.g. VC-0042"
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-green-300 focus:ring-2 focus:ring-green-100 text-sm"
+              />
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                Admin Remarks <span className="text-slate-400 font-normal">(optional)</span>
+              </label>
+              <textarea
+                rows={3}
+                value={approveModal.adminRemarks}
+                onChange={(e) => setApproveModal({ ...approveModal, adminRemarks: e.target.value })}
+                placeholder="Any notes about this approval..."
+                className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:border-green-300 focus:ring-2 focus:ring-green-100 resize-none text-sm"
+              />
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={closeApproveModal}
+                className="flex-1 px-4 py-2.5 bg-slate-100 text-slate-700 font-medium rounded-xl hover:bg-slate-200 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAccept}
+                className="flex-1 px-4 py-2.5 bg-green-600 text-white font-medium rounded-xl hover:bg-green-500 transition-all shadow-lg shadow-green-600/20"
+              >
+                Confirm Approve
+              </button>
+            </div>
+          </div>
         </div>
       )}
       {/* Rejection Reason Modal */}
