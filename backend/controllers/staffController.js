@@ -173,7 +173,8 @@ exports.getAdminStaffDetail = async (req, res) => {
         // 4) Previous assignments / booking history (recent)
         const historyRes = await db.query(`
             SELECT bsa.assignment_id, bsa.booking_id, bsa.service_start_date, bsa.service_end_date, bsa.daily_rate, bsa.amount_allocated, bsa.status,
-                   b.client_id, c.full_name as client_name, p.full_name as patient_name,
+                   b.client_id, b.status as booking_status, b.service_type, b.service_model,
+                   c.full_name as client_name, p.full_name as patient_name,
                    COALESCE(salary_totals.total_salary_paid, 0) as total_salary_paid
             FROM booking_staff_assignments bsa
             LEFT JOIN bookings b ON bsa.booking_id = b.booking_id
@@ -191,6 +192,29 @@ exports.getAdminStaffDetail = async (req, res) => {
         `, [staff_profile_id]);
 
         const booking_history = historyRes.rows;
+
+        // 4b) Unique clients & patients stats + swap-out count
+        const statsRes = await db.query(`
+            SELECT
+                COUNT(DISTINCT b.client_id) as unique_clients,
+                COUNT(DISTINCT b.patient_id) as unique_patients,
+                COUNT(bsa.assignment_id) as total_assignments
+            FROM booking_staff_assignments bsa
+            LEFT JOIN bookings b ON bsa.booking_id = b.booking_id
+            WHERE bsa.staff_profile_id = $1
+        `, [staff_profile_id]);
+
+        const swapCountRes = await db.query(
+            `SELECT COUNT(*) as swap_out_count FROM staff_swaps WHERE old_staff_id = $1`,
+            [staff_profile_id]
+        );
+
+        const stats = {
+            unique_clients: parseInt(statsRes.rows[0]?.unique_clients || 0),
+            unique_patients: parseInt(statsRes.rows[0]?.unique_patients || 0),
+            total_assignments: parseInt(statsRes.rows[0]?.total_assignments || 0),
+            swap_out_count: parseInt(swapCountRes.rows[0]?.swap_out_count || 0),
+        };
 
         // 5) Reviews summary & recent reviews
         const reviewsRes = await db.query(`
@@ -229,6 +253,7 @@ exports.getAdminStaffDetail = async (req, res) => {
                     total_paid_out: totalPaidOut,
                     outstanding: outstanding
                 },
+                stats,
                 current_assignment,
                 booking_history,
                 reviews: {
@@ -379,7 +404,8 @@ exports.getBookingHistory = async (req, res) => {
         // Data query with salary totals per booking
         const dataQuery = `
             SELECT bsa.assignment_id, bsa.booking_id, bsa.service_start_date, bsa.service_end_date, bsa.daily_rate, bsa.amount_allocated, bsa.status,
-                         b.client_id, c.full_name as client_name, p.full_name as patient_name,
+                         b.client_id, b.status as booking_status, b.service_type, b.service_model,
+                         c.full_name as client_name, p.full_name as patient_name,
                          COALESCE(salary_totals.total_salary, 0) as total_salary
             FROM booking_staff_assignments bsa
             LEFT JOIN bookings b ON bsa.booking_id = b.booking_id

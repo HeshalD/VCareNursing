@@ -34,23 +34,32 @@ exports.protect = async (req, res, next) => {
 // LAYER 2: Do they have the right Role? (e.g., SUPER_ADMIN)
 exports.restrictTo = (...roles) => {
   return (req, res, next) => {
-    // req.user was set by the protect middleware above
-    // Handle both string and array role formats
-    const userRoles = Array.isArray(req.user.role) ? req.user.role : [req.user.role];
-    
-    // Clean roles by removing curly braces and trim
-    const cleanedUserRoles = userRoles.map(role => 
-      typeof role === 'string' ? role.replace(/\{|\}/g, '').trim() : role
-    );
-    
-    // Check if user has any of the required roles
-    const hasRequiredRole = roles.some(requiredRole => 
+    const rawRole = req.user.role;
+
+    let cleanedUserRoles;
+    if (Array.isArray(rawRole)) {
+      // pg parsed the enum[] as a proper JS array
+      cleanedUserRoles = rawRole.map(r =>
+        typeof r === 'string' ? r.replace(/\{|\}/g, '').trim() : String(r)
+      );
+    } else if (typeof rawRole === 'string') {
+      // pg returned the enum[] as a PostgreSQL literal: "{NURSE,CARETAKER}" or "NURSE"
+      cleanedUserRoles = rawRole
+        .replace(/\{|\}/g, '')
+        .split(',')
+        .map(r => r.trim())
+        .filter(Boolean);
+    } else {
+      cleanedUserRoles = [];
+    }
+
+    const hasRequiredRole = roles.some(requiredRole =>
       cleanedUserRoles.includes(requiredRole)
     );
-    
+
     if (!hasRequiredRole) {
-      return res.status(403).json({ 
-        message: 'Permission Denied: You do not have access to this action.' 
+      return res.status(403).json({
+        message: 'Permission Denied: You do not have access to this action.'
       });
     }
     next();

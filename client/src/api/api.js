@@ -1262,6 +1262,55 @@ class ApiClient {
   async getPatientsByClient(clientId) {
     return this.request(`/patients/client/${clientId}`);
   }
+
+  // Staff change request endpoints (staff-facing)
+  async submitChangeRequest(data) {
+    return this.request('/staff-change-requests', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getMyChangeRequests() {
+    return this.request('/staff-change-requests/my');
+  }
+
+  // Staff change request endpoints (admin-facing)
+  async getAllChangeRequests(params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const endpoint = query ? `/staff-change-requests?${query}` : '/staff-change-requests';
+    return this.request(endpoint);
+  }
+
+  async claimChangeRequest(id) {
+    return this.request(`/staff-change-requests/${id}/claim`, {
+      method: 'PATCH',
+    });
+  }
+
+  async resolveChangeRequest(id, data) {
+    return this.request(`/staff-change-requests/${id}/resolve`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getChangeRequestLogs(id) {
+    return this.request(`/staff-change-requests/${id}/logs`);
+  }
+
+  // Activity log endpoints
+  async getActivityLog(params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const endpoint = query ? `/activity-log?${query}` : '/activity-log';
+    return this.request(endpoint);
+  }
+
+  async getActivityLogByActor(userId, params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const endpoint = query ? `/activity-log/actor/${userId}?${query}` : `/activity-log/actor/${userId}`;
+    return this.request(endpoint);
+  }
 }
 
 // Create and export a singleton instance

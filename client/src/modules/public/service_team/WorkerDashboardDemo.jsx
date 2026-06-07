@@ -13,6 +13,7 @@ import {
   BadgeCheck,
   Briefcase,
   ArrowUpRight,
+  FilePen,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import apiClient from '../../../api/api';
@@ -235,6 +236,20 @@ const WorkerDashboardDemo = () => {
               <StatCard key={stat.title} {...stat} />
             ))}
           </section>
+
+          <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-6 py-4 shadow-sm">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">Need to update your details?</p>
+              <p className="text-xs text-slate-500 mt-0.5">Submit a request to change your profile or bank account information.</p>
+            </div>
+            <Link
+              to="/services/change-request"
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors"
+            >
+              <FilePen className="h-4 w-4" />
+              Request a Change
+            </Link>
+          </div>
 
           <section className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">

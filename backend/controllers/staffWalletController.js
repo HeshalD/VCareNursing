@@ -1,6 +1,20 @@
 // backend/controllers/staffWalletController.js
 
 const { pool } = require('../config/db');
+const { logActivity } = require('../utils/activityLogger');
+
+async function getReviewerName(userId) {
+  const result = await pool.query(
+    'SELECT full_name FROM staff_profiles WHERE user_id = $1',
+    [userId]
+  );
+  return result.rows[0]?.full_name || 'Admin';
+}
+
+function extractActorRole(role) {
+  const raw = Array.isArray(role) ? role[0] : role;
+  return typeof raw === 'string' ? raw.replace(/\{|\}/g, '').trim() : String(raw);
+}
 
 // GET /api/staff-wallet/my-wallet
 // Staff views their own wallet balance
@@ -44,7 +58,8 @@ const getMyAdvances = async (req, res) => {
     const { staff_profile_id } = staffResult.rows[0];
 
     const advancesResult = await pool.query(
-      `SELECT advance_id, staff_profile_id, amount_requested, status, requested_at, approved_at, rejected_reason
+      `SELECT advance_id, staff_profile_id, amount_requested, status, requested_at, approved_at,
+              rejected_reason, reviewed_by_user_id, reviewed_by_name
        FROM staff_advances
        WHERE staff_profile_id = $1
        ORDER BY requested_at DESC`,
@@ -128,6 +143,8 @@ const approveAdvance = async (req, res) => {
   const client = await pool.connect();
 
   try {
+    const reviewerName = await getReviewerName(req.user.user_id);
+
     await client.query('BEGIN');
 
     // Get the advance
@@ -156,7 +173,7 @@ const approveAdvance = async (req, res) => {
 
     // Debit the wallet
     await client.query(
-      `UPDATE staff_wallet 
+      `UPDATE staff_wallet
        SET balance = balance - $1, updated_at = NOW()
        WHERE staff_profile_id = $2`,
       [advance.amount_requested, advance.staff_profile_id]
@@ -164,22 +181,33 @@ const approveAdvance = async (req, res) => {
 
     // Log the transaction
     await client.query(
-      `INSERT INTO staff_wallet_transactions 
+      `INSERT INTO staff_wallet_transactions
         (staff_profile_id, type, amount, reason, reference_id, created_at)
        VALUES ($1, 'DEBIT', $2, 'ADVANCE_DEDUCTION', $3, NOW())`,
       [advance.staff_profile_id, advance.amount_requested, advance.advance_id]
     );
 
-    // Update advance status
+    // Update advance status and record reviewer
     const updated = await client.query(
-      `UPDATE staff_advances 
-       SET status = 'APPROVED', approved_at = NOW()
-       WHERE advance_id = $1
+      `UPDATE staff_advances
+       SET status = 'APPROVED', approved_at = NOW(),
+           reviewed_by_user_id = $1, reviewed_by_name = $2
+       WHERE advance_id = $3
        RETURNING *`,
-      [advanceId]
+      [req.user.user_id, reviewerName, advanceId]
     );
 
     await client.query('COMMIT');
+
+    await logActivity({
+      actorUserId: req.user.user_id,
+      actorName: reviewerName,
+      actorRole: extractActorRole(req.user.role),
+      actionType: 'ADVANCE_APPROVED',
+      entityType: 'STAFF_ADVANCE',
+      entityId: advanceId,
+      details: { staff_profile_id: advance.staff_profile_id, amount: advance.amount_requested }
+    });
 
     res.json({ status: 'success', data: updated.rows[0] });
   } catch (err) {
@@ -198,17 +226,34 @@ const rejectAdvance = async (req, res) => {
   const { reason } = req.body;
 
   try {
+    const reviewerName = await getReviewerName(req.user.user_id);
+
     const result = await pool.query(
-      `UPDATE staff_advances 
-       SET status = 'REJECTED', rejected_reason = $1
-       WHERE advance_id = $2 AND status = 'PENDING'
+      `UPDATE staff_advances
+       SET status = 'REJECTED', rejected_reason = $1,
+           reviewed_by_user_id = $2, reviewed_by_name = $3
+       WHERE advance_id = $4 AND status = 'PENDING'
        RETURNING *`,
-      [reason || null, advanceId]
+      [reason || null, req.user.user_id, reviewerName, advanceId]
     );
 
     if (!result.rows.length) {
       return res.status(404).json({ status: 'error', message: 'Pending advance not found' });
     }
+
+    await logActivity({
+      actorUserId: req.user.user_id,
+      actorName: reviewerName,
+      actorRole: extractActorRole(req.user.role),
+      actionType: 'ADVANCE_REJECTED',
+      entityType: 'STAFF_ADVANCE',
+      entityId: advanceId,
+      details: {
+        staff_profile_id: result.rows[0].staff_profile_id,
+        amount: result.rows[0].amount_requested,
+        reason: reason || null
+      }
+    });
 
     res.json({ status: 'success', data: result.rows[0] });
   } catch (err) {
@@ -222,7 +267,7 @@ const rejectAdvance = async (req, res) => {
 const getAllAdvances = async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT sa.*, sp.full_name, sp.advance_threshold_amount,
+      `SELECT sa.*, sp.full_name, sp.staff_code, sp.advance_threshold_amount,
               COALESCE(sw.balance, 0) AS current_balance
        FROM staff_advances sa
        JOIN staff_profiles sp ON sp.staff_profile_id = sa.staff_profile_id
@@ -277,7 +322,7 @@ const updateAdvanceThreshold = async (req, res) => {
 const getPendingAdvances = async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT sa.*, sp.full_name, sp.advance_threshold_amount,
+      `SELECT sa.*, sp.full_name, sp.staff_code, sp.advance_threshold_amount,
               COALESCE(sw.balance, 0) AS current_balance
        FROM staff_advances sa
        JOIN staff_profiles sp ON sp.staff_profile_id = sa.staff_profile_id

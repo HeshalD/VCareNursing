@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import {
   Users, Calendar, DollarSign, Activity,
   Settings, LogOut, Bell, Search,
-  ShieldCheck, FileText, SendHorizontal , Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet, Landmark,
-  ChevronLeft, ChevronRight
+  ShieldCheck, FileText, SendHorizontal, Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet, Landmark,
+  ChevronLeft, ChevronRight, ClipboardList, History
 } from 'lucide-react';
 import logo from '../../../assets/Logo/VCareLogo.png';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -124,6 +124,20 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
             label="Reports"
             path="/admin/reports"
             active={location.pathname.startsWith('/admin/reports')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
+            icon={ClipboardList}
+            label="Change Requests"
+            path="/admin/change-requests"
+            active={isActive('/admin/change-requests')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
+            icon={History}
+            label="Activity Log"
+            path="/admin/activity-log"
+            active={isActive('/admin/activity-log')}
             collapsed={collapsed}
           />
           {/*

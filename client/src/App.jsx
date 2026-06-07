@@ -47,6 +47,7 @@ import TerminationRequests from './modules/admin/termination_requests/terminatio
 import Statements from './modules/admin/statements/statements';
 import Earnings from './modules/public/service_team/Earnings';
 import AdvanceRequests from './modules/admin/advance_requests/advance_requests';
+import StaffWorkingHistory from './modules/admin/advance_requests/StaffWorkingHistory';
 import ForgotPasswordPage from './modules/auth/ForgotPasswordPage';
 import VerifyForgotPasswordOtp from './modules/auth/VerifyForgotPasswordOtp';
 import ResetPasswordPage from './modules/auth/ResetPasswordPage';
@@ -61,6 +62,9 @@ import ClientLayout from './modules/client/components/ClientLayout';
 import WorkerBookings from './modules/public/service_team/WorkerBookings';
 import StaffMyProfile from './modules/public/service_team/StaffMyProfile';
 import StaffSettings from './modules/public/service_team/StaffSettings';
+import StaffChangeRequestPage from './modules/public/service_team/StaffChangeRequestPage';
+import ChangeRequestsPage from './modules/admin/change_requests/ChangeRequestsPage';
+import ActivityLogPage from './modules/admin/activity_log/ActivityLogPage';
 import QuotationsPage from './modules/admin/service_quotes/quotations';
 import QuotationDetailsPage from './modules/admin/service_quotes/quotation_details';
 import ServiceRequestSummaryPage from './modules/admin/service_requests/service_request_summary';
@@ -109,6 +113,7 @@ function App() {
             <Route path="/services/bookings" element={<WorkerBookings />} />
             <Route path="/services/my-profile" element={<StaffMyProfile />} />
             <Route path="/services/settings" element={<StaffSettings />} />
+            <Route path="/services/change-request" element={<StaffChangeRequestPage />} />
             <Route element={<ClientLayout />}>
               <Route path="/client/profile" element={<ClientProfile />} />
               <Route path="/client/bookings" element={<ClientBookings />} />
@@ -243,6 +248,21 @@ function App() {
             <Route path="/admin/advance-requests" element={
               <AdminAuthProvider>
                 <AdvanceRequests />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/staff-history/:staffProfileId" element={
+              <AdminAuthProvider>
+                <StaffWorkingHistory />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/change-requests" element={
+              <AdminAuthProvider>
+                <ChangeRequestsPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/activity-log" element={
+              <AdminAuthProvider>
+                <ActivityLogPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/settings" element={

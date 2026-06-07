@@ -929,6 +929,12 @@ async function runMigration() {
     ALTER TABLE internal_staff ADD COLUMN IF NOT EXISTS address TEXT;
   `);
 
+  await db.query(`
+    ALTER TABLE staff_advances
+      ADD COLUMN IF NOT EXISTS reviewed_by_user_id UUID REFERENCES users(user_id),
+      ADD COLUMN IF NOT EXISTS reviewed_by_name VARCHAR(255);
+  `);
+
   // =========================================================
   // SEED DEFAULT PRESET ITEMS
   // =========================================================

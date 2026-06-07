@@ -8,6 +8,9 @@ import {
   Briefcase,
   CalendarDays,
   Check,
+  ChevronDown,
+  ChevronUp,
+  ClipboardList,
   DollarSign,
   History,
   Landmark,
@@ -170,6 +173,10 @@ const StaffDetailPage = () => {
   const [payoutSubmitting, setPayoutSubmitting] = useState(false);
   const [payoutSubmitError, setPayoutSubmitError] = useState('');
   const [payoutSubmitSuccess, setPayoutSubmitSuccess] = useState('');
+  const [changeRequests, setChangeRequests] = useState([]);
+  const [expandedRequestId, setExpandedRequestId] = useState(null);
+  const [requestLogs, setRequestLogs] = useState({});
+  const [loadingLogs, setLoadingLogs] = useState({});
 
   const profile = detail?.profile || {};
   const overviewEarnings = detail?.earnings || {};
@@ -186,6 +193,7 @@ const StaffDetailPage = () => {
     { id: 'reviews', label: 'Reviews', icon: Star },
     { id: 'payouts', label: 'Payouts', icon: Wallet },
     { id: 'bank-accounts', label: 'Bank Accounts', icon: Landmark },
+    { id: 'change-history', label: 'Change History', icon: ClipboardList },
   ]), []);
 
   const totalEarned = Number(earningsSummary?.total_earned ?? overviewEarnings.total_earned ?? 0);
@@ -233,10 +241,11 @@ const StaffDetailPage = () => {
       runAdminRequest(() => apiClient.getStaffPayouts(staffProfileId, { page: 1, limit: 20 })),
       runAdminRequest(() => apiClient.getStaffBankAccounts(staffProfileId)),
       runAdminRequest(() => apiClient.getBankAccounts()),
+      runAdminRequest(() => apiClient.getAllChangeRequests({ staff_profile_id: staffProfileId })),
     ]);
 
     const nextErrors = {};
-    const [detailRes, earningsRes, earningsTxRes, currentBookingRes, historyRes, payoutsSummaryRes, payoutsRes, bankAccountsRes, companyBankAccountsRes] = results;
+    const [detailRes, earningsRes, earningsTxRes, currentBookingRes, historyRes, payoutsSummaryRes, payoutsRes, bankAccountsRes, companyBankAccountsRes, changeRequestsRes] = results;
 
     if (detailRes.status === 'fulfilled') {
       setDetail(detailRes.value?.data || null);
@@ -299,6 +308,12 @@ const StaffDetailPage = () => {
       }
     } else {
       nextErrors.companyBankAccounts = companyBankAccountsRes.reason?.message || 'Failed to load company bank accounts';
+    }
+
+    if (changeRequestsRes.status === 'fulfilled') {
+      setChangeRequests(safeArray(changeRequestsRes.value?.data));
+    } else {
+      nextErrors.changeRequests = changeRequestsRes.reason?.message || 'Failed to load change requests';
     }
 
     setSectionErrors(nextErrors);
@@ -866,6 +881,215 @@ const StaffDetailPage = () => {
     </div>
   );
 
+  const handleExpandRequest = async (requestId) => {
+    if (expandedRequestId === requestId) {
+      setExpandedRequestId(null);
+      return;
+    }
+    setExpandedRequestId(requestId);
+    if (!requestLogs[requestId]) {
+      setLoadingLogs((prev) => ({ ...prev, [requestId]: true }));
+      try {
+        const res = await runAdminRequest(() => apiClient.getChangeRequestLogs(requestId));
+        setRequestLogs((prev) => ({ ...prev, [requestId]: safeArray(res?.data) }));
+      } catch {
+        setRequestLogs((prev) => ({ ...prev, [requestId]: [] }));
+      } finally {
+        setLoadingLogs((prev) => ({ ...prev, [requestId]: false }));
+      }
+    }
+  };
+
+  const requestTypeBadge = (type) => {
+    const map = {
+      PROFILE_UPDATE: 'bg-blue-100 text-blue-700',
+      BANK_ACCOUNT_ADD: 'bg-emerald-100 text-emerald-700',
+      BANK_ACCOUNT_EDIT: 'bg-amber-100 text-amber-700',
+      BANK_ACCOUNT_REMOVE: 'bg-rose-100 text-rose-700',
+    };
+    return map[type] || 'bg-slate-100 text-slate-700';
+  };
+
+  const requestTypeLabel = (type) => {
+    const map = {
+      PROFILE_UPDATE: 'Profile Update',
+      BANK_ACCOUNT_ADD: 'Bank Add',
+      BANK_ACCOUNT_EDIT: 'Bank Edit',
+      BANK_ACCOUNT_REMOVE: 'Bank Remove',
+    };
+    return map[type] || type;
+  };
+
+  const auditActionStyle = (action) => {
+    const map = {
+      SUBMITTED: { dot: 'bg-slate-500', badge: 'bg-slate-100 text-slate-700' },
+      CLAIMED: { dot: 'bg-blue-500', badge: 'bg-blue-100 text-blue-700' },
+      APPROVED: { dot: 'bg-emerald-500', badge: 'bg-emerald-100 text-emerald-700' },
+      REJECTED: { dot: 'bg-rose-500', badge: 'bg-rose-100 text-rose-700' },
+    };
+    return map[action] || { dot: 'bg-slate-400', badge: 'bg-slate-100 text-slate-700' };
+  };
+
+  const renderChangeDiff = (requestType, requestedChanges) => {
+    if (!requestedChanges) return <p className="text-sm text-slate-500">No change data available.</p>;
+
+    if (requestType === 'PROFILE_UPDATE' || requestType === 'BANK_ACCOUNT_EDIT') {
+      return (
+        <div className="space-y-2">
+          {Object.entries(requestedChanges).map(([field, change]) => (
+            <div key={field} className="flex flex-wrap items-center gap-2 rounded-lg bg-white border border-slate-200 px-3 py-2 text-sm">
+              <span className="w-44 font-semibold text-slate-600 capitalize">{field.replace(/_/g, ' ')}</span>
+              <span className="text-rose-600 line-through">{String(change?.old_value ?? '—')}</span>
+              <span className="text-slate-400">→</span>
+              <span className="font-medium text-emerald-700">{String(change?.new_value ?? '—')}</span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    if (requestType === 'BANK_ACCOUNT_ADD') {
+      return (
+        <div className="space-y-2">
+          {Object.entries(requestedChanges).map(([field, value]) => (
+            <div key={field} className="flex items-center gap-2 rounded-lg bg-white border border-slate-200 px-3 py-2 text-sm">
+              <span className="w-44 font-semibold text-slate-600 capitalize">{field.replace(/_/g, ' ')}</span>
+              <span className="font-medium text-emerald-700">{String(value ?? '—')}</span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    if (requestType === 'BANK_ACCOUNT_REMOVE') {
+      return (
+        <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          Remove bank account ID: <span className="font-mono font-semibold">{requestedChanges.staff_bank_account_id}</span>
+        </div>
+      );
+    }
+
+    return <pre className="overflow-x-auto rounded-lg bg-slate-100 p-3 text-xs">{JSON.stringify(requestedChanges, null, 2)}</pre>;
+  };
+
+  const renderChangeHistory = () => {
+    const approvedCount = changeRequests.filter((r) => r.status === 'APPROVED').length;
+    const rejectedCount = changeRequests.filter((r) => r.status === 'REJECTED').length;
+    const pendingCount = changeRequests.filter((r) => r.status === 'PENDING' || r.status === 'UNDER_REVIEW').length;
+
+    return (
+      <div className="space-y-6">
+        <div className="grid gap-4 md:grid-cols-4">
+          <StatCard icon={ClipboardList} label="Total Requests" value={changeRequests.length} tone="slate" />
+          <StatCard icon={ClipboardList} label="Pending / Under Review" value={pendingCount} tone="amber" />
+          <StatCard icon={ClipboardList} label="Approved" value={approvedCount} tone="emerald" />
+          <StatCard icon={ClipboardList} label="Rejected" value={rejectedCount} tone="rose" />
+        </div>
+
+        <Card title="Change Request History" subtitle="All profile and bank account change requests submitted by this staff member">
+          {sectionLoadErrors.changeRequests ? (
+            <EmptyState title="Failed to load change requests" subtitle={sectionLoadErrors.changeRequests} />
+          ) : changeRequests.length === 0 ? (
+            <EmptyState title="No change requests" subtitle="This staff member has not submitted any change requests yet." />
+          ) : (
+            <div className="space-y-3">
+              {changeRequests.map((req) => {
+                const isExpanded = expandedRequestId === req.request_id;
+                const logs = requestLogs[req.request_id] || [];
+                const isLoadingLog = loadingLogs[req.request_id];
+
+                return (
+                  <div key={req.request_id} className="overflow-hidden rounded-2xl border border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => handleExpandRequest(req.request_id)}
+                      className="flex w-full items-start gap-4 px-4 py-4 text-left transition-colors hover:bg-slate-50"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                          <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${requestTypeBadge(req.request_type)}`}>
+                            {requestTypeLabel(req.request_type)}
+                          </span>
+                          <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${statusTone(req.status)}`}>
+                            {req.status?.replace(/_/g, ' ')}
+                          </span>
+                          <span className="font-mono text-xs text-slate-400">#{String(req.request_id || '').slice(-8)}</span>
+                        </div>
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-600">
+                          <span>Submitted: {formatDateTime(req.created_at)}</span>
+                          {req.reviewer_name && (
+                            <span>
+                              Reviewer: <span className="font-semibold text-slate-800">{req.reviewer_name}</span>
+                            </span>
+                          )}
+                          {req.reviewed_at && <span>Resolved: {formatDateTime(req.reviewed_at)}</span>}
+                        </div>
+                        {req.review_notes && (
+                          <p className="mt-1 text-sm italic text-slate-500">"{req.review_notes}"</p>
+                        )}
+                      </div>
+                      <div className="mt-1 flex-shrink-0">
+                        {isExpanded
+                          ? <ChevronUp className="h-4 w-4 text-slate-400" />
+                          : <ChevronDown className="h-4 w-4 text-slate-400" />}
+                      </div>
+                    </button>
+
+                    {isExpanded && (
+                      <div className="space-y-5 border-t border-slate-200 bg-slate-50/60 px-4 py-4">
+                        <div>
+                          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Requested Changes</p>
+                          {renderChangeDiff(req.request_type, req.requested_changes)}
+                        </div>
+
+                        <div>
+                          <p className="mb-3 text-xs font-bold uppercase tracking-wide text-slate-500">Audit Trail</p>
+                          {isLoadingLog ? (
+                            <div className="flex items-center gap-2 text-sm text-slate-500">
+                              <Loader2 className="h-4 w-4 animate-spin" /> Loading logs...
+                            </div>
+                          ) : logs.length === 0 ? (
+                            <p className="text-sm text-slate-500">No audit log entries found.</p>
+                          ) : (
+                            <div className="relative space-y-4 pl-5">
+                              <div className="absolute bottom-2 left-2 top-2 w-px bg-slate-200" />
+                              {logs.map((log, idx) => {
+                                const style = auditActionStyle(log.action);
+                                return (
+                                  <div key={log.log_id || idx} className="relative flex gap-3">
+                                    <div className={`absolute -left-[13px] mt-1.5 h-2.5 w-2.5 rounded-full ring-2 ring-white ${style.dot}`} />
+                                    <div className="flex-1">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${style.badge}`}>
+                                          {log.action}
+                                        </span>
+                                        <span className="text-sm font-semibold text-slate-800">
+                                          {log.performed_by_name || 'Unknown'}
+                                        </span>
+                                        <span className="text-xs text-slate-500">{formatDateTime(log.created_at)}</span>
+                                      </div>
+                                      {log.notes && (
+                                        <p className="mt-1 text-sm italic text-slate-600">"{log.notes}"</p>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Card>
+      </div>
+    );
+  };
+
   const openAddBankModal = () => setBankModal({
     isOpen: true, mode: 'add', editing: null,
     form: { account_holder_name: '', bank_name: '', branch_name: '', account_number: '', currency: 'LKR' },
@@ -1238,6 +1462,7 @@ const StaffDetailPage = () => {
           {activeSection === 'reviews' && renderReviews()}
           {activeSection === 'payouts' && renderPayouts()}
           {activeSection === 'bank-accounts' && renderBankAccounts()}
+          {activeSection === 'change-history' && renderChangeHistory()}
         </div>
       </div>
     </AdminLayout>

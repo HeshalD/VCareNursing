@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { 
-  LayoutDashboard, User, DollarSign, Settings, LogOut, Briefcase, Calendar 
+import {
+  LayoutDashboard, User, DollarSign, Settings, LogOut, Briefcase, Calendar, FilePen
 } from 'lucide-react';
 import logoUrl from '../../../assets/Logo/VCareLogo.png';
 
@@ -69,11 +69,17 @@ const StaffSidebar = ({ staffProfileId }) => {
           to="/services/my-profile" 
           active={location.pathname === '/services/my-profile'}
         />
-        <NavItem 
-          icon={Settings} 
-          label="Settings" 
-          to="/services/settings" 
-          active={location.pathname === '/services/settings'} 
+        <NavItem
+          icon={FilePen}
+          label="Request Change"
+          to="/services/change-request"
+          active={location.pathname === '/services/change-request'}
+        />
+        <NavItem
+          icon={Settings}
+          label="Settings"
+          to="/services/settings"
+          active={location.pathname === '/services/settings'}
         />
       </nav>
 
