@@ -292,7 +292,14 @@ exports.getAdminClientDetail = async (req, res) => {
          q.qty_days
        FROM bookings b
        LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
-       LEFT JOIN staff_profiles sp ON b.assigned_staff_id = sp.staff_profile_id
+       LEFT JOIN LATERAL (
+         SELECT bsa.staff_profile_id
+         FROM booking_staff_assignments bsa
+         WHERE bsa.booking_id = b.booking_id AND bsa.status = 'ACTIVE'
+         ORDER BY bsa.assigned_on DESC
+         LIMIT 1
+       ) active_bsa ON true
+       LEFT JOIN staff_profiles sp ON COALESCE(b.assigned_staff_id, active_bsa.staff_profile_id) = sp.staff_profile_id
        LEFT JOIN service_requests sr ON b.request_id = sr.request_id
        LEFT JOIN quotations q ON sr.active_quote_id = q.quote_id
        WHERE b.client_id = $1
@@ -341,10 +348,12 @@ exports.getAdminClientDetail = async (req, res) => {
          bsa.notes,
          bsa.updated_at,
          sp.full_name as staff_name,
-         sp.designation
+         sp.designation,
+         p.full_name as patient_name
        FROM booking_staff_assignments bsa
        JOIN bookings b ON bsa.booking_id = b.booking_id
        JOIN staff_profiles sp ON bsa.staff_profile_id = sp.staff_profile_id
+       LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
        WHERE b.client_id = $1
        ORDER BY bsa.assigned_on DESC`,
       [client_id]

@@ -3,6 +3,17 @@ const bcrypt = require('bcrypt');
 const { sendWhatsAppMessage } = require('../utils/whatsapp');
 const sendEmail = require('../utils/email');
 const { upload } = require('../config/cloudinaryConfig');
+const { logActivity } = require('../utils/activityLogger');
+
+function extractActorRole(role) {
+    const raw = Array.isArray(role) ? role[0] : role;
+    return typeof raw === 'string' ? raw.replace(/\{|\}/g, '').split(',')[0].trim() : String(raw);
+}
+
+async function getActorName(userId) {
+    const result = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [userId]);
+    return result.rows[0]?.full_name || 'Admin';
+}
 
 // Middleware for handling payment slip upload
 exports.uploadPaymentSlip = (req, res, next) => {
@@ -629,6 +640,26 @@ const convertToBookingInternal = async (req, res) => {
         // Step 2C (Staff Assignment): POST /api/bookings/:booking_id/assign-staff (via staffAssignmentController)
 
         await client.query('COMMIT');
+
+        try {
+            const actorName = await getActorName(req.user.user_id);
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: extractActorRole(req.user.role),
+                actionType: 'BOOKING_CREATED',
+                entityType: 'BOOKING',
+                entityId: bookingId,
+                details: {
+                    booking_id: bookingId,
+                    request_id,
+                    quote_id: bookingQuoteId,
+                    total_amount: parseFloat(quoteData.total_amount),
+                },
+            });
+        } catch (logErr) {
+            console.error('Activity log error:', logErr);
+        }
 
         // Return success with booking details for next step
         res.status(201).json({
@@ -2005,7 +2036,31 @@ exports.swapStaff = async (req, res) => {
 
         await client.query('COMMIT');
 
-        // 8. Notifications — stubbed out, ready for WhatsApp go-live
+        // 8. Activity log (non-fatal — must not roll back the committed swap)
+        try {
+            const actorName = await getActorName(req.user.user_id);
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: extractActorRole(req.user.role),
+                actionType: 'STAFF_SWAPPED',
+                entityType: 'BOOKING',
+                entityId: booking_id,
+                details: {
+                    booking_id,
+                    old_staff_name: currentStaffName || null,
+                    old_staff_id: oldStaffId,
+                    new_staff_name: newStaff.full_name,
+                    new_staff_id: new_staff_id,
+                    swap_reason: swap_reason || null,
+                    billing_gap: billingGap,
+                }
+            });
+        } catch (logErr) {
+            console.error('Activity log error (non-fatal):', logErr);
+        }
+
+        // 9. Notifications — stubbed out, ready for WhatsApp go-live
         // await sendBookingConfirmation(
         //     booking.client_mobile,
         //     booking.client_name,

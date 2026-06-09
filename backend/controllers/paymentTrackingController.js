@@ -1,7 +1,26 @@
 const db = require('../config/db');
 const bcrypt = require('bcrypt');
+const { logActivity } = require('../utils/activityLogger');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function extractActorRole(role) {
+  const raw = Array.isArray(role) ? role[0] : role;
+  return typeof raw === 'string' ? raw.replace(/\{|\}/g, '').split(',')[0].trim() : String(raw);
+}
+
+async function getActorName(userId) {
+  const result = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [userId]);
+  return result.rows[0]?.full_name || 'Admin';
+}
+
+async function safeLog(params) {
+  try {
+    await logActivity(params);
+  } catch (err) {
+    console.error('Activity log error:', err);
+  }
+}
 
 const getOrCreateClientProfileForQuotation = async (client, quotation) => {
   const requestResult = await client.query(
@@ -455,6 +474,26 @@ const recordPayment = async (req, res) => {
 
     await client.query('COMMIT');
 
+    await safeLog({
+      actorUserId: req.user?.user_id,
+      actorName: await getActorName(req.user?.user_id).catch(() => 'Admin'),
+      actorRole: extractActorRole(req.user?.role),
+      actionType: 'QUOTE_PAYMENT_RECORDED',
+      entityType: 'QUOTATION',
+      entityId: quote_id,
+      details: {
+        quote_id,
+        payment_id: payment.payment_id,
+        amount_received: parseFloat(amount_received),
+        payment_method,
+        reference_number: reference_number || null,
+        total_paid: new_total,
+        remaining_balance,
+        percent_paid: ((new_total / quotation.total_amount) * 100).toFixed(2),
+        has_slip: !!paymentSlipUrl,
+      },
+    });
+
     res.status(201).json({
       status: 'success',
       message: 'Payment recorded successfully',
@@ -700,6 +739,25 @@ const recordBookingPayment = async (req, res) => {
     const remaining_balance = parseFloat(booking.total_amount || 0) - new_total;
 
     await client.query('COMMIT');
+
+    await safeLog({
+      actorUserId: req.user?.user_id,
+      actorName: await getActorName(req.user?.user_id).catch(() => 'Admin'),
+      actorRole: extractActorRole(req.user?.role),
+      actionType: 'BOOKING_PAYMENT_RECORDED',
+      entityType: 'BOOKING',
+      entityId: booking_id,
+      details: {
+        booking_id,
+        payment_id: payment.booking_payment_id,
+        amount_received: parseFloat(amount_received),
+        payment_method,
+        reference_number: reference_number || null,
+        total_paid: new_total,
+        remaining_balance,
+        has_slip: !!paymentSlipUrl,
+      },
+    });
 
     res.status(201).json({
       status: 'success',
@@ -1193,6 +1251,21 @@ const verifyPayment = async (req, res) => {
       WHERE request_id = (SELECT request_id FROM quotations WHERE quote_id = $1)
     `, [payment.quote_id]);
 
+    await safeLog({
+      actorUserId: req.user?.user_id,
+      actorName: await getActorName(req.user?.user_id).catch(() => 'Admin'),
+      actorRole: extractActorRole(req.user?.role),
+      actionType: 'PAYMENT_VERIFIED',
+      entityType: 'PAYMENT',
+      entityId: payment_id,
+      details: {
+        payment_id,
+        quote_id: payment.quote_id,
+        amount: parseFloat(payment.amount_received),
+        verification_notes: verification_notes || null,
+      },
+    });
+
     res.status(200).json({
       status: 'success',
       message: 'Payment verified successfully',
@@ -1273,6 +1346,20 @@ const rejectPayment = async (req, res) => {
         payment_id,
         status
     `, [rejection_reason, payment_id]);
+
+    await safeLog({
+      actorUserId: req.user?.user_id,
+      actorName: await getActorName(req.user?.user_id).catch(() => 'Admin'),
+      actorRole: extractActorRole(req.user?.role),
+      actionType: 'PAYMENT_REJECTED',
+      entityType: 'PAYMENT',
+      entityId: payment_id,
+      details: {
+        payment_id,
+        quote_id: payment.quote_id,
+        rejection_reason,
+      },
+    });
 
     res.status(200).json({
       status: 'success',

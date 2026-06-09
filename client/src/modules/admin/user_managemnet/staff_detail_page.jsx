@@ -75,7 +75,7 @@ const statusTone = (value) => {
   return 'bg-slate-100 text-slate-700';
 };
 
-const StatCard = ({ icon: Icon, label, value, tone = 'slate' }) => {
+const StatCard = ({ icon: Icon, label, value, tone = 'slate', onClick }) => {
   const toneMap = {
     slate: 'bg-slate-100 text-slate-700',
     blue: 'bg-blue-100 text-blue-700',
@@ -86,12 +86,17 @@ const StatCard = ({ icon: Icon, label, value, tone = 'slate' }) => {
   };
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div
+      className={`rounded-2xl border border-slate-200 bg-white p-4 shadow-sm ${onClick ? 'cursor-pointer hover:shadow-md hover:border-slate-300 transition-all' : ''}`}
+      onClick={onClick}
+      title={onClick ? 'Click to see breakdown' : undefined}
+    >
       <div className={`mb-3 inline-flex h-10 w-10 items-center justify-center rounded-xl ${toneMap[tone] || toneMap.slate}`}>
         <Icon className="h-5 w-5" />
       </div>
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
       <p className="mt-1 text-xl font-bold text-slate-900">{value}</p>
+      {onClick && <p className="mt-1 text-xs text-blue-500">View breakdown →</p>}
     </div>
   );
 };
@@ -402,8 +407,8 @@ const StaffDetailPage = () => {
   };
 
   const overviewCards = [
-    { icon: BadgeDollarSign, label: 'Current Earnings', value: formatMoney(currentEarnings), tone: 'emerald' },
-    { icon: DollarSign, label: 'Total Earned', value: formatMoney(totalEarned), tone: 'blue' },
+    { icon: BadgeDollarSign, label: 'Current Earnings', value: formatMoney(currentEarnings), tone: 'emerald', onClick: () => navigate(`/admin/staff/${staffProfileId}/current-earnings`) },
+    { icon: DollarSign, label: 'Total Earned', value: formatMoney(totalEarned), tone: 'blue', onClick: () => navigate(`/admin/staff/${staffProfileId}/total-earnings`) },
     { icon: Wallet, label: 'Total Paid Out', value: formatMoney(totalPaidOut), tone: 'violet' },
     { icon: Activity, label: 'Outstanding Payable', value: formatMoney(outstandingPayable), tone: 'rose' },
   ];
@@ -544,8 +549,8 @@ const StaffDetailPage = () => {
   const renderEarnings = () => (
     <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-4">
-        <StatCard icon={BadgeDollarSign} label="Current Earnings" value={formatMoney(currentEarnings)} tone="emerald" />
-        <StatCard icon={DollarSign} label="Total Earned" value={formatMoney(totalEarned)} tone="blue" />
+        <StatCard icon={BadgeDollarSign} label="Current Earnings" value={formatMoney(currentEarnings)} tone="emerald" onClick={() => navigate(`/admin/staff/${staffProfileId}/current-earnings`)} />
+        <StatCard icon={DollarSign} label="Total Earned" value={formatMoney(totalEarned)} tone="blue" onClick={() => navigate(`/admin/staff/${staffProfileId}/total-earnings`)} />
         <StatCard icon={Wallet} label="Total Paid Out" value={formatMoney(totalPaidOut)} tone="violet" />
         <StatCard icon={Activity} label="Outstanding" value={formatMoney(outstandingPayable)} tone="rose" />
       </div>
@@ -610,7 +615,6 @@ const StaffDetailPage = () => {
             <InfoRow label="Service Start" value={formatDate(currentAssignment.service_start_date || currentAssignment.start_date)} />
             <InfoRow label="Service End" value={formatDate(currentAssignment.service_end_date)} />
             <InfoRow label="Daily Rate" value={formatMoney(currentAssignment.daily_rate || currentAssignment.booking_daily_rate)} />
-            <InfoRow label="Allocated Amount" value={formatMoney(currentAssignment.amount_allocated)} />
             <InfoRow label="Assigned On" value={formatDateTime(currentAssignment.assigned_on)} />
           </div>
         ) : (
@@ -637,7 +641,7 @@ const StaffDetailPage = () => {
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Start</th>
                 <th className="px-4 py-3">End</th>
-                <th className="px-4 py-3 text-right">Allocated</th>
+                <th className="px-4 py-3 text-right">Days Worked</th>
                 <th className="px-4 py-3 text-right">Salary</th>
               </tr>
             </thead>
@@ -650,7 +654,19 @@ const StaffDetailPage = () => {
                   <td className="px-4 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(row.status)}`}>{row.status || '-'}</span></td>
                   <td className="px-4 py-3 text-slate-600">{formatDate(row.service_start_date)}</td>
                   <td className="px-4 py-3 text-slate-600">{formatDate(row.service_end_date)}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatMoney(row.amount_allocated)}</td>
+                  <td className="px-4 py-3 text-right">
+                    {(() => {
+                      if (!row.service_start_date) return <span className="text-slate-400">-</span>;
+                      const start = new Date(row.service_start_date);
+                      const end = row.service_end_date ? new Date(row.service_end_date) : new Date();
+                      const days = Math.max(1, Math.ceil((end - start) / 86400000));
+                      return (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
+                          {days} {days === 1 ? 'day' : 'days'}
+                        </span>
+                      );
+                    })()}
+                  </td>
                   <td className="px-4 py-3 text-right font-semibold text-emerald-700">{formatMoney(row.total_salary_paid || row.total_salary)}</td>
                 </tr>
               ))}
@@ -1401,9 +1417,14 @@ const StaffDetailPage = () => {
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[360px]">
-                <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
+                <div
+                  className="rounded-2xl bg-white/10 p-4 backdrop-blur cursor-pointer hover:bg-white/20 transition-colors"
+                  onClick={() => navigate(`/admin/staff/${staffProfileId}/current-earnings`)}
+                  title="Click to see current earnings breakdown"
+                >
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-300">Current Earnings</p>
                   <p className="mt-1 text-2xl font-bold">{formatMoney(currentEarnings)}</p>
+                  <p className="mt-1 text-xs text-white/60">View breakdown →</p>
                 </div>
                 <div className="rounded-2xl bg-white/10 p-4 backdrop-blur">
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-300">Outstanding Payable</p>
@@ -1433,8 +1454,8 @@ const StaffDetailPage = () => {
           </div>
 
           <div className="grid gap-4 p-6 lg:grid-cols-4">
-            <StatCard icon={BadgeDollarSign} label="Current Earnings" value={formatMoney(currentEarnings)} tone="emerald" />
-            <StatCard icon={DollarSign} label="Total Earned" value={formatMoney(totalEarned)} tone="blue" />
+            <StatCard icon={BadgeDollarSign} label="Current Earnings" value={formatMoney(currentEarnings)} tone="emerald" onClick={() => navigate(`/admin/staff/${staffProfileId}/current-earnings`)} />
+            <StatCard icon={DollarSign} label="Total Earned" value={formatMoney(totalEarned)} tone="blue" onClick={() => navigate(`/admin/staff/${staffProfileId}/total-earnings`)} />
             <StatCard icon={Wallet} label="Paid Out" value={formatMoney(totalPaidOut)} tone="violet" />
             <StatCard icon={Activity} label="Bookings" value={totalBookings} tone="amber" />
           </div>

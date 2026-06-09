@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const bookingController = require('../controllers/bookingController');
 const paymentTrackingController = require('../controllers/paymentTrackingController');
+const bookingNotesController = require('../controllers/bookingNotesController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { upload } = require('../config/cloudinaryConfig');
 
@@ -124,5 +125,11 @@ router.patch('/:booking_id/extend', protect, restrictTo('SUPER_ADMIN', 'ACCOUNTS
 
 router.post('/:booking_id/swap-staff', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), bookingController.swapStaff);
 router.get('/:booking_id/swap-history', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.getSwapHistory);
+
+// Notes CRUD
+router.post('/:booking_id/notes', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingNotesController.addNote);
+router.get('/:booking_id/notes', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingNotesController.getBookingNotes);
+router.patch('/:booking_id/notes/:note_id', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingNotesController.updateNote);
+router.delete('/:booking_id/notes/:note_id', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), bookingNotesController.deleteNote);
 
 module.exports = router;

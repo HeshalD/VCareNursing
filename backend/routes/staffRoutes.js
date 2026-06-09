@@ -195,6 +195,21 @@ router.get(
   staffController.getEarningsTransactions
 );
 
+// Earnings breakdown pages
+router.get(
+  '/:staff_profile_id/total-earnings-breakdown',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getTotalEarningsBreakdown
+);
+
+router.get(
+  '/:staff_profile_id/current-earnings-breakdown',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getCurrentEarningsBreakdown
+);
+
 // Admin: Record a payout to a staff member (company -> staff personal bank)
 router.post(
   '/:staff_profile_id/payouts',

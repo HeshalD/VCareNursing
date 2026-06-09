@@ -378,9 +378,9 @@ exports.assignStaffToBooking = async (req, res) => {
 
     await db.query(
       `UPDATE bookings
-       SET status = 'ACTIVE', ot_rate = $2
+       SET status = 'ACTIVE', ot_rate = $2, assigned_staff_id = $3
        WHERE booking_id = $1`,
-      [booking_id, bookingOtRate]
+      [booking_id, bookingOtRate, staff_profile_id]
     );
 
     return res.status(201).json({

@@ -392,6 +392,13 @@ class ApiClient {
 
   }
 
+  async updateServiceRequest(requestId, data) {
+    return this.request(`/service-requests/${requestId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data)
+    });
+  }
+
   async getServiceRequestQuotes(requestId) {
     return this.request(`/quotes/request/${requestId}`);
   }
@@ -819,6 +826,18 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify(payoutData),
     });
+  }
+
+  async getStaffTotalEarningsBreakdown(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/total-earnings-breakdown`);
+  }
+
+  async getStaffCurrentEarningsBreakdown(staffProfileId, filters = {}) {
+    const queryParams = new URLSearchParams(filters).toString();
+    const url = queryParams
+      ? `/staff/${staffProfileId}/current-earnings-breakdown?${queryParams}`
+      : `/staff/${staffProfileId}/current-earnings-breakdown`;
+    return this.request(url);
   }
 
   async getStaffBankAccounts(staffProfileId) {
@@ -1263,6 +1282,13 @@ class ApiClient {
     return this.request(`/patients/client/${clientId}`);
   }
 
+  async createPatient(patientData) {
+    return this.request('/patients/create', {
+      method: 'POST',
+      body: JSON.stringify(patientData),
+    });
+  }
+
   // Staff change request endpoints (staff-facing)
   async submitChangeRequest(data) {
     return this.request('/staff-change-requests', {
@@ -1297,6 +1323,57 @@ class ApiClient {
 
   async getChangeRequestLogs(id) {
     return this.request(`/staff-change-requests/${id}/logs`);
+  }
+
+  // Booking Notes endpoints
+  async getBookingNotes(bookingId) {
+    return this.request(`/bookings/${bookingId}/notes`);
+  }
+
+  async addBookingNote(bookingId, noteData) {
+    return this.request(`/bookings/${bookingId}/notes`, {
+      method: 'POST',
+      body: JSON.stringify(noteData),
+    });
+  }
+
+  async updateBookingNote(bookingId, noteId, noteData) {
+    return this.request(`/bookings/${bookingId}/notes/${noteId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(noteData),
+    });
+  }
+
+  async deleteBookingNote(bookingId, noteId) {
+    return this.request(`/bookings/${bookingId}/notes/${noteId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getClientNotes(clientId, params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const endpoint = query ? `/client/${clientId}/notes?${query}` : `/client/${clientId}/notes`;
+    return this.request(endpoint);
+  }
+
+  async addClientNote(clientId, noteData) {
+    return this.request(`/client/${clientId}/notes`, {
+      method: 'POST',
+      body: JSON.stringify(noteData),
+    });
+  }
+
+  async updateClientNote(clientId, noteId, noteData) {
+    return this.request(`/client/${clientId}/notes/${noteId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(noteData),
+    });
+  }
+
+  async deleteClientNote(clientId, noteId) {
+    return this.request(`/client/${clientId}/notes/${noteId}`, {
+      method: 'DELETE',
+    });
   }
 
   // Activity log endpoints

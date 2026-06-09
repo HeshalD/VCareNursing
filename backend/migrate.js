@@ -785,6 +785,11 @@ async function runMigration() {
     ADD COLUMN IF NOT EXISTS last_payment_date TIMESTAMP WITH TIME ZONE
   `);
 
+  await db.query(`
+    ALTER TABLE bookings
+    ADD COLUMN IF NOT EXISTS admin_notes TEXT
+  `);
+
   // =========================================================
   // MODULAR QUOTATION TABLES
   // =========================================================
@@ -815,6 +820,24 @@ async function runMigration() {
       amount NUMERIC(12,2) NOT NULL,
       sort_order INTEGER DEFAULT 0,
       is_preset_item BOOLEAN DEFAULT false,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // =========================================================
+  // CLIENT NOTES
+  // =========================================================
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS client_notes (
+      note_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      client_id UUID NOT NULL REFERENCES client_profiles(client_profile_id) ON DELETE CASCADE,
+      booking_id UUID REFERENCES bookings(booking_id) ON DELETE SET NULL,
+      note_text TEXT NOT NULL,
+      note_type VARCHAR(50) DEFAULT 'GENERAL',
+      created_by_user_id UUID REFERENCES users(user_id),
+      created_by_name VARCHAR(255) NOT NULL,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     );
   `);
@@ -891,6 +914,21 @@ async function runMigration() {
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_activity_log_created
     ON activity_log(created_at DESC);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_client_notes_client_id
+    ON client_notes(client_id);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_client_notes_booking_id
+    ON client_notes(booking_id);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_client_notes_created_at
+    ON client_notes(created_at DESC);
   `);
 
   // =========================================================

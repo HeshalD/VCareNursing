@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
+  ArrowRight,
   Activity,
   BadgeDollarSign,
   BookOpen,
@@ -14,6 +15,7 @@ import {
   Loader2,
   MapPin,
   Phone,
+  Plus,
   ReceiptText,
   ShieldAlert,
   Star,
@@ -22,7 +24,19 @@ import {
   Crown,
   Download,
   SendHorizontal,
+  StickyNote,
+  Pencil,
+  Check,
+  Trash2,
+  X,
 } from 'lucide-react';
+
+const NOTE_TYPE_META = {
+  GENERAL: { label: 'General', classes: 'bg-slate-100 text-slate-700' },
+  MEDICAL: { label: 'Medical', classes: 'bg-blue-100 text-blue-700' },
+  BILLING: { label: 'Billing', classes: 'bg-amber-100 text-amber-700' },
+  URGENT:  { label: 'Urgent',  classes: 'bg-red-100 text-red-700' },
+};
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 
@@ -117,6 +131,23 @@ const ClientDetailPage = () => {
   const [clientTransactions, setClientTransactions] = useState([]);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
 
+  // Notes state
+  const [notes, setNotes] = useState([]);
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [noteText, setNoteText] = useState('');
+  const [noteType, setNoteType] = useState('GENERAL');
+  const [noteSubmitting, setNoteSubmitting] = useState(false);
+  const [noteError, setNoteError] = useState('');
+  const [editingNoteId, setEditingNoteId] = useState(null);
+  const [editNoteText, setEditNoteText] = useState('');
+  const [editNoteType, setEditNoteType] = useState('GENERAL');
+
+  const emptyPatientForm = { full_name: '', age: '', relationship_to_client: '', medical_condition: '', residential_address: '', emergency_contact_name: '', emergency_contact_number: '' };
+  const [showAddPatient, setShowAddPatient] = useState(false);
+  const [patientForm, setPatientForm] = useState(emptyPatientForm);
+  const [patientFormLoading, setPatientFormLoading] = useState(false);
+  const [patientFormError, setPatientFormError] = useState('');
+
   useEffect(() => {
     const loadDetail = async () => {
       try {
@@ -145,11 +176,77 @@ const ClientDetailPage = () => {
       }
     };
 
+    const loadNotes = async () => {
+      try {
+        setNotesLoading(true);
+        const response = await apiClient.getClientNotes(clientId);
+        setNotes(response.data || []);
+      } catch {
+        // non-fatal
+      } finally {
+        setNotesLoading(false);
+      }
+    };
+
     if (clientId) {
       loadDetail();
       loadTransactions();
+      loadNotes();
     }
   }, [clientId]);
+
+  const handleAddNote = async () => {
+    if (!noteText.trim()) return;
+    try {
+      setNoteSubmitting(true);
+      setNoteError('');
+      const response = await apiClient.addClientNote(clientId, { note_text: noteText, note_type: noteType });
+      setNotes((prev) => [response.data, ...prev]);
+      setNoteText('');
+      setNoteType('GENERAL');
+    } catch (err) {
+      setNoteError(err.message || 'Failed to add note');
+    } finally {
+      setNoteSubmitting(false);
+    }
+  };
+
+  const handleDeleteNote = async (noteId) => {
+    try {
+      setNoteError('');
+      await apiClient.deleteClientNote(clientId, noteId);
+      setNotes((prev) => prev.filter((n) => n.note_id !== noteId));
+    } catch (err) {
+      setNoteError(err.message || 'Failed to delete note');
+    }
+  };
+
+  const startEdit = (note) => {
+    setEditingNoteId(note.note_id);
+    setEditNoteText(note.note_text);
+    setEditNoteType(note.note_type || 'GENERAL');
+  };
+
+  const cancelEdit = () => {
+    setEditingNoteId(null);
+    setEditNoteText('');
+    setEditNoteType('GENERAL');
+  };
+
+  const handleSaveEdit = async (noteId) => {
+    if (!editNoteText.trim()) return;
+    try {
+      setNoteError('');
+      const response = await apiClient.updateClientNote(clientId, noteId, {
+        note_text: editNoteText,
+        note_type: editNoteType,
+      });
+      setNotes((prev) => prev.map((n) => (n.note_id === noteId ? response.data : n)));
+      cancelEdit();
+    } catch (err) {
+      setNoteError(err.message || 'Failed to update note');
+    }
+  };
 
   const clientProfile = detail?.client_profile || {};
   const paymentSummary = detail?.payment_summary || {};
@@ -206,6 +303,31 @@ const ClientDetailPage = () => {
     }
   };
 
+  const handleAddPatient = async (e) => {
+    e.preventDefault();
+    if (!patientForm.full_name.trim()) {
+      setPatientFormError('Patient name is required.');
+      return;
+    }
+    setPatientFormLoading(true);
+    setPatientFormError('');
+    try {
+      await apiClient.createPatient({
+        ...patientForm,
+        age: patientForm.age ? parseInt(patientForm.age, 10) : null,
+        client_id: clientProfile.client_profile_id,
+      });
+      setShowAddPatient(false);
+      setPatientForm(emptyPatientForm);
+      const refreshed = await apiClient.getAdminClientDetail(clientId);
+      setDetail(refreshed.data || null);
+    } catch (err) {
+      setPatientFormError(err.message || 'Failed to add patient. Please try again.');
+    } finally {
+      setPatientFormLoading(false);
+    }
+  };
+
   const sectionConfig = [
     { id: 'overview', label: 'Overview', icon: Users },
     { id: 'payments', label: 'Payments', icon: BadgeDollarSign },
@@ -214,6 +336,7 @@ const ClientDetailPage = () => {
     { id: 'staff', label: 'Staff', icon: Briefcase },
     { id: 'reviews', label: 'Reviews', icon: Star },
     { id: 'patients', label: 'Patients', icon: HeartPulse },
+    { id: 'notes', label: 'Notes', icon: StickyNote },
     { id: 'statement', label: 'Statement', icon: ReceiptText },
     { id: 'overdue', label: 'Overdue', icon: ShieldAlert },
   ];
@@ -253,7 +376,13 @@ const ClientDetailPage = () => {
             {activeBookings.length === 0 ? (
               <EmptyState title="No booking records yet" />
             ) : (
-              activeBookings.map((booking, index) => (
+              activeBookings.map((booking, index) => {
+                const bookingStart = booking.start_date;
+                const bookingEnd = booking.actual_end_time || booking.scheduled_end_time;
+                const bookingDays = bookingStart
+                  ? Math.max(1, Math.ceil((new Date(bookingEnd || new Date()) - new Date(bookingStart)) / 86400000))
+                  : null;
+                return (
                 <DataCard key={booking.booking_id || index} title={booking.service_type || 'Booking'}>
                   <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                     <InfoRow label="Booking ID" value={booking.booking_id} />
@@ -261,13 +390,57 @@ const ClientDetailPage = () => {
                     <InfoRow label="Service Model" value={booking.service_model || '-'} />
                     <InfoRow label="Start Date" value={formatDate(booking.start_date)} />
                     <InfoRow label="Patient" value={booking.patient_name || '-'} />
-                    <InfoRow label="Assigned Staff" value={booking.current_staff_name || '-'} />
-                    <InfoRow label="Quoted Amount" value={formatMoney(booking.amount_quotated || booking.quote_total || 0)} />
+                    <InfoRow label="Assigned Staff" value={booking.current_staff_name || 'Not assigned'} />
+                    <InfoRow label="Quoted Amount" value={formatMoney(booking.amount_quotated || booking.total_amount || 0)} />
                     <InfoRow label="Paid" value={formatMoney(booking.amount_paid || 0)} />
-                    <InfoRow label="Balance" value={formatMoney((booking.amount_quotated || booking.quote_total || 0) - (booking.amount_paid || 0))} />
+                    <InfoRow label="Balance" value={formatMoney((booking.amount_quotated || booking.total_amount || 0) - (booking.amount_paid || 0))} />
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Days Worked</p>
+                      <div className="mt-1">
+                        {bookingDays !== null ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
+                            {bookingDays} {bookingDays === 1 ? 'day' : 'days'}
+                            {!bookingEnd && <span className="text-blue-400"> (ongoing)</span>}
+                          </span>
+                        ) : (
+                          <span className="text-sm font-medium text-slate-400">-</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
+                  {booking.booking_id && (
+                    <div className="mt-4 flex items-center justify-end gap-3 border-t border-slate-200 pt-4">
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/admin/bookings/${booking.booking_id}/detail`)}
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        <ArrowRight className="h-4 w-4" />
+                        View Booking
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/admin/bookings/${booking.booking_id}/detail?section=staff`)}
+                        className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700"
+                      >
+                        <ArrowRight className="h-4 w-4" />
+                        Swap Staff Member
+                      </button>
+                      {!['TERMINATED', 'COMPLETED', 'CANCELLED'].includes((booking.status || '').toUpperCase()) && (
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/admin/bookings/${booking.booking_id}/detail?section=actions`)}
+                          className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700"
+                        >
+                          <ArrowRight className="h-4 w-4" />
+                          End Booking
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </DataCard>
-              ))
+              );
+              })
             )}
           </div>
         );
@@ -298,18 +471,38 @@ const ClientDetailPage = () => {
             {recentAssignments.length === 0 ? (
               <EmptyState title="No staff assignment history" />
             ) : (
-              recentAssignments.map((assignment, index) => (
-                <DataCard key={assignment.assignment_id || index} title={assignment.staff_name || 'Staff Assignment'}>
-                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                    <InfoRow label="Staff" value={assignment.staff_name || '-'} />
-                    <InfoRow label="Designation" value={assignment.designation || '-'} />
-                    <InfoRow label="Status" value={assignment.status || '-'} />
-                    <InfoRow label="Assigned On" value={formatDateTime(assignment.assigned_on)} />
-                    <InfoRow label="Daily Rate" value={formatMoney(assignment.daily_rate)} />
-                    <InfoRow label="Allocated Amount" value={formatMoney(assignment.amount_allocated)} />
-                  </div>
-                </DataCard>
-              ))
+              recentAssignments.map((assignment, index) => {
+                const assignStart = assignment.service_start_date;
+                const assignEnd = assignment.service_end_date;
+                const assignDays = assignStart
+                  ? Math.max(1, Math.ceil((new Date(assignEnd || new Date()) - new Date(assignStart)) / 86400000))
+                  : null;
+                return (
+                  <DataCard key={assignment.assignment_id || index} title={assignment.staff_name || 'Staff Assignment'}>
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                      <InfoRow label="Staff" value={assignment.staff_name || '-'} />
+                      <InfoRow label="Designation" value={assignment.designation || '-'} />
+                      <InfoRow label="Patient" value={assignment.patient_name || '-'} />
+                      <InfoRow label="Status" value={assignment.status || '-'} />
+                      <InfoRow label="Assigned On" value={formatDateTime(assignment.assigned_on)} />
+                      <InfoRow label="Daily Rate" value={formatMoney(assignment.daily_rate)} />
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Days Worked</p>
+                        <div className="mt-1">
+                          {assignDays !== null ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
+                              {assignDays} {assignDays === 1 ? 'day' : 'days'}
+                              {!assignEnd && <span className="text-blue-400"> (ongoing)</span>}
+                            </span>
+                          ) : (
+                            <span className="text-sm font-medium text-slate-400">-</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </DataCard>
+                );
+              })
             )}
           </div>
         );
@@ -344,6 +537,128 @@ const ClientDetailPage = () => {
       case 'patients':
         return (
           <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold text-slate-600">{patients.length} patient{patients.length !== 1 ? 's' : ''} registered</p>
+              <button
+                type="button"
+                onClick={() => { setShowAddPatient(true); setPatientFormError(''); }}
+                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+              >
+                <Plus className="h-4 w-4" /> Add Patient
+              </button>
+            </div>
+
+            {showAddPatient && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl">
+                  <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+                    <h3 className="text-base font-bold text-slate-900">Add New Patient</h3>
+                    <button type="button" onClick={() => setShowAddPatient(false)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+                      <X className="h-5 w-5" />
+                    </button>
+                  </div>
+                  <form onSubmit={handleAddPatient} className="space-y-4 p-6">
+                    {patientFormError && (
+                      <div className="rounded-xl bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700 border border-rose-200">
+                        {patientFormError}
+                      </div>
+                    )}
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="sm:col-span-2">
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Full Name *</label>
+                        <input
+                          type="text"
+                          value={patientForm.full_name}
+                          onChange={(e) => setPatientForm(f => ({ ...f, full_name: e.target.value }))}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                          placeholder="Patient's full name"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Age</label>
+                        <input
+                          type="number"
+                          value={patientForm.age}
+                          onChange={(e) => setPatientForm(f => ({ ...f, age: e.target.value }))}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                          placeholder="e.g. 65"
+                          min="0"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Relationship to Client</label>
+                        <input
+                          type="text"
+                          value={patientForm.relationship_to_client}
+                          onChange={(e) => setPatientForm(f => ({ ...f, relationship_to_client: e.target.value }))}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                          placeholder="e.g. Parent, Friend"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Medical Condition / Remarks</label>
+                        <textarea
+                          value={patientForm.medical_condition}
+                          onChange={(e) => setPatientForm(f => ({ ...f, medical_condition: e.target.value }))}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                          rows={2}
+                          placeholder="Describe the patient's condition or any special remarks"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Residential Address</label>
+                        <input
+                          type="text"
+                          value={patientForm.residential_address}
+                          onChange={(e) => setPatientForm(f => ({ ...f, residential_address: e.target.value }))}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                          placeholder="Patient's home address"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Emergency Contact Name</label>
+                        <input
+                          type="text"
+                          value={patientForm.emergency_contact_name}
+                          onChange={(e) => setPatientForm(f => ({ ...f, emergency_contact_name: e.target.value }))}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                          placeholder="Contact person's name"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Emergency Contact Number</label>
+                        <input
+                          type="tel"
+                          value={patientForm.emergency_contact_number}
+                          onChange={(e) => setPatientForm(f => ({ ...f, emergency_contact_number: e.target.value }))}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                          placeholder="e.g. 0771234567"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex gap-3 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowAddPatient(false)}
+                        className="flex-1 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={patientFormLoading}
+                        className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                      >
+                        {patientFormLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                        {patientFormLoading ? 'Adding...' : 'Add Patient'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
             {patients.length === 0 ? (
               <EmptyState title="No patients registered under this client" />
             ) : (
@@ -365,6 +680,165 @@ const ClientDetailPage = () => {
             )}
           </div>
         );
+      case 'notes':
+        return (
+          <div className="space-y-5">
+            <div>
+              <p className="text-sm font-semibold text-slate-700">All notes for this client</p>
+              <p className="mt-0.5 text-xs text-slate-500">Includes general profile notes and notes attached to specific bookings.</p>
+            </div>
+
+            {/* Add note form */}
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+              <p className="text-sm font-semibold text-slate-700">Add a new note</p>
+              {noteError && (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{noteError}</div>
+              )}
+              <textarea
+                rows={3}
+                value={noteText}
+                onChange={(e) => setNoteText(e.target.value)}
+                placeholder="Write a note about this client..."
+                className="w-full resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500"
+              />
+              <div className="flex items-center gap-3">
+                <select
+                  value={noteType}
+                  onChange={(e) => setNoteType(e.target.value)}
+                  className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500"
+                >
+                  <option value="GENERAL">General</option>
+                  <option value="MEDICAL">Medical</option>
+                  <option value="BILLING">Billing</option>
+                  <option value="URGENT">Urgent</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={handleAddNote}
+                  disabled={noteSubmitting || !noteText.trim()}
+                  className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                >
+                  {noteSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                  {noteSubmitting ? 'Adding...' : 'Add Note'}
+                </button>
+              </div>
+            </div>
+
+            {/* Notes list */}
+            {notesLoading ? (
+              <div className="flex items-center gap-2 py-6 text-sm text-slate-500">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading notes...
+              </div>
+            ) : notes.length === 0 ? (
+              <EmptyState title="No notes yet for this client" />
+            ) : (
+              <div className="space-y-3">
+                {notes.map((note) => {
+                  const meta = NOTE_TYPE_META[note.note_type] || NOTE_TYPE_META.GENERAL;
+                  const isEditing = editingNoteId === note.note_id;
+                  const isEdited = note.updated_at && note.updated_at !== note.created_at;
+
+                  return (
+                    <div key={note.note_id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      {isEditing ? (
+                        <div className="space-y-3">
+                          <textarea
+                            rows={3}
+                            value={editNoteText}
+                            onChange={(e) => setEditNoteText(e.target.value)}
+                            className="w-full resize-none rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500"
+                          />
+                          <div className="flex items-center gap-2">
+                            <select
+                              value={editNoteType}
+                              onChange={(e) => setEditNoteType(e.target.value)}
+                              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500"
+                            >
+                              <option value="GENERAL">General</option>
+                              <option value="MEDICAL">Medical</option>
+                              <option value="BILLING">Billing</option>
+                              <option value="URGENT">Urgent</option>
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => handleSaveEdit(note.note_id)}
+                              className="inline-flex items-center gap-1 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700"
+                            >
+                              <Check className="h-3.5 w-3.5" /> Save
+                            </button>
+                            <button
+                              type="button"
+                              onClick={cancelEdit}
+                              className="inline-flex items-center gap-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                            >
+                              <X className="h-3.5 w-3.5" /> Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-start justify-between gap-3">
+                            <p className="text-sm leading-relaxed text-slate-800">{note.note_text}</p>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => startEdit(note)}
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+                                title="Edit note"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteNote(note.note_id)}
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-100 hover:text-rose-600"
+                                title="Delete note"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                            {/* Type badge */}
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${meta.classes}`}>
+                              {meta.label}
+                            </span>
+
+                            {/* Booking context or profile-level badge */}
+                            {note.booking_id ? (
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/admin/bookings/${note.booking_id}/detail`)}
+                                className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700 hover:bg-violet-200"
+                              >
+                                <BookOpen className="h-3 w-3" />
+                                {note.booking_service_type || 'Booking'} &middot; {note.booking_status || '—'}
+                              </button>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                                <Users className="h-3 w-3" /> Client Profile
+                              </span>
+                            )}
+
+                            {/* Author + date */}
+                            <span className="text-xs text-slate-400">
+                              {note.created_by_name} &middot; {formatDateTime(note.created_at)}
+                            </span>
+                            {isEdited && (
+                              <span className="text-xs italic text-slate-400">(edited)</span>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+
       case 'statement':
         return (
           <div className="space-y-5">

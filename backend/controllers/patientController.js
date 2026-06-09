@@ -1,4 +1,15 @@
 const db = require('../config/db');
+const { logActivity } = require('../utils/activityLogger');
+
+function extractActorRole(role) {
+  const raw = Array.isArray(role) ? role[0] : role;
+  return typeof raw === 'string' ? raw.replace(/\{|\}/g, '').split(',')[0].trim() : String(raw);
+}
+
+async function getActorName(userId) {
+  const result = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [userId]);
+  return result.rows[0]?.full_name || 'Admin';
+}
 
 exports.createPatientProfile = async (req, res) => {
     const { 
@@ -39,11 +50,27 @@ exports.createPatientProfile = async (req, res) => {
         ];
 
         const result = await db.query(query, values);
+        const newPatient = result.rows[0];
+
+        try {
+            const actorName = await getActorName(req.user.user_id);
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: extractActorRole(req.user.role),
+                actionType: 'PATIENT_CREATED',
+                entityType: 'PATIENT',
+                entityId: newPatient.patient_id,
+                details: { patient_name: full_name, client_id }
+            });
+        } catch (logErr) {
+            console.error('Activity log error (non-fatal):', logErr);
+        }
 
         res.status(201).json({
             status: 'success',
             message: 'Patient profile created successfully',
-            data: result.rows[0]
+            data: newPatient
         });
 
     } catch (error) {

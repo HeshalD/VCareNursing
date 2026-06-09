@@ -72,6 +72,8 @@ import BookingStaffRosterPage from './modules/admin/service_requests/booking_sta
 import BookingStaffAssignmentPage from './modules/admin/service_requests/booking_staff_assignment';
 import BookingDetailPage from './modules/admin/bookings/BookingDetailPage';
 import StaffDetailPage from './modules/admin/user_managemnet/staff_detail_page';
+import TotalEarningsBreakdownPage from './modules/admin/user_managemnet/TotalEarningsBreakdownPage';
+import CurrentEarningsBreakdownPage from './modules/admin/user_managemnet/CurrentEarningsBreakdownPage';
 
 function App() {
   return (
@@ -175,6 +177,16 @@ function App() {
             <Route path="/admin/staff/:staffProfileId/detail" element={
               <AdminAuthProvider>
                 <StaffDetailPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/staff/:staffProfileId/total-earnings" element={
+              <AdminAuthProvider>
+                <TotalEarningsBreakdownPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/staff/:staffProfileId/current-earnings" element={
+              <AdminAuthProvider>
+                <CurrentEarningsBreakdownPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/workers" element={

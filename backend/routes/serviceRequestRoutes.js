@@ -19,6 +19,9 @@ router.get('/:id', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), serviceReq
 // Protected admin route to update service request status
 router.put('/:id/status', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), serviceRequestController.updateServiceRequestStatus);
 
+// Protected admin route to update full service request details
+router.put('/:id', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), serviceRequestController.updateServiceRequest);
+
 // Admin route to create service request manually
 router.post('/proxy-service-request', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), serviceRequestController.createServiceRequest);
 

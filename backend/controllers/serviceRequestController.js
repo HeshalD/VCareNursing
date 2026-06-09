@@ -1,4 +1,15 @@
 const db = require('../config/db');
+const { logActivity } = require('../utils/activityLogger');
+
+function extractActorRole(role) {
+    const raw = Array.isArray(role) ? role[0] : role;
+    return typeof raw === 'string' ? raw.replace(/\{|\}/g, '').split(',')[0].trim() : String(raw);
+}
+
+async function getActorName(userId) {
+    const result = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [userId]);
+    return result.rows[0]?.full_name || 'Admin';
+}
 
 exports.submitServiceRequest = async (req, res) => {
     try {
@@ -449,6 +460,115 @@ exports.getClientServiceRequestsWithQuotes = async (req, res) => {
             status: 'error',
             message: 'Failed to fetch service requests with quotes'
         });
+    }
+};
+
+exports.updateServiceRequest = async (req, res) => {
+    const { id } = req.params;
+    const {
+        payer_name,
+        payer_mobile,
+        patient_name,
+        patient_age,
+        relationship_to_client,
+        patient_condition,
+        service_type,
+        service_model,
+        location_address,
+        start_date,
+        remarks,
+        preferred_gender,
+        status
+    } = req.body;
+
+    try {
+        const existing = await db.query('SELECT * FROM service_requests WHERE request_id = $1', [id]);
+        if (existing.rows.length === 0) {
+            return res.status(404).json({ status: 'error', message: 'Service request not found' });
+        }
+        const old = existing.rows[0];
+
+        const result = await db.query(
+            `UPDATE service_requests SET
+                payer_name = COALESCE($1, payer_name),
+                payer_mobile = COALESCE($2, payer_mobile),
+                patient_name = COALESCE($3, patient_name),
+                patient_age = COALESCE($4, patient_age),
+                relationship_to_client = $5,
+                patient_condition = $6,
+                service_type = COALESCE($7, service_type),
+                service_model = COALESCE($8::service_model_enum, service_model),
+                location_address = $9,
+                start_date = $10,
+                remarks = $11,
+                preferred_gender = COALESCE($12::gender_preference_enum, preferred_gender),
+                status = COALESCE($13, status)
+             WHERE request_id = $14
+             RETURNING *`,
+            [
+                payer_name || null,
+                payer_mobile || null,
+                patient_name || null,
+                patient_age != null ? parseInt(patient_age) : null,
+                relationship_to_client !== undefined ? relationship_to_client : old.relationship_to_client,
+                patient_condition !== undefined ? patient_condition : old.patient_condition,
+                service_type || null,
+                service_model || null,
+                location_address !== undefined ? location_address : old.location_address,
+                start_date !== undefined ? start_date : old.start_date,
+                remarks !== undefined ? remarks : old.remarks,
+                preferred_gender || null,
+                status || null,
+                id
+            ]
+        );
+
+        const newServiceModel = result.rows[0].service_model;
+        if (newServiceModel && newServiceModel !== old.service_model) {
+            await db.query(
+                `UPDATE bookings SET service_model = $1::service_model_enum WHERE request_id = $2`,
+                [newServiceModel, id]
+            );
+        }
+
+        const changes = {};
+        const fields = [
+            'payer_name', 'payer_mobile', 'patient_name', 'patient_age',
+            'relationship_to_client', 'patient_condition', 'service_type',
+            'service_model', 'location_address', 'start_date', 'remarks',
+            'preferred_gender', 'status'
+        ];
+        for (const field of fields) {
+            const oldVal = String(old[field] ?? '');
+            const newVal = String(result.rows[0][field] ?? '');
+            if (oldVal !== newVal) {
+                changes[field] = { from: old[field], to: result.rows[0][field] };
+            }
+        }
+
+        try {
+            const actorName = await getActorName(req.user.user_id);
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: extractActorRole(req.user.role),
+                actionType: 'SERVICE_REQUEST_UPDATED',
+                entityType: 'SERVICE_REQUEST',
+                entityId: id,
+                details: {
+                    request_id: id,
+                    payer_name: result.rows[0].payer_name,
+                    changes
+                }
+            });
+        } catch (logErr) {
+            console.error('Activity log error:', logErr);
+        }
+
+        res.status(200).json({ status: 'success', data: result.rows[0] });
+    } catch (error) {
+        console.error('Update Service Request Error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to update service request' });
     }
 };
 

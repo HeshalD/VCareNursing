@@ -3,10 +3,11 @@ const router = express.Router();
 const patientController = require('../controllers/patientController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 
-// Route to manually add a patient (Admin Only)
+// Route to manually add a patient (Admin / Internal Staff)
 router.post(
-    '/create', 
-    protect, 
+    '/create',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
     patientController.createPatientProfile
 );
 

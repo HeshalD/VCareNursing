@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const clientController = require('../controllers/clientController');
+const bookingNotesController = require('../controllers/bookingNotesController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 
 // All routes below require login
@@ -15,6 +16,10 @@ router.get('/all-bookings', clientController.getAllBookingsForClient);
 router.get('/service-history/:client_id', clientController.getClientServiceHistory);
 // Admin: enriched booking history for dashboard
 router.get('/:client_id/bookings', protect, restrictTo('SUPER_ADMIN'), clientController.getAdminClientBookings);
+router.get('/:client_id/notes', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingNotesController.getClientNotes);
+router.post('/:client_id/notes', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingNotesController.addClientNote);
+router.patch('/:client_id/notes/:note_id', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingNotesController.updateClientNote);
+router.delete('/:client_id/notes/:note_id', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), bookingNotesController.deleteClientNote);
 router.get('/:client_id/detail', restrictTo('SUPER_ADMIN'), clientController.getAdminClientDetail);
 // Admin consolidated client detail (admin-only) - keep before generic '/:client_id' route
 router.get('/:client_id/detail', restrictTo('SUPER_ADMIN'), clientController.getAdminClientDetail);

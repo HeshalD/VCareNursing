@@ -3,6 +3,25 @@ const html_to_pdf = require('html-pdf-node');
 const estimateTemplate = require('../templates/estimateTemplate');
 const { sendWhatsAppMessage, checkMessageStatus } = require('../utils/whatsapp');
 const cloudinary = require('cloudinary').v2;
+const { logActivity } = require('../utils/activityLogger');
+
+function extractActorRole(role) {
+  const raw = Array.isArray(role) ? role[0] : role;
+  return typeof raw === 'string' ? raw.replace(/\{|\}/g, '').split(',')[0].trim() : String(raw);
+}
+
+async function getActorName(userId) {
+  const result = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [userId]);
+  return result.rows[0]?.full_name || 'Admin';
+}
+
+async function safeLog(params) {
+  try {
+    await logActivity(params);
+  } catch (err) {
+    console.error('Activity log error:', err);
+  }
+}
 
 // Configure Cloudinary
 cloudinary.config({
@@ -42,6 +61,21 @@ exports.createQuotation = async (req, res) => {
             daily_rate, days, transport,
             subTotal, subTotal
         ]);
+
+        await safeLog({
+            actorUserId: req.user?.user_id,
+            actorName: await getActorName(req.user?.user_id).catch(() => 'Admin'),
+            actorRole: extractActorRole(req.user?.role),
+            actionType: 'QUOTATION_CREATED',
+            entityType: 'QUOTATION',
+            entityId: result.rows[0].quote_id,
+            details: {
+                quote_id: result.rows[0].quote_id,
+                estimate_number: result.rows[0].estimate_number,
+                request_id,
+                total_amount: subTotal,
+            },
+        });
 
         res.status(201).json({
             status: 'success',
@@ -232,6 +266,22 @@ exports.generateAndSendPDF = async (req, res) => {
         // 6. Update service request status to PENDING and set active_quote_id
         await db.query("UPDATE service_requests SET status = 'PENDING', active_quote_id = $1 WHERE request_id = $2", [quote_id, data.request_id]);
 
+        await safeLog({
+            actorUserId: req.user?.user_id,
+            actorName: await getActorName(req.user?.user_id).catch(() => 'Admin'),
+            actorRole: extractActorRole(req.user?.role),
+            actionType: 'QUOTATION_SENT',
+            entityType: 'QUOTATION',
+            entityId: quote_id,
+            details: {
+                quote_id,
+                estimate_number: data.estimate_number,
+                request_id: data.request_id,
+                payer_mobile: data.payer_mobile,
+                pdf_url: pdfUrl,
+            },
+        });
+
         res.status(200).json({
             status: 'success',
             message: 'PDF Estimate generated, uploaded, and sent via WhatsApp',
@@ -412,6 +462,22 @@ exports.createModularQuotation = async (req, res) => {
             GROUP BY q.quote_id
         `, [quote_id]);
 
+        await safeLog({
+            actorUserId: req.user?.user_id,
+            actorName: await getActorName(req.user?.user_id).catch(() => 'Admin'),
+            actorRole: extractActorRole(req.user?.role),
+            actionType: 'QUOTATION_CREATED',
+            entityType: 'QUOTATION',
+            entityId: quote_id,
+            details: {
+                quote_id,
+                estimate_number: estimateNumber,
+                request_id,
+                total_amount: sub_total,
+                line_item_count: processedItems.length,
+            },
+        });
+
         res.status(201).json({
             status: 'success',
             data: completeQuote.rows[0]
@@ -518,6 +584,20 @@ exports.updateQuoteLineItems = async (req, res) => {
             WHERE q.quote_id = $1
             GROUP BY q.quote_id
         `, [quote_id]);
+
+        await safeLog({
+            actorUserId: req.user?.user_id,
+            actorName: await getActorName(req.user?.user_id).catch(() => 'Admin'),
+            actorRole: extractActorRole(req.user?.role),
+            actionType: 'QUOTATION_UPDATED',
+            entityType: 'QUOTATION',
+            entityId: quote_id,
+            details: {
+                quote_id,
+                new_total: sub_total,
+                line_item_count: line_items.length,
+            },
+        });
 
         res.status(200).json({
             status: 'success',

@@ -23,7 +23,7 @@ import {
   DollarSign,
   Activity,
 } from 'lucide-react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
@@ -130,13 +130,14 @@ const BookingDetailPage = () => {
   const { adminToken } = useAdminAuth();
   const navigate = useNavigate();
   const { bookingId } = useParams();
+  const [searchParams] = useSearchParams();
 
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [actionLoading, setActionLoading] = useState('');
   const [statementLoading, setStatementLoading] = useState(false);
-  const [activeSection, setActiveSection] = useState('overview');
+  const [activeSection, setActiveSection] = useState(searchParams.get('section') || 'overview');
   const [bankAccounts, setBankAccounts] = useState([]);
   const [availableStaff, setAvailableStaff] = useState([]);
   const [paymentSlipFile, setPaymentSlipFile] = useState(null);
