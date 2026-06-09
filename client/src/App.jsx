@@ -74,6 +74,8 @@ import BookingDetailPage from './modules/admin/bookings/BookingDetailPage';
 import StaffDetailPage from './modules/admin/user_managemnet/staff_detail_page';
 import TotalEarningsBreakdownPage from './modules/admin/user_managemnet/TotalEarningsBreakdownPage';
 import CurrentEarningsBreakdownPage from './modules/admin/user_managemnet/CurrentEarningsBreakdownPage';
+import PatientsPage from './modules/admin/patients/patients';
+import PatientDetailPage from './modules/admin/patients/patient_details';
 
 function App() {
   return (
@@ -270,6 +272,16 @@ function App() {
             <Route path="/admin/change-requests" element={
               <AdminAuthProvider>
                 <ChangeRequestsPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/patients" element={
+              <AdminAuthProvider>
+                <PatientsPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/patients/:patientId/detail" element={
+              <AdminAuthProvider>
+                <PatientDetailPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/activity-log" element={

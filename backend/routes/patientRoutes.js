@@ -3,6 +3,14 @@ const router = express.Router();
 const patientController = require('../controllers/patientController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 
+// Route to get all patients (admin view)
+router.get(
+    '/all',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    patientController.getAllPatients
+);
+
 // Route to manually add a patient (Admin / Internal Staff)
 router.post(
     '/create',
@@ -18,10 +26,18 @@ router.get(
     patientController.getPatientsByClient
 );
 
+// Route to get full patient detail (profile page)
+router.get(
+    '/:patient_id/detail',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    patientController.getPatientDetail
+);
+
 // Route to get patient by ID
 router.get(
-    '/:patient_id', 
-    protect, 
+    '/:patient_id',
+    protect,
     patientController.getPatientById
 );
 

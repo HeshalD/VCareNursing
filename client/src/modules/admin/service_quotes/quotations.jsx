@@ -8,7 +8,8 @@ import {
   Upload,
   CheckCircle,
   XCircle,
-  AlertCircle
+  AlertCircle,
+  ExternalLink
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
@@ -356,7 +357,7 @@ const QuotationsPage = () => {
                         className={`cursor-pointer border-t border-slate-100 hover:bg-slate-50 ${
                           selectedQuote?.quote_id === quote.quote_id ? 'bg-blue-50/50' : ''
                         } ${status === 'OVERPAID' ? 'bg-red-50/60' : ''}`}
-                        onClick={() => navigate(`/admin/quotations/${quote.quote_id}`)}
+                        onClick={() => selectQuote(quote)}
                       >
                         <td className="px-4 py-3 font-medium text-slate-900">{quote.estimate_number}</td>
                         <td className="px-4 py-3 text-slate-700">
@@ -393,9 +394,17 @@ const QuotationsPage = () => {
           ) : (
             <>
               <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="mb-3">
-                  <h3 className="text-base font-semibold text-slate-900">{selectedQuote.estimate_number}</h3>
-                  <p className="text-sm text-slate-500">{selectedQuote.payer_name}</p>
+                <div className="mb-3 flex items-start justify-between gap-2">
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-900">{selectedQuote.estimate_number}</h3>
+                    <p className="text-sm text-slate-500">{selectedQuote.payer_name}</p>
+                  </div>
+                  <button
+                    onClick={() => navigate(`/admin/quotations/${selectedQuote.quote_id}`)}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" /> View Details
+                  </button>
                 </div>
 
                 <div className="space-y-2 text-sm">

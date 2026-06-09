@@ -1278,6 +1278,11 @@ class ApiClient {
   }
 
   // Patient endpoints
+  async getAllPatients(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return this.request(`/patients/all${qs ? `?${qs}` : ''}`);
+  }
+
   async getPatientsByClient(clientId) {
     return this.request(`/patients/client/${clientId}`);
   }
@@ -1287,6 +1292,23 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify(patientData),
     });
+  }
+
+  async updatePatient(patientId, patientData) {
+    return this.request(`/patients/${patientId}`, {
+      method: 'PUT',
+      body: JSON.stringify(patientData),
+    });
+  }
+
+  async deletePatient(patientId) {
+    return this.request(`/patients/${patientId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getPatientDetail(patientId) {
+    return this.request(`/patients/${patientId}/detail`);
   }
 
   // Staff change request endpoints (staff-facing)
