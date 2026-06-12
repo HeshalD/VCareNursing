@@ -145,7 +145,7 @@ const ClientDetailPage = () => {
 
   const [showRecordPayment, setShowRecordPayment] = useState(false);
 
-  const emptyPatientForm = { full_name: '', age: '', relationship_to_client: '', medical_condition: '', residential_address: '', emergency_contact_name: '', emergency_contact_number: '' };
+  const emptyPatientForm = { full_name: '', age: '', gender: '', relationship_to_client: '', medical_condition: '', residential_address: '', emergency_contact_name: '', emergency_contact_number: '' };
   const [showAddPatient, setShowAddPatient] = useState(false);
   const [patientForm, setPatientForm] = useState(emptyPatientForm);
   const [patientFormLoading, setPatientFormLoading] = useState(false);
@@ -309,7 +309,7 @@ const ClientDetailPage = () => {
   const handleAddPatient = async (e) => {
     e.preventDefault();
     if (!patientForm.full_name.trim()) {
-      setPatientFormError('Patient name is required.');
+      setPatientFormError('Care profile name is required.');
       return;
     }
     setPatientFormLoading(true);
@@ -325,7 +325,7 @@ const ClientDetailPage = () => {
       const refreshed = await apiClient.getAdminClientDetail(clientId);
       setDetail(refreshed.data || null);
     } catch (err) {
-      setPatientFormError(err.message || 'Failed to add patient. Please try again.');
+      setPatientFormError(err.message || 'Failed to add care profile. Please try again.');
     } finally {
       setPatientFormLoading(false);
     }
@@ -352,7 +352,7 @@ const ClientDetailPage = () => {
     { id: 'quotes', label: 'Quotes', icon: FileText },
     { id: 'staff', label: 'Staff', icon: Briefcase },
     { id: 'reviews', label: 'Reviews', icon: Star },
-    { id: 'patients', label: 'Patients', icon: HeartPulse },
+    { id: 'patients', label: 'Care Profiles', icon: HeartPulse },
     { id: 'notes', label: 'Notes', icon: StickyNote },
     { id: 'statement', label: 'Statement', icon: ReceiptText },
     { id: 'overdue', label: 'Overdue', icon: ShieldAlert },
@@ -555,13 +555,13 @@ const ClientDetailPage = () => {
         return (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <p className="text-sm font-semibold text-slate-600">{patients.length} patient{patients.length !== 1 ? 's' : ''} registered</p>
+              <p className="text-sm font-semibold text-slate-600">{patients.length} care profile{patients.length !== 1 ? 's' : ''} registered</p>
               <button
                 type="button"
                 onClick={() => { setShowAddPatient(true); setPatientFormError(''); }}
                 className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
               >
-                <Plus className="h-4 w-4" /> Add Patient
+                <Plus className="h-4 w-4" /> Add Care Profile
               </button>
             </div>
 
@@ -569,7 +569,7 @@ const ClientDetailPage = () => {
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
                 <div className="w-full max-w-lg rounded-3xl bg-white shadow-2xl">
                   <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
-                    <h3 className="text-base font-bold text-slate-900">Add New Patient</h3>
+                    <h3 className="text-base font-bold text-slate-900">Add New Care Profile</h3>
                     <button type="button" onClick={() => setShowAddPatient(false)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
                       <X className="h-5 w-5" />
                     </button>
@@ -588,7 +588,7 @@ const ClientDetailPage = () => {
                           value={patientForm.full_name}
                           onChange={(e) => setPatientForm(f => ({ ...f, full_name: e.target.value }))}
                           className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
-                          placeholder="Patient's full name"
+                          placeholder="Full name"
                           required
                         />
                       </div>
@@ -602,6 +602,19 @@ const ClientDetailPage = () => {
                           placeholder="e.g. 65"
                           min="0"
                         />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Gender</label>
+                        <select
+                          value={patientForm.gender}
+                          onChange={(e) => setPatientForm(f => ({ ...f, gender: e.target.value }))}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white"
+                        >
+                          <option value="">— Select —</option>
+                          <option value="MALE">Male</option>
+                          <option value="FEMALE">Female</option>
+                          <option value="OTHER">Other</option>
+                        </select>
                       </div>
                       <div>
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Relationship to Client</label>
@@ -620,7 +633,7 @@ const ClientDetailPage = () => {
                           onChange={(e) => setPatientForm(f => ({ ...f, medical_condition: e.target.value }))}
                           className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
                           rows={2}
-                          placeholder="Describe the patient's condition or any special remarks"
+                          placeholder="Describe the condition or any special remarks"
                         />
                       </div>
                       <div className="sm:col-span-2">
@@ -630,7 +643,7 @@ const ClientDetailPage = () => {
                           value={patientForm.residential_address}
                           onChange={(e) => setPatientForm(f => ({ ...f, residential_address: e.target.value }))}
                           className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
-                          placeholder="Patient's home address"
+                          placeholder="Home address"
                         />
                       </div>
                       <div>
@@ -668,7 +681,7 @@ const ClientDetailPage = () => {
                         className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
                       >
                         {patientFormLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                        {patientFormLoading ? 'Adding...' : 'Add Patient'}
+                        {patientFormLoading ? 'Adding...' : 'Add Care Profile'}
                       </button>
                     </div>
                   </form>
@@ -677,14 +690,14 @@ const ClientDetailPage = () => {
             )}
 
             {patients.length === 0 ? (
-              <EmptyState title="No patients registered under this client" />
+              <EmptyState title="No care profiles registered under this client" />
             ) : (
               patients.map((patient, index) => (
-                <DataCard key={patient.patient_id || index} title={patient.full_name || 'Patient'}>
+                <DataCard key={patient.patient_id || index} title={patient.full_name || 'Care Profile'}>
                   <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                     <InfoRow label="Name" value={patient.full_name} />
                     <InfoRow label="Age" value={patient.age || '-'} />
-                    <InfoRow label="Gender" value={patient.gender || '-'} />
+                    <InfoRow label="Gender" value={patient.gender ? patient.gender.charAt(0) + patient.gender.slice(1).toLowerCase() : '-'} />
                     <InfoRow label="Relationship" value={patient.relationship_to_client || '-'} />
                     <InfoRow label="Emergency Contact" value={patient.emergency_contact_name || '-'} />
                     <InfoRow label="Contact Number" value={patient.emergency_contact_number || '-'} />
@@ -1016,7 +1029,7 @@ const ClientDetailPage = () => {
               <DataCard title="Quick Summary">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <InfoRow label="Bookings" value={`${bookingSummary.total_bookings || 0} total`} />
-                  <InfoRow label="Patients" value={patientSummary.total_patients || 0} />
+                  <InfoRow label="Care Profiles" value={patientSummary.total_patients || 0} />
                   <InfoRow label="Quotes" value={quotationSummary.total_quotes || 0} />
                   <InfoRow label="Current Staff" value={staffSummary.active_assignment_count || 0} />
                   <InfoRow label="Reviews" value={reviewSummary.total_reviews || 0} />

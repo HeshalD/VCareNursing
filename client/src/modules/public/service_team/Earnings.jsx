@@ -170,7 +170,7 @@ const Earnings = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-900 flex overflow-hidden">
+    <div className="h-screen bg-slate-50 font-sans text-slate-900 flex overflow-hidden">
       <StaffSidebar staffProfileId={staffData?.staff_profile_id} />
 
       <main className="flex-1 overflow-y-auto">

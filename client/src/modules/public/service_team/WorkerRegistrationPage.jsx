@@ -1305,7 +1305,7 @@ const WorkerRegistrationPage = () => {
                             <p className="font-semibold text-amber-900">
                               I confirm that all the information provided above is accurate and complete, and I have read and agree to the{' '}
                               <a
-                                href="https://res.cloudinary.com/dohaktkth/image/upload/v1780648957/vcare_terms___conditions_temp_qf9uzl.pdf"
+                                href="https://res.cloudinary.com/dohaktkth/image/upload/v1780652809/INDEPENDENT_CONTRACTOR_AGREEMENT_knloa6.pdf"
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-indigo-600 hover:underline"

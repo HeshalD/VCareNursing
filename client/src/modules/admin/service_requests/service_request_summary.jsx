@@ -342,7 +342,7 @@ const ServiceRequestSummaryPage = () => {
                           </div>
                         </div>
                         <div>
-                          <SectionHeading icon={Stethoscope} label="Patient" />
+                          <SectionHeading icon={Stethoscope} label="Care Profile" />
                           <div className="mt-3 space-y-3">
                             <FormField label="Name" value={editForm.patient_name} onChange={set('patient_name')} />
                             <FormField label="Age" type="number" value={editForm.patient_age} onChange={set('patient_age')} />
@@ -378,7 +378,7 @@ const ServiceRequestSummaryPage = () => {
                         </section>
 
                         <section>
-                          <SectionHeading icon={Stethoscope} label="Patient" />
+                          <SectionHeading icon={Stethoscope} label="Care Profile" />
                           <dl className="mt-3 space-y-2.5">
                             <Field label="Name" value={request.patient_name} />
                             <Field label="Age" value={request.patient_age} />
@@ -399,7 +399,7 @@ const ServiceRequestSummaryPage = () => {
 
                       {request.patient_condition && (
                         <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
-                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Patient Condition</p>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Condition</p>
                           <p className="mt-1 text-sm text-slate-700">{request.patient_condition}</p>
                         </div>
                       )}

@@ -192,7 +192,7 @@ const TimelineItem = ({ item, type, isLast }) => {
               <div style={s.detailGrid}>
                 <DetailItem label="Payer Name" value={item.payer_name} />
                 <DetailItem label="Payer Mobile" value={item.payer_mobile} icon={<Phone size={12} />} />
-                <DetailItem label="Patient Age" value={item.patient_age ? `${item.patient_age} years` : null} />
+                <DetailItem label="Age" value={item.patient_age ? `${item.patient_age} years` : null} />
                 <DetailItem label="Service Model" value={item.service_model} />
                 {item.location_address && (
                   <div style={{ gridColumn: '1 / -1' }}>
@@ -412,7 +412,7 @@ const ClientServiceRequests = () => {
                   </td>
                   <td style={s.td}>
                     <div style={{ fontSize: 13, color: '#1e293b', lineHeight: 1.7 }}>
-                      {item.patient_name && <div><strong style={{ color: '#64748b', fontWeight: 500 }}>Patient:</strong> {item.patient_name}</div>}
+                      {item.patient_name && <div><strong style={{ color: '#64748b', fontWeight: 500 }}>Care Profile:</strong> {item.patient_name}</div>}
                       {item.estimate_number && <div><strong style={{ color: '#64748b', fontWeight: 500 }}>Quote:</strong> {item.estimate_number}</div>}
                       {item.total_amount && <div><strong style={{ color: '#64748b', fontWeight: 500 }}>Amount:</strong> {formatCurrency(item.total_amount)}</div>}
                     </div>

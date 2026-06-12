@@ -135,7 +135,7 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
           />
           <SidebarItem
             icon={HeartPulse}
-            label="Patients"
+            label="Care Profiles"
             path="/admin/patients"
             active={isActive('/admin/patients')}
             collapsed={collapsed}

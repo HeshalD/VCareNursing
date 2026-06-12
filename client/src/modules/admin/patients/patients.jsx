@@ -17,12 +17,21 @@ const EMPTY_FORM = {
   client_id: '',
   full_name: '',
   age: '',
+  gender: '',
   relationship_to_client: '',
   medical_condition: '',
   residential_address: '',
   emergency_contact_name: '',
   emergency_contact_number: '',
 };
+
+const GENDER_OPTIONS = [
+  { value: 'MALE', label: 'Male' },
+  { value: 'FEMALE', label: 'Female' },
+  { value: 'OTHER', label: 'Other' },
+];
+
+const genderLabel = (g) => GENDER_OPTIONS.find((o) => o.value === g)?.label || '—';
 
 // ─── Small reusable components ──────────────────────────────────────────────
 
@@ -34,7 +43,7 @@ const Field = ({ label, value }) => (
   </div>
 );
 
-// ─── Patient Form Modal ──────────────────────────────────────────────────────
+// ─── Care Profile Form Modal ─────────────────────────────────────────────────
 
 const PatientModal = ({ mode, initial, clients, onClose, onSave, saving }) => {
   const [form, setForm] = useState(initial || EMPTY_FORM);
@@ -65,7 +74,7 @@ const PatientModal = ({ mode, initial, clients, onClose, onSave, saving }) => {
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
           <h2 className="text-lg font-bold text-slate-900">
-            {mode === 'add' ? 'Add New Patient' : 'Edit Patient'}
+            {mode === 'add' ? 'Add New Care Profile' : 'Edit Care Profile'}
           </h2>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500">
             <X className="w-5 h-5" />
@@ -99,7 +108,7 @@ const PatientModal = ({ mode, initial, clients, onClose, onSave, saving }) => {
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <label className="block text-sm font-medium text-slate-700 mb-1">
-                Patient Full Name <span className="text-red-500">*</span>
+                Full Name <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
@@ -130,6 +139,20 @@ const PatientModal = ({ mode, initial, clients, onClose, onSave, saving }) => {
             </div>
 
             <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Gender</label>
+              <select
+                value={form.gender || ''}
+                onChange={(e) => set('gender', e.target.value)}
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white"
+              >
+                <option value="">— Select —</option>
+                {GENDER_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="col-span-2">
               <label className="block text-sm font-medium text-slate-700 mb-1">Relationship to Client</label>
               <input
                 type="text"
@@ -195,7 +218,7 @@ const PatientModal = ({ mode, initial, clients, onClose, onSave, saving }) => {
               className="px-4 py-2 rounded-lg bg-teal-600 text-white text-sm font-medium hover:bg-teal-700 disabled:opacity-60 flex items-center gap-2"
             >
               {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-              {mode === 'add' ? 'Add Patient' : 'Save Changes'}
+              {mode === 'add' ? 'Add Care Profile' : 'Save Changes'}
             </button>
           </div>
         </form>
@@ -214,13 +237,13 @@ const DeleteModal = ({ patient, onClose, onConfirm, deleting }) => (
           <Trash2 className="w-5 h-5 text-red-600" />
         </div>
         <div>
-          <h2 className="text-base font-bold text-slate-900">Delete Patient</h2>
+          <h2 className="text-base font-bold text-slate-900">Delete Care Profile</h2>
           <p className="text-sm text-slate-500">This action cannot be undone.</p>
         </div>
       </div>
       <p className="text-sm text-slate-700 mb-6">
         Are you sure you want to delete <span className="font-semibold">{patient.full_name}</span>?
-        Patients with active bookings cannot be deleted.
+        Care Profiles with active bookings cannot be deleted.
       </p>
       <div className="flex justify-end gap-3">
         <button
@@ -261,6 +284,7 @@ const PatientRow = ({ patient, proxyMode, onEdit, onDelete, onView }) => {
             <p className="text-sm font-semibold text-slate-900 truncate">{patient.full_name}</p>
             <p className="text-xs text-slate-500">
               {patient.age ? `Age ${patient.age}` : 'Age —'}
+              {patient.gender ? ` · ${genderLabel(patient.gender)}` : ''}
               {patient.relationship_to_client ? ` · ${patient.relationship_to_client}` : ''}
             </p>
           </div>
@@ -301,6 +325,7 @@ const PatientRow = ({ patient, proxyMode, onEdit, onDelete, onView }) => {
 
       {expanded && (
         <div className="px-4 pb-4 pt-1 bg-slate-50 border-t border-slate-100 grid grid-cols-2 gap-4">
+          <Field label="Gender" value={genderLabel(patient.gender)} />
           <Field label="Medical Condition" value={patient.medical_condition} />
           <Field label="Residential Address" value={patient.residential_address} />
           <Field label="Emergency Contact" value={patient.emergency_contact_name} />
@@ -337,7 +362,7 @@ const ClientGroup = ({ clientName, clientMobile, patients, proxyMode, onEdit, on
           </span>
         )}
         <span className="ml-1 text-xs text-slate-400 bg-slate-100 rounded-full px-2 py-0.5">
-          {patients.length} patient{patients.length !== 1 ? 's' : ''}
+          {patients.length} care profile{patients.length !== 1 ? 's' : ''}
         </span>
       </button>
 
@@ -382,7 +407,7 @@ const Pagination = ({ page, totalPages, total, limit, onPage }) => {
     <div className="flex items-center justify-between mt-8 pt-4 border-t border-slate-200">
       <p className="text-sm text-slate-500">
         Showing <strong className="text-slate-700">{start}–{end}</strong> of{' '}
-        <strong className="text-slate-700">{total}</strong> patients
+        <strong className="text-slate-700">{total}</strong> care profiles
       </p>
       <div className="flex items-center gap-1">
         <button
@@ -464,7 +489,7 @@ export default function PatientsPage() {
       setPatients(res.data || []);
       setPagination(res.pagination || { total: 0, page: pg, limit: LIMIT });
     } catch (err) {
-      setError(err.message || 'Failed to load patients');
+      setError(err.message || 'Failed to load care profiles');
     } finally {
       setLoading(false);
     }
@@ -503,11 +528,11 @@ export default function PatientsPage() {
     setSaving(true);
     try {
       await apiClient.createPatient({ ...form, age: Number(form.age) });
-      showToast('Patient added successfully');
+      showToast('Care Profile added successfully');
       setAddModal(false);
       loadPatients(page, search);
     } catch (err) {
-      showToast(err.message || 'Failed to add patient', 'error');
+      showToast(err.message || 'Failed to add care profile', 'error');
     } finally {
       setSaving(false);
     }
@@ -517,11 +542,11 @@ export default function PatientsPage() {
     setSaving(true);
     try {
       await apiClient.updatePatient(editTarget.patient_id, { ...form, age: Number(form.age) });
-      showToast('Patient updated successfully');
+      showToast('Care Profile updated successfully');
       setEditTarget(null);
       loadPatients(page, search);
     } catch (err) {
-      showToast(err.message || 'Failed to update patient', 'error');
+      showToast(err.message || 'Failed to update care profile', 'error');
     } finally {
       setSaving(false);
     }
@@ -531,7 +556,7 @@ export default function PatientsPage() {
     setDeleting(true);
     try {
       await apiClient.deletePatient(deleteTarget.patient_id);
-      showToast('Patient deleted');
+      showToast('Care Profile deleted');
       setDeleteTarget(null);
       // If we deleted the last item on a non-first page, go back one
       const newTotal = pagination.total - 1;
@@ -540,7 +565,7 @@ export default function PatientsPage() {
       setPage(targetPage);
       loadPatients(targetPage, search);
     } catch (err) {
-      showToast(err.message || 'Failed to delete patient', 'error');
+      showToast(err.message || 'Failed to delete care profile', 'error');
     } finally {
       setDeleting(false);
     }
@@ -548,7 +573,7 @@ export default function PatientsPage() {
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <AdminLayout title="Patients" subtitle="All registered patients, grouped by client">
+    <AdminLayout title="Care Profiles" subtitle="All registered care profiles, grouped by client">
       {/* Toast */}
       {toast && (
         <div
@@ -568,7 +593,7 @@ export default function PatientsPage() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
               type="text"
-              placeholder="Search by patient name, client, condition, or address…"
+              placeholder="Search by care profile name, client, condition, or address…"
               value={searchInput}
               onChange={(e) => handleSearchChange(e.target.value)}
               className="w-full pl-9 pr-4 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white"
@@ -595,7 +620,7 @@ export default function PatientsPage() {
                     className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-teal-600 text-white text-sm font-medium hover:bg-teal-700 shadow-sm"
                   >
                     <Plus className="w-4 h-4" />
-                    Add Patient
+                    Add Care Profile
                   </button>
                 )}
               </>
@@ -607,7 +632,7 @@ export default function PatientsPage() {
         <div className="flex items-center gap-4 mb-6 text-sm text-slate-500">
           <span className="flex items-center gap-1.5">
             <Users className="w-4 h-4 text-teal-600" />
-            <strong className="text-slate-800">{pagination.total}</strong> patient{pagination.total !== 1 ? 's' : ''} total
+            <strong className="text-slate-800">{pagination.total}</strong> care profile{pagination.total !== 1 ? 's' : ''} total
           </span>
           {proxyMode && (
             <span className="ml-auto flex items-center gap-1.5 text-violet-600 font-semibold">
@@ -636,7 +661,7 @@ export default function PatientsPage() {
           <div className="flex flex-col items-center justify-center py-24 text-center">
             <HeartPulse className="w-10 h-10 text-slate-300 mb-3" />
             <p className="text-slate-500 font-medium">
-              {search ? 'No patients match your search.' : 'No patients registered yet.'}
+              {search ? 'No care profiles match your search.' : 'No care profiles registered yet.'}
             </p>
           </div>
         ) : (
@@ -683,6 +708,7 @@ export default function PatientsPage() {
           initial={{
             full_name: editTarget.full_name || '',
             age: editTarget.age || '',
+            gender: editTarget.gender || '',
             relationship_to_client: editTarget.relationship_to_client || '',
             medical_condition: editTarget.medical_condition || '',
             residential_address: editTarget.residential_address || '',

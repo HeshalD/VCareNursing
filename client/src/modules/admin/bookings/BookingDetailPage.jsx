@@ -617,8 +617,8 @@ const BookingDetailPage = () => {
               <p className="text-sm font-semibold text-slate-900">{clientDetails.client_name || `Client #${bookingSummary.client_id || '-'}`}</p>
             </div>
             <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
-              <p className="text-xs text-slate-500">Patient</p>
-              <p className="text-sm font-semibold text-slate-900">{patientDetails.patient_name || `Patient #${bookingSummary.patient_id || '-'}`}</p>
+              <p className="text-xs text-slate-500">Care Profile</p>
+              <p className="text-sm font-semibold text-slate-900">{patientDetails.patient_name || `Care Profile #${bookingSummary.patient_id || '-'}`}</p>
             </div>
           </div>
         </div>
@@ -724,7 +724,7 @@ const BookingDetailPage = () => {
               <div>
                 <div className="mb-4 flex items-center gap-3">
                   <div className="rounded-full bg-violet-100 p-2 text-violet-600"><Activity className="h-4 w-4" /></div>
-                  <h3 className="text-base font-semibold text-slate-900">Patient details</h3>
+                  <h3 className="text-base font-semibold text-slate-900">Care profile details</h3>
                 </div>
                 <div className="grid gap-4 rounded-lg border border-slate-200 bg-slate-50 p-4 sm:grid-cols-2">
                   <DetailRow label="Name" value={patientDetails.patient_name} />

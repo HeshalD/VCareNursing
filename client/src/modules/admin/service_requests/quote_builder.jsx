@@ -317,7 +317,7 @@ const QuoteBuilder = () => {
                 <div>
                   <h3 className="font-medium text-slate-900 mb-3 flex items-center gap-2">
                     <User className="w-4 h-4" />
-                    Patient Information
+                    Care Profile Information
                   </h3>
                   <div className="space-y-2">
                     <div className="flex justify-between">

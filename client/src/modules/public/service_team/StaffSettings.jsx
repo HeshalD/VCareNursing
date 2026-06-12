@@ -41,7 +41,7 @@ const StaffSettings = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans flex text-slate-900">
+    <div className="h-screen bg-slate-50 font-sans flex text-slate-900 overflow-hidden">
       <StaffSidebar />
 
       <main className="flex-1 p-8 overflow-y-auto">

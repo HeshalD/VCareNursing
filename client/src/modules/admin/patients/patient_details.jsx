@@ -18,6 +18,14 @@ const fmt = (v) =>
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 0 });
 const fmtMoney = (v) => money.format(Number(v || 0));
 
+const GENDER_OPTIONS = [
+  { value: 'MALE', label: 'Male' },
+  { value: 'FEMALE', label: 'Female' },
+  { value: 'OTHER', label: 'Other' },
+];
+
+const genderLabel = (g) => GENDER_OPTIONS.find((o) => o.value === g)?.label || '—';
+
 const BOOKING_STATUS_STYLES = {
   ACTIVE:     'bg-emerald-100 text-emerald-700',
   PENDING:    'bg-amber-100 text-amber-700',
@@ -105,7 +113,7 @@ const EditModal = ({ initial, onClose, onSave, saving }) => {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
-          <h2 className="text-lg font-bold text-slate-900">Edit Patient</h2>
+          <h2 className="text-lg font-bold text-slate-900">Edit Care Profile</h2>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500">
             <X className="w-5 h-5" />
           </button>
@@ -115,7 +123,7 @@ const EditModal = ({ initial, onClose, onSave, saving }) => {
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <label className="block text-sm font-medium text-slate-700 mb-1">
-                Patient Full Name <span className="text-red-500">*</span>
+                Full Name <span className="text-red-500">*</span>
               </label>
               <input
                 type="text" value={form.full_name}
@@ -138,6 +146,20 @@ const EditModal = ({ initial, onClose, onSave, saving }) => {
             </div>
 
             <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Gender</label>
+              <select
+                value={form.gender || ''}
+                onChange={(e) => set('gender', e.target.value)}
+                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white"
+              >
+                <option value="">— Select —</option>
+                {GENDER_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="col-span-2">
               <label className="block text-sm font-medium text-slate-700 mb-1">Relationship to Client</label>
               <input
                 type="text" placeholder="e.g. Friend, Parent" value={form.relationship_to_client}
@@ -233,7 +255,7 @@ export default function PatientDetailPage() {
       const res = await apiClient.getPatientDetail(patientId);
       setData(res.data);
     } catch (err) {
-      setError(err.message || 'Failed to load patient details');
+      setError(err.message || 'Failed to load care profile details');
     } finally {
       setLoading(false);
     }
@@ -245,11 +267,11 @@ export default function PatientDetailPage() {
     setSaving(true);
     try {
       await apiClient.updatePatient(patientId, { ...form, age: Number(form.age) });
-      showToast('Patient updated successfully');
+      showToast('Care Profile updated successfully');
       setEditOpen(false);
       await load();
     } catch (err) {
-      showToast(err.message || 'Failed to update patient', 'error');
+      showToast(err.message || 'Failed to update care profile', 'error');
     } finally {
       setSaving(false);
     }
@@ -257,7 +279,7 @@ export default function PatientDetailPage() {
 
   if (loading) {
     return (
-      <AdminLayout title="Patient Profile">
+      <AdminLayout title="Care Profile">
         <div className="flex min-h-[50vh] items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-teal-600" />
         </div>
@@ -267,14 +289,14 @@ export default function PatientDetailPage() {
 
   if (error || !data) {
     return (
-      <AdminLayout title="Patient Profile">
+      <AdminLayout title="Care Profile">
         <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-700">
-          <p className="font-semibold">{error || 'Patient not found'}</p>
+          <p className="font-semibold">{error || 'Care Profile not found'}</p>
           <button
             onClick={() => navigate('/admin/patients')}
             className="mt-4 inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
           >
-            <ArrowLeft className="h-4 w-4" /> Back to Patients
+            <ArrowLeft className="h-4 w-4" /> Back to Care Profiles
           </button>
         </div>
       </AdminLayout>
@@ -288,11 +310,11 @@ export default function PatientDetailPage() {
   const renderOverview = () => (
     <div className="grid gap-4 md:grid-cols-2">
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-        <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-4">Patient Details</p>
+        <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-4">Care Profile Details</p>
         <div className="grid grid-cols-2 gap-4">
           <InfoRow label="Full Name" value={patient.full_name} />
           <InfoRow label="Age" value={patient.age ? `${patient.age} years` : null} />
-          <InfoRow label="Gender" value={patient.gender} />
+          <InfoRow label="Gender" value={genderLabel(patient.gender)} />
           <InfoRow label="Relationship to Client" value={patient.relationship_to_client} />
           <div className="col-span-2">
             <InfoRow label="Medical Condition" value={patient.medical_condition} />
@@ -333,7 +355,7 @@ export default function PatientDetailPage() {
   const renderBookings = () => (
     <div className="space-y-3">
       {bookings.length === 0 ? (
-        <EmptyState icon={CalendarDays} message="No bookings found for this patient." />
+        <EmptyState icon={CalendarDays} message="No bookings found for this care profile." />
       ) : (
         bookings.map((b) => {
           const end = b.actual_end_time || b.scheduled_end_time;
@@ -391,7 +413,7 @@ export default function PatientDetailPage() {
   const renderStaffHistory = () => (
     <div className="space-y-3">
       {staff_history.length === 0 ? (
-        <EmptyState icon={Users} message="No staff have worked with this patient yet." />
+        <EmptyState icon={Users} message="No staff have worked with this care profile yet." />
       ) : (
         staff_history.map((s) => (
           <div key={s.staff_profile_id} className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
@@ -441,14 +463,14 @@ export default function PatientDetailPage() {
 
   return (
     <AdminLayout
-      title="Patient Profile"
-      subtitle="Full patient history, bookings and staff care record"
+      title="Care Profile"
+      subtitle="Full care profile history, bookings and staff care record"
       actions={(
         <button
           onClick={() => navigate('/admin/patients')}
           className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
         >
-          <ArrowLeft className="h-4 w-4" /> Back to Patients
+          <ArrowLeft className="h-4 w-4" /> Back to Care Profiles
         </button>
       )}
     >
@@ -510,7 +532,7 @@ export default function PatientDetailPage() {
                   onClick={() => setEditOpen(true)}
                   className="inline-flex items-center gap-2 rounded-xl bg-white/15 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/25 border border-white/20 self-start"
                 >
-                  <Pencil className="h-4 w-4" /> Edit Patient
+                  <Pencil className="h-4 w-4" /> Edit Care Profile
                 </button>
               )}
             </div>
@@ -530,7 +552,7 @@ export default function PatientDetailPage() {
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 flex items-center gap-3">
             <Activity className="h-5 w-5 text-emerald-600 flex-shrink-0" />
             <p className="text-sm font-semibold text-emerald-800">
-              {active_bookings.length} active booking{active_bookings.length > 1 ? 's' : ''} currently running for this patient.
+              {active_bookings.length} active booking{active_bookings.length > 1 ? 's' : ''} currently running for this care profile.
               {active_bookings.some((b) => b.assigned_staff_name) && (
                 <span className="font-normal ml-1">
                   Current staff: <strong>{active_bookings.map((b) => b.assigned_staff_name).filter(Boolean).join(', ')}</strong>
@@ -561,6 +583,7 @@ export default function PatientDetailPage() {
           initial={{
             full_name: patient.full_name || '',
             age: patient.age || '',
+            gender: patient.gender || '',
             relationship_to_client: patient.relationship_to_client || '',
             medical_condition: patient.medical_condition || '',
             residential_address: patient.residential_address || '',

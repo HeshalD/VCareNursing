@@ -317,7 +317,7 @@ const Statements = () => {
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Client</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Patient</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Care Profile</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Service</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Staff</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Start Date</th>
@@ -437,7 +437,7 @@ const Statements = () => {
                 </div>
                 
                 <div>
-                  <h4 className="text-sm font-medium text-slate-500 mb-2">Patient Information</h4>
+                  <h4 className="text-sm font-medium text-slate-500 mb-2">Care Profile Information</h4>
                   <div className="space-y-2">
                     <div>
                       <span className="text-sm font-medium text-slate-900">Name:</span>

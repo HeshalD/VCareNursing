@@ -162,7 +162,7 @@ const WorkerBookings = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans flex text-slate-900">
+    <div className="h-screen bg-slate-50 font-sans flex text-slate-900 overflow-hidden">
       <StaffSidebar />
       <main className="flex-1 overflow-y-auto">
         <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '1.5rem' }}>
@@ -281,7 +281,7 @@ const WorkerBookings = () => {
                       <div style={{ flex: 1 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
                           <span style={{ fontWeight: 600, color: '#1f2937' }}>
-                            {booking.patient_name || booking.patient_full_name || 'Unknown Patient'}
+                            {booking.patient_name || booking.patient_full_name || 'Unknown Care Profile'}
                           </span>
                           <StatusBadge status={booking.status} />
                         </div>
@@ -310,7 +310,7 @@ const WorkerBookings = () => {
                         {/* Patient Info */}
                         <div style={{ marginBottom: '1.5rem' }}>
                           <h4 style={{ fontSize: '0.875rem', fontWeight: 600, color: '#374151', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <User size={16} /> Patient Information
+                            <User size={16} /> Care Profile Information
                           </h4>
                           <div style={{
                             background: '#f9fafb',

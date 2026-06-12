@@ -169,7 +169,7 @@ const BookingStaffRosterPage = () => {
 
                 {/* Patient */}
                 <section>
-                  <SectionHeading icon={Stethoscope} label="Patient" />
+                  <SectionHeading icon={Stethoscope} label="Care Profile" />
                   <dl className="mt-3 space-y-2">
                     <Field label="Name" value={request?.patient_name || booking?.patient_name} />
                     <Field label="Age" value={request?.patient_age ?? booking?.patient_age} />

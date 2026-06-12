@@ -246,7 +246,7 @@ const Bookings = () => {
                 <tr>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Booking ID</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Client</th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Patient</th>
+                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Care Profile</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Service</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Start Date</th>
                   <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
@@ -419,7 +419,7 @@ const Bookings = () => {
                         
                         {/* Patient Information */}
                         <div>
-                          <h4 className="font-medium text-slate-900 mb-3">Patient</h4>
+                          <h4 className="font-medium text-slate-900 mb-3">Care Profile</h4>
                           <div className="space-y-2">
                             <div>
                               <p className="text-sm text-slate-500">Name</p>
@@ -449,7 +449,7 @@ const Bookings = () => {
                           <p className="font-medium text-slate-900">{selectedBooking.client_id}</p>
                         </div>
                         <div>
-                          <p className="text-sm text-slate-500 mb-1">Patient ID</p>
+                          <p className="text-sm text-slate-500 mb-1">Care Profile ID</p>
                           <p className="font-medium text-slate-900">{selectedBooking.patient_id}</p>
                         </div>
                       </div>

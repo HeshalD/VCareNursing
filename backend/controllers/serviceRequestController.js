@@ -18,6 +18,7 @@ exports.submitServiceRequest = async (req, res) => {
             payer_mobile,
             patient_name,
             patient_age,
+            patient_gender, // Care profile's own gender (MALE/FEMALE/OTHER)
             relationship, // This maps to relationship_to_client
             patient_condition,
             service_type,
@@ -63,17 +64,18 @@ exports.submitServiceRequest = async (req, res) => {
                 service_model,
                 location_address, 
                 gps_coordinates, 
-                start_date, 
+                start_date,
                 remarks,
                 preferred_gender,
-                preferred_staff_id
+                preferred_staff_id,
+                gender
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9::service_model_enum, $10, 
-                CASE WHEN $11::double precision IS NOT NULL AND $12::double precision IS NOT NULL 
+                $1, $2, $3, $4, $5, $6, $7, $8, $9::service_model_enum, $10,
+                CASE WHEN $11::double precision IS NOT NULL AND $12::double precision IS NOT NULL
                      THEN point($12::double precision, $11::double precision)
-                     ELSE NULL 
-                END, 
-                $13, $14, $15::gender_preference_enum, $16
+                     ELSE NULL
+                END,
+                $13, $14, $15::gender_preference_enum, $16, $17::gender_enum
             )
             RETURNING *;
         `;
@@ -94,7 +96,8 @@ exports.submitServiceRequest = async (req, res) => {
             start_date,         // $13
             remarks,            // $14
             preferred_gender || 'ANY', // $15 (default to ANY if not provided)
-            preferred_staff_id || null  // $16 (optional preferred staff)
+            preferred_staff_id || null,  // $16 (optional preferred staff)
+            patient_gender || null  // $17 (care profile's own gender, optional)
         ];
 
         const result = await db.query(query, values);
@@ -203,6 +206,7 @@ exports.createServiceRequest = async (req, res) => {
         payer_mobile,
         patient_name,
         patient_age,
+        patient_gender, // Care profile's own gender (MALE/FEMALE/OTHER)
         relationship_to_client,
         patient_condition,
         service_type,
@@ -302,16 +306,17 @@ exports.createServiceRequest = async (req, res) => {
                 preferred_gender,
                 preferred_staff_id,
                 status,
+                gender,
                 created_at
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9::service_model_enum, $10,
-                CASE WHEN $11::double precision IS NOT NULL AND $12::double precision IS NOT NULL 
+                CASE WHEN $11::double precision IS NOT NULL AND $12::double precision IS NOT NULL
                      THEN point($12::double precision, $11::double precision)
-                     ELSE NULL 
+                     ELSE NULL
                 END,
-                $13, $14, $15::gender_preference_enum, $16, $17, NOW()
+                $13, $14, $15::gender_preference_enum, $16, $17, $18::gender_enum, NOW()
             )
-            RETURNING 
+            RETURNING
                 request_id,
                 client_id,
                 payer_name,
@@ -329,6 +334,7 @@ exports.createServiceRequest = async (req, res) => {
                 preferred_gender,
                 preferred_staff_id,
                 status,
+                gender,
                 created_at
         `;
 
@@ -349,7 +355,8 @@ exports.createServiceRequest = async (req, res) => {
             remarks || null,
             finalPreferredGender.toUpperCase(),
             preferred_staff_id || null,
-            finalStatus
+            finalStatus,
+            patient_gender || null
         ];
 
         const result = await db.query(insertQuery, insertValues);

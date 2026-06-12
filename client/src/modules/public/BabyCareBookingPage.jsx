@@ -35,6 +35,7 @@ const BabyCareBookingPage = () => {
     // Baby Information
     patient_name: '',
     patient_age: '',
+    patient_gender: '',
     relationship: 'PARENT',
     patient_condition: '',
 
@@ -145,6 +146,7 @@ const BabyCareBookingPage = () => {
         ...prev,
         patient_name: '',
         patient_age: '',
+        patient_gender: '',
         relationship: 'PARENT',
         patient_condition: ''
       }));
@@ -157,6 +159,7 @@ const BabyCareBookingPage = () => {
         ...prev,
         patient_name: selectedPatient.full_name,
         patient_age: selectedPatient.age.toString(),
+        patient_gender: selectedPatient.gender || '',
         relationship: selectedPatient.relationship_to_client || 'OTHER',
         patient_condition: selectedPatient.medical_condition || ''
       }));
@@ -506,6 +509,12 @@ const BabyCareBookingPage = () => {
                                       <Heart className="w-4 h-4" />
                                       {patient.relationship_to_client || 'Other'}
                                     </span>
+                                    {patient.gender && (
+                                      <span className="flex items-center gap-1">
+                                        <UserCheck className="w-4 h-4" />
+                                        {patient.gender.charAt(0) + patient.gender.slice(1).toLowerCase()}
+                                      </span>
+                                    )}
                                   </div>
                                   {patient.medical_condition && (
                                     <p className="text-xs text-slate-500 mt-2">
@@ -567,6 +576,20 @@ const BabyCareBookingPage = () => {
                           placeholder="e.g. 6 months, 2 years"
                           required
                         />
+                      </div>
+                      <div>
+                        <label className="text-sm font-semibold text-slate-600 block mb-1">Gender</label>
+                        <select
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-slate-900"
+                          value={formData.patient_gender}
+                          onChange={e => setFormData({ ...formData, patient_gender: e.target.value })}
+                          onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
+                        >
+                          <option value="">— Select —</option>
+                          <option value="MALE">Male</option>
+                          <option value="FEMALE">Female</option>
+                          <option value="OTHER">Other</option>
+                        </select>
                       </div>
                       <div>
                         <label className="text-sm font-semibold text-slate-600 block mb-1">Relationship to Baby</label>

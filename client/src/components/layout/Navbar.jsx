@@ -56,24 +56,25 @@ const Navbar = () => {
     return user?.mobile_number || 'User';
   };
 
-  const isStaffUser = () => {
-    const staffRoles = ['{CARETAKER}', '{NURSE}', '{NANNY}', '{ACCOUNTS}', '{COORDINATOR}', '{SALES}', '{STORE_MANAGER}'];
-    const userRole = user?.role;
-
-    if (Array.isArray(userRole)) {
-      return userRole.some(role => staffRoles.includes(role));
+  // Normalize role to a plain string array regardless of format:
+  // handles '{NURSE}', ['NURSE'], '{NURSE,COORDINATOR}', ['NURSE','COORDINATOR'], 'NURSE'
+  const normalizeRoles = (role) => {
+    if (Array.isArray(role)) {
+      return role.map(r => r.replace(/[{}]/g, '').trim()).filter(Boolean);
     }
-    return staffRoles.includes(userRole);
+    if (typeof role === 'string') {
+      return role.replace(/[{}]/g, '').split(',').map(r => r.trim()).filter(Boolean);
+    }
+    return [];
+  };
+
+  const isStaffUser = () => {
+    const staffRoles = ['CARETAKER', 'NURSE', 'NANNY', 'ACCOUNTS', 'COORDINATOR', 'SALES', 'STORE_MANAGER'];
+    return normalizeRoles(user?.role).some(r => staffRoles.includes(r));
   };
 
   const isClientUser = () => {
-    const clientRoles = ['{CLIENT}'];
-    const userRole = user?.role;
-
-    if (Array.isArray(userRole)) {
-      return userRole.some(role => clientRoles.includes(role));
-    }
-    return clientRoles.includes(userRole);
+    return normalizeRoles(user?.role).includes('CLIENT');
   };
 
   return (
@@ -95,101 +96,105 @@ const Navbar = () => {
               <div className="w-20 h-8 bg-slate-200 rounded-full animate-pulse"></div>
             ) : isAuthenticated ? (
               <div className="flex items-center gap-3">
+                {/* Staff dashboard button — visible for any staff role */}
                 {isStaffUser() && (
                   <Link
                     to="/services/provider-dashboard"
                     className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full text-sm font-medium transition-all"
                   >
                     <Briefcase className="w-4 h-4" />
-                    
+                    My Dashboard
                   </Link>
                 )}
-                <div className="relative" ref={dropdownRef}>
-                  <button
-                    onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-50 hover:bg-blue-100 rounded-full transition-all"
-                  >
-                    <User className="w-4 h-4 text-blue-600" />
-                    <span className="text-sm font-medium text-blue-900">{getUserDisplayName()}</span>
-                    <ChevronDown className={`w-4 h-4 text-blue-600 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
-                  </button>
 
-                  {isDropdownOpen && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -10 }}
-                      className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-2 z-50"
+                {/* Profile dropdown — visible for clients (alone or alongside staff role) */}
+                {isClientUser() ? (
+                  <div className="relative" ref={dropdownRef}>
+                    <button
+                      onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                      className="flex items-center gap-2 px-4 py-2 bg-blue-50 hover:bg-blue-100 rounded-full transition-all"
                     >
-                      <Link
-                        to="/client/profile"
-                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-                        onClick={() => setIsDropdownOpen(false)}
+                      <User className="w-4 h-4 text-blue-600" />
+                      <span className="text-sm font-medium text-blue-900">{getUserDisplayName()}</span>
+                      <ChevronDown className={`w-4 h-4 text-blue-600 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
+                    </button>
+
+                    {isDropdownOpen && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-2 z-50"
                       >
-                        <User className="w-4 h-4 text-slate-400" />
-                        My Profile
-                      </Link>
-                      <Link
-                        to="/client/bookings"
-                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-                        onClick={() => setIsDropdownOpen(false)}
-                      >
-                        <Calendar className="w-4 h-4 text-slate-400" />
-                        My Bookings
-                      </Link>
-                      <Link
-                        to="/client/service-requests"
-                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-                        onClick={() => setIsDropdownOpen(false)}
-                      >
-                        <Briefcase className="w-4 h-4 text-slate-400" />
-                        Service Requests
-                      </Link>
-                      <Link
-                        to="/client/patients"
-                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-                        onClick={() => setIsDropdownOpen(false)}
-                      >
-                        <Users className="w-4 h-4 text-slate-400" />
-                        Patients
-                      </Link>
-                      <Link
-                        to="/client/financial"
-                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-                        onClick={() => setIsDropdownOpen(false)}
-                      >
-                        <Wallet className="w-4 h-4 text-slate-400" />
-                        Financial
-                      </Link>
-                      <Link
-                        to="/client/reviews"
-                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-                        onClick={() => setIsDropdownOpen(false)}
-                      >
-                        <Star className="w-4 h-4 text-slate-400" />
-                        Reviews
-                      </Link>
-                      {isStaffUser() && (
                         <Link
-                          to="/services/provider-dashboard"
+                          to="/client/profile"
+                          className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                          onClick={() => setIsDropdownOpen(false)}
+                        >
+                          <User className="w-4 h-4 text-slate-400" />
+                          My Profile
+                        </Link>
+                        <Link
+                          to="/client/bookings"
+                          className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                          onClick={() => setIsDropdownOpen(false)}
+                        >
+                          <Calendar className="w-4 h-4 text-slate-400" />
+                          My Bookings
+                        </Link>
+                        <Link
+                          to="/client/service-requests"
                           className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
                           onClick={() => setIsDropdownOpen(false)}
                         >
                           <Briefcase className="w-4 h-4 text-slate-400" />
-                          Staff Dashboard
+                          Service Requests
                         </Link>
-                      )}
-                      <div className="border-t border-slate-100 my-2"></div>
-                      <button
-                        onClick={handleLogout}
-                        className="flex items-center gap-3 px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition-colors w-full text-left"
-                      >
-                        <LogOut className="w-4 h-4" />
-                        Logout
-                      </button>
-                    </motion.div>
-                  )}
-                </div>
+                        <Link
+                          to="/client/patients"
+                          className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                          onClick={() => setIsDropdownOpen(false)}
+                        >
+                          <Users className="w-4 h-4 text-slate-400" />
+                          Care Profiles
+                        </Link>
+                        <Link
+                          to="/client/financial"
+                          className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                          onClick={() => setIsDropdownOpen(false)}
+                        >
+                          <Wallet className="w-4 h-4 text-slate-400" />
+                          Financial
+                        </Link>
+                        <Link
+                          to="/client/reviews"
+                          className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                          onClick={() => setIsDropdownOpen(false)}
+                        >
+                          <Star className="w-4 h-4 text-slate-400" />
+                          Reviews
+                        </Link>
+                        <div className="border-t border-slate-100 my-2"></div>
+                        <button
+                          onClick={handleLogout}
+                          className="flex items-center gap-3 px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition-colors w-full text-left"
+                        >
+                          <LogOut className="w-4 h-4" />
+                          Logout
+                        </button>
+                      </motion.div>
+                    )}
+                  </div>
+                ) : (
+                  /* Staff-only: no dropdown, just a logout icon button */
+                  <button
+                    onClick={handleLogout}
+                    className="flex items-center gap-2 px-3 py-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-full transition-all text-sm font-medium"
+                    title="Logout"
+                  >
+                    <LogOut className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             ) : (
               <Link
@@ -226,100 +231,108 @@ const Navbar = () => {
               <div className="w-full h-12 bg-slate-200 rounded-xl animate-pulse mt-4"></div>
             ) : isAuthenticated ? (
               <>
-                <Link
-                  to="/client/bookings"
-                  className="flex items-center justify-center gap-2 w-full px-5 py-3 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-xl font-medium transition-all"
-                >
-                  <Calendar className="w-4 h-4" />
-                  My Bookings
-                </Link>
+                {/* Staff dashboard button — any staff role */}
                 {isStaffUser() && (
                   <Link
                     to="/services/provider-dashboard"
-                    className="flex items-center justify-center gap-2 w-full px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition-all mt-4"
+                    className="flex items-center justify-center gap-2 w-full px-5 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition-all"
+                    onClick={() => setIsOpen(false)}
                   >
                     <Briefcase className="w-4 h-4" />
-                    Staff Dashboard
+                    My Dashboard
                   </Link>
                 )}
-                <div className="relative" ref={dropdownRef}>
-                  <button
-                    onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                    className="flex items-center gap-2 px-3 py-3 bg-blue-50 hover:bg-blue-100 rounded-xl mt-4 transition-all w-full"
-                  >
-                    <User className="w-4 h-4 text-blue-600" />
-                    <span className="text-sm font-medium text-blue-900">{getUserDisplayName()}</span>
-                    <ChevronDown className={`w-4 h-4 text-blue-600 transition-transform ml-auto ${isDropdownOpen ? 'rotate-180' : ''}`} />
-                  </button>
 
-                  {isDropdownOpen && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -10 }}
-                      className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-2 z-50"
+                {/* Client profile dropdown — clients only */}
+                {isClientUser() ? (
+                  <>
+                    <Link
+                      to="/client/bookings"
+                      className="flex items-center justify-center gap-2 w-full px-5 py-3 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-xl font-medium transition-all"
+                      onClick={() => setIsOpen(false)}
                     >
-                      <Link
-                        to="/client/profile"
-                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-                        onClick={() => { setIsDropdownOpen(false); setIsOpen(false); }}
-                      >
-                        <User className="w-4 h-4 text-slate-400" />
-                        My Profile
-                      </Link>
-                      <Link
-                        to="/client/bookings"
-                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-                        onClick={() => { setIsDropdownOpen(false); setIsOpen(false); }}
-                      >
-                        <Calendar className="w-4 h-4 text-slate-400" />
-                        My Bookings
-                      </Link>
-                      <Link
-                        to="/client/patients"
-                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-                        onClick={() => { setIsDropdownOpen(false); setIsOpen(false); }}
-                      >
-                        <Users className="w-4 h-4 text-slate-400" />
-                        Patients
-                      </Link>
-                      <Link
-                        to="/client/financial"
-                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-                        onClick={() => { setIsDropdownOpen(false); setIsOpen(false); }}
-                      >
-                        <Wallet className="w-4 h-4 text-slate-400" />
-                        Financial
-                      </Link>
-                      <Link
-                        to="/client/reviews"
-                        className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-                        onClick={() => { setIsDropdownOpen(false); setIsOpen(false); }}
-                      >
-                        <Star className="w-4 h-4 text-slate-400" />
-                        Reviews
-                      </Link>
-                      {isStaffUser() && (
-                        <Link
-                          to="/services/provider-dashboard"
-                          className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-                          onClick={() => { setIsDropdownOpen(false); setIsOpen(false); }}
-                        >
-                          <Briefcase className="w-4 h-4 text-slate-400" />
-                          Staff Dashboard
-                        </Link>
-                      )}
-                      <div className="border-t border-slate-100 my-2"></div>
+                      <Calendar className="w-4 h-4" />
+                      My Bookings
+                    </Link>
+                    <div className="relative" ref={dropdownRef}>
                       <button
-                        onClick={() => { handleLogout(); setIsOpen(false); }}
-                        className="flex items-center gap-3 px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition-colors w-full text-left"
+                        onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                        className="flex items-center gap-2 px-3 py-3 bg-blue-50 hover:bg-blue-100 rounded-xl mt-2 transition-all w-full"
                       >
-                        <LogOut className="w-4 h-4" />
-                        Logout
+                        <User className="w-4 h-4 text-blue-600" />
+                        <span className="text-sm font-medium text-blue-900">{getUserDisplayName()}</span>
+                        <ChevronDown className={`w-4 h-4 text-blue-600 transition-transform ml-auto ${isDropdownOpen ? 'rotate-180' : ''}`} />
                       </button>
-                    </motion.div>
-                  )}
-                </div>
+
+                      {isDropdownOpen && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -10 }}
+                          className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-2 z-50"
+                        >
+                          <Link
+                            to="/client/profile"
+                            className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                            onClick={() => { setIsDropdownOpen(false); setIsOpen(false); }}
+                          >
+                            <User className="w-4 h-4 text-slate-400" />
+                            My Profile
+                          </Link>
+                          <Link
+                            to="/client/bookings"
+                            className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                            onClick={() => { setIsDropdownOpen(false); setIsOpen(false); }}
+                          >
+                            <Calendar className="w-4 h-4 text-slate-400" />
+                            My Bookings
+                          </Link>
+                          <Link
+                            to="/client/patients"
+                            className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                            onClick={() => { setIsDropdownOpen(false); setIsOpen(false); }}
+                          >
+                            <Users className="w-4 h-4 text-slate-400" />
+                            Care Profiles
+                          </Link>
+                          <Link
+                            to="/client/financial"
+                            className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                            onClick={() => { setIsDropdownOpen(false); setIsOpen(false); }}
+                          >
+                            <Wallet className="w-4 h-4 text-slate-400" />
+                            Financial
+                          </Link>
+                          <Link
+                            to="/client/reviews"
+                            className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                            onClick={() => { setIsDropdownOpen(false); setIsOpen(false); }}
+                          >
+                            <Star className="w-4 h-4 text-slate-400" />
+                            Reviews
+                          </Link>
+                          <div className="border-t border-slate-100 my-2"></div>
+                          <button
+                            onClick={() => { handleLogout(); setIsOpen(false); }}
+                            className="flex items-center gap-3 px-4 py-3 text-sm text-red-600 hover:bg-red-50 transition-colors w-full text-left"
+                          >
+                            <LogOut className="w-4 h-4" />
+                            Logout
+                          </button>
+                        </motion.div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  /* Staff-only: logout button below the dashboard link */
+                  <button
+                    onClick={() => { handleLogout(); setIsOpen(false); }}
+                    className="flex items-center justify-center gap-2 w-full px-5 py-3 text-red-600 hover:bg-red-50 rounded-xl font-medium transition-all"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    Logout
+                  </button>
+                )}
               </>
             ) : (
               <Link to="/login" className="block w-full text-center mt-4 px-5 py-3 bg-blue-600 text-white rounded-xl font-medium">

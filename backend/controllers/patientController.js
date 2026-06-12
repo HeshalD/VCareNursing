@@ -20,7 +20,8 @@ exports.createPatientProfile = async (req, res) => {
         medical_condition,
         residential_address,    // "Mount Lavinia" (Crucial for Sponsored Booking)
         emergency_contact_name, // "Sunil's Wife"
-        emergency_contact_number
+        emergency_contact_number,
+        gender                  // 'MALE' | 'FEMALE' | 'OTHER'
     } = req.body;
 
     try {
@@ -33,20 +34,22 @@ exports.createPatientProfile = async (req, res) => {
                 relationship_to_client, 
                 medical_condition, 
                 residential_address, 
-                emergency_contact_name, 
+                emergency_contact_name,
                 emergency_contact_number,
-                is_registration_fee_paid 
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false)
+                gender,
+                is_registration_fee_paid
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, false)
             RETURNING *;
         `;
-        
-        // Note: is_registration_fee_paid defaults to FALSE for manually added patients 
+
+        // Note: is_registration_fee_paid defaults to FALSE for manually added patients
         // until a quote is generated and paid.
 
         const values = [
-            client_id, full_name, age, relationship_to_client, 
-            medical_condition, residential_address, 
-            emergency_contact_name, emergency_contact_number
+            client_id, full_name, age, relationship_to_client,
+            medical_condition, residential_address,
+            emergency_contact_name, emergency_contact_number,
+            gender || null
         ];
 
         const result = await db.query(query, values);
@@ -147,7 +150,8 @@ exports.updatePatientProfile = async (req, res) => {
         medical_condition,
         residential_address,
         emergency_contact_name,
-        emergency_contact_number
+        emergency_contact_number,
+        gender
     } = req.body;
 
     try {
@@ -160,8 +164,9 @@ exports.updatePatientProfile = async (req, res) => {
                 medical_condition = $4,
                 residential_address = $5,
                 emergency_contact_name = $6,
-                emergency_contact_number = $7
-            WHERE patient_id = $8
+                emergency_contact_number = $7,
+                gender = $8
+            WHERE patient_id = $9
             RETURNING *;
         `;
 
@@ -169,6 +174,7 @@ exports.updatePatientProfile = async (req, res) => {
             full_name, age, relationship_to_client,
             medical_condition, residential_address,
             emergency_contact_name, emergency_contact_number,
+            gender || null,
             patient_id
         ];
 

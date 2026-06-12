@@ -89,7 +89,7 @@ const LedgerRow = ({ entry }) => {
               {entry.client_name || 'Daily Salary'}
             </p>
             {entry.patient_name && (
-              <p className="text-xs text-slate-400">Patient: {entry.patient_name}</p>
+              <p className="text-xs text-slate-400">Care Profile: {entry.patient_name}</p>
             )}
             {entry.service_type && (
               <p className="text-xs text-slate-400">{entry.service_type}</p>

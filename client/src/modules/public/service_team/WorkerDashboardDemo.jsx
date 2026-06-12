@@ -4,13 +4,9 @@ import {
   Calendar,
   MapPin,
   DollarSign,
-  Bell,
   CheckCircle,
   Clock,
   Star,
-  TrendingUp,
-  Home,
-  BadgeCheck,
   Briefcase,
   ArrowUpRight,
   FilePen,
@@ -20,43 +16,72 @@ import apiClient from '../../../api/api';
 import { useAuth } from '../../../context/AuthContext';
 import StaffSidebar from './StaffSidebar';
 
+const formatDate = (dateStr) => {
+  if (!dateStr) return null;
+  return new Date(dateStr).toLocaleDateString('en-LK', { day: 'numeric', month: 'short', year: 'numeric' });
+};
+
 const WorkerDashboardDemo = () => {
   const { user, loading: authLoading } = useAuth();
   const [staffData, setStaffData] = useState(null);
   const [walletData, setWalletData] = useState(null);
+  const [currentBooking, setCurrentBooking] = useState(null);
+  const [completedCount, setCompletedCount] = useState(null);
   const [dataLoading, setDataLoading] = useState(true);
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
-      // Wait for auth to finish
       if (authLoading) return;
 
       const userId = user?.user_id || user?.id;
       const staffId = user?.staff_id;
-      
+
       if (!userId) {
         setDataLoading(false);
         return;
       }
 
       try {
-        // Fetch staff data first
+        // Step 1: staff data (needed to get staff_profile_id for subsequent calls)
+        let staffProfile = null;
         try {
-          const staffResponse = staffId 
-            ? await apiClient.getStaffByID(staffId) 
+          const staffRes = staffId
+            ? await apiClient.getStaffByID(staffId)
             : await apiClient.getStaffByUserID(userId);
-          setStaffData(staffResponse.data);
-        } catch (staffErr) {
-          console.error('Dashboard - Staff fetch failed:', staffErr);
+          staffProfile = staffRes.data;
+          setStaffData(staffProfile);
+        } catch (e) {
+          console.error('Dashboard - Staff fetch failed:', e);
         }
 
-        // Fetch wallet data separately
-        try {
-          const walletResponse = await apiClient.getMyWallet();
-          setWalletData(walletResponse.data?.data || walletResponse.data);
-        } catch (walletErr) {
-          console.error('Dashboard - Wallet fetch failed:', walletErr);
+        // Step 2: parallel secondary fetches
+        const [walletRes, bookingRes, historyRes] = await Promise.allSettled([
+          apiClient.getMyWallet(),
+          staffProfile?.staff_profile_id
+            ? apiClient.getStaffCurrentBooking(staffProfile.staff_profile_id)
+            : Promise.resolve(null),
+          staffProfile?.staff_profile_id
+            ? apiClient.getStaffBookingHistory(staffProfile.staff_profile_id, { status: 'COMPLETED', limit: 1 })
+            : Promise.resolve(null),
+        ]);
+
+        if (walletRes.status === 'fulfilled' && walletRes.value) {
+          setWalletData(walletRes.value.data?.data || walletRes.value.data);
+        } else if (walletRes.status === 'rejected') {
+          console.error('Dashboard - Wallet fetch failed:', walletRes.reason);
+        }
+
+        if (bookingRes.status === 'fulfilled' && bookingRes.value) {
+          setCurrentBooking(bookingRes.value.data);
+        } else if (bookingRes.status === 'rejected') {
+          console.error('Dashboard - Current booking fetch failed:', bookingRes.reason);
+        }
+
+        if (historyRes.status === 'fulfilled' && historyRes.value) {
+          setCompletedCount(historyRes.value.pagination?.total_count ?? 0);
+        } else if (historyRes.status === 'rejected') {
+          console.error('Dashboard - History fetch failed:', historyRes.reason);
         }
       } catch (error) {
         console.error('Dashboard - General error:', error);
@@ -108,6 +133,9 @@ const WorkerDashboardDemo = () => {
       role === 'COORDINATOR' ? 'Care Coordinator' :
         'Healthcare Professional';
 
+  const avgRating = staffData?.average_rating;
+  const totalReviews = staffData?.total_reviews ?? 0;
+
   const stats = [
     {
       title: 'Wallet Balance',
@@ -117,20 +145,20 @@ const WorkerDashboardDemo = () => {
     },
     {
       title: 'Completed Shifts',
-      value: '12',
-      description: '+2 upcoming this week',
+      value: completedCount !== null ? String(completedCount) : '—',
+      description: completedCount === 1 ? '1 assignment completed' : `${completedCount ?? 0} assignments completed`,
       icon: Clock,
     },
     {
       title: 'Rating',
-      value: '4.9',
-      description: 'Excellent service record',
+      value: avgRating ? Number(avgRating).toFixed(1) : '—',
+      description: totalReviews > 0 ? `Based on ${totalReviews} review${totalReviews !== 1 ? 's' : ''}` : 'No reviews yet',
       icon: Star,
     },
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans flex text-slate-900 overflow-hidden">
+    <div className="h-screen bg-slate-50 font-sans flex text-slate-900 overflow-hidden">
       <StaffSidebar staffProfileId={staffData?.staff_profile_id} />
 
       <main className="flex-1 overflow-y-auto">
@@ -263,13 +291,26 @@ const WorkerDashboardDemo = () => {
             </div>
 
             <div className="p-6">
-              <JobCard
-                title="Elderly Care - Night Shift"
-                location="Nugegoda, Western Province"
-                date="Today, 8:00 PM - 6:00 AM"
-                price="LKR 4,500"
-                tags={['Nursing', 'Urgent']}
-              />
+              {currentBooking ? (
+                <JobCard
+                  title={currentBooking.patient_name || 'Active Assignment'}
+                  location={currentBooking.client_name || '—'}
+                  date={[
+                    formatDate(currentBooking.service_start_date),
+                    formatDate(currentBooking.service_end_date),
+                  ].filter(Boolean).join(' → ') || '—'}
+                  price={currentBooking.daily_rate
+                    ? `LKR ${Number(currentBooking.daily_rate).toLocaleString()}/day`
+                    : '—'}
+                  tags={['Active']}
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center py-10 text-slate-400">
+                  <Briefcase className="w-8 h-8 mb-3 text-slate-300" />
+                  <p className="text-sm font-medium text-slate-500">No active shift</p>
+                  <p className="text-xs mt-1 text-slate-400">Your current assignment will appear here once you are assigned.</p>
+                </div>
+              )}
             </div>
           </section>
         </div>
@@ -285,10 +326,6 @@ const StatCard = ({ title, value, description, icon: Icon }) => (
       <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-100 text-slate-600">
         <Icon className="w-5 h-5" />
       </div>
-      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
-        <TrendingUp className="w-3 h-3" />
-        +12%
-      </span>
     </div>
     <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">{title}</p>
     <div className="mt-2 text-3xl font-semibold tracking-tight text-slate-900">{value}</div>

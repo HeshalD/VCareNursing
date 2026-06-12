@@ -173,7 +173,7 @@ const TerminationRequests = () => {
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input
                 type="text"
-                placeholder="Search by client, patient, staff, or booking ID..."
+                placeholder="Search by client, care profile, staff, or booking ID..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -363,14 +363,14 @@ const TerminationRequests = () => {
 
               {/* Client & Patient Information */}
               <div>
-                <h3 className="font-semibold text-slate-900 mb-3">Client & Patient Information</h3>
+                <h3 className="font-semibold text-slate-900 mb-3">Client & Care Profile Information</h3>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-sm text-slate-500">Client Name</label>
                     <p className="font-medium">{selectedRequest.client_name}</p>
                   </div>
                   <div>
-                    <label className="text-sm text-slate-500">Patient Name</label>
+                    <label className="text-sm text-slate-500">Care Profile Name</label>
                     <p className="font-medium">{selectedRequest.patient_name}</p>
                   </div>
                   <div className="col-span-2">

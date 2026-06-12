@@ -4,8 +4,20 @@ const jwt = require('jsonwebtoken');
 const sendEmail = require('../utils/email');
 const { sendWhatsAppOtp, sendWhatsAppMessage } = require('../utils/whatsapp');
 const { sendSmsOtp, sendSms } = require('../utils/sms');
+const { sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected } = require('../utils/metaWhatsapp');
+const { logActivity } = require('../utils/activityLogger');
 
 const getUploadedFileUrl = (files, fieldName) => (files && files[fieldName] && files[fieldName][0]) ? files[fieldName][0].path : null;
+
+function extractActorRole(role) {
+  const raw = Array.isArray(role) ? role[0] : role;
+  return typeof raw === 'string' ? raw.replace(/\{|\}/g, '').split(',')[0].trim() : String(raw);
+}
+
+async function getActorName(userId) {
+  const result = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [userId]);
+  return result.rows[0]?.full_name || 'Admin';
+}
 
 exports.submitApplication = async (req, res) => {
   try {
@@ -473,7 +485,23 @@ exports.acceptApplication = async (req, res) => {
 
     await client.query('COMMIT');
 
-    // 5. Send Appropriate Notification
+    // 5. Activity log (non-fatal)
+    try {
+      const actorName = await getActorName(req.user.user_id);
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName,
+        actorRole: extractActorRole(req.user.role),
+        actionType: 'APPLICATION_ACCEPTED',
+        entityType: 'STAFF_APPLICATION',
+        entityId: String(application_id),
+        details: { applicant_name: app.full_name, assigned_staff_id: custom_staff_id.trim(), is_new_user: isNewUser },
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (accept):', logErr.message);
+    }
+
+    // 6. Send Appropriate Notification
     let messageBody = '';
     if (isNewUser) {
         messageBody = ` Congratulations ${app.full_name}! Welcome to the VCare Family! \n\nYour staff application has been approved! Here's what you need to do:\n\nSTEP 1: Go to the VCare website\nSTEP 2: Click "Login" \nSTEP 3: Enter your PHONE NUMBER: ${app.mobile_number}\nSTEP 4: Enter your temporary password: ${tempPassword}\nSTEP 5: You'll be automatically prompted to set your own permanent password\n\nWe're excited to have you join our team of dedicated healthcare professionals!\n\nWith love,\nThe VCare Team `;
@@ -484,7 +512,10 @@ exports.acceptApplication = async (req, res) => {
     Promise.allSettled([
         // email notification temporarily disabled
         /* sendEmail({ email: app.email, subject: 'VCare Staff Application Accepted', message: messageBody }), */
-        sendSms(app.mobile_number, messageBody)
+        sendSms(app.mobile_number, messageBody),
+        isNewUser
+            ? sendStaffWelcomeNew(app.mobile_number, app.full_name)
+            : sendStaffWelcomeExisting(app.mobile_number, app.full_name)
     ]);
 
     res.status(200).json({
@@ -533,20 +564,35 @@ exports.rejectApplication = async (req, res) => {
       [reason, application_id]
     );
 
-    // 3. Send Notifications (Parallel)
+    // 3. Activity log (non-fatal)
+    try {
+      const actorName = await getActorName(req.user.user_id);
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName,
+        actorRole: extractActorRole(req.user.role),
+        actionType: 'APPLICATION_REJECTED',
+        entityType: 'STAFF_APPLICATION',
+        entityId: String(application_id),
+        details: { applicant_name: app.full_name, reason },
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (reject):', logErr.message);
+    }
+
+    // 4. Send Notifications (Parallel)
     const emailSubject = 'Update on your VCare Staff Application';
     const messageBody = `Dear ${app.full_name},\n\nThank you so much for your interest in joining the VCare family! We truly appreciate the time and effort you put into your application.\n\nAfter careful consideration, we regret to inform you that we cannot proceed with your application at this time.\n\nReason: ${reason}\n\nPlease don't be discouraged! We encourage you to apply again in the future when your qualifications or experience may better match our current needs.\n\nWe wish you the very best in your healthcare career journey.\n\nWith warm regards,\nThe VCare Team`;
 
     Promise.allSettled([
         // email notification temporarily disabled
-        /* sendEmail({ 
-            email: app.email, 
-            subject: emailSubject, 
-            message: messageBody 
+        /* sendEmail({
+            email: app.email,
+            subject: emailSubject,
+            message: messageBody
         }), */
-        // use WhatsApp for rejection message
-        // Note: Ensure your WhatsApp provider supports free-form text or use a pre-approved "Rejection" template
-        sendWhatsAppOtp(app.mobile_number, messageBody) 
+        sendSms(app.mobile_number, messageBody),
+        sendStaffApplicationRejected(app.mobile_number, app.full_name, reason)
     ]);
 
     res.status(200).json({
@@ -569,7 +615,7 @@ exports.updateApplication = async (req, res) => {
 
   try {
     const appResult = await db.query(
-      'SELECT status FROM staff_applications WHERE application_id = $1',
+      'SELECT * FROM staff_applications WHERE application_id = $1',
       [applicationId]
     );
 
@@ -577,7 +623,9 @@ exports.updateApplication = async (req, res) => {
       return res.status(404).json({ message: 'Application not found' });
     }
 
-    if (appResult.rows[0].status !== 'PENDING') {
+    const current = appResult.rows[0];
+
+    if (current.status !== 'PENDING') {
       return res.status(400).json({ message: 'Only PENDING applications can be edited' });
     }
 
@@ -612,6 +660,51 @@ exports.updateApplication = async (req, res) => {
     const updated = await db.query(
       'SELECT * FROM staff_applications WHERE application_id = $1', [applicationId]
     );
+
+    // Build a diff of only changed fields
+    const changes = {};
+    const diff = (field, oldVal, newVal) => {
+      const o = oldVal ?? null;
+      const n = newVal ?? null;
+      if ((o ?? '') !== (n ?? '')) changes[field] = { from: o, to: n };
+    };
+
+    diff('full_name',      current.full_name,      full_name);
+    diff('email',          current.email,           email);
+    diff('mobile_number',  current.mobile_number,   mobile_number);
+    diff('qualifications', current.qualifications,  qualifications);
+    diff('home_address',   current.home_address,    home_address);
+    diff('location',       current.location,        location);
+    diff('nic_number',     current.nic_number,      nic_number);
+    diff('gender',         current.gender,          gender);
+
+    const oldDob = current.date_of_birth ? new Date(current.date_of_birth).toISOString().substring(0, 10) : null;
+    const newDob = date_of_birth || null;
+    if (oldDob !== newDob) changes['date_of_birth'] = { from: oldDob, to: newDob };
+
+    const oldRoles = (Array.isArray(current.applied_roles) ? current.applied_roles : [])
+      .map(r => r.replace(/\{|\}/g, '').trim()).filter(Boolean).sort();
+    const newRoles = [...rolesArray].sort();
+    if (oldRoles.join(',') !== newRoles.join(',')) {
+      changes['applied_roles'] = { from: oldRoles, to: newRoles };
+    }
+
+    if (Object.keys(changes).length > 0) {
+      try {
+        const actorName = await getActorName(req.user.user_id);
+        await logActivity({
+          actorUserId: req.user.user_id,
+          actorName,
+          actorRole: extractActorRole(req.user.role),
+          actionType: 'APPLICATION_UPDATED',
+          entityType: 'STAFF_APPLICATION',
+          entityId: String(applicationId),
+          details: { applicant_name: current.full_name, changes },
+        });
+      } catch (logErr) {
+        console.error('Activity log failed (update):', logErr.message);
+      }
+    }
 
     res.status(200).json({ status: 'success', data: updated.rows[0] });
   } catch (error) {

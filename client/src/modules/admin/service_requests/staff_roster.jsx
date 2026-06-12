@@ -1094,7 +1094,7 @@ const StaffRoster = () => {
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                           <div className="flex items-center gap-2">
-                            <span className="text-xs text-slate-500">Patient:</span>
+                            <span className="text-xs text-slate-500">Care Profile:</span>
                             <span className="text-sm font-medium text-slate-900">{serviceRequest.patient_name}</span>
                           </div>
                           <div className="flex items-center gap-2">

@@ -637,7 +637,7 @@ const StaffDetailPage = () => {
               <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                 <th className="px-4 py-3">Booking</th>
                 <th className="px-4 py-3">Client</th>
-                <th className="px-4 py-3">Patient</th>
+                <th className="px-4 py-3">Care Profile</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Start</th>
                 <th className="px-4 py-3">End</th>

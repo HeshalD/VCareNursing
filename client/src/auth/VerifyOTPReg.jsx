@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Lock, ArrowLeft, Mail } from 'lucide-react';
+import { Lock, ArrowLeft } from 'lucide-react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import loginBg from '../assets/images/Gemini_Generated_Image_5nmpua5nmpua5nmp.png';
 import apiClient from '../api/api';
@@ -13,20 +13,20 @@ const VerifyOTPReg = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [timeLeft, setTimeLeft] = useState(300); // 5 minutes
-  const [email, setEmail] = useState('');
+  const [mobileNumber, setMobileNumber] = useState('');
   const [userId, setUserId] = useState('');
 
   useEffect(() => {
-    // Get email and userId from location state
-    if (location.state?.email) {
-      setEmail(location.state.email);
+    // Get mobile number and userId from location state
+    if (location.state?.mobileNumber) {
+      setMobileNumber(location.state.mobileNumber);
     }
     if (location.state?.userId) {
       setUserId(location.state.userId);
     }
 
-    // Redirect if no email provided
-    if (!location.state?.email) {
+    // Redirect if no mobile number provided
+    if (!location.state?.mobileNumber) {
       navigate('/register');
       return;
     }
@@ -104,7 +104,7 @@ const VerifyOTPReg = () => {
       const response = await apiClient.verifyOtp(userId, otpValue);
       
       console.log('OTP verification successful:', response);
-      setSuccess('Email verified successfully! Redirecting to login...');
+      setSuccess('Mobile number verified successfully! Redirecting to login...');
       
       // Redirect to login page after 2 seconds
       setTimeout(() => {
@@ -153,7 +153,7 @@ const VerifyOTPReg = () => {
             className="text-5xl font-bold text-white mb-6 leading-tight"
           >
             Verify Your <br />
-            Email Address.
+            Mobile Number.
           </motion.h1>
           <motion.p
             initial={{ opacity: 0, y: 20 }}
@@ -161,7 +161,7 @@ const VerifyOTPReg = () => {
             transition={{ duration: 0.7, delay: 0.2 }}
             className="text-lg text-slate-300 leading-relaxed font-light"
           >
-            Enter the 6-digit verification code sent to your email address
+            Enter the 6-digit verification code sent via SMS to your mobile number
             to complete your registration and access our healthcare services.
           </motion.p>
         </div>
@@ -183,10 +183,10 @@ const VerifyOTPReg = () => {
               Back to Register
             </Link>
             
-            <h2 className="text-3xl font-bold text-slate-900 mb-2">Verify Email</h2>
+            <h2 className="text-3xl font-bold text-slate-900 mb-2">Verify Mobile Number</h2>
             <p className="text-slate-600 text-sm">
-              We've sent a verification code to:<br />
-              <span className="font-medium text-slate-900">{email}</span>
+              We've sent a verification code via SMS to:<br />
+              <span className="font-medium text-slate-900">{mobileNumber}</span>
             </p>
           </motion.div>
 
@@ -275,7 +275,7 @@ const VerifyOTPReg = () => {
               ) : (
                 <>
                   <Lock className="w-5 h-5" />
-                  Verify Email
+                  Verify Mobile Number
                 </>
               )}
             </motion.button>

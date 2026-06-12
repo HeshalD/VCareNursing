@@ -35,6 +35,7 @@ const HomeNursingBookingPage = () => {
     // Patient Information
     patient_name: '',
     patient_age: '',
+    patient_gender: '',
     relationship: 'SELF',
     patient_condition: '',
 
@@ -145,6 +146,7 @@ const HomeNursingBookingPage = () => {
         ...prev,
         patient_name: '',
         patient_age: '',
+        patient_gender: '',
         relationship: 'SELF',
         patient_condition: ''
       }));
@@ -157,6 +159,7 @@ const HomeNursingBookingPage = () => {
         ...prev,
         patient_name: selectedPatient.full_name,
         patient_age: selectedPatient.age.toString(),
+        patient_gender: selectedPatient.gender || '',
         relationship: selectedPatient.relationship_to_client || 'OTHER',
         patient_condition: selectedPatient.medical_condition || ''
       }));
@@ -399,7 +402,7 @@ const HomeNursingBookingPage = () => {
           <div className="flex items-center gap-4">
             {[
               { id: 1, title: "Payer Details", icon: User },
-              { id: 2, title: "Patient Info", icon: UserCheck },
+              { id: 2, title: "Care Profile Info", icon: UserCheck },
               { id: 3, title: "Service Details", icon: Heart },
               { id: 4, title: "Choose Caregiver", icon: CheckCircle }
             ].map((step, index) => (
@@ -483,13 +486,13 @@ const HomeNursingBookingPage = () => {
                     initial="hidden" animate="visible" exit="exit"
                     className="space-y-6"
                   >
-                    <h2 className="text-2xl font-bold text-white mb-6">Patient Information</h2>
+                    <h2 className="text-2xl font-bold text-white mb-6">Care Profile Information</h2>
                     
                     {/* Patient Selection for Authenticated Clients */}
                     {isAuthenticated && patients.length > 0 && (
                       <div className="md:col-span-2 mb-6">
                         <label className="text-sm font-semibold text-slate-400 block mb-3">
-                          Select Registered Patient
+                          Select Registered Care Profile
                         </label>
                         <div className="grid gap-3 mb-4">
                           {patients.map(patient => (
@@ -515,6 +518,12 @@ const HomeNursingBookingPage = () => {
                                       <Heart className="w-4 h-4" />
                                       {patient.relationship_to_client || 'Other'}
                                     </span>
+                                    {patient.gender && (
+                                      <span className="flex items-center gap-1">
+                                        <UserCheck className="w-4 h-4" />
+                                        {patient.gender.charAt(0) + patient.gender.slice(1).toLowerCase()}
+                                      </span>
+                                    )}
                                   </div>
                                   {patient.medical_condition && (
                                     <p className="text-xs text-slate-500 mt-2">
@@ -542,7 +551,7 @@ const HomeNursingBookingPage = () => {
                             Clear selection
                           </button>
                           <span>•</span>
-                          <span>Or fill in form below for a new patient</span>
+                          <span>Or fill in form below for a new care profile</span>
                         </div>
                       </div>
                     )}
@@ -550,9 +559,9 @@ const HomeNursingBookingPage = () => {
                     <div className="grid md:grid-cols-2 gap-6">
                       <div className="md:col-span-2">
                         <label className="text-sm font-semibold text-slate-400 block mb-1">
-                          Patient Name
+                          Full Name
                           {isAuthenticated && patients.length > 0 && (
-                            <span className="ml-2 text-xs text-emerald-400">(Required if no patient selected above)</span>
+                            <span className="ml-2 text-xs text-emerald-400">(Required if no care profile selected above)</span>
                           )}
                         </label>
                         <input
@@ -578,7 +587,21 @@ const HomeNursingBookingPage = () => {
                         />
                       </div>
                       <div>
-                        <label className="text-sm font-semibold text-slate-400 block mb-1">Relationship to Patient</label>
+                        <label className="text-sm font-semibold text-slate-400 block mb-1">Gender</label>
+                        <select
+                          className="w-full px-4 py-3 bg-[#0b1120] border border-white/10 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-white"
+                          value={formData.patient_gender}
+                          onChange={e => setFormData({ ...formData, patient_gender: e.target.value })}
+                          onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
+                        >
+                          <option value="">— Select —</option>
+                          <option value="MALE">Male</option>
+                          <option value="FEMALE">Female</option>
+                          <option value="OTHER">Other</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-sm font-semibold text-slate-400 block mb-1">Relationship to Care Profile</label>
                         <select
                           className="w-full px-4 py-3 bg-[#0b1120] border border-white/10 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-white"
                           value={formData.relationship}

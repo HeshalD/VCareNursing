@@ -243,7 +243,7 @@ export default function StaffWorkingHistory() {
           {
             icon: <Heart className="w-5 h-5 text-rose-600" />,
             bg: 'bg-rose-50',
-            label: 'Unique Patients',
+            label: 'Unique Care Profiles',
             value: stats?.unique_patients ?? uniquePatientsInHistory.length,
           },
           {
@@ -329,7 +329,7 @@ export default function StaffWorkingHistory() {
               <p className="font-medium text-slate-900">{current_assignment.client_name || '—'}</p>
             </div>
             <div>
-              <p className="text-xs text-emerald-700 mb-0.5">Patient</p>
+              <p className="text-xs text-emerald-700 mb-0.5">Care Profile</p>
               <p className="font-medium text-slate-900">{current_assignment.patient_name || '—'}</p>
             </div>
             <div>
@@ -375,7 +375,7 @@ export default function StaffWorkingHistory() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200">
-                  <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Client / Patient</th>
+                  <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Client / Care Profile</th>
                   <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Service</th>
                   <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Period</th>
                   <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Duration</th>

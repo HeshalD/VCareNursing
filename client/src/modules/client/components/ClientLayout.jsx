@@ -12,7 +12,7 @@ const NAV_ITEMS = [
   { icon: User, label: 'Profile', path: '/client/profile' },
   { icon: Calendar, label: 'Bookings', path: '/client/bookings' },
   { icon: FileText, label: 'Service Requests', path: '/client/service-requests' },
-  { icon: Stethoscope, label: 'Patients', path: '/client/patients' },
+  { icon: Stethoscope, label: 'Care Profiles', path: '/client/patients' },
   { icon: Wallet, label: 'Financial', path: '/client/financial' },
   { icon: MessageSquare, label: 'Reviews', path: '/client/reviews' },
 ];
@@ -238,7 +238,7 @@ const ClientLayout = () => {
                     className="flex items-center gap-3 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
                   >
                     <Stethoscope className="w-4 h-4 text-slate-400" />
-                    Patients
+                    Care Profiles
                   </Link>
                   <Link
                     to="/client/financial"

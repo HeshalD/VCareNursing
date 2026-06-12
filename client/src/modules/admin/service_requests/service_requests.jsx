@@ -228,7 +228,7 @@ const ServiceRequests = () => {
               <thead className="bg-white">
                 <tr className="text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
                   <th className="px-4 py-3">Request Details</th>
-                  <th className="px-4 py-3">Patient Info</th>
+                  <th className="px-4 py-3">Care Profile Info</th>
                   <th className="px-4 py-3">Service</th>
                   <th className="px-4 py-3">Location</th>
                   <th className="px-4 py-3">Start Date</th>
@@ -346,7 +346,7 @@ const ServiceRequests = () => {
 
               {/* Patient Information */}
               <div>
-                <h3 className="font-semibold text-slate-900 mb-3">Patient Information</h3>
+                <h3 className="font-semibold text-slate-900 mb-3">Care Profile Information</h3>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-sm text-slate-500">Name</label>

@@ -116,13 +116,13 @@ const AllocationRow = ({ row, index, bookings, patients, onChange, onRemove, can
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <label className={labelCls}>Patient</label>
+              <label className={labelCls}>Care Profile</label>
               <select
                 className={selectCls}
                 value={row.new_booking.patient_id}
                 onChange={e => updateNewBooking('patient_id', e.target.value)}
               >
-                <option value="">Select patient…</option>
+                <option value="">Select care profile…</option>
                 {patients.map(p => (
                   <option key={p.patient_id} value={p.patient_id}>
                     {p.full_name} {p.age ? `(Age ${p.age})` : ''}

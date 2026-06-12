@@ -362,7 +362,32 @@ async function runMigration() {
       service_model service_model_enum DEFAULT 'SHIFT_BASED',
       preferred_gender gender_preference_enum DEFAULT 'ANY',
       preferred_staff_id UUID REFERENCES staff_profiles(staff_profile_id),
-      active_quote_id UUID
+      active_quote_id UUID,
+      gender gender_enum
+    );
+  `);
+
+  // bookings must exist before quotations / booking_payment_tracking reference it
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS bookings (
+      booking_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      client_id UUID NOT NULL REFERENCES client_profiles(client_profile_id),
+      patient_id UUID NOT NULL,
+      service_type VARCHAR(50),
+      start_date DATE,
+      status VARCHAR(20) DEFAULT 'ACTIVE',
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      assigned_staff_id UUID REFERENCES staff_profiles(staff_profile_id),
+      service_model service_model_enum DEFAULT 'SHIFT_BASED',
+      preferred_gender gender_preference_enum DEFAULT 'ANY',
+      request_id UUID REFERENCES service_requests(request_id),
+      service_mode VARCHAR(20),
+      scheduled_end_time TIMESTAMP,
+      actual_end_time TIMESTAMP,
+      ot_rate DECIMAL(10,2) DEFAULT 500.00,
+      daily_rate DECIMAL(10,2),
+      amount_quotated DECIMAL(12,2),
+      amount_paid DECIMAL(12,2) DEFAULT 0.00
     );
   `);
 
@@ -431,29 +456,6 @@ async function runMigration() {
       status VARCHAR(20) DEFAULT 'VERIFIED',
       notes TEXT,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
-
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS bookings (
-      booking_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-      client_id UUID NOT NULL REFERENCES client_profiles(client_profile_id),
-      patient_id UUID NOT NULL,
-      service_type VARCHAR(50),
-      start_date DATE,
-      status VARCHAR(20) DEFAULT 'ACTIVE',
-      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-      assigned_staff_id UUID REFERENCES staff_profiles(staff_profile_id),
-      service_model service_model_enum DEFAULT 'SHIFT_BASED',
-      preferred_gender gender_preference_enum DEFAULT 'ANY',
-      request_id UUID REFERENCES service_requests(request_id),
-      service_mode VARCHAR(20),
-      scheduled_end_time TIMESTAMP,
-      actual_end_time TIMESTAMP,
-      ot_rate DECIMAL(10,2) DEFAULT 500.00,
-      daily_rate DECIMAL(10,2),
-      amount_quotated DECIMAL(12,2),
-      amount_paid DECIMAL(12,2) DEFAULT 0.00
     );
   `);
 
@@ -839,6 +841,12 @@ async function runMigration() {
   await db.query(`
     ALTER TABLE bookings
     ADD COLUMN IF NOT EXISTS admin_notes TEXT
+  `);
+
+  // Care profile (patient) gender captured on the lead/service request
+  await db.query(`
+    ALTER TABLE service_requests
+    ADD COLUMN IF NOT EXISTS gender gender_enum
   `);
 
   // =========================================================

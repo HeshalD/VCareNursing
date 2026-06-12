@@ -190,7 +190,7 @@ const ProxyServiceRequest = () => {
 
       // Validate patient age
       if (isNaN(formData.patient_age) || formData.patient_age <= 0) {
-        setError('Patient age must be a positive number');
+        setError('Age must be a positive number');
         setFormLoading(false);
         return;
       }
@@ -561,12 +561,12 @@ const ProxyServiceRequest = () => {
             <div className="border-b border-slate-200 pb-6">
               <h2 className="text-lg font-semibold text-slate-900 mb-4 flex items-center gap-2">
                 <User className="w-5 h-5" />
-                Patient Information
+                Care Profile Information
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2">
-                    Patient Name <span className="text-red-500">*</span>
+                    Full Name <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
@@ -574,13 +574,13 @@ const ProxyServiceRequest = () => {
                     value={formData.patient_name}
                     onChange={handleInputChange}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Enter patient's full name"
+                    placeholder="Enter full name"
                     required
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2">
-                    Patient Age <span className="text-red-500">*</span>
+                    Age <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="number"
@@ -588,7 +588,7 @@ const ProxyServiceRequest = () => {
                     value={formData.patient_age}
                     onChange={handleInputChange}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Enter patient's age"
+                    placeholder="Enter age"
                     min="1"
                     required
                   />
@@ -613,7 +613,7 @@ const ProxyServiceRequest = () => {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2">
-                    Patient Condition
+                    Condition
                   </label>
                   <textarea
                     name="patient_condition"
@@ -621,7 +621,7 @@ const ProxyServiceRequest = () => {
                     onChange={handleInputChange}
                     rows="3"
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Describe patient's condition and care needs"
+                    placeholder="Describe the condition and care needs"
                   />
                 </div>
               </div>
@@ -822,7 +822,7 @@ const ProxyServiceRequest = () => {
 
               {/* Patient Information */}
               <div>
-                <h3 className="font-semibold text-slate-900 mb-3">Patient Information</h3>
+                <h3 className="font-semibold text-slate-900 mb-3">Care Profile Information</h3>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-sm text-slate-500">Name</label>

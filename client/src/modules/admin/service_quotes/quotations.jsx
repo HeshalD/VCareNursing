@@ -304,7 +304,7 @@ const QuotationsPage = () => {
                 <input
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Search by estimate, payer, patient, phone, or service"
+                  placeholder="Search by estimate, payer, care profile, phone, or service"
                   className="w-full rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500"
                 />
               </div>

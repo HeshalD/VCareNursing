@@ -196,7 +196,7 @@ const BookingStaffAssignmentPage = () => {
                 <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                   <Stat label="Booking" value={formData.booking.booking_id} />
                   <Stat label="Client" value={formData.booking.client_name} />
-                  <Stat label="Patient" value={formData.booking.patient_name} />
+                  <Stat label="Care Profile" value={formData.booking.patient_name} />
                   <Stat label="Service" value={formData.booking.service_type} />
                 </div>
                 <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">

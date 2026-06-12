@@ -76,7 +76,7 @@ const relatedTo = (tx) => {
   }
   if (tx.client_name) {
     const parts = [];
-    if (tx.patient_name) parts.push(`Patient: ${tx.patient_name}`);
+    if (tx.patient_name) parts.push(`Care Profile: ${tx.patient_name}`);
     if (tx.booking_service_type) parts.push(tx.booking_service_type);
     return { primary: tx.client_name, secondary: parts.join(' · ') || 'Client' };
   }
