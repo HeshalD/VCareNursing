@@ -17,6 +17,7 @@ import {
   CircleDollarSign,
   Upload,
   User,
+  Wallet,
   Users,
   XCircle,
   AlertTriangle,
@@ -143,6 +144,10 @@ const BookingDetailPage = () => {
   const [paymentSlipFile, setPaymentSlipFile] = useState(null);
   const [paymentForm, setPaymentForm] = useState(initialPaymentForm);
   const [paymentSubmitting, setPaymentSubmitting] = useState(false);
+  const [walletPayoffAmount, setWalletPayoffAmount] = useState('');
+  const [walletPayoffNotes, setWalletPayoffNotes] = useState('');
+  const [walletPayoffSubmitting, setWalletPayoffSubmitting] = useState(false);
+  const [walletPayoffError, setWalletPayoffError] = useState('');
   const [swapForm, setSwapForm] = useState({
     new_staff_id: '',
     swap_reason: '',
@@ -422,6 +427,28 @@ const BookingDetailPage = () => {
       setError(submitError?.message || 'Failed to swap staff member');
     } finally {
       setSwapSubmitting(false);
+    }
+  };
+
+  const handleWalletPayoff = async (event) => {
+    event.preventDefault();
+    const amount = parseFloat(walletPayoffAmount);
+    if (!amount || amount <= 0) return;
+
+    try {
+      setWalletPayoffSubmitting(true);
+      setWalletPayoffError('');
+      const originalToken = apiClient.token;
+      apiClient.setToken(adminToken);
+      await apiClient.walletPayoffBooking(bookingId, amount, walletPayoffNotes || null);
+      apiClient.setToken(originalToken);
+      setWalletPayoffAmount('');
+      setWalletPayoffNotes('');
+      await fetchBookingDetail();
+    } catch (submitError) {
+      setWalletPayoffError(submitError?.message || 'Failed to process wallet payoff');
+    } finally {
+      setWalletPayoffSubmitting(false);
     }
   };
 
@@ -875,6 +902,93 @@ const BookingDetailPage = () => {
                   </div>
                 </div>
               </div>
+
+              {(() => {
+                const walletBalance = Number(clientDetails.wallet_balance || 0);
+                const maxPayoff = Math.min(walletBalance, overdueAmount);
+                const canPayoff = walletBalance > 0 && overdueAmount > 0 && !isTerminatedBooking;
+
+                return (
+                  <div>
+                    <div className="mb-4 flex items-center gap-3">
+                      <div className="rounded-full bg-violet-100 p-2 text-violet-600"><Wallet className="h-4 w-4" /></div>
+                      <h3 className="text-base font-semibold text-slate-900">Wallet payoff</h3>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white p-4">
+                      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                        <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                          <p className="text-xs text-slate-500">Wallet balance</p>
+                          <p className={`mt-1 text-sm font-semibold ${walletBalance > 0 ? 'text-emerald-700' : 'text-slate-400'}`}>{formatMoney(walletBalance)}</p>
+                        </div>
+                        <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                          <p className="text-xs text-slate-500">Overdue amount</p>
+                          <p className={`mt-1 text-sm font-semibold ${overdueAmount > 0 ? 'text-rose-700' : 'text-slate-400'}`}>{formatMoney(overdueAmount)}</p>
+                        </div>
+                        <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                          <p className="text-xs text-slate-500">Max payable</p>
+                          <p className={`mt-1 text-sm font-semibold ${maxPayoff > 0 ? 'text-violet-700' : 'text-slate-400'}`}>{formatMoney(maxPayoff)}</p>
+                        </div>
+                      </div>
+
+                      {canPayoff ? (
+                        <form onSubmit={handleWalletPayoff} className="space-y-3">
+                          <div className="flex gap-2">
+                            <input
+                              required
+                              type="number"
+                              min="0.01"
+                              max={maxPayoff.toFixed(2)}
+                              step="0.01"
+                              value={walletPayoffAmount}
+                              onChange={(e) => setWalletPayoffAmount(e.target.value)}
+                              placeholder="Amount to pay off"
+                              className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-violet-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setWalletPayoffAmount(maxPayoff.toFixed(2))}
+                              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                            >
+                              Max
+                            </button>
+                          </div>
+                          <textarea
+                            value={walletPayoffNotes}
+                            onChange={(e) => setWalletPayoffNotes(e.target.value)}
+                            placeholder="Notes (optional)"
+                            rows={2}
+                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-violet-500"
+                          />
+                          {walletPayoffError && (
+                            <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                              {walletPayoffError}
+                            </div>
+                          )}
+                          <button
+                            type="submit"
+                            disabled={walletPayoffSubmitting || !walletPayoffAmount || parseFloat(walletPayoffAmount) <= 0}
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                          >
+                            <Wallet className="h-4 w-4" />
+                            {walletPayoffSubmitting ? 'Processing...' : 'Pay with wallet'}
+                          </button>
+                        </form>
+                      ) : (
+                        <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center">
+                          <Wallet className="mx-auto h-6 w-6 text-slate-300" />
+                          <p className="mt-2 text-sm text-slate-500">
+                            {isTerminatedBooking
+                              ? 'Wallet payoff is not available for terminated bookings.'
+                              : overdueAmount <= 0
+                                ? 'No overdue amount on this booking.'
+                                : 'Client wallet balance is empty.'}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
 

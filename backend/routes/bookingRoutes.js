@@ -85,6 +85,13 @@ router.post(
     paymentTrackingController.recordBookingPayment
 );
 
+router.post(
+    '/:booking_id/wallet-payoff',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    paymentTrackingController.walletPayoffBooking
+);
+
 router.get(
     '/:booking_id/payments',
     protect,

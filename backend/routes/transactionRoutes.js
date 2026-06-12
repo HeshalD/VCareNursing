@@ -1,0 +1,32 @@
+const express = require('express');
+const router = express.Router();
+const transactionController = require('../controllers/transactionController');
+const { protect, restrictTo } = require('../middleware/authMiddleware');
+
+const adminRoles = ['SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'];
+
+// GET /api/transactions/meta — enum values for dropdowns
+router.get(
+  '/meta',
+  protect,
+  restrictTo(...adminRoles),
+  transactionController.getTransactionMeta
+);
+
+// POST /api/transactions/manual — record an off-platform transaction
+router.post(
+  '/manual',
+  protect,
+  restrictTo(...adminRoles),
+  transactionController.createManualTransaction
+);
+
+// GET /api/transactions — full ledger with filters
+router.get(
+  '/',
+  protect,
+  restrictTo(...adminRoles),
+  transactionController.getAllTransactions
+);
+
+module.exports = router;

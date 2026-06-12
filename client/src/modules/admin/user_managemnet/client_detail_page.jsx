@@ -39,6 +39,7 @@ const NOTE_TYPE_META = {
 };
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import RecordClientPaymentModal from '../components/RecordClientPaymentModal';
 
 const money = new Intl.NumberFormat('en-LK', {
   style: 'currency',
@@ -141,6 +142,8 @@ const ClientDetailPage = () => {
   const [editingNoteId, setEditingNoteId] = useState(null);
   const [editNoteText, setEditNoteText] = useState('');
   const [editNoteType, setEditNoteType] = useState('GENERAL');
+
+  const [showRecordPayment, setShowRecordPayment] = useState(false);
 
   const emptyPatientForm = { full_name: '', age: '', relationship_to_client: '', medical_condition: '', residential_address: '', emergency_contact_name: '', emergency_contact_number: '' };
   const [showAddPatient, setShowAddPatient] = useState(false);
@@ -325,6 +328,20 @@ const ClientDetailPage = () => {
       setPatientFormError(err.message || 'Failed to add patient. Please try again.');
     } finally {
       setPatientFormLoading(false);
+    }
+  };
+
+  const handlePaymentRecorded = async () => {
+    setShowRecordPayment(false);
+    try {
+      const [refreshed, txRefreshed] = await Promise.all([
+        apiClient.getAdminClientDetail(clientId),
+        apiClient.getClientTransactions(clientId),
+      ]);
+      setDetail(refreshed.data || null);
+      setClientTransactions(txRefreshed.data || []);
+    } catch {
+      // non-fatal — page data will be stale until manual refresh
     }
   };
 
@@ -1047,13 +1064,22 @@ const ClientDetailPage = () => {
       title="Client Details"
       subtitle="Admin dashboard view of the full client profile and history"
       actions={(
-        <button
-          type="button"
-          onClick={() => navigate('/admin/users')}
-          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-        >
-          <ArrowLeft className="h-4 w-4" /> Back to user management
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowRecordPayment(true)}
+            className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+          >
+            <Plus className="h-4 w-4" /> Record Payment
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/admin/users')}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            <ArrowLeft className="h-4 w-4" /> Back to user management
+          </button>
+        </div>
       )}
     >
       <div className="space-y-6">
@@ -1117,6 +1143,15 @@ const ClientDetailPage = () => {
           {renderSection()}
         </div>
       </div>
+      {showRecordPayment && (
+        <RecordClientPaymentModal
+          clientId={clientId}
+          bookings={activeBookings}
+          patients={patients}
+          onClose={() => setShowRecordPayment(false)}
+          onSuccess={handlePaymentRecorded}
+        />
+      )}
     </AdminLayout>
   );
 };

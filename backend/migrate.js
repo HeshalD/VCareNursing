@@ -148,6 +148,48 @@ async function runMigration() {
 
   await db.query(`
     DO $$ BEGIN
+      ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'WALLET_TOPUP';
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'WALLET_DEBIT';
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  // Categories for manually recorded (off-platform) transactions
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'OTHER_INCOME';
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'OTHER_EXPENSE';
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  // Salary advances recorded in the main ledger (money out)
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'STAFF_ADVANCE';
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  await db.query(`
+    DO $$ BEGIN
       CREATE TYPE transaction_type_enum AS ENUM (
         'CREDIT', 'DEBIT'
       );
@@ -778,6 +820,15 @@ async function runMigration() {
     ADD COLUMN IF NOT EXISTS payment_tracking_id UUID REFERENCES payment_tracking(payment_id)
   `);
 
+  // Manual (off-platform) transaction support
+  await db.query(`
+    ALTER TABLE transactions
+    ADD COLUMN IF NOT EXISTS is_manual BOOLEAN DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES users(user_id),
+    ADD COLUMN IF NOT EXISTS external_party VARCHAR(255),
+    ADD COLUMN IF NOT EXISTS transaction_date DATE
+  `);
+
   await db.query(`
     ALTER TABLE bookings
     ADD COLUMN IF NOT EXISTS amount_paid DECIMAL(12, 2) DEFAULT 0,
@@ -843,6 +894,41 @@ async function runMigration() {
   `);
 
   // =========================================================
+  // CLIENT PAYMENT RECORDING (independent admin payment system)
+  // =========================================================
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS client_payment_records (
+      record_id           UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      client_id           UUID NOT NULL REFERENCES client_profiles(client_profile_id) ON DELETE RESTRICT,
+      total_amount        NUMERIC(12,2) NOT NULL CHECK (total_amount > 0),
+      payment_method      VARCHAR(50) NOT NULL,
+      bank_account_id     UUID REFERENCES bank_accounts(account_id),
+      cheque_number       VARCHAR(50),
+      cheque_date         DATE,
+      reference_number    VARCHAR(100),
+      slip_url            TEXT,
+      notes               TEXT,
+      recorded_by         UUID NOT NULL REFERENCES users(user_id),
+      recorded_by_name    VARCHAR(255) NOT NULL,
+      created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS client_payment_allocations (
+      allocation_id       UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      record_id           UUID NOT NULL REFERENCES client_payment_records(record_id) ON DELETE CASCADE,
+      allocation_type     VARCHAR(20) NOT NULL CHECK (allocation_type IN ('BOOKING', 'NEW_BOOKING', 'WALLET')),
+      amount              NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+      booking_id          UUID REFERENCES bookings(booking_id),
+      transaction_id      UUID REFERENCES transactions(transaction_id),
+      booking_payment_id  UUID REFERENCES booking_payment_tracking(booking_payment_id),
+      created_at          TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // =========================================================
   // INDEXES
   // =========================================================
 
@@ -879,6 +965,16 @@ async function runMigration() {
   await db.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_payment_tracking_id
     ON transactions(payment_tracking_id);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_transactions_created_at
+    ON transactions(created_at DESC);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_transactions_category
+    ON transactions(category);
   `);
 
   await db.query(`
@@ -929,6 +1025,26 @@ async function runMigration() {
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_client_notes_created_at
     ON client_notes(created_at DESC);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_client_payment_records_client_id
+    ON client_payment_records(client_id);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_client_payment_records_created_at
+    ON client_payment_records(created_at DESC);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_client_payment_allocations_record_id
+    ON client_payment_allocations(record_id);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_client_payment_allocations_booking_id
+    ON client_payment_allocations(booking_id);
   `);
 
   // =========================================================

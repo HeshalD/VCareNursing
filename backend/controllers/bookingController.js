@@ -124,7 +124,7 @@ const applyBookingSettlement = async (client, booking, settlementAction, settlem
         [
             booking.client_id,
             booking.booking_id,
-            'BOOKING_SETTLEMENT',
+            'WALLET_REFUND',
             walletDepositedAmount,
             settlementNotes
         ]
@@ -812,6 +812,7 @@ exports.getAdminBookingDetail = async (req, res) => {
             c.client_profile_id,
             c.full_name as client_name,
             c.primary_address as client_address,
+            c.wallet_balance,
             uc.mobile_number as client_mobile,
             uc.email as client_email,
             p.patient_id as resolved_patient_id,
@@ -982,7 +983,8 @@ exports.getAdminBookingDetail = async (req, res) => {
                     client_name: booking.client_name,
                     client_address: booking.client_address,
                     client_mobile: booking.client_mobile,
-                    client_email: booking.client_email
+                    client_email: booking.client_email,
+                    wallet_balance: parseFloat(booking.wallet_balance || 0)
                 },
                 patient_details: {
                     patient_id: booking.resolved_patient_id || booking.patient_id,

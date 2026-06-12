@@ -171,7 +171,7 @@ const approveAdvance = async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'Insufficient wallet balance to approve this advance' });
     }
 
-    // Debit the wallet
+    // Debit the wallet (controls advance eligibility)
     await client.query(
       `UPDATE staff_wallet
        SET balance = balance - $1, updated_at = NOW()
@@ -179,12 +179,37 @@ const approveAdvance = async (req, res) => {
       [advance.amount_requested, advance.staff_profile_id]
     );
 
-    // Log the transaction
+    // Also reduce current_earnings (controls how much can be paid out) so the
+    // advance lowers the payout ceiling — an advance is an early payout of earnings.
+    // Without this the staff member could be over-paid (advance + full payout).
+    await client.query(
+      `UPDATE staff_profiles
+       SET current_earnings = GREATEST(COALESCE(current_earnings, 0) - $1, 0)
+       WHERE staff_profile_id = $2`,
+      [advance.amount_requested, advance.staff_profile_id]
+    );
+
+    // Log the wallet movement (staff wallet history)
     await client.query(
       `INSERT INTO staff_wallet_transactions
         (staff_profile_id, type, amount, reason, reference_id, created_at)
        VALUES ($1, 'DEBIT', $2, 'ADVANCE_DEDUCTION', $3, NOW())`,
       [advance.staff_profile_id, advance.amount_requested, advance.advance_id]
+    );
+
+    // Record the same advance in the main transactions ledger as money out
+    await client.query(
+      `INSERT INTO transactions
+        (staff_profile_id, category, transaction_type, amount, status, notes,
+         reference_number, created_by, verified_by, created_at)
+       VALUES ($1, 'STAFF_ADVANCE', 'DEBIT', $2, 'COMPLETED', $3, $4, $5, $5, NOW())`,
+      [
+        advance.staff_profile_id,
+        advance.amount_requested,
+        `Salary advance approved by ${reviewerName}`,
+        advance.advance_id,
+        req.user.user_id,
+      ]
     );
 
     // Update advance status and record reviewer

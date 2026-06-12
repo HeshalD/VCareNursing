@@ -484,6 +484,13 @@ class ApiClient {
     });
   }
 
+  async walletPayoffBooking(bookingId, amount, notes = null) {
+    return this.request(`/bookings/${bookingId}/wallet-payoff`, {
+      method: 'POST',
+      body: JSON.stringify({ amount, notes }),
+    });
+  }
+
   async verifyQuotePayment(paymentId, verification_notes) {
     return this.request(`/payments/${paymentId}/verify`, {
       method: 'POST',
@@ -1398,6 +1405,34 @@ class ApiClient {
     });
   }
 
+  // Client Payment Recording endpoints
+  async recordClientPayment(clientId, paymentData, paymentSlipFile = null) {
+    if (paymentSlipFile) {
+      const formData = new FormData();
+      formData.append('payment_slip', paymentSlipFile);
+      const { allocations, ...rest } = paymentData;
+      Object.entries(rest).forEach(([key, value]) => {
+        if (value !== null && value !== undefined && value !== '') {
+          formData.append(key, value);
+        }
+      });
+      formData.append('allocations', JSON.stringify(allocations));
+      return this.request(`/client-payments/${clientId}/record`, {
+        method: 'POST',
+        headers: { ...(this.token && { Authorization: `Bearer ${this.token}` }) },
+        body: formData,
+      });
+    }
+    return this.request(`/client-payments/${clientId}/record`, {
+      method: 'POST',
+      body: JSON.stringify(paymentData),
+    });
+  }
+
+  async getClientPaymentRecords(clientId) {
+    return this.request(`/client-payments/${clientId}`);
+  }
+
   // Activity log endpoints
   async getActivityLog(params = {}) {
     const query = new URLSearchParams(params).toString();
@@ -1409,6 +1444,24 @@ class ApiClient {
     const query = new URLSearchParams(params).toString();
     const endpoint = query ? `/activity-log/actor/${userId}?${query}` : `/activity-log/actor/${userId}`;
     return this.request(endpoint);
+  }
+
+  // Transactions endpoints
+  async getAllTransactions(params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const endpoint = query ? `/transactions?${query}` : '/transactions';
+    return this.request(endpoint);
+  }
+
+  async getTransactionMeta() {
+    return this.request('/transactions/meta');
+  }
+
+  async createManualTransaction(transactionData) {
+    return this.request('/transactions/manual', {
+      method: 'POST',
+      body: JSON.stringify(transactionData),
+    });
   }
 }
 

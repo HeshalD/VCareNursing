@@ -3,7 +3,7 @@ import {
   Users, Calendar, DollarSign, Activity,
   Settings, LogOut, Bell, Search,
   ShieldCheck, FileText, SendHorizontal, Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet, Landmark,
-  ChevronLeft, ChevronRight, ClipboardList, History, HeartPulse
+  ChevronLeft, ChevronRight, ClipboardList, History, HeartPulse, ArrowLeftRight
 } from 'lucide-react';
 import logo from '../../../assets/Logo/VCareLogo.png';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -103,6 +103,13 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
             label="Financials"
             path="/admin/financial"
             active={isActive('/admin/financial')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
+            icon={ArrowLeftRight}
+            label="Transactions"
+            path="/admin/transactions"
+            active={isActive('/admin/transactions')}
             collapsed={collapsed}
           />
           <SidebarItem
