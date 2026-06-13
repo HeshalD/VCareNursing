@@ -10,6 +10,9 @@ const ACTION_TYPE_OPTIONS = [
   'CHANGE_REQUEST_REJECTED',
   'CLIENT_PAYMENT_RECORDED',
   'MANUAL_TRANSACTION_ADDED',
+  'BANK_ACCOUNT_CREATED',
+  'BANK_ACCOUNT_UPDATED',
+  'BANK_ACCOUNT_DEACTIVATED',
 ];
 
 const ROLE_COLORS = {
@@ -19,12 +22,15 @@ const ROLE_COLORS = {
 };
 
 const ACTION_COLORS = {
-  CHANGE_REQUEST_SUBMITTED: 'bg-slate-100 text-slate-700',
-  CHANGE_REQUEST_CLAIMED:   'bg-blue-100 text-blue-700',
-  CHANGE_REQUEST_APPROVED:  'bg-green-100 text-green-700',
-  CHANGE_REQUEST_REJECTED:  'bg-red-100 text-red-700',
-  CLIENT_PAYMENT_RECORDED:  'bg-emerald-100 text-emerald-700',
-  MANUAL_TRANSACTION_ADDED: 'bg-amber-100 text-amber-700',
+  CHANGE_REQUEST_SUBMITTED:  'bg-slate-100 text-slate-700',
+  CHANGE_REQUEST_CLAIMED:    'bg-blue-100 text-blue-700',
+  CHANGE_REQUEST_APPROVED:   'bg-green-100 text-green-700',
+  CHANGE_REQUEST_REJECTED:   'bg-red-100 text-red-700',
+  CLIENT_PAYMENT_RECORDED:   'bg-emerald-100 text-emerald-700',
+  MANUAL_TRANSACTION_ADDED:  'bg-amber-100 text-amber-700',
+  BANK_ACCOUNT_CREATED:      'bg-indigo-100 text-indigo-700',
+  BANK_ACCOUNT_UPDATED:      'bg-cyan-100 text-cyan-700',
+  BANK_ACCOUNT_DEACTIVATED:  'bg-rose-100 text-rose-700',
 };
 
 const fmt = (d) => d

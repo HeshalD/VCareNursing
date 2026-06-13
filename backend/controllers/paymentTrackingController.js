@@ -1,6 +1,23 @@
 const db = require('../config/db');
 const bcrypt = require('bcrypt');
 const { logActivity } = require('../utils/activityLogger');
+const { sendSms } = require('../utils/sms');
+const { sendPaymentRecorded } = require('../utils/metaWhatsapp');
+
+const formatPaymentDate = (date) =>
+  new Date(date).toLocaleDateString('en-LK', { day: 'numeric', month: 'long', year: 'numeric' });
+
+const sendPaymentNotifications = async (mobile, name, amount, date) => {
+  const formattedAmount = parseFloat(amount).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const formattedDate = formatPaymentDate(date);
+  const smsBody = `Hi ${name}, we have received your payment of Rs. ${formattedAmount} on ${formattedDate}. Thank you for your prompt payment. - VCare Nursing`;
+  const [smsRes, waRes] = await Promise.allSettled([
+    sendSms(mobile, smsBody),
+    sendPaymentRecorded(mobile, name, formattedAmount, formattedDate),
+  ]);
+  if (smsRes.status === 'rejected') console.error('[Payment] SMS failed:', smsRes.reason?.message);
+  if (waRes.status === 'rejected') console.error('[Payment] WhatsApp failed:', waRes.reason?.message);
+};
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -474,6 +491,22 @@ const recordPayment = async (req, res) => {
 
     await client.query('COMMIT');
 
+    // Notify payer of payment receipt (fire-and-forget)
+    ;(async () => {
+      try {
+        const srResult = await db.query(
+          'SELECT payer_name, payer_mobile FROM service_requests WHERE request_id = $1',
+          [quotation.request_id]
+        );
+        if (srResult.rows.length > 0) {
+          const { payer_name, payer_mobile } = srResult.rows[0];
+          await sendPaymentNotifications(payer_mobile, payer_name, amount_received, new Date());
+        }
+      } catch (e) {
+        console.error('[Payment] Notification error (recordPayment):', e.message);
+      }
+    })();
+
     await safeLog({
       actorUserId: req.user?.user_id,
       actorName: await getActorName(req.user?.user_id).catch(() => 'Admin'),
@@ -739,6 +772,25 @@ const recordBookingPayment = async (req, res) => {
     const remaining_balance = parseFloat(booking.total_amount || 0) - new_total;
 
     await client.query('COMMIT');
+
+    // Notify client of payment receipt (fire-and-forget)
+    ;(async () => {
+      try {
+        const clientResult = await db.query(
+          `SELECT cp.full_name, u.mobile_number
+           FROM client_profiles cp
+           JOIN users u ON cp.user_id = u.user_id
+           WHERE cp.client_profile_id = $1`,
+          [booking.client_id]
+        );
+        if (clientResult.rows.length > 0) {
+          const { full_name, mobile_number } = clientResult.rows[0];
+          await sendPaymentNotifications(mobile_number, full_name, amount_received, new Date());
+        }
+      } catch (e) {
+        console.error('[Payment] Notification error (recordBookingPayment):', e.message);
+      }
+    })();
 
     await safeLog({
       actorUserId: req.user?.user_id,

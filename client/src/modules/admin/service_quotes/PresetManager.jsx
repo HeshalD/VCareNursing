@@ -150,7 +150,9 @@ const PresetManager = ({ isOpen, onClose, onSave }) => {
   const fetchPresets = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/quotes/presets');
+      const response = await fetch('/api/quotes/presets', {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+      });
       const data = await response.json();
       setPresets(data.data || []);
     } catch {

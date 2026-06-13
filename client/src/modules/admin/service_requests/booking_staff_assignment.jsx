@@ -199,7 +199,8 @@ const BookingStaffAssignmentPage = () => {
                   <Stat label="Care Profile" value={formData.booking.patient_name} />
                   <Stat label="Service" value={formData.booking.service_type} />
                 </div>
-                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                  <Stat label="Start Date" value={formData.booking.start_date ? new Date(formData.booking.start_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'N/A'} />
                   <Stat label="Paid" value={money(formData.booking.amount_paid)} />
                   <Stat label="Quotated" value={money(formData.booking.amount_quotated)} />
                   <Stat label="Quote Rate" value={money(formData.booking.quote_daily_rate || 0)} />

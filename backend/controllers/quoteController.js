@@ -2,6 +2,7 @@ const db = require('../config/db');
 const html_to_pdf = require('html-pdf-node');
 const estimateTemplate = require('../templates/estimateTemplate');
 const { sendWhatsAppMessage, checkMessageStatus } = require('../utils/whatsapp');
+const { sendClientQuotation } = require('../utils/metaWhatsapp');
 const cloudinary = require('cloudinary').v2;
 const { logActivity } = require('../utils/activityLogger');
 
@@ -260,10 +261,15 @@ exports.generateAndSendPDF = async (req, res) => {
             }
         }, 5000); // Check after 5 seconds
 
-        // 5. Update Status
+        // 5. Send Meta WhatsApp template notification
+        const formattedTotal = `Rs. ${parseFloat(data.total_amount).toLocaleString('en-LK')}`;
+        sendClientQuotation(data.payer_mobile, data.payer_name, data.estimate_number, formattedTotal)
+          .catch(err => console.error('[Meta WA] Quotation template failed:', err.message));
+
+        // 7. Update Status
         await db.query("UPDATE quotations SET status = 'SENT' WHERE quote_id = $1", [quote_id]);
-        
-        // 6. Update service request status to PENDING and set active_quote_id
+
+        // 8. Update service request status to PENDING and set active_quote_id
         await db.query("UPDATE service_requests SET status = 'PENDING', active_quote_id = $1 WHERE request_id = $2", [quote_id, data.request_id]);
 
         await safeLog({

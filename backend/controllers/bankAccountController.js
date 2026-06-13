@@ -1,4 +1,10 @@
 const db = require('../config/db');
+const { logActivity } = require('../utils/activityLogger');
+
+function extractActorRole(role) {
+  const raw = Array.isArray(role) ? role[0] : role;
+  return typeof raw === 'string' ? raw.replace(/\{|\}/g, '').split(',')[0].trim() : String(raw);
+}
 
 /**
  * Get all active bank accounts
@@ -157,10 +163,37 @@ const createBankAccount = async (req, res) => {
         created_by
     `, [account_nickname, account_number, account_holder_name, bank_name, branch_name, currency, created_by]);
 
+    const created = result.rows[0];
+    (async () => {
+      try {
+        const actorUserId = req.user?.user_id;
+        const actorRole = extractActorRole(req.user?.role);
+        const nameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [actorUserId]);
+        await logActivity({
+          actorUserId,
+          actorName: nameRes.rows[0]?.full_name || 'Admin',
+          actorRole,
+          actionType: 'BANK_ACCOUNT_CREATED',
+          entityType: 'bank_account',
+          entityId: null,
+          details: {
+            account_id: created.account_id,
+            account_nickname: created.account_nickname,
+            account_number: created.account_number,
+            bank_name: created.bank_name,
+            branch_name: created.branch_name,
+            currency: created.currency,
+          },
+        });
+      } catch (e) {
+        console.error('[BankAccount] Activity log error:', e.message);
+      }
+    })();
+
     res.status(201).json({
       status: 'success',
       message: 'Bank account created successfully',
-      data: result.rows[0]
+      data: created
     });
   } catch (error) {
     console.error('Error creating bank account:', error);
@@ -283,6 +316,25 @@ const updateBankAccount = async (req, res) => {
 
     const result = await db.query(query, values);
 
+    (async () => {
+      try {
+        const actorUserId = req.user?.user_id;
+        const actorRole = extractActorRole(req.user?.role);
+        const nameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [actorUserId]);
+        await logActivity({
+          actorUserId,
+          actorName: nameRes.rows[0]?.full_name || 'Admin',
+          actorRole,
+          actionType: 'BANK_ACCOUNT_UPDATED',
+          entityType: 'bank_account',
+          entityId: null,
+          details: { account_id, updated_fields: Object.keys(req.body) },
+        });
+      } catch (e) {
+        console.error('[BankAccount] Activity log error:', e.message);
+      }
+    })();
+
     res.status(200).json({
       status: 'success',
       message: 'Bank account updated successfully',
@@ -347,10 +399,35 @@ const deactivateBankAccount = async (req, res) => {
         updated_at
     `, [account_id]);
 
+    const deactivated = result.rows[0];
+    (async () => {
+      try {
+        const actorUserId = req.user?.user_id;
+        const actorRole = extractActorRole(req.user?.role);
+        const nameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [actorUserId]);
+        await logActivity({
+          actorUserId,
+          actorName: nameRes.rows[0]?.full_name || 'Admin',
+          actorRole,
+          actionType: 'BANK_ACCOUNT_DEACTIVATED',
+          entityType: 'bank_account',
+          entityId: null,
+          details: {
+            account_id,
+            account_nickname: deactivated.account_nickname,
+            account_number: deactivated.account_number,
+            bank_name: deactivated.bank_name,
+          },
+        });
+      } catch (e) {
+        console.error('[BankAccount] Activity log error:', e.message);
+      }
+    })();
+
     res.status(200).json({
       status: 'success',
       message: 'Bank account deactivated successfully',
-      data: result.rows[0]
+      data: deactivated
     });
   } catch (error) {
     console.error('Error deactivating bank account:', error);

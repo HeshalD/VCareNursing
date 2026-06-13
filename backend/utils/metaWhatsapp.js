@@ -53,4 +53,24 @@ const sendStaffWelcomeExisting = (mobileNumber, fullName) =>
 const sendStaffApplicationRejected = (mobileNumber, fullName, reason) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_staff_application_rejected', 'en', [fullName, reason]);
 
-module.exports = { sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected };
+// Sent when a service request is received — {{1}} = name, {{2}} = service type, {{3}} = date
+const sendServiceRequestConfirmed = (mobileNumber, payerName, serviceType, date) =>
+  sendTemplate(formatNumber(mobileNumber), 'vcare_service_request_confirmed', 'en', [payerName, serviceType, date]);
+
+// Sent when a quotation is issued — {{1}} = name, {{2}} = estimate number, {{3}} = total amount
+const sendClientQuotation = (mobileNumber, payerName, estimateNumber, totalAmount) =>
+  sendTemplate(formatNumber(mobileNumber), 'vcare_client_quotation', 'en', [payerName, estimateNumber, totalAmount]);
+
+// Sent when a payment is recorded — {{1}} = name, {{2}} = amount, {{3}} = date
+const sendPaymentRecorded = (mobileNumber, payerName, amount, date) =>
+  sendTemplate(formatNumber(mobileNumber), 'vcare_payment_recorded', 'en', [payerName, amount, date]);
+
+// Sent when staff is assigned to a booking — {{1}} = client name, {{2}} = staff name, {{3}} = date, {{4}} = time, {{5}} = staff profile URL
+const sendBookingConfirmed = (mobileNumber, clientName, staffName, date, time, staffProfileUrl) =>
+  sendTemplate(formatNumber(mobileNumber), 'vcare_booking_confirmed', 'en', [clientName, staffName, date, time, staffProfileUrl]);
+
+// Sent to staff when assigned to a booking — {{1}} = staff name, {{2}} = patient name, {{3}} = location, {{4}} = conditions, {{5}} = start date
+const sendStaffNewAssignment = (mobileNumber, staffName, patientName, location, conditions, startDate) =>
+  sendTemplate(formatNumber(mobileNumber), 'vcare_staff_new_assignment', 'en', [staffName, patientName, location, conditions, startDate]);
+
+module.exports = { sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendPaymentRecorded, sendBookingConfirmed, sendStaffNewAssignment };

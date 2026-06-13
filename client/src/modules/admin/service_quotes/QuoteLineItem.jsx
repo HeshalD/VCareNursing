@@ -149,6 +149,7 @@ const QuoteLineItem = ({ item, index, onUpdate, onDelete, onMoveUp, onMoveDown, 
               type="number"
               value={item.quantity}
               onChange={e => handleInputChange('quantity', e.target.value)}
+              onWheel={e => e.target.blur()}
               placeholder="1"
               min="0"
               step="0.01"
@@ -164,6 +165,7 @@ const QuoteLineItem = ({ item, index, onUpdate, onDelete, onMoveUp, onMoveDown, 
               type="number"
               value={item.unit_price}
               onChange={e => handleInputChange('unit_price', e.target.value)}
+              onWheel={e => e.target.blur()}
               placeholder="0"
               min="0"
               step="0.01"

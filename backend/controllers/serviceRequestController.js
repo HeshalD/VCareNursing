@@ -1,5 +1,31 @@
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
+const { sendSms } = require('../utils/sms');
+const { sendServiceRequestConfirmed } = require('../utils/metaWhatsapp');
+
+const formatServiceType = (type) => {
+    if (!type) return 'our services';
+    return type.charAt(0).toUpperCase() + type.slice(1).toLowerCase();
+};
+
+const formatDate = (dateStr) => {
+    if (!dateStr) return 'the requested date';
+    return new Date(dateStr).toLocaleDateString('en-LK', { day: 'numeric', month: 'long', year: 'numeric' });
+};
+
+const sendServiceRequestNotifications = async (mobileNumber, payerName, serviceType, startDate) => {
+    const formattedType = formatServiceType(serviceType);
+    const formattedDate = formatDate(startDate);
+    const smsBody = `Hi ${payerName},\n\nWe have received your service request for ${formattedType} on ${formattedDate}.\n\nOur team is reviewing your request and will get back to you with a quote shortly.\n\nThank you for choosing VCare Nursing.`;
+
+    const [smsRes, waRes] = await Promise.allSettled([
+        sendSms(mobileNumber, smsBody),
+        sendServiceRequestConfirmed(mobileNumber, payerName, formattedType, formattedDate),
+    ]);
+
+    if (smsRes.status === 'rejected') console.error('[ServiceRequest] SMS failed:', smsRes.reason?.message);
+    if (waRes.status === 'rejected')  console.error('[ServiceRequest] WhatsApp failed:', waRes.reason?.message);
+};
 
 function extractActorRole(role) {
     const raw = Array.isArray(role) ? role[0] : role;
@@ -102,8 +128,8 @@ exports.submitServiceRequest = async (req, res) => {
 
         const result = await db.query(query, values);
 
-        // 3. Phase 1 SMS: "Request Received" (Mockup)
-        console.log(`SMS to ${payer_mobile}: Request Received. A VCare Agent will contact you shortly.`);
+        // 3. Send SMS + WhatsApp confirmation (non-fatal)
+        sendServiceRequestNotifications(payer_mobile, payer_name, service_type, start_date).catch(() => {});
 
         res.status(201).json({
             status: 'success',
@@ -361,8 +387,8 @@ exports.createServiceRequest = async (req, res) => {
 
         const result = await db.query(insertQuery, insertValues);
 
-        // Send notification (optional - similar to staff creation)
-        console.log(`Service request created: ${result.rows[0].request_id} for ${payer_name}`);
+        // Send SMS + WhatsApp confirmation (non-fatal)
+        sendServiceRequestNotifications(payer_mobile, payer_name, service_type, start_date).catch(() => {});
 
         res.status(201).json({
             status: 'success',

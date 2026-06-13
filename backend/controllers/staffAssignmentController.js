@@ -1,4 +1,6 @@
 const db = require('../config/db');
+const { sendSms } = require('../utils/sms');
+const { sendBookingConfirmed, sendStaffNewAssignment } = require('../utils/metaWhatsapp');
 
 /**
  * STAFF ASSIGNMENT CONTROLLER
@@ -382,6 +384,69 @@ exports.assignStaffToBooking = async (req, res) => {
        WHERE booking_id = $1`,
       [booking_id, bookingOtRate, staff_profile_id]
     );
+
+    (async () => {
+      try {
+        const [clientRes, bookingRes, staffMobileRes] = await Promise.all([
+          db.query(
+            `SELECT cp.full_name, u.mobile_number
+             FROM bookings b
+             JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+             JOIN users u ON cp.user_id = u.user_id
+             WHERE b.booking_id = $1`,
+            [booking_id]
+          ),
+          db.query(
+            `SELECT
+               COALESCE(pp.full_name, sr.patient_name) AS patient_name,
+               COALESCE(pp.medical_condition, sr.patient_condition) AS medical_condition,
+               sr.location_address
+             FROM bookings b
+             LEFT JOIN service_requests sr ON b.request_id = sr.request_id
+             LEFT JOIN patient_profiles pp ON b.patient_id = pp.patient_id
+             WHERE b.booking_id = $1`,
+            [booking_id]
+          ),
+          db.query(
+            `SELECT u.mobile_number FROM staff_profiles sp JOIN users u ON sp.user_id = u.user_id WHERE sp.staff_profile_id = $1`,
+            [staff_profile_id]
+          ),
+        ]);
+
+        if (clientRes.rows.length === 0) return;
+
+        const { full_name: clientName, mobile_number: clientMobile } = clientRes.rows[0];
+        const { patient_name, medical_condition, location_address } = bookingRes.rows[0] || {};
+        const staffMobile = staffMobileRes.rows[0]?.mobile_number;
+
+        const formattedDate = new Date(service_start_date).toLocaleDateString('en-GB', {
+          day: 'numeric', month: 'long', year: 'numeric'
+        });
+        const staffProfileUrl = `https://vcarenursing.com/services/staff-profile/${staff_profile_id}`;
+        const conditions = medical_condition || 'Not specified';
+
+        const clientSms = `Hi ${clientName}, your booking has been confirmed!\n\nStaff Member: ${staff.full_name}\nDate: ${formattedDate}\n\nView staff profile: ${staffProfileUrl}\n\nIf you need any changes, please contact us. - VCare Nursing`;
+        const staffSms = `Hi ${staff.full_name}, you have been assigned to a new booking.\n\nPatient: ${patient_name || 'N/A'}\nLocation: ${location_address || 'N/A'}\nConditions: ${conditions}\nStart Date: ${formattedDate}\n\nLog in to the staff portal for full details. - VCare Nursing`;
+
+        const results = await Promise.allSettled([
+          sendBookingConfirmed(clientMobile, clientName, staff.full_name, formattedDate, '9:00 AM', staffProfileUrl),
+          sendSms(clientMobile, clientSms),
+          ...(staffMobile ? [
+            sendStaffNewAssignment(staffMobile, staff.full_name, patient_name || 'N/A', location_address || 'N/A', conditions, formattedDate),
+            sendSms(staffMobile, staffSms),
+          ] : []),
+        ]);
+
+        results.forEach((r, i) => {
+          if (r.status === 'rejected') {
+            const label = ['Client WA', 'Client SMS', 'Staff WA', 'Staff SMS'][i];
+            console.error(`[BookingConfirmed] ${label} failed:`, r.reason?.message);
+          }
+        });
+      } catch (e) {
+        console.error('[BookingConfirmed] Notification error:', e.message);
+      }
+    })();
 
     return res.status(201).json({
       status: 'success',

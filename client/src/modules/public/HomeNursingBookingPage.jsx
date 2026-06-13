@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   User, Calendar, Phone, MapPin, Heart, CheckCircle, ShieldCheck,
   ArrowRight, UserCheck, Home, Clock, Star, Activity,
-  Stethoscope, Filter, Loader2, ChevronRight, ChevronLeft, Briefcase
+  Stethoscope, Filter, Loader2, ChevronRight, ChevronLeft
 } from 'lucide-react';
 import Navbar from '../../components/layout/Navbar';
 import Footer from '../../components/layout/Footer';
@@ -25,6 +25,7 @@ const HomeNursingBookingPage = () => {
   const [shouldRefetchStaff, setShouldRefetchStaff] = useState(false);
   const [patients, setPatients] = useState([]);
   const [patientsLoading, setPatientsLoading] = useState(false);
+  const [staffSearch, setStaffSearch] = useState('');
 
   const [formData, setFormData] = useState({
     // Payer Information
@@ -183,7 +184,7 @@ const HomeNursingBookingPage = () => {
 
   useEffect(() => {
     filterStaff();
-  }, [staffData, activeFilter]);
+  }, [staffData, activeFilter, staffSearch]);
 
   const fetchStaffData = async () => {
     try {
@@ -211,14 +212,11 @@ const HomeNursingBookingPage = () => {
           .map(staff => ({
             id: staff.staff_profile_id,
             name: staff.full_name,
-            age: 30 + Math.floor(Math.random() * 25),
             role: staff.role.includes('NURSE') ? 'Nurse' : 'Caretaker',
-            experience: Math.floor(Math.random() * 20) + 5,
             location: staff.home_address || 'Sri Lanka',
-            rating: (Math.random() * 1.5 + 3.5).toFixed(1),
-            reviews: Math.floor(Math.random() * 150) + 10,
+            rating: staff.average_rating ? parseFloat(staff.average_rating).toFixed(1) : null,
+            reviews: staff.total_reviews || 0,
             isVerified: staff.verification_status === 'VERIFIED',
-            price: `LKR ${Math.floor(Math.random() * 50000) + 30000}/mo`,
             image: staff.profile_picture_url || `https://i.pravatar.cc/300?u=${staff.staff_profile_id}`,
             badges: Array.isArray(staff.qualifications) && staff.qualifications.length > 0
               ? staff.qualifications.slice(0, 2)
@@ -243,38 +241,20 @@ const HomeNursingBookingPage = () => {
         const caretakers = caretakersResponse.data || [];
 
         // Transform API data to match expected format
-        const transformedStaff = [...nurses, ...caretakers].map(staff => {
-          // Calculate age from date_of_birth if available
-          let calculatedAge = 30; // Default fallback age
-          if (staff.date_of_birth) {
-            const birthDate = new Date(staff.date_of_birth);
-            const today = new Date();
-            let age = today.getFullYear() - birthDate.getFullYear();
-            const monthDiff = today.getMonth() - birthDate.getMonth();
-            if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
-              age--;
-            }
-            calculatedAge = age;
-          }
-
-          return {
-            id: staff.staff_profile_id,
-            name: staff.full_name,
-            age: calculatedAge,
-            role: staff.role.includes('NURSE') ? 'Nurse' : 'Caretaker',
-            experience: Math.floor(Math.random() * 20) + 5,
-            location: staff.home_address || 'Sri Lanka',
-            rating: (Math.random() * 1.5 + 3.5).toFixed(1),
-            reviews: Math.floor(Math.random() * 150) + 10,
-            isVerified: staff.verification_status === 'VERIFIED',
-            price: `LKR ${Math.floor(Math.random() * 50000) + 30000}/mo`,
-            image: staff.profile_picture_url || `https://i.pravatar.cc/300?u=${staff.staff_profile_id}`,
-            badges: Array.isArray(staff.qualifications) && staff.qualifications.length > 0
-              ? staff.qualifications.slice(0, 2)
-              : ['Experienced'],
-            staffType: staff.role.includes('NURSE') ? 'NURSE' : 'CARETAKER'
-          };
-        });
+        const transformedStaff = [...nurses, ...caretakers].map(staff => ({
+          id: staff.staff_profile_id,
+          name: staff.full_name,
+          role: staff.role.includes('NURSE') ? 'Nurse' : 'Caretaker',
+          location: staff.home_address || 'Sri Lanka',
+          rating: staff.average_rating ? parseFloat(staff.average_rating).toFixed(1) : null,
+          reviews: staff.total_reviews || 0,
+          isVerified: staff.verification_status === 'VERIFIED',
+          image: staff.profile_picture_url || `https://i.pravatar.cc/300?u=${staff.staff_profile_id}`,
+          badges: Array.isArray(staff.qualifications) && staff.qualifications.length > 0
+            ? staff.qualifications.slice(0, 2)
+            : ['Experienced'],
+          staffType: staff.role.includes('NURSE') ? 'NURSE' : 'CARETAKER'
+        }));
 
         console.log('Setting staff data (all):', transformedStaff);
         setStaffData(transformedStaff);
@@ -288,11 +268,12 @@ const HomeNursingBookingPage = () => {
   };
 
   const filterStaff = () => {
-    if (activeFilter === 'ALL') {
-      setFilteredStaff(staffData);
-    } else {
-      setFilteredStaff(staffData.filter(staff => staff.staffType === activeFilter));
+    let result = activeFilter === 'ALL' ? staffData : staffData.filter(s => s.staffType === activeFilter);
+    if (staffSearch.trim()) {
+      const q = staffSearch.toLowerCase();
+      result = result.filter(s => s.name.toLowerCase().includes(q) || s.location.toLowerCase().includes(q));
     }
+    setFilteredStaff(result);
   };
 
   const handleFilterChange = (filter) => {
@@ -750,35 +731,38 @@ const HomeNursingBookingPage = () => {
                       </div>
                     </div>
 
-                    {/* Filter Buttons */}
-                    <div className="flex items-center gap-2 bg-white/5 rounded-full p-1 mb-8">
-                      <button
-                        onClick={() => handleFilterChange('ALL')}
-                        className={`px-6 py-2 rounded-full font-medium transition-all ${activeFilter === 'ALL'
-                            ? 'bg-emerald-500 text-white'
-                            : 'text-slate-400 hover:text-white'
-                          }`}
-                      >
-                        All Staff
-                      </button>
-                      <button
-                        onClick={() => handleFilterChange('NURSE')}
-                        className={`px-6 py-2 rounded-full font-medium transition-all ${activeFilter === 'NURSE'
-                            ? 'bg-emerald-500 text-white'
-                            : 'text-slate-400 hover:text-white'
-                          }`}
-                      >
-                        Nurses
-                      </button>
-                      <button
-                        onClick={() => handleFilterChange('CARETAKER')}
-                        className={`px-6 py-2 rounded-full font-medium transition-all ${activeFilter === 'CARETAKER'
-                            ? 'bg-emerald-500 text-white'
-                            : 'text-slate-400 hover:text-white'
-                          }`}
-                      >
-                        Caretakers
-                      </button>
+                    {/* Search & Filter */}
+                    <div className="flex flex-col sm:flex-row gap-3 mb-6">
+                      <div className="relative flex-1">
+                        <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                        <input
+                          type="text"
+                          value={staffSearch}
+                          onChange={e => setStaffSearch(e.target.value)}
+                          placeholder="Search by name or location..."
+                          className="w-full pl-9 pr-4 py-2.5 bg-[#0b1120] border border-white/10 rounded-xl text-sm text-white placeholder:text-slate-600 focus:ring-2 focus:ring-emerald-500 outline-none"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2 bg-white/5 rounded-full p-1">
+                        <button
+                          onClick={() => handleFilterChange('ALL')}
+                          className={`px-5 py-2 rounded-full font-medium transition-all text-sm ${activeFilter === 'ALL' ? 'bg-emerald-500 text-white' : 'text-slate-400 hover:text-white'}`}
+                        >
+                          All Staff
+                        </button>
+                        <button
+                          onClick={() => handleFilterChange('NURSE')}
+                          className={`px-5 py-2 rounded-full font-medium transition-all text-sm ${activeFilter === 'NURSE' ? 'bg-emerald-500 text-white' : 'text-slate-400 hover:text-white'}`}
+                        >
+                          Nurses
+                        </button>
+                        <button
+                          onClick={() => handleFilterChange('CARETAKER')}
+                          className={`px-5 py-2 rounded-full font-medium transition-all text-sm ${activeFilter === 'CARETAKER' ? 'bg-emerald-500 text-white' : 'text-slate-400 hover:text-white'}`}
+                        >
+                          Caretakers
+                        </button>
+                      </div>
                     </div>
 
                     {/* Loading State */}
@@ -834,19 +818,15 @@ const HomeNursingBookingPage = () => {
 
                             <div className="space-y-2">
                               <div className="flex items-center gap-2 text-sm text-slate-400">
-                                <Star className="w-4 h-4 text-emerald-500 fill-current" />
-                                <span>{staff.rating} ({staff.reviews} reviews)</span>
-                              </div>
-                              <div className="flex items-center gap-2 text-sm text-slate-400">
-                                <Briefcase className="w-4 h-4" />
-                                <span>{staff.experience} Years</span>
+                                <Star className={`w-4 h-4 fill-current ${staff.rating ? 'text-emerald-500' : 'text-slate-600'}`} />
+                                {staff.rating
+                                  ? <span>{staff.rating} <span className="text-slate-500">({staff.reviews} {staff.reviews === 1 ? 'review' : 'reviews'})</span></span>
+                                  : <span className="text-slate-500">No reviews yet</span>
+                                }
                               </div>
                               <div className="flex items-center gap-2 text-sm text-slate-400">
                                 <MapPin className="w-4 h-4" />
                                 <span>{staff.location}</span>
-                              </div>
-                              <div className="flex items-center gap-2 text-sm font-semibold text-emerald-400">
-                                <span>{staff.price}</span>
                               </div>
                             </div>
 

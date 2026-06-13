@@ -16,13 +16,28 @@
 | 9 | `vcare_booking_overdue_balance` | Utility | Client name, amount, due date |
 | 10 | `vcare_payment_recorded` | Utility | Client name, amount, date, balance |
 | 11 | `vcare_monthly_statement` | Utility | Client name, month, statement link |
-| 12 | `vcare_salary_statement` | Utility | Staff name, month, amount, statement link |
-| 13 | `vcare_rate_staff_member` | Utility | Client name, staff name, rating link |
+| 12 | `vcare_salary_statement` | Utility | Staff name, month, net pay, statement PDF |
+| 13 | `vcare_rate_staff_member` | Utility | Client name, staff name, booking link |
+| 14 | `vcare_staff_new_assignment` | Utility | Staff name, patient name, start date, end date, daily rate |
+| 15 | `vcare_staff_assignment_changed` | Utility | Staff name, patient name, booking reference |
+| 16 | `vcare_staff_assignment_terminated` | Utility | Staff name, patient name, end date |
+| 17 | `vcare_staff_change_request_sent` | Utility | Staff name, request type, reference ID |
+| 18a | `vcare_staff_change_request_approved` | Utility | Staff name, request type |
+| 18b | `vcare_staff_change_request_rejected` | Utility | Staff name, request type, reason |
+| 19 | `vcare_staff_advance_request_sent` | Utility | Staff name, amount requested, reference ID |
+| 20a | `vcare_staff_advance_approved` | Utility | Staff name, amount approved, new wallet balance |
+| 20b | `vcare_staff_advance_rejected` | Utility | Staff name, amount requested, reason |
+| 21 | `vcare_staff_salary_paid` | Utility | Staff name, amount, date |
+| 22 | `vcare_client_termination_requested` | Utility | Client name, booking reference, requested end date |
+| 23a | `vcare_client_termination_approved` | Utility | Client name, booking reference, end date, refund amount |
+| 23b | `vcare_client_termination_rejected` | Utility | Client name, booking reference |
+| 24 | `vcare_booking_completed_client` | Utility | Client name, staff name, completion date |
+| 25 | `vcare_client_wallet_refund` | Utility | Client name, refund amount, reason |
 
-**Total: 13 templates — 3 Authentication, 10 Utility**
+**Total: 28 templates — 3 Authentication, 25 Utility**
 
 > **Template limit:** WhatsApp Business accounts allow up to **250 templates** by default.
-> 13 templates is well within this limit. You can always request a higher limit from Meta if needed.
+> 28 templates is well within this limit. You can always request a higher limit from Meta if needed.
 
 ---
 
@@ -190,7 +205,7 @@ We appreciate the time you took to apply and wish you all the best in your job s
 | Field | Value |
 |---|---|
 | Category | **Utility** |
-| Template Name | `vcare_service_request_confirmed` |
+| Template Name | `Service Request Received` |
 | Language | English (US) |
 
 **Header:** (Text) `Service Request Received`
@@ -226,16 +241,17 @@ Thank you for choosing VCare Nursing.
 ```
 Hi {{1}},
 
-Here is your quotation for *{{2}}*:
+Please find attached your quotation for {{2}}:
 
-💰 Total: ${{3}}
 
-This quotation is valid until *{{4}}*. Please log in to your account to accept or enquire further.
+Please make sure to complete this payment and send us the receipt to move on with the booking. 
+
+Thank you.
 ```
 
 **Footer:** `VCare Nursing`
 
-**Buttons:** Visit Website — `https://vcarenursing.com/client/quotes`
+**Media:** Document (PDF) - *Dynamic URL*
 
 **Sample values:** `{{1}}` = `Emily`, `{{2}}` = `Home Nursing – 4 hours`, `{{3}}` = `320.00`, `{{4}}` = `20 June 2026`
 
@@ -406,11 +422,534 @@ Your feedback helps us maintain the highest standard of service. It only takes 3
 
 **Footer:** `VCare Nursing`
 
-**Buttons:** Visit Website — `https://vcarenursing.com/rate/{{3}}`
+**Buttons:** Visit Website — `https://vcarenursing.com/client/bookings/{{3}}`
 
-> **Note on the rating link button:** WhatsApp allows a static base URL with a dynamic suffix. Set the button URL to `https://vcarenursing.com/rate/` and pass `{{3}}` as the dynamic part (the booking or staff ID) at send time.
+> **Note on the rating link button:** WhatsApp allows a static base URL with a dynamic suffix. Set the button URL to `https://vcarenursing.com/client/bookings/` and pass `{{3}}` as the dynamic part (the booking ID) at send time. This takes the client directly to the relevant booking in their profile where they can leave a review.
 
 **Sample values:** `{{1}}` = `Emily`, `{{2}}` = `Sarah Johnson`, `{{3}}` = `BK-10045`
+
+---
+
+---
+
+## Staff Assignment Templates
+
+---
+
+### 14. `vcare_staff_new_assignment`
+
+| Field | Value |
+|---|---|
+| Category | **Utility** |
+| Template Name | `vcare_staff_new_assignment` |
+| Language | English (US) |
+
+**Header:** (Text) `New Assignment`
+
+**Body:**
+```
+Hi {{1}},
+
+You have been assigned to a new booking. Here are the details:
+
+👤 Patient: {{2}}
+📅 Start Date: {{3}}
+📅 End Date: {{4}}
+💰 Daily Rate: ${{5}}
+
+Please log in to the staff portal for the full assignment details and any additional instructions.
+```
+
+**Footer:** `VCare Nursing`
+
+**Buttons:** Visit Website — `https://vcarenursing.com/staff/assignments`
+
+**At send time, pass:**
+- `{{1}}` = `staff.full_name`
+- `{{2}}` = `patient_name`
+- `{{3}}` = `service_start_date` (formatted, e.g. `18 June 2026`)
+- `{{4}}` = `service_end_date` (formatted, or `"Ongoing"` if open-ended)
+- `{{5}}` = `daily_rate`
+
+**Sample values:** `{{1}}` = `Sarah`, `{{2}}` = `John Perera`, `{{3}}` = `18 June 2026`, `{{4}}` = `25 June 2026`, `{{5}}` = `85.00`
+
+---
+
+### 15. `vcare_staff_assignment_changed`
+
+| Field | Value |
+|---|---|
+| Category | **Utility** |
+| Template Name | `vcare_staff_assignment_changed` |
+| Language | English (US) |
+
+**Header:** (Text) `Assignment Update`
+
+**Body:**
+```
+Hi {{1}},
+
+Please note that you have been removed from the following booking:
+
+👤 Patient: {{2}}
+🔖 Booking Reference: {{3}}
+
+If you have any questions, please contact the VCare Nursing office.
+```
+
+**Footer:** `VCare Nursing`
+
+**At send time, pass:**
+- `{{1}}` = `staff.full_name`
+- `{{2}}` = `patient_name`
+- `{{3}}` = `booking_id`
+
+**Sample values:** `{{1}}` = `Sarah`, `{{2}}` = `John Perera`, `{{3}}` = `BK-10045`
+
+---
+
+### 16. `vcare_staff_assignment_terminated`
+
+| Field | Value |
+|---|---|
+| Category | **Utility** |
+| Template Name | `vcare_staff_assignment_terminated` |
+| Language | English (US) |
+
+**Header:** (Text) `Assignment Ended`
+
+**Body:**
+```
+Hi {{1}},
+
+Your assignment has come to an end. Thank you for your dedication and service.
+
+👤 Patient: {{2}}
+📅 End Date: {{3}}
+
+Please log in to the staff portal to view your final assignment summary.
+```
+
+**Footer:** `VCare Nursing`
+
+**Buttons:** Visit Website — `https://vcarenursing.com/staff/assignments`
+
+**At send time, pass:**
+- `{{1}}` = `staff.full_name`
+- `{{2}}` = `patient_name`
+- `{{3}}` = `official_end_date` (formatted)
+
+**Sample values:** `{{1}}` = `Sarah`, `{{2}}` = `John Perera`, `{{3}}` = `25 June 2026`
+
+---
+
+## Staff Administrative Templates
+
+---
+
+### 17. `vcare_staff_change_request_sent`
+
+| Field | Value |
+|---|---|
+| Category | **Utility** |
+| Template Name | `vcare_staff_change_request_sent` |
+| Language | English (US) |
+
+**Header:** (Text) `Change Request Received`
+
+**Body:**
+```
+Hi {{1}},
+
+Your change request has been received and is now under review by the admin team.
+
+📋 Request Type: {{2}}
+🔖 Reference: #{{3}}
+
+You will be notified once a decision has been made. Please allow 1–2 business days for review.
+```
+
+**Footer:** `VCare Nursing`
+
+**At send time, pass:**
+- `{{1}}` = `staff.full_name`
+- `{{2}}` = `request_type` (formatted for display, e.g. `"Profile Update"`, `"Bank Account Change"`)
+- `{{3}}` = `request_id`
+
+**Sample values:** `{{1}}` = `Sarah`, `{{2}}` = `Profile Update`, `{{3}}` = `CR-0021`
+
+---
+
+### 18a. `vcare_staff_change_request_approved`
+
+| Field | Value |
+|---|---|
+| Category | **Utility** |
+| Template Name | `vcare_staff_change_request_approved` |
+| Language | English (US) |
+
+**Header:** (Text) `Change Request Approved ✅`
+
+**Body:**
+```
+Hi {{1}},
+
+Good news — your change request has been approved.
+
+📋 Request Type: {{2}}
+
+Your profile has been updated accordingly. Please log in to the staff portal to verify the changes.
+```
+
+**Footer:** `VCare Nursing`
+
+**Buttons:** Visit Website — `https://vcarenursing.com/staff/profile`
+
+**At send time, pass:**
+- `{{1}}` = `staff.full_name` (looked up via `changeReq.staff_profile_id`)
+- `{{2}}` = `changeReq.request_type` (formatted)
+
+**Sample values:** `{{1}}` = `Sarah`, `{{2}}` = `Bank Account Change`
+
+---
+
+### 18b. `vcare_staff_change_request_rejected`
+
+| Field | Value |
+|---|---|
+| Category | **Utility** |
+| Template Name | `vcare_staff_change_request_rejected` |
+| Language | English (US) |
+
+**Header:** (Text) `Change Request Update`
+
+**Body:**
+```
+Hi {{1}},
+
+Your change request has been reviewed and could not be approved at this time.
+
+📋 Request Type: {{2}}
+📝 Reason: {{3}}
+
+If you have any questions, please contact the VCare Nursing office.
+```
+
+**Footer:** `VCare Nursing`
+
+**At send time, pass:**
+- `{{1}}` = `staff.full_name`
+- `{{2}}` = `changeReq.request_type` (formatted)
+- `{{3}}` = `review_notes`
+
+**Sample values:** `{{1}}` = `Sarah`, `{{2}}` = `Bank Account Change`, `{{3}}` = `Account details could not be verified`
+
+---
+
+### 19. `vcare_staff_advance_request_sent`
+
+| Field | Value |
+|---|---|
+| Category | **Utility** |
+| Template Name | `vcare_staff_advance_request_sent` |
+| Language | English (US) |
+
+**Header:** (Text) `Advance Request Received`
+
+**Body:**
+```
+Hi {{1}},
+
+Your advance request has been received and is pending admin approval.
+
+💰 Amount Requested: ${{2}}
+🔖 Reference: #{{3}}
+
+You will be notified once a decision has been made.
+```
+
+**Footer:** `VCare Nursing`
+
+**At send time, pass:**
+- `{{1}}` = `staff.full_name` (looked up via `staff_profile_id`)
+- `{{2}}` = `amount_requested`
+- `{{3}}` = `advance_id`
+
+**Sample values:** `{{1}}` = `Sarah`, `{{2}}` = `500.00`, `{{3}}` = `ADV-0034`
+
+---
+
+### 20a. `vcare_staff_advance_approved`
+
+| Field | Value |
+|---|---|
+| Category | **Utility** |
+| Template Name | `vcare_staff_advance_approved` |
+| Language | English (US) |
+
+**Header:** (Text) `Advance Approved ✅`
+
+**Body:**
+```
+Hi {{1}},
+
+Your advance request has been approved and credited to your wallet.
+
+💰 Amount Approved: ${{2}}
+👜 New Wallet Balance: ${{3}}
+
+Please log in to the staff portal to view your updated wallet.
+```
+
+**Footer:** `VCare Nursing`
+
+**Buttons:** Visit Website — `https://vcarenursing.com/staff/wallet`
+
+**At send time, pass:**
+- `{{1}}` = `staff.full_name` (looked up via `advance.staff_profile_id`)
+- `{{2}}` = `advance.amount_requested`
+- `{{3}}` = `walletResult.balance`
+
+**Sample values:** `{{1}}` = `Sarah`, `{{2}}` = `500.00`, `{{3}}` = `1,250.00`
+
+---
+
+### 20b. `vcare_staff_advance_rejected`
+
+| Field | Value |
+|---|---|
+| Category | **Utility** |
+| Template Name | `vcare_staff_advance_rejected` |
+| Language | English (US) |
+
+**Header:** (Text) `Advance Request Update`
+
+**Body:**
+```
+Hi {{1}},
+
+Your advance request of ${{2}} could not be approved at this time.
+
+📝 Reason: {{3}}
+
+If you have any questions, please contact the VCare Nursing office.
+```
+
+**Footer:** `VCare Nursing`
+
+**At send time, pass:**
+- `{{1}}` = `staff.full_name`
+- `{{2}}` = `result.amount_requested`
+- `{{3}}` = `reason`
+
+**Sample values:** `{{1}}` = `Sarah`, `{{2}}` = `500.00`, `{{3}}` = `Insufficient wallet balance to support this advance`
+
+---
+
+### 21. `vcare_staff_salary_paid`
+
+| Field | Value |
+|---|---|
+| Category | **Utility** |
+| Template Name | `vcare_staff_salary_paid` |
+| Language | English (US) |
+
+**Header:** (Text) `Salary Processed`
+
+**Body:**
+```
+Hi {{1}},
+
+Your daily salary has been processed and credited to your wallet.
+
+💰 Amount: ${{2}}
+📅 Date: {{3}}
+
+Please log in to the staff portal to view your updated wallet balance.
+```
+
+**Footer:** `VCare Nursing`
+
+**Buttons:** Visit Website — `https://vcarenursing.com/staff/wallet`
+
+**At send time, pass:**
+- `{{1}}` = `assignment.staff_name`
+- `{{2}}` = `salaryAmount`
+- `{{3}}` = `today` (formatted business date, e.g. `13 June 2026`)
+
+**Sample values:** `{{1}}` = `Sarah`, `{{2}}` = `85.00`, `{{3}}` = `13 June 2026`
+
+> **Note:** This is triggered by the nightly `dailyInvoicing` job at 23:59. For the salary sheet/PDF, see template 12 (`vcare_salary_statement`).
+
+---
+
+## Client Booking Lifecycle Templates
+
+---
+
+### 22. `vcare_client_termination_requested`
+
+| Field | Value |
+|---|---|
+| Category | **Utility** |
+| Template Name | `vcare_client_termination_requested` |
+| Language | English (US) |
+
+**Header:** (Text) `Termination Request Received`
+
+**Body:**
+```
+Hi {{1}},
+
+We have received your request to terminate your booking.
+
+🔖 Booking Reference: {{2}}
+📅 Requested End Date: {{3}}
+
+Our team is reviewing your request and will get back to you shortly. If this is urgent, please contact us directly.
+```
+
+**Footer:** `VCare Nursing`
+
+**At send time, pass:**
+- `{{1}}` = `client_name`
+- `{{2}}` = `booking_id`
+- `{{3}}` = `requested_end_date` (formatted; or `"Immediately"` if urgency is `IMMEDIATE`)
+
+**Sample values:** `{{1}}` = `Emily`, `{{2}}` = `BK-10045`, `{{3}}` = `20 June 2026`
+
+---
+
+### 23a. `vcare_client_termination_approved`
+
+| Field | Value |
+|---|---|
+| Category | **Utility** |
+| Template Name | `vcare_client_termination_approved` |
+| Language | English (US) |
+
+**Header:** (Text) `Termination Approved`
+
+**Body:**
+```
+Hi {{1}},
+
+Your termination request for booking {{2}} has been approved.
+
+📅 Official End Date: {{3}}
+💰 Wallet Refund: ${{4}}
+
+Any eligible refund has been credited to your VCare wallet. Please log in to your account to view your booking summary and updated balance.
+```
+
+**Footer:** `VCare Nursing`
+
+**Buttons:** Visit Website — `https://vcarenursing.com/client/bookings`
+
+**At send time, pass:**
+- `{{1}}` = `client_name`
+- `{{2}}` = `request.booking_id`
+- `{{3}}` = `official_end_date` (formatted)
+- `{{4}}` = `refundAmount` (pass `"0.00"` if no refund applies)
+
+**Sample values:** `{{1}}` = `Emily`, `{{2}}` = `BK-10045`, `{{3}}` = `20 June 2026`, `{{4}}` = `120.00`
+
+---
+
+### 23b. `vcare_client_termination_rejected`
+
+| Field | Value |
+|---|---|
+| Category | **Utility** |
+| Template Name | `vcare_client_termination_rejected` |
+| Language | English (US) |
+
+**Header:** (Text) `Termination Request Update`
+
+**Body:**
+```
+Hi {{1}},
+
+Your termination request for booking {{2}} could not be processed at this time.
+
+Please contact our team directly for further assistance and to discuss your options.
+```
+
+**Footer:** `VCare Nursing`
+
+**At send time, pass:**
+- `{{1}}` = `client_name`
+- `{{2}}` = `request.booking_id`
+
+**Sample values:** `{{1}}` = `Emily`, `{{2}}` = `BK-10045`
+
+---
+
+### 24. `vcare_booking_completed_client`
+
+| Field | Value |
+|---|---|
+| Category | **Utility** |
+| Template Name | `vcare_booking_completed_client` |
+| Language | English (US) |
+
+**Header:** (Text) `Booking Completed`
+
+**Body:**
+```
+Hi {{1}},
+
+Your booking with {{2}} has been successfully completed.
+
+📅 Completion Date: {{3}}
+
+Thank you for choosing VCare Nursing. Please log in to your account to view your booking summary.
+```
+
+**Footer:** `VCare Nursing`
+
+**Buttons:** Visit Website — `https://vcarenursing.com/client/bookings`
+
+**At send time, pass:**
+- `{{1}}` = `client_name`
+- `{{2}}` = `staff_name` (looked up via `booking.assigned_staff_id`)
+- `{{3}}` = `actual_end_time` (formatted date)
+
+**Sample values:** `{{1}}` = `Emily`, `{{2}}` = `Sarah Johnson`, `{{3}}` = `25 June 2026`
+
+---
+
+### 25. `vcare_client_wallet_refund`
+
+| Field | Value |
+|---|---|
+| Category | **Utility** |
+| Template Name | `vcare_client_wallet_refund` |
+| Language | English (US) |
+
+**Header:** (Text) `Wallet Refund Credited ✅`
+
+**Body:**
+```
+Hi {{1}},
+
+A refund of ${{2}} has been credited to your VCare wallet.
+
+💼 Reason: {{3}}
+
+Please log in to your account to view your updated wallet balance.
+```
+
+**Footer:** `VCare Nursing`
+
+**Buttons:** Visit Website — `https://vcarenursing.com/client/wallet`
+
+**At send time, pass:**
+- `{{1}}` = `client_name`
+- `{{2}}` = `refundAmount` (calculated as `unusedDays × daily_rate`)
+- `{{3}}` = `settlement_notes` (e.g. `"Unused booking days refunded"`)
+
+**Sample values:** `{{1}}` = `Emily`, `{{2}}` = `120.00`, `{{3}}` = `Unused booking days refunded`
 
 ---
 

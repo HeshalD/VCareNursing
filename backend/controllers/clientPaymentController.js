@@ -1,6 +1,24 @@
 const db = require('../config/db');
+const { logActivity } = require('../utils/activityLogger');
+const { sendSms } = require('../utils/sms');
+const { sendPaymentRecorded } = require('../utils/metaWhatsapp');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const formatPaymentDate = (date) =>
+  new Date(date).toLocaleDateString('en-LK', { day: 'numeric', month: 'long', year: 'numeric' });
+
+const sendPaymentNotifications = async (mobile, name, amount, date) => {
+  const formattedAmount = parseFloat(amount).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const formattedDate = formatPaymentDate(date);
+  const smsBody = `Hi ${name}, we have received your payment of Rs. ${formattedAmount} on ${formattedDate}. Thank you for your prompt payment. - VCare Nursing`;
+  const [smsRes, waRes] = await Promise.allSettled([
+    sendSms(mobile, smsBody),
+    sendPaymentRecorded(mobile, name, formattedAmount, formattedDate),
+  ]);
+  if (smsRes.status === 'rejected') console.error('[Payment] SMS failed:', smsRes.reason?.message);
+  if (waRes.status === 'rejected') console.error('[Payment] WhatsApp failed:', waRes.reason?.message);
+};
 const VALID_PAYMENT_METHODS = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
 
 function extractActorRole(role) {
@@ -340,28 +358,46 @@ const recordClientPayment = async (req, res) => {
       }
     }
 
-    // Activity log — inside transaction so it rolls back with everything else
-    await pgClient.query(
-      `INSERT INTO activity_log
-         (actor_user_id, actor_name, actor_role, action_type, entity_type, entity_id, details)
-       VALUES ($1,$2,$3,'CLIENT_PAYMENT_RECORDED','client_payment_record',$4,$5)`,
-      [
-        actorUserId, actorName, actorRole, record_id,
-        JSON.stringify({
-          client_id,
-          total_amount: parsedTotal,
-          payment_method,
-          allocation_count: allocations.length,
-          allocations_summary: allocations.map(a => ({
-            type: a.type,
-            amount: parseFloat(a.amount),
-            ...(a.booking_id && { booking_id: a.booking_id }),
-          })),
-        }),
-      ]
-    );
-
     await pgClient.query('COMMIT');
+
+    logActivity({
+      actorUserId,
+      actorName,
+      actorRole,
+      actionType: 'CLIENT_PAYMENT_RECORDED',
+      entityType: 'client_payment_record',
+      entityId: record_id,
+      details: {
+        client_id,
+        total_amount: parsedTotal,
+        payment_method,
+        allocation_count: allocations.length,
+        allocations_summary: allocations.map(a => ({
+          type: a.type,
+          amount: parseFloat(a.amount),
+          ...(a.booking_id && { booking_id: a.booking_id }),
+        })),
+      },
+    }).catch(e => console.error('[ClientPayment] Activity log error:', e.message));
+
+    // Notify client of payment receipt (fire-and-forget)
+    ;(async () => {
+      try {
+        const clientResult = await db.query(
+          `SELECT cp.full_name, u.mobile_number
+           FROM client_profiles cp
+           JOIN users u ON cp.user_id = u.user_id
+           WHERE cp.client_profile_id = $1`,
+          [client_id]
+        );
+        if (clientResult.rows.length > 0) {
+          const { full_name, mobile_number } = clientResult.rows[0];
+          await sendPaymentNotifications(mobile_number, full_name, parsedTotal, new Date());
+        }
+      } catch (e) {
+        console.error('[Payment] Notification error (recordClientPayment):', e.message);
+      }
+    })();
 
     return res.status(201).json({
       status: 'success',
