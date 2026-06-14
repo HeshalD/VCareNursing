@@ -215,6 +215,7 @@ const AdvanceRequests = () => {
                             <User className="w-4 h-4 text-blue-600" />
                           </div>
                           <div>
+                            <p className="text-xs font-mono font-medium text-slate-500 mb-0.5">{request.advance_code}</p>
                             <p className="font-medium text-slate-900">{request.full_name || '—'}</p>
                             <p className="text-xs text-slate-400 mt-0.5">
                               {request.staff_code ? `#${request.staff_code}` : 'No code'}

@@ -342,7 +342,7 @@ const BookingDetailPage = () => {
       const downloadUrl = window.URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = downloadUrl;
-      anchor.download = `statement-booking-${bookingSummary.booking_id || bookingId}.pdf`;
+      anchor.download = `statement-booking-${bookingSummary.booking_code || bookingSummary.booking_id || bookingId}.pdf`;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
@@ -558,7 +558,7 @@ const BookingDetailPage = () => {
 
   return (
     <AdminLayout
-      title={`Booking #${bookingSummary.booking_id || bookingId}`}
+      title={`Booking ${bookingSummary.booking_code || bookingSummary.booking_id || bookingId}`}
       subtitle="Admin detail view for booking records, billing, staffing, and settlement actions"
     >
       <div className="space-y-6">
@@ -1247,7 +1247,7 @@ const BookingDetailPage = () => {
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
                 <h3 className="text-base font-semibold text-slate-900">Action snapshot</h3>
                 <div className="mt-4 space-y-4">
-                  <DetailRow label="Booking ID" value={bookingSummary.booking_id || bookingId} mono />
+                  <DetailRow label="Booking Code" value={bookingSummary.booking_code || bookingSummary.booking_id || bookingId} mono />
                   <DetailRow label="Status" value={bookingSummary.status || '-'} />
                   <DetailRow label="Service" value={bookingSummary.service_type || '-'} />
                   <DetailRow label="Start" value={formatDate(bookingSummary.start_date)} />

@@ -73,6 +73,19 @@ const ServiceRequests = () => {
         return 'bg-green-100 text-green-800 border-green-200';
       case 'CANCELLED':
         return 'bg-red-100 text-red-800 border-red-200';
+      case 'BOOKING_CREATED':
+        return 'bg-indigo-100 text-indigo-800 border-indigo-200';
+      default:
+        return 'bg-gray-100 text-gray-800 border-gray-200';
+    }
+  };
+
+  const getBookingStatusColor = (status) => {
+    switch (status) {
+      case 'PENDING':
+        return 'bg-amber-100 text-amber-800 border-amber-200';
+      case 'ACTIVE':
+        return 'bg-emerald-100 text-emerald-800 border-emerald-200';
       default:
         return 'bg-gray-100 text-gray-800 border-gray-200';
     }
@@ -90,6 +103,8 @@ const ServiceRequests = () => {
         return <CheckCircle className="w-4 h-4" />;
       case 'CANCELLED':
         return <XCircle className="w-4 h-4" />;
+      case 'BOOKING_CREATED':
+        return <CheckCircle className="w-4 h-4" />;
       default:
         return <FileText className="w-4 h-4" />;
     }
@@ -174,6 +189,7 @@ const ServiceRequests = () => {
               <option key="contacted" value="CONTACTED">Contacted</option>
               <option key="confirmed" value="CONFIRMED">Confirmed</option>
               <option key="cancelled" value="CANCELLED">Cancelled</option>
+              <option key="booking_created" value="BOOKING_CREATED">Booking Created</option>
             </select>
           </div>
 
@@ -241,6 +257,7 @@ const ServiceRequests = () => {
                   <tr key={request.request_id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-3 align-top">
                       <div>
+                        <div className="text-xs font-mono font-medium text-slate-500 mb-1">{request.service_request_code}</div>
                         <div className="font-medium text-slate-900">{request.payer_name}</div>
                         <div className="flex items-center gap-2 text-sm text-slate-500 mt-1">
                           <Phone className="w-3 h-3" />
@@ -278,10 +295,18 @@ const ServiceRequests = () => {
                       </div>
                     </td>
                     <td className="px-4 py-3 align-top">
-                      <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-semibold border ${getStatusColor(request.status || 'PENDING')}`}>
-                        {getStatusIcon(request.status || 'PENDING')}
-                        <span className="uppercase">{request.status || 'PENDING'}</span>
-                      </span>
+                      <div className="flex flex-col gap-1.5">
+                        <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold border ${getStatusColor(request.status || 'PENDING')}`}>
+                          {getStatusIcon(request.status || 'PENDING')}
+                          <span className="uppercase">{(request.status || 'PENDING').replace(/_/g, ' ')}</span>
+                        </span>
+                        {request.status === 'BOOKING_CREATED' && request.booking_status && (
+                          <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${getBookingStatusColor(request.booking_status)}`}>
+                            <span className="w-1.5 h-1.5 rounded-full bg-current opacity-70" />
+                            <span className="uppercase">{request.booking_status}</span>
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3 align-top">
                       <div className="flex items-center gap-2">

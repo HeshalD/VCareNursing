@@ -281,7 +281,12 @@ const PatientRow = ({ patient, proxyMode, onEdit, onDelete, onView }) => {
             <User className="w-4 h-4 text-teal-700" />
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-slate-900 truncate">{patient.full_name}</p>
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-semibold text-slate-900 truncate">{patient.full_name}</p>
+              {patient.patient_code && (
+                <span className="text-xs font-mono text-slate-400">{patient.patient_code}</span>
+              )}
+            </div>
             <p className="text-xs text-slate-500">
               {patient.age ? `Age ${patient.age}` : 'Age —'}
               {patient.gender ? ` · ${genderLabel(patient.gender)}` : ''}

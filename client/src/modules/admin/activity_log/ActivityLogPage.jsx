@@ -13,6 +13,10 @@ const ACTION_TYPE_OPTIONS = [
   'BANK_ACCOUNT_CREATED',
   'BANK_ACCOUNT_UPDATED',
   'BANK_ACCOUNT_DEACTIVATED',
+  'STAFF_ASSIGNED',
+  'ASSIGNMENT_UPDATED',
+  'ASSIGNMENT_COMPLETED',
+  'TERMINATION_APPROVED',
 ];
 
 const ROLE_COLORS = {
@@ -31,6 +35,10 @@ const ACTION_COLORS = {
   BANK_ACCOUNT_CREATED:      'bg-indigo-100 text-indigo-700',
   BANK_ACCOUNT_UPDATED:      'bg-cyan-100 text-cyan-700',
   BANK_ACCOUNT_DEACTIVATED:  'bg-rose-100 text-rose-700',
+  STAFF_ASSIGNED:            'bg-teal-100 text-teal-700',
+  ASSIGNMENT_UPDATED:        'bg-sky-100 text-sky-700',
+  ASSIGNMENT_COMPLETED:      'bg-green-100 text-green-700',
+  TERMINATION_APPROVED:      'bg-orange-100 text-orange-700',
 };
 
 const fmt = (d) => d

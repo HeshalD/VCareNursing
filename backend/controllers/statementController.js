@@ -3,6 +3,19 @@ const { generateStatementPDF } = require('../utils/statement');
 const cloudinary = require('cloudinary').v2;
 const { sendWhatsAppMessage } = require('../utils/whatsapp');
 
+async function saveStatementRecord({ client_id, period_start, period_end, opening_balance, total_invoiced, total_paid, balance_due, pdf_url, delivery_method, generated_by }) {
+    try {
+        await db.query(
+            `INSERT INTO saved_statements
+               (client_id, period_start, period_end, opening_balance, total_invoiced, total_paid, balance_due, pdf_url, delivery_method, generated_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            [client_id, period_start, period_end, opening_balance, total_invoiced, total_paid, balance_due, pdf_url || null, delivery_method, generated_by || null]
+        );
+    } catch (err) {
+        console.error('saveStatementRecord failed (non-fatal):', err.message);
+    }
+}
+
 const normalizeDateRange = (req) => {
     const rawStart = req.query.start_date || req.body?.start_date;
     const rawEnd = req.query.end_date || req.body?.end_date;
@@ -126,6 +139,49 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
         statementLines,
         pdfData
     };
+};
+
+exports.getSavedStatements = async (req, res) => {
+    const { client_id, page = 1, limit = 50 } = req.query;
+    try {
+        const params = [];
+        const conditions = [];
+
+        if (client_id) {
+            params.push(client_id);
+            conditions.push(`ss.client_id = $${params.length}`);
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        const pageNum = Math.max(1, parseInt(page) || 1);
+        const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 50));
+        const offset = (pageNum - 1) * limitNum;
+
+        const [rows, countRes] = await Promise.all([
+            db.query(
+                `SELECT ss.*, cp.full_name AS client_name
+                 FROM saved_statements ss
+                 LEFT JOIN client_profiles cp ON cp.client_profile_id = ss.client_id
+                 ${whereClause}
+                 ORDER BY ss.created_at DESC
+                 LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+                [...params, limitNum, offset]
+            ),
+            db.query(
+                `SELECT COUNT(*) FROM saved_statements ss ${whereClause}`,
+                params
+            ),
+        ]);
+
+        return res.status(200).json({
+            status: 'success',
+            data: rows.rows,
+            total: parseInt(countRes.rows[0].count),
+        });
+    } catch (error) {
+        console.error('getSavedStatements error:', error);
+        return res.status(500).json({ message: 'Failed to fetch saved statements.' });
+    }
 };
 
 exports.getClientTransactions = async (req, res) => {
@@ -269,6 +325,19 @@ exports.downloadClientStatement = async (req, res) => {
         console.timeEnd("response-send");
         console.log("🎉 PDF sent successfully!");
 
+        saveStatementRecord({
+            client_id,
+            period_start: start_date,
+            period_end: end_date,
+            opening_balance: openingBalance,
+            total_invoiced: totalInvoiced,
+            total_paid: totalPaid,
+            balance_due: currentBalance,
+            pdf_url: null,
+            delivery_method: 'DOWNLOAD',
+            generated_by: req.user?.user_id || null,
+        });
+
     } catch (error) {
         clearTimeout(requestTimeout);
         console.error("❌ PDF Generation Error:", error);
@@ -288,7 +357,7 @@ exports.sendClientStatementToWhatsApp = async (req, res) => {
     const { start_date, end_date } = normalizeDateRange(req);
 
     try {
-        const { clientName, clientMobile, pdfData } = await buildStatementPayload(client_id, start_date, end_date);
+        const { clientName, clientMobile, openingBalance, totalInvoiced, totalPaid, currentBalance, pdfData } = await buildStatementPayload(client_id, start_date, end_date);
 
         const pdfBuffer = await generateStatementPDF(pdfData);
         const pdfUpload = await new Promise((resolve, reject) => {
@@ -315,6 +384,19 @@ exports.sendClientStatementToWhatsApp = async (req, res) => {
                 filename: `Statement_${clientName.replace(/\s+/g, '_')}.pdf`
             }
         );
+
+        saveStatementRecord({
+            client_id,
+            period_start: start_date,
+            period_end: end_date,
+            opening_balance: openingBalance,
+            total_invoiced: totalInvoiced,
+            total_paid: totalPaid,
+            balance_due: currentBalance,
+            pdf_url: pdfUpload.secure_url,
+            delivery_method: 'WHATSAPP',
+            generated_by: req.user?.user_id || null,
+        });
 
         return res.status(200).json({
             status: 'success',

@@ -1098,6 +1098,163 @@ async function runMigration() {
   `);
 
   // =========================================================
+  // SAVED STATEMENTS
+  // =========================================================
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS saved_statements (
+      statement_id   UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      client_id      UUID NOT NULL REFERENCES client_profiles(client_profile_id),
+      period_start   DATE NOT NULL,
+      period_end     DATE NOT NULL,
+      opening_balance DECIMAL(12,2) NOT NULL DEFAULT 0,
+      total_invoiced  DECIMAL(12,2) NOT NULL DEFAULT 0,
+      total_paid      DECIMAL(12,2) NOT NULL DEFAULT 0,
+      balance_due     DECIMAL(12,2) NOT NULL DEFAULT 0,
+      pdf_url         TEXT,
+      delivery_method VARCHAR(20) NOT NULL DEFAULT 'DOWNLOAD',
+      generated_by    UUID REFERENCES users(user_id),
+      created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // =========================================================
+  // HUMAN-READABLE CODES
+  // =========================================================
+
+  await db.query(`CREATE SEQUENCE IF NOT EXISTS termination_code_seq START 1`);
+  await db.query(`ALTER TABLE service_terminations ADD COLUMN IF NOT EXISTS termination_code VARCHAR(15) UNIQUE`);
+  await db.query(`
+    UPDATE service_terminations
+    SET termination_code = 'TER-' || LPAD(nextval('termination_code_seq')::text, 5, '0')
+    WHERE termination_code IS NULL
+  `);
+  await db.query(`
+    ALTER TABLE service_terminations
+    ALTER COLUMN termination_code SET DEFAULT 'TER-' || LPAD(nextval('termination_code_seq')::text, 5, '0')
+  `);
+
+  await db.query(`CREATE SEQUENCE IF NOT EXISTS client_code_seq START 1`);
+  await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS client_code VARCHAR(15) UNIQUE`);
+  await db.query(`
+    UPDATE client_profiles
+    SET client_code = 'CL-' || LPAD(nextval('client_code_seq')::text, 5, '0')
+    WHERE client_code IS NULL
+  `);
+  await db.query(`
+    ALTER TABLE client_profiles
+    ALTER COLUMN client_code SET DEFAULT 'CL-' || LPAD(nextval('client_code_seq')::text, 5, '0')
+  `);
+
+  await db.query(`CREATE SEQUENCE IF NOT EXISTS patient_code_seq START 1`);
+  await db.query(`ALTER TABLE patient_profiles ADD COLUMN IF NOT EXISTS patient_code VARCHAR(15) UNIQUE`);
+  await db.query(`
+    UPDATE patient_profiles
+    SET patient_code = 'CP-' || LPAD(nextval('patient_code_seq')::text, 5, '0')
+    WHERE patient_code IS NULL
+  `);
+  await db.query(`
+    ALTER TABLE patient_profiles
+    ALTER COLUMN patient_code SET DEFAULT 'CP-' || LPAD(nextval('patient_code_seq')::text, 5, '0')
+  `);
+
+  await db.query(`CREATE SEQUENCE IF NOT EXISTS advance_code_seq START 1`);
+  await db.query(`ALTER TABLE staff_advances ADD COLUMN IF NOT EXISTS advance_code VARCHAR(15) UNIQUE`);
+  await db.query(`
+    UPDATE staff_advances
+    SET advance_code = 'AR-' || LPAD(nextval('advance_code_seq')::text, 5, '0')
+    WHERE advance_code IS NULL
+  `);
+  await db.query(`
+    ALTER TABLE staff_advances
+    ALTER COLUMN advance_code SET DEFAULT 'AR-' || LPAD(nextval('advance_code_seq')::text, 5, '0')
+  `);
+
+  await db.query(`CREATE SEQUENCE IF NOT EXISTS service_request_code_seq START 1`);
+  await db.query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS service_request_code VARCHAR(15) UNIQUE`);
+  await db.query(`
+    UPDATE service_requests
+    SET service_request_code = 'SR-' || LPAD(nextval('service_request_code_seq')::text, 5, '0')
+    WHERE service_request_code IS NULL
+  `);
+  await db.query(`
+    ALTER TABLE service_requests
+    ALTER COLUMN service_request_code SET DEFAULT 'SR-' || LPAD(nextval('service_request_code_seq')::text, 5, '0')
+  `);
+
+  await db.query(`CREATE SEQUENCE IF NOT EXISTS booking_code_seq START 1`);
+  await db.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS booking_code VARCHAR(15) UNIQUE`);
+  await db.query(`
+    UPDATE bookings
+    SET booking_code = 'BK-' || LPAD(nextval('booking_code_seq')::text, 5, '0')
+    WHERE booking_code IS NULL
+  `);
+  await db.query(`
+    ALTER TABLE bookings
+    ALTER COLUMN booking_code SET DEFAULT 'BK-' || LPAD(nextval('booking_code_seq')::text, 5, '0')
+  `);
+
+  await db.query(`CREATE SEQUENCE IF NOT EXISTS transaction_code_seq START 1`);
+  await db.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transaction_code VARCHAR(15) UNIQUE`);
+  await db.query(`
+    UPDATE transactions
+    SET transaction_code = 'TR-' || LPAD(nextval('transaction_code_seq')::text, 7, '0')
+    WHERE transaction_code IS NULL
+  `);
+  await db.query(`
+    ALTER TABLE transactions
+    ALTER COLUMN transaction_code SET DEFAULT 'TR-' || LPAD(nextval('transaction_code_seq')::text, 7, '0')
+  `);
+
+  await db.query(`CREATE SEQUENCE IF NOT EXISTS change_request_code_seq START 1`);
+  await db.query(`ALTER TABLE staff_change_requests ADD COLUMN IF NOT EXISTS change_request_code VARCHAR(15) UNIQUE`);
+  await db.query(`
+    UPDATE staff_change_requests
+    SET change_request_code = 'CHR-' || LPAD(nextval('change_request_code_seq')::text, 5, '0')
+    WHERE change_request_code IS NULL
+  `);
+  await db.query(`
+    ALTER TABLE staff_change_requests
+    ALTER COLUMN change_request_code SET DEFAULT 'CHR-' || LPAD(nextval('change_request_code_seq')::text, 5, '0')
+  `);
+
+  await db.query(`CREATE SEQUENCE IF NOT EXISTS staff_application_code_seq START 1`);
+  await db.query(`ALTER TABLE staff_applications ADD COLUMN IF NOT EXISTS application_code VARCHAR(15) UNIQUE`);
+  await db.query(`
+    UPDATE staff_applications
+    SET application_code = 'SA-' || LPAD(nextval('staff_application_code_seq')::text, 5, '0')
+    WHERE application_code IS NULL
+  `);
+  await db.query(`
+    ALTER TABLE staff_applications
+    ALTER COLUMN application_code SET DEFAULT 'SA-' || LPAD(nextval('staff_application_code_seq')::text, 5, '0')
+  `);
+
+  await db.query(`CREATE SEQUENCE IF NOT EXISTS statement_code_seq START 1`);
+  await db.query(`ALTER TABLE saved_statements ADD COLUMN IF NOT EXISTS statement_code VARCHAR(15) UNIQUE`);
+  await db.query(`
+    UPDATE saved_statements
+    SET statement_code = 'STM-' || LPAD(nextval('statement_code_seq')::text, 7, '0')
+    WHERE statement_code IS NULL
+  `);
+  await db.query(`
+    ALTER TABLE saved_statements
+    ALTER COLUMN statement_code SET DEFAULT 'STM-' || LPAD(nextval('statement_code_seq')::text, 7, '0')
+  `);
+
+  await db.query(`CREATE SEQUENCE IF NOT EXISTS review_code_seq START 1`);
+  await db.query(`ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS review_code VARCHAR(15) UNIQUE`);
+  await db.query(`
+    UPDATE staff_reviews
+    SET review_code = 'RV-' || LPAD(nextval('review_code_seq')::text, 7, '0')
+    WHERE review_code IS NULL
+  `);
+  await db.query(`
+    ALTER TABLE staff_reviews
+    ALTER COLUMN review_code SET DEFAULT 'RV-' || LPAD(nextval('review_code_seq')::text, 7, '0')
+  `);
+
+  // =========================================================
   // SEED DEFAULT PRESET ITEMS
   // =========================================================
 

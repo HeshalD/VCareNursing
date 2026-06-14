@@ -3,6 +3,7 @@ const router = express.Router();
 const statementController = require('../controllers/statementController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 
+router.get('/saved', protect, restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'), statementController.getSavedStatements);
 router.get('/transactions/:client_id', protect, restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'), statementController.getClientTransactions);
 router.get('/:client_id', protect, restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'), statementController.getClientStatement);
 

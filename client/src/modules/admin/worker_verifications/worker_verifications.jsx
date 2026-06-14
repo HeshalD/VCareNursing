@@ -131,6 +131,9 @@ const WorkerVerification = () => {
                         )}
                         <div>
                           <p className="font-semibold text-slate-900 text-sm">{app.full_name ?? 'Unknown'}</p>
+                          {app.application_code && (
+                            <p className="text-xs font-mono font-medium text-slate-400">{app.application_code}</p>
+                          )}
                           <p className="text-xs text-slate-400">{app.location ?? '—'}</p>
                         </div>
                       </div>

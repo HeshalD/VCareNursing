@@ -377,7 +377,6 @@ export default function PatientDetailPage() {
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <InfoRow label="Start Date" value={fmt(b.start_date)} />
-                <InfoRow label="End Date" value={end ? fmt(end) : isOngoing ? 'Ongoing' : '—'} />
                 <InfoRow label="Assigned Staff" value={b.assigned_staff_name || 'Not assigned'} />
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Duration</p>
@@ -390,7 +389,7 @@ export default function PatientDetailPage() {
                     <p className="text-sm font-medium text-slate-400">—</p>
                   )}
                 </div>
-                <InfoRow label="Quoted Amount" value={fmtMoney(b.amount_quotated)} />
+                
                 <InfoRow label="Amount Paid" value={fmtMoney(b.amount_paid)} />
                 <InfoRow label="Balance" value={fmtMoney((b.amount_quotated || 0) - (b.amount_paid || 0))} />
                 <InfoRow label="Daily Rate" value={b.daily_rate ? fmtMoney(b.daily_rate) : '—'} />
@@ -444,7 +443,6 @@ export default function PatientDetailPage() {
               </div>
               <InfoRow label="Assignments" value={`${s.total_assignments} booking${s.total_assignments !== 1 ? 's' : ''}`} />
               <InfoRow label="First Worked" value={fmt(s.first_worked)} />
-              <InfoRow label="Last Worked" value={fmt(s.last_worked)} />
             </div>
 
             <div className="mt-4 pt-4 border-t border-slate-100 flex justify-end">
@@ -495,6 +493,9 @@ export default function PatientDetailPage() {
                 </div>
                 <div>
                   <h1 className="text-2xl font-bold">{patient.full_name}</h1>
+                  {patient.patient_code && (
+                    <p className="mt-0.5 text-sm font-mono text-teal-200">{patient.patient_code}</p>
+                  )}
                   <div className="mt-2 flex flex-wrap gap-3 text-sm text-teal-100">
                     {patient.age && (
                       <span className="inline-flex items-center gap-1.5">

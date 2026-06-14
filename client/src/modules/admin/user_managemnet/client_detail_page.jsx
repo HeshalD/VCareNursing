@@ -1015,7 +1015,7 @@ const ClientDetailPage = () => {
             <div className="grid gap-4 lg:grid-cols-2">
               <DataCard title="Client Information">
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <InfoRow label="Client Profile ID" value={clientProfile.client_profile_id} />
+                  <InfoRow label="Client Code" value={clientProfile.client_code || clientProfile.client_profile_id} />
                   <InfoRow label="User ID" value={clientProfile.user_id} />
                   <InfoRow label="Email" value={clientProfile.email || '-'} />
                   <InfoRow label="Phone" value={clientProfile.mobile_number || '-'} />

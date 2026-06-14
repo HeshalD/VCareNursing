@@ -96,6 +96,7 @@ const UserManagement = () => {
 
   const formatClientData = (client) => ({
     id: client.client_profile_id,
+    client_code: client.client_code,
     name: client.full_name || 'Unknown',
     email: client.email || 'N/A',
     phone: client.mobile_number || 'N/A',

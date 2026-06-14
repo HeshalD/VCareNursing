@@ -336,8 +336,11 @@ const TransactionsPage = () => {
                           className="hover:bg-slate-50 transition-colors cursor-pointer"
                           onClick={() => setExpandedRow(isExpanded ? null : tx.transaction_id)}
                         >
-                          <td className="px-4 py-3 text-sm text-slate-500 whitespace-nowrap">
-                            {fmtDate(tx.transaction_date)}
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            {tx.transaction_code && (
+                              <p className="text-xs font-mono font-medium text-slate-500 mb-0.5">{tx.transaction_code}</p>
+                            )}
+                            <p className="text-sm text-slate-500">{fmtDate(tx.transaction_date)}</p>
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap">
                             {flowDir === 'IN' ? (
@@ -397,8 +400,11 @@ const TransactionsPage = () => {
                             <td colSpan={9} className="px-6 py-4">
                               <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3 text-sm">
                                 <div>
-                                  <p className="text-xs font-semibold text-slate-400 uppercase">Transaction ID</p>
-                                  <p className="text-slate-700 font-mono text-xs mt-0.5 break-all">{tx.transaction_id}</p>
+                                  <p className="text-xs font-semibold text-slate-400 uppercase">Transaction Code</p>
+                                  <p className="text-slate-900 font-mono font-semibold mt-0.5">{tx.transaction_code || tx.transaction_id}</p>
+                                  {tx.transaction_code && (
+                                    <p className="text-slate-400 font-mono text-xs mt-0.5 break-all">{tx.transaction_id}</p>
+                                  )}
                                 </div>
                                 <div>
                                   <p className="text-xs font-semibold text-slate-400 uppercase">Recorded At</p>

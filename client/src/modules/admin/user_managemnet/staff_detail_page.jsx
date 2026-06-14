@@ -527,7 +527,12 @@ const StaffDetailPage = () => {
                   {safeArray(overviewReviews.recent).slice(0, 3).map((review, index) => (
                     <div key={review.review_id || index} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                       <div className="flex items-center justify-between gap-3">
-                        <p className="font-semibold text-slate-900">{review.client_name || 'Client'}</p>
+                        <div>
+                          <p className="font-semibold text-slate-900">{review.client_name || 'Client'}</p>
+                          {review.review_code && (
+                            <p className="text-xs font-mono text-slate-400">{review.review_code}</p>
+                          )}
+                        </div>
                         <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">
                           <Star className="h-3 w-3" /> {review.rating || '-'}
                         </span>
@@ -717,6 +722,9 @@ const StaffDetailPage = () => {
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <p className="font-semibold text-slate-900">{review.client_name || 'Client'}</p>
+                      {review.review_code && (
+                        <p className="text-xs font-mono font-medium text-slate-400">{review.review_code}</p>
+                      )}
                       <p className="text-sm text-slate-500">{formatDateTime(review.created_at)}</p>
                     </div>
                     <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">

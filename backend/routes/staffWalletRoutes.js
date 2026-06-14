@@ -9,12 +9,14 @@ const {
   rejectAdvance,
   getAllAdvances,
   updateAdvanceThreshold,
-  getPendingAdvances
+  getPendingAdvances,
+  getMyCurrentEarningsBreakdown,
 } = require('../controllers/staffWalletController');
 
 // Staff routes
 router.get('/my-wallet', protect, restrictTo('STAFF', 'NURSE', 'CARETAKER', 'NANNY'), getMyWallet);
 router.get('/my-advances', protect, restrictTo('STAFF', 'NURSE', 'CARETAKER', 'NANNY'), getMyAdvances);
+router.get('/my-earnings-breakdown', protect, restrictTo('STAFF', 'NURSE', 'CARETAKER', 'NANNY'), getMyCurrentEarningsBreakdown);
 router.post('/request-advance', protect, restrictTo('STAFF', 'NURSE', 'CARETAKER', 'NANNY'), requestAdvance);
 
 // Admin routes

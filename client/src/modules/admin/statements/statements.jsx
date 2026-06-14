@@ -18,6 +18,8 @@ const Statements = () => {
   const [endDate, setEndDate] = useState('');
   const [generatedPDF, setGeneratedPDF] = useState(null);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [savedStatements, setSavedStatements] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const getStatusBadge = (status) => {
     const statusConfig = {
@@ -48,9 +50,25 @@ const Statements = () => {
     return icons[serviceType] || Activity;
   };
 
+  const fetchSavedStatements = async () => {
+    setHistoryLoading(true);
+    try {
+      const orig = apiClient.token;
+      apiClient.setToken(adminToken);
+      const res = await apiClient.getSavedStatements({ limit: 100 });
+      apiClient.setToken(orig);
+      setSavedStatements(res.data || []);
+    } catch (err) {
+      console.error('Error fetching statement history:', err);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (adminToken) {
       fetchBookings();
+      fetchSavedStatements();
     }
   }, [adminToken, showAllBookings]);
 
@@ -177,7 +195,8 @@ const Statements = () => {
       // Store the PDF blob for both download and WhatsApp
       const blob = new Blob([response], { type: 'application/pdf' });
       setGeneratedPDF(blob);
-      
+      fetchSavedStatements();
+
     } catch (err) {
       console.error('Error generating statement:', err);
       alert('Failed to generate statement. Please try again.');
@@ -522,6 +541,94 @@ const Statements = () => {
           </div>
         </div>
       )}
+
+      {/* Statement History */}
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-slate-800">Statement History</h3>
+            <p className="text-sm text-slate-500 mt-1">All statements generated through the system</p>
+          </div>
+          <button
+            onClick={fetchSavedStatements}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+          >
+            <Activity className="w-3.5 h-3.5" />
+            Refresh
+          </button>
+        </div>
+
+        {historyLoading ? (
+          <div className="flex items-center justify-center h-32">
+            <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+          </div>
+        ) : savedStatements.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-32 gap-2">
+            <FileText className="w-8 h-8 text-slate-300" />
+            <p className="text-sm text-slate-400">No statements generated yet</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr>
+                  {['Code', 'Client', 'Period', 'Summary', 'Delivery', 'Generated', ''].map(h => (
+                    <th key={h} className="px-5 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {savedStatements.map(s => (
+                  <tr key={s.statement_id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-5 py-3">
+                      <span className="font-mono text-sm font-semibold text-slate-800">{s.statement_code}</span>
+                    </td>
+                    <td className="px-5 py-3 text-sm font-medium text-slate-900">{s.client_name || '—'}</td>
+                    <td className="px-5 py-3 text-sm text-slate-600 whitespace-nowrap">
+                      {new Date(s.period_start).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      {' – '}
+                      {new Date(s.period_end).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </td>
+                    <td className="px-5 py-3 text-xs text-slate-500 whitespace-nowrap">
+                      <span className="text-emerald-600 font-medium">Paid: LKR {Number(s.total_paid).toLocaleString()}</span>
+                      <span className="mx-1 text-slate-300">·</span>
+                      <span className={Number(s.balance_due) > 0 ? 'text-rose-600 font-medium' : 'text-slate-500'}>
+                        Bal: LKR {Number(s.balance_due).toLocaleString()}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3">
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
+                        s.delivery_method === 'WHATSAPP'
+                          ? 'bg-green-100 text-green-700'
+                          : 'bg-blue-100 text-blue-700'
+                      }`}>
+                        {s.delivery_method === 'WHATSAPP' ? <MessageSquare className="w-3 h-3" /> : <Download className="w-3 h-3" />}
+                        {s.delivery_method === 'WHATSAPP' ? 'WhatsApp' : 'Download'}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3 text-sm text-slate-500 whitespace-nowrap">
+                      {new Date(s.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </td>
+                    <td className="px-5 py-3 text-right">
+                      {s.pdf_url && (
+                        <a
+                          href={s.pdf_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors"
+                        >
+                          <Download className="w-3 h-3" />
+                          Open PDF
+                        </a>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {/* Date Range Modal */}
       {dateRangeModal && selectedBookingForStatement && (

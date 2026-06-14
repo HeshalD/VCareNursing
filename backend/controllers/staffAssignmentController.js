@@ -1,6 +1,12 @@
 const db = require('../config/db');
 const { sendSms } = require('../utils/sms');
 const { sendBookingConfirmed, sendStaffNewAssignment } = require('../utils/metaWhatsapp');
+const { logActivity } = require('../utils/activityLogger');
+
+function extractActorRole(role) {
+  const raw = Array.isArray(role) ? role[0] : role;
+  return typeof raw === 'string' ? raw.replace(/\{|\}/g, '').split(',')[0].trim() : String(raw);
+}
 
 /**
  * STAFF ASSIGNMENT CONTROLLER
@@ -448,6 +454,33 @@ exports.assignStaffToBooking = async (req, res) => {
       }
     })();
 
+    (async () => {
+      try {
+        const actorUserId = req.user?.user_id;
+        const actorRole = extractActorRole(req.user?.role);
+        const nameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [actorUserId]);
+        await logActivity({
+          actorUserId,
+          actorName: nameRes.rows[0]?.full_name || 'Admin',
+          actorRole,
+          actionType: 'STAFF_ASSIGNED',
+          entityType: 'booking',
+          entityId: null,
+          details: {
+            booking_id,
+            assignment_id: assignment.assignment_id,
+            staff_profile_id,
+            staff_name: staff.full_name,
+            service_start_date,
+            service_end_date: assignment.service_end_date,
+            amount_allocated: parseFloat(assignment.amount_allocated),
+          },
+        });
+      } catch (e) {
+        console.error('[StaffAssignment] Activity log error:', e.message);
+      }
+    })();
+
     return res.status(201).json({
       status: 'success',
       message: `${staff.full_name} assigned successfully`,
@@ -792,6 +825,31 @@ exports.updateAssignment = async (req, res) => {
     const updateResult = await db.query(updateQuery, updateValues);
     const updatedAssignment = updateResult.rows[0];
 
+    (async () => {
+      try {
+        const actorUserId = req.user?.user_id;
+        const actorRole = extractActorRole(req.user?.role);
+        const nameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [actorUserId]);
+        await logActivity({
+          actorUserId,
+          actorName: nameRes.rows[0]?.full_name || 'Admin',
+          actorRole,
+          actionType: 'ASSIGNMENT_UPDATED',
+          entityType: 'staff_assignment',
+          entityId: null,
+          details: {
+            assignment_id,
+            ...(service_start_date && { service_start_date }),
+            ...(service_end_date && { service_end_date }),
+            ...(daily_rate && { daily_rate }),
+            ...(notes && { notes }),
+          },
+        });
+      } catch (e) {
+        console.error('[StaffAssignment] Activity log error:', e.message);
+      }
+    })();
+
     return res.status(200).json({
       status: 'success',
       message: 'Assignment updated successfully',
@@ -861,6 +919,29 @@ exports.completeAssignment = async (req, res) => {
 
     const updateResult = await db.query(updateQuery, [assignment_id]);
     const completedAssignment = updateResult.rows[0];
+
+    (async () => {
+      try {
+        const actorUserId = req.user?.user_id;
+        const actorRole = extractActorRole(req.user?.role);
+        const nameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [actorUserId]);
+        await logActivity({
+          actorUserId,
+          actorName: nameRes.rows[0]?.full_name || 'Admin',
+          actorRole,
+          actionType: 'ASSIGNMENT_COMPLETED',
+          entityType: 'staff_assignment',
+          entityId: null,
+          details: {
+            assignment_id,
+            staff_name: assignment.staff_name,
+            booking_id: assignment.booking_id,
+          },
+        });
+      } catch (e) {
+        console.error('[StaffAssignment] Activity log error:', e.message);
+      }
+    })();
 
     return res.status(200).json({
       status: 'success',

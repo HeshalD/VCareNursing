@@ -5,52 +5,116 @@ import {
   CalendarDays,
   ArrowUpRight,
   ArrowDownRight,
+  ArrowDownLeft,
   Clock3,
   BadgeCheck,
   CircleAlert,
   X,
+  BadgeDollarSign,
+  Activity,
+  Info,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import apiClient from '../../../api/api';
 import { useAuth } from '../../../context/AuthContext';
 import StaffSidebar from './StaffSidebar';
 
 const STATUS_META = {
-  APPROVED: {
-    label: 'Approved',
-    className: 'bg-emerald-50 text-emerald-700 border-emerald-100',
-  },
-  PENDING: {
-    label: 'Pending',
-    className: 'bg-amber-50 text-amber-700 border-amber-100',
-  },
-  REJECTED: {
-    label: 'Rejected',
-    className: 'bg-rose-50 text-rose-700 border-rose-100',
-  },
+  APPROVED: { label: 'Approved', className: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
+  PENDING:  { label: 'Pending',  className: 'bg-amber-50 text-amber-700 border-amber-100'   },
+  REJECTED: { label: 'Rejected', className: 'bg-rose-50 text-rose-700 border-rose-100'      },
 };
 
 const formatCurrency = (value) => `LKR ${Number(value || 0).toLocaleString()}`;
 
 const formatDate = (value) =>
   value
-    ? new Date(value).toLocaleDateString('en-GB', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-      })
+    ? new Date(value).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
     : '—';
+
+const formatDateTime = (value) => {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+};
+
+const LedgerRow = ({ entry }) => {
+  const isCredit = entry.transaction_type === 'CREDIT';
+  return (
+    <tr className="hover:bg-slate-50/70 transition-colors">
+      <td className="px-4 py-3 text-sm text-slate-500 whitespace-nowrap">
+        {formatDateTime(entry.created_at)}
+      </td>
+      <td className="px-4 py-3">
+        {isCredit ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
+            <ArrowUpRight className="h-3 w-3" />
+            Earned
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-700">
+            <ArrowDownLeft className="h-3 w-3" />
+            Payout
+          </span>
+        )}
+      </td>
+      <td className="px-4 py-3">
+        {isCredit ? (
+          <div>
+            <p className="text-sm font-medium text-slate-800">{entry.client_name || 'Daily Salary'}</p>
+            {entry.patient_name && <p className="text-xs text-slate-400">Care Profile: {entry.patient_name}</p>}
+            {entry.service_type  && <p className="text-xs text-slate-400">{entry.service_type}</p>}
+          </div>
+        ) : (
+          <div>
+            <p className="text-sm font-medium text-slate-800">
+              Payout{entry.company_account_name ? ` via ${entry.company_account_name}` : ''}
+            </p>
+            {entry.staff_bank_name && (
+              <p className="text-xs text-slate-400">
+                To: {entry.staff_bank_name}
+                {entry.staff_account_number && ` ···${entry.staff_account_number.slice(-4)}`}
+              </p>
+            )}
+            {entry.payout_notes && <p className="text-xs text-slate-400 italic">{entry.payout_notes}</p>}
+          </div>
+        )}
+      </td>
+      <td className={`px-4 py-3 text-right font-semibold whitespace-nowrap ${isCredit ? 'text-emerald-700' : 'text-rose-600'}`}>
+        {isCredit ? '+' : '-'}{formatCurrency(entry.amount)}
+      </td>
+      <td className="px-4 py-3 text-right text-sm font-medium text-slate-700 whitespace-nowrap">
+        {formatCurrency(entry.running_balance)}
+      </td>
+    </tr>
+  );
+};
 
 const Earnings = () => {
   const { user } = useAuth();
-  const [wallet, setWallet] = useState(null);
+  const [wallet, setWallet]       = useState(null);
   const [staffData, setStaffData] = useState(null);
-  const [advances, setAdvances] = useState([]);
+  const [advances, setAdvances]   = useState([]);
+  const [breakdown, setBreakdown] = useState(null);
+  const [ledgerPage, setLedgerPage] = useState(1);
+
   const [showModal, setShowModal] = useState(false);
-  const [amount, setAmount] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [amount, setAmount]       = useState('');
+  const [loading, setLoading]     = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError]         = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  const fetchBreakdown = async (p = 1) => {
+    try {
+      const res = await apiClient.getMyCurrentEarningsBreakdown({ page: p, limit: 50 });
+      if (res.status === 'success') setBreakdown(res.data);
+    } catch {
+      // non-fatal — ledger section just won't render
+    }
+  };
 
   useEffect(() => {
     const fetchData = async () => {
@@ -59,22 +123,18 @@ const Earnings = () => {
         setError('');
 
         const staffId = user?.staff_id || user?.id;
-        if (!staffId) {
-          setError('Staff profile not found.');
-          return;
-        }
+        if (!staffId) { setError('Staff profile not found.'); return; }
 
         const [walletResponse, staffResponse, advancesResponse] = await Promise.all([
           apiClient.getMyWallet(),
-          user?.staff_id
-            ? apiClient.getStaffByID(user.staff_id)
-            : apiClient.getStaffByUserID(user.id),
+          user?.staff_id ? apiClient.getStaffByID(user.staff_id) : apiClient.getStaffByUserID(user.id),
           apiClient.getMyAdvances(),
         ]);
 
         setWallet(walletResponse.data);
         setStaffData(staffResponse.data);
         setAdvances(advancesResponse.data || []);
+        await fetchBreakdown(1);
       } catch (err) {
         console.error('Failed to load earnings data:', err);
         setError('Failed to load earnings data.');
@@ -82,9 +142,13 @@ const Earnings = () => {
         setLoading(false);
       }
     };
-
     fetchData();
   }, [user?.staff_id, user?.id]);
+
+  const handleLedgerPage = (p) => {
+    setLedgerPage(p);
+    fetchBreakdown(p);
+  };
 
   const handleRequestAdvance = async () => {
     const parsedAmount = Number(amount);
@@ -92,7 +156,6 @@ const Earnings = () => {
       setError('Please enter a valid amount.');
       return;
     }
-
     try {
       setSubmitting(true);
       setError('');
@@ -100,11 +163,11 @@ const Earnings = () => {
       setSuccessMsg('Advance request submitted successfully.');
       setShowModal(false);
       setAmount('');
-
-      const walletResponse = await apiClient.getMyWallet();
+      const [walletResponse, advancesResponse] = await Promise.all([
+        apiClient.getMyWallet(),
+        apiClient.getMyAdvances(),
+      ]);
       setWallet(walletResponse.data);
-
-      const advancesResponse = await apiClient.getMyAdvances();
       setAdvances(advancesResponse.data || []);
     } catch (err) {
       console.error('Advance request error:', err);
@@ -114,46 +177,26 @@ const Earnings = () => {
     }
   };
 
-  const walletBalance = Number(wallet?.balance || 0);
-  const thresholdAmount = Number(wallet?.advance_threshold_amount || 15000);
+  const walletBalance    = Number(wallet?.balance || 0);
+  const thresholdAmount  = Number(wallet?.advance_threshold_amount || 15000);
   const canRequestAdvance = walletBalance >= thresholdAmount;
 
-  const totalRequested = useMemo(
-    () => {
-      const now = new Date();
-      const currentMonth = now.getMonth();
-      const currentYear = now.getFullYear();
+  const totalRequested = useMemo(() => {
+    const now = new Date();
+    return advances.reduce((sum, item) => {
+      const d = item?.requested_at ? new Date(item.requested_at) : null;
+      const isCurrentMonth = d && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+      return isCurrentMonth ? sum + Number(item.amount_requested || 0) : sum;
+    }, 0);
+  }, [advances]);
 
-      return advances.reduce((sum, item) => {
-        const requestedDate = item?.requested_at ? new Date(item.requested_at) : null;
-        const isCurrentMonth =
-          requestedDate &&
-          requestedDate.getMonth() === currentMonth &&
-          requestedDate.getFullYear() === currentYear;
+  const approvedCount = useMemo(() => advances.filter((i) => i.status === 'APPROVED').length, [advances]);
+  const pendingCount  = useMemo(() => advances.filter((i) => i.status === 'PENDING').length,  [advances]);
 
-        if (!isCurrentMonth) {
-          return sum;
-        }
+  const staffName        = staffData?.full_name || user?.name || 'Staff Member';
+  const verificationLabel = staffData?.verification_status === 'VERIFIED' ? 'Verified' : 'Pending verification';
 
-        return sum + Number(item.amount_requested || 0);
-      }, 0);
-    },
-    [advances]
-  );
-
-  const approvedCount = useMemo(
-    () => advances.filter((item) => item.status === 'APPROVED').length,
-    [advances]
-  );
-
-  const pendingCount = useMemo(
-    () => advances.filter((item) => item.status === 'PENDING').length,
-    [advances]
-  );
-
-  const staffName = staffData?.full_name || user?.name || 'Staff Member';
-  const verificationLabel =
-    staffData?.verification_status === 'VERIFIED' ? 'Verified' : 'Pending verification';
+  const totalLedgerPages = breakdown?.pagination?.total_pages || 1;
 
   if (loading) {
     return (
@@ -175,20 +218,17 @@ const Earnings = () => {
 
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-6xl mx-auto px-6 md:px-8 py-6 md:py-8 space-y-6">
+
+          {/* Header */}
           <header className="flex flex-col gap-4 border-b border-slate-200 bg-white px-6 py-6 rounded-2xl shadow-sm">
             <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400 mb-1">
-                  Provider Portal
-                </p>
-                <h1 className="text-3xl md:text-4xl font-semibold tracking-tight text-slate-900">
-                  Earnings
-                </h1>
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400 mb-1">Provider Portal</p>
+                <h1 className="text-3xl md:text-4xl font-semibold tracking-tight text-slate-900">Earnings</h1>
                 <p className="text-sm text-slate-500 mt-2 max-w-2xl">
-                  Track your wallet balance, review advance requests, and submit a new request when eligible.
+                  Track your current balance, view your full earnings ledger, and manage advance requests.
                 </p>
               </div>
-
               <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                 <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-900 text-white">
                   <Wallet className="w-5 h-5" />
@@ -207,7 +247,6 @@ const Earnings = () => {
               <span className="text-sm font-medium">{error}</span>
             </div>
           )}
-
           {successMsg && (
             <div className="flex items-center gap-3 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-emerald-700">
               <BadgeCheck className="w-5 h-5 flex-shrink-0" />
@@ -215,7 +254,35 @@ const Earnings = () => {
             </div>
           )}
 
-          <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Earnings Summary Cards */}
+          <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-5 shadow-sm">
+              <div className="flex items-center gap-2 mb-3 text-emerald-600">
+                <BadgeDollarSign className="h-5 w-5" />
+                <span className="text-xs font-semibold uppercase tracking-wide">Current Balance</span>
+              </div>
+              <p className="text-2xl font-bold text-slate-900">{formatCurrency(breakdown?.summary?.current_earnings ?? walletBalance)}</p>
+              <p className="mt-1 text-xs text-slate-500">Unpaid earnings owed to you</p>
+            </div>
+
+            <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5 shadow-sm">
+              <div className="flex items-center gap-2 mb-3 text-blue-600">
+                <Activity className="h-5 w-5" />
+                <span className="text-xs font-semibold uppercase tracking-wide">Total Earned</span>
+              </div>
+              <p className="text-2xl font-bold text-slate-900">{formatCurrency(breakdown?.summary?.total_earned)}</p>
+              <p className="mt-1 text-xs text-slate-500">Sum of all salary credits</p>
+            </div>
+
+            <div className="rounded-2xl border border-rose-100 bg-rose-50 p-5 shadow-sm">
+              <div className="flex items-center gap-2 mb-3 text-rose-600">
+                <ArrowDownLeft className="h-5 w-5" />
+                <span className="text-xs font-semibold uppercase tracking-wide">Total Paid Out</span>
+              </div>
+              <p className="text-2xl font-bold text-slate-900">{formatCurrency(breakdown?.summary?.total_paid_out)}</p>
+              <p className="mt-1 text-xs text-slate-500">Sum of all payouts recorded</p>
+            </div>
+
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between mb-4">
                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Wallet Balance</p>
@@ -223,85 +290,134 @@ const Earnings = () => {
                   <Wallet className="w-5 h-5" />
                 </div>
               </div>
-              <p className="text-3xl font-semibold tracking-tight text-slate-900">{formatCurrency(walletBalance)}</p>
-              <p className="mt-2 text-sm text-slate-500">
-                Threshold for advance requests: {formatCurrency(thresholdAmount)}
-              </p>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-center justify-between mb-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">This Month</p>
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600">
-                  <TrendingUp className="w-5 h-5" />
-                </div>
-              </div>
-              <p className="text-3xl font-semibold tracking-tight text-slate-900">{formatCurrency(totalRequested)}</p>
-              <p className="mt-2 text-sm text-slate-500">Advance requests submitted across your current history.</p>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-center justify-between mb-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Request Status</p>
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600">
-                  <BadgeCheck className="w-5 h-5" />
-                </div>
-              </div>
-              <p className="text-3xl font-semibold tracking-tight text-slate-900">{approvedCount}</p>
-              <p className="mt-2 text-sm text-slate-500">Approved requests. Pending: {pendingCount}.</p>
+              <p className="text-2xl font-bold text-slate-900">{formatCurrency(walletBalance)}</p>
+              <p className="mt-1 text-xs text-slate-500">Threshold: {formatCurrency(thresholdAmount)}</p>
             </div>
           </section>
 
+          {/* How it's calculated */}
+          <div className="rounded-2xl border border-blue-100 bg-blue-50 px-5 py-4 flex gap-3">
+            <Info className="h-5 w-5 text-blue-500 shrink-0 mt-0.5" />
+            <div className="text-sm text-blue-800 space-y-1">
+              <p>
+                <strong>Current Balance</strong> = Total Earned − Total Paid Out. The ledger below shows every
+                event that contributed to this balance, with a running total after each entry so you can
+                trace exactly how it was built.
+              </p>
+              <p>
+                <strong>Wallet Balance</strong> is a separate advance-eligible balance.{' '}
+                <strong>Advances</strong> are issued from the wallet and shown in their own section below.
+              </p>
+            </div>
+          </div>
+
+          {/* Earnings & Payouts Ledger */}
+          <section className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h2 className="font-semibold text-slate-900">Earnings &amp; Payouts Ledger</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Chronological record with running balance</p>
+              </div>
+              <div className="flex items-center gap-4 text-xs text-slate-500">
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+                  Earning
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-2.5 w-2.5 rounded-full bg-rose-400" />
+                  Payout
+                </span>
+              </div>
+            </div>
+
+            {!breakdown || breakdown.ledger.length === 0 ? (
+              <div className="p-10 text-center text-slate-500 text-sm">No transactions recorded yet.</div>
+            ) : (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-100 bg-slate-50">
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 whitespace-nowrap">Date &amp; Time</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Type</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Description</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Amount</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 whitespace-nowrap">Running Balance</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {breakdown.ledger.map((entry) => (
+                        <LedgerRow key={entry.transaction_id} entry={entry} />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {totalLedgerPages > 1 && (
+                  <div className="flex items-center justify-between px-5 py-4 border-t border-slate-100 bg-slate-50">
+                    <p className="text-sm text-slate-500">
+                      Page {ledgerPage} of {totalLedgerPages} ({breakdown.pagination.total_count} entries)
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        disabled={ledgerPage <= 1}
+                        onClick={() => handleLedgerPage(ledgerPage - 1)}
+                        className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                        Previous
+                      </button>
+                      <button
+                        disabled={ledgerPage >= totalLedgerPages}
+                        onClick={() => handleLedgerPage(ledgerPage + 1)}
+                        className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      >
+                        Next
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+
+          {/* Advance Requests */}
           <section className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between border-b border-slate-200 px-6 py-5">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Advance Requests</h2>
-                <p className="text-sm text-slate-500 mt-1">Your advance request history and current eligibility.</p>
+                <p className="text-sm text-slate-500 mt-1">
+                  {approvedCount} approved · {pendingCount} pending · This month: {formatCurrency(totalRequested)}
+                </p>
               </div>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => {
-                    setError('');
-                    setSuccessMsg('');
-                    setShowModal(true);
-                  }}
-                  disabled={!canRequestAdvance}
-                  className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors ${
-                    canRequestAdvance
-                      ? 'bg-slate-900 text-white hover:bg-slate-800'
-                      : 'cursor-not-allowed bg-slate-100 text-slate-400'
-                  }`}
-                >
-                  <ArrowUpRight className="w-4 h-4" />
-                  Request Advance
-                </button>
-              </div>
+              <button
+                onClick={() => { setError(''); setSuccessMsg(''); setShowModal(true); }}
+                disabled={!canRequestAdvance}
+                className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors ${
+                  canRequestAdvance
+                    ? 'bg-slate-900 text-white hover:bg-slate-800'
+                    : 'cursor-not-allowed bg-slate-100 text-slate-400'
+                }`}
+              >
+                <ArrowUpRight className="w-4 h-4" />
+                Request Advance
+              </button>
             </div>
 
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-slate-200">
                 <thead className="bg-slate-50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-                      Amount
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-                      Status
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-                      Requested
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-                      Actioned
-                    </th>
+                    {['Amount', 'Status', 'Requested', 'Actioned'].map((h) => (
+                      <th key={h} className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">{h}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {advances.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="px-6 py-16 text-center text-sm text-slate-500">
-                        No advance requests yet.
-                      </td>
+                      <td colSpan={4} className="px-6 py-16 text-center text-sm text-slate-500">No advance requests yet.</td>
                     </tr>
                   ) : (
                     advances.map((advance) => {
@@ -344,9 +460,11 @@ const Earnings = () => {
               </table>
             </div>
           </section>
+
         </div>
       </main>
 
+      {/* Advance Request Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4">
           <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl">
@@ -356,11 +474,7 @@ const Earnings = () => {
                 <p className="text-sm text-slate-500 mt-1">Enter the amount you need to withdraw.</p>
               </div>
               <button
-                onClick={() => {
-                  setShowModal(false);
-                  setError('');
-                  setAmount('');
-                }}
+                onClick={() => { setShowModal(false); setError(''); setAmount(''); }}
                 className="inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
                 aria-label="Close modal"
               >
@@ -370,7 +484,7 @@ const Earnings = () => {
 
             <div className="px-6 py-5 space-y-4">
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Current Balance</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Wallet Balance</p>
                 <p className="mt-1 text-lg font-semibold text-slate-900">{formatCurrency(walletBalance)}</p>
               </div>
 
@@ -392,7 +506,7 @@ const Earnings = () => {
                 />
                 {!canRequestAdvance && (
                   <p className="mt-2 text-xs text-slate-500">
-                    Minimum balance required for advance requests is {formatCurrency(thresholdAmount)}.
+                    Minimum wallet balance required: {formatCurrency(thresholdAmount)}.
                   </p>
                 )}
               </div>
@@ -400,11 +514,7 @@ const Earnings = () => {
 
             <div className="flex gap-3 border-t border-slate-200 px-6 py-5">
               <button
-                onClick={() => {
-                  setShowModal(false);
-                  setError('');
-                  setAmount('');
-                }}
+                onClick={() => { setShowModal(false); setError(''); setAmount(''); }}
                 className="flex-1 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50"
               >
                 Cancel

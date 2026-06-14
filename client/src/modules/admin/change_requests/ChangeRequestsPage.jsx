@@ -233,6 +233,9 @@ const ChangeRequestsPage = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4">
+                      {req.change_request_code && (
+                        <p className="text-xs font-mono font-medium text-slate-400 mb-0.5">{req.change_request_code}</p>
+                      )}
                       <span className="text-sm text-slate-700">{REQUEST_TYPE_LABELS[req.request_type] || req.request_type}</span>
                     </td>
                     <td className="px-6 py-4 text-sm text-slate-500">{fmt(req.created_at)}</td>
@@ -261,7 +264,12 @@ const ChangeRequestsPage = () => {
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 flex-shrink-0">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">Change Request Detail</h2>
-                <p className="text-xs text-slate-400 mt-0.5 font-mono">{selectedRequest.request_id}</p>
+                <p className="text-sm font-mono font-semibold text-slate-700 mt-0.5">
+                  {selectedRequest.change_request_code || selectedRequest.request_id}
+                </p>
+                {selectedRequest.change_request_code && (
+                  <p className="text-xs text-slate-400 font-mono">{selectedRequest.request_id}</p>
+                )}
               </div>
               <button onClick={closeDetail} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100">
                 <XCircle className="w-5 h-5" />

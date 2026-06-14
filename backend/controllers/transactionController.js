@@ -102,6 +102,7 @@ const getAllTransactions = async (req, res) => {
     const listQuery = `
       SELECT
         t.transaction_id,
+        t.transaction_code,
         t.category,
         t.transaction_type,
         t.amount,

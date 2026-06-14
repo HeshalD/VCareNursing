@@ -1028,6 +1028,11 @@ class ApiClient {
     });
   }
 
+  async getSavedStatements(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return this.request(`/statement/saved${qs ? '?' + qs : ''}`);
+  }
+
   // Admin Staff Management endpoints
   async createStaffProfile(staffData) {
     return this.request('/staff/proxy-create', {
@@ -1070,6 +1075,12 @@ class ApiClient {
 
   async getMyAdvances() {
     return this.request('/staff-wallet/my-advances');
+  }
+
+  async getMyCurrentEarningsBreakdown(filters = {}) {
+    const queryParams = new URLSearchParams(filters).toString();
+    const url = queryParams ? `/staff-wallet/my-earnings-breakdown?${queryParams}` : `/staff-wallet/my-earnings-breakdown`;
+    return this.request(url);
   }
 
   async getAllAdvances() {

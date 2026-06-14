@@ -4,6 +4,8 @@ const { sendWhatsAppMessage } = require('../utils/whatsapp');
 const sendEmail = require('../utils/email');
 const { upload } = require('../config/cloudinaryConfig');
 const { logActivity } = require('../utils/activityLogger');
+const { sendClientTerminationRequested, sendClientTerminationApproved } = require('../utils/metaWhatsapp');
+const { sendSms } = require('../utils/sms');
 
 function extractActorRole(role) {
     const raw = Array.isArray(role) ? role[0] : role;
@@ -48,6 +50,7 @@ const getBookingSettlementSnapshot = async (client, booking_id) => {
     const bookingResult = await client.query(
         `SELECT
             b.booking_id,
+            b.booking_code,
             b.status,
             b.assigned_staff_id,
             b.client_id,
@@ -432,11 +435,12 @@ const convertToBookingInternal = async (req, res) => {
         const newBooking = await client.query(
             `INSERT INTO bookings (client_id, patient_id, service_type, service_model, start_date, assigned_staff_id, status, preferred_gender, request_id, service_mode, scheduled_end_time, actual_end_time, ot_rate, daily_rate, amount_quotated, amount_paid) 
              VALUES ($1, $2, $3, $4::service_model_enum, $5, NULL, 'PENDING', $6::gender_preference_enum, $7, $8, $9, NULL, $10, $11, $12, $13)
-             RETURNING booking_id`,
+             RETURNING booking_id, booking_code`,
             [clientProfileId, patientId, reqData.service_type, reqData.service_model || 'SHIFT_BASED', reqData.start_date, reqData.preferred_gender || 'ANY', request_id, null, scheduledEndTime, 500.00, quoteData.daily_rate, quoteData.total_amount, 0]
         );
 
         const bookingId = newBooking.rows[0].booking_id;
+        const bookingCode = newBooking.rows[0].booking_code;
 
         if (registrationFeeAmount > 0) {
             const regFeeCategoryResult = await client.query(
@@ -667,6 +671,7 @@ const convertToBookingInternal = async (req, res) => {
             message: "Booking created successfully. Proceed to: (1) Record Payment, (2) Assign Staff.",
             data: {
                 booking_id: bookingId,
+                booking_code: bookingCode,
                 status: 'PENDING',
                 quote_id: bookingQuoteId,
                 quotation_amount: parseFloat(quoteData.total_amount),
@@ -722,8 +727,9 @@ exports.getByBookingID = async (req, res) => {
     try {
         // Simplified query first to test basic functionality
         const query = `
-            SELECT 
+            SELECT
                 b.booking_id,
+                b.booking_code,
                 b.service_type,
                 b.service_model,
                 b.start_date,
@@ -790,8 +796,9 @@ exports.getAdminBookingDetail = async (req, res) => {
     const { booking_id } = req.params;
 
     const bookingQuery = `
-        SELECT 
+        SELECT
             b.booking_id,
+            b.booking_code,
             b.request_id,
             b.client_id,
             b.patient_id,
@@ -907,6 +914,7 @@ exports.getAdminBookingDetail = async (req, res) => {
             db.query(
                 `SELECT
                     st.termination_id,
+                    st.termination_code,
                     st.requested_by,
                     st.urgency,
                     st.requested_end_date,
@@ -1042,6 +1050,7 @@ exports.getBookingTerminationRequests = async (req, res) => {
         const result = await db.query(
             `SELECT
                 termination_id,
+                termination_code,
                 requested_by,
                 urgency,
                 requested_end_date,
@@ -1081,6 +1090,7 @@ exports.getBookingInvoiceBreakdown = async (req, res) => {
         const bookingResult = await db.query(
             `SELECT
                 b.booking_id,
+                b.booking_code,
                 b.status,
                 b.client_id,
                 b.assigned_staff_id,
@@ -1147,6 +1157,7 @@ exports.getBookingInvoiceBreakdown = async (req, res) => {
             status: 'success',
             data: {
                 booking_id: booking.booking_id,
+                booking_code: booking.booking_code,
                 booking_status: booking.status,
                 client_id: booking.client_id,
                 client_name: booking.client_name,
@@ -1318,7 +1329,7 @@ exports.requestTermination = async (req, res) => {
             INSERT INTO service_terminations (
                 booking_id, requested_by, urgency, requested_end_date, reason, status
             ) VALUES ($1, 'CLIENT', $2, $3, $4, 'PENDING')
-            RETURNING termination_id;
+            RETURNING termination_id, termination_code;
         `;
         const termRes = await client.query(insertReqQuery, [
             booking_id, urgency, targetEndDate, reason
@@ -1332,16 +1343,34 @@ exports.requestTermination = async (req, res) => {
 
         await client.query('COMMIT');
 
-        // 5. Alert the Admin Dashboard (High Priority Task)
-        // This is where you'd trigger a WebSocket event, Email, or WhatsApp to your coordinators.
-        console.log(`🚨 HIGH PRIORITY: Client requested termination for Booking ${booking_id}. Urgency: ${urgency}`);
-        // await sendAdminAlert(`Termination requested for booking ${booking_id}. Urgency: ${urgency}. Reason: ${reason}`);
+        const terminationCode = termRes.rows[0].termination_code;
+
+        // Notify client via WhatsApp (fire-and-forget)
+        (async () => {
+            try {
+                const clientRes = await db.query(
+                    `SELECT u.mobile_number, cp.full_name
+                     FROM client_profiles cp
+                     JOIN users u ON cp.user_id = u.user_id
+                     WHERE cp.client_profile_id = $1`,
+                    [booking.client_id]
+                );
+                if (clientRes.rows.length > 0) {
+                    const { mobile_number, full_name } = clientRes.rows[0];
+                    const endDateStr = targetEndDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+                    await sendClientTerminationRequested(mobile_number, full_name, terminationCode, endDateStr);
+                }
+            } catch (e) {
+                console.error('[requestTermination] WhatsApp notify error:', e.message);
+            }
+        })();
 
         res.status(201).json({
             status: 'success',
             message: "Termination request submitted successfully. Our team will review and confirm shortly.",
             data: {
                 termination_id: termRes.rows[0].termination_id,
+                termination_code: termRes.rows[0].termination_code,
                 target_end_date: targetEndDate
             }
         });
@@ -1358,13 +1387,15 @@ exports.requestTermination = async (req, res) => {
 exports.getPendingTerminationRequests = async (req, res) => {
     try {
         const query = `
-            SELECT 
+            SELECT
                 st.termination_id,
+                st.termination_code,
                 st.urgency,
                 st.requested_end_date,
                 st.reason,
                 st.created_at as request_date,
                 b.booking_id,
+                b.booking_code,
                 b.start_date,
                 b.service_type,
                 c.full_name as client_name,
@@ -1441,7 +1472,7 @@ exports.approveTerminationRequest = async (req, res) => {
         // 3. Terminate the Booking
         await client.query(
             `UPDATE bookings 
-     SET status = 'COMPLETED', actual_end_time = $2
+     SET status = 'TERMINATED', actual_end_time = $2
      WHERE booking_id = $1`,
             [request.booking_id, officialEndDate]
         );
@@ -1524,9 +1555,51 @@ exports.approveTerminationRequest = async (req, res) => {
 
         await client.query('COMMIT');
 
-        // 6. Notifications (WhatsApp/SMS)
-        // -> Message Staff: "Your assignment has ended. You are now available for new bookings."
-        // -> Message Client: "Your service termination is confirmed. Any refunds have been added to your VCare Wallet."
+        // 6. Activity log + notifications (fire-and-forget)
+        (async () => {
+            try {
+                const actorUserId = req.user?.user_id;
+                const actorRole = extractActorRole(req.user?.role);
+                const actorName = await getActorName(actorUserId);
+
+                await logActivity({
+                    actorUserId,
+                    actorName,
+                    actorRole,
+                    actionType: 'TERMINATION_APPROVED',
+                    entityType: 'booking',
+                    entityId: null,
+                    details: {
+                        termination_id,
+                        termination_code: request.termination_code,
+                        booking_id: request.booking_id,
+                        official_end_date: officialEndDate,
+                    },
+                });
+
+                const clientRes = await db.query(
+                    `SELECT u.mobile_number, cp.full_name
+                     FROM client_profiles cp
+                     JOIN users u ON cp.user_id = u.user_id
+                     WHERE cp.client_profile_id = $1`,
+                    [request.client_id]
+                );
+                if (clientRes.rows.length > 0) {
+                    const { mobile_number, full_name } = clientRes.rows[0];
+                    const endDateStr = officialEndDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+                    const ref = request.termination_code;
+
+                    await Promise.allSettled([
+                        sendClientTerminationApproved(mobile_number, full_name, ref, endDateStr),
+                        sendSms(mobile_number,
+                            `VCare: Hi ${full_name}, your termination request (${ref}) has been approved. Official end date: ${endDateStr}. Please contact us regarding any eligible refund.`
+                        ),
+                    ]);
+                }
+            } catch (e) {
+                console.error('[approveTermination] Post-commit error:', e.message);
+            }
+        })();
 
         res.status(200).json({
             status: 'success',
@@ -1710,8 +1783,9 @@ exports.forceStopBooking = async (req, res) => {
 exports.getAllBookings = async (req, res) => {
     try {
         const query = `
-            SELECT 
+            SELECT
                 b.booking_id,
+                b.booking_code,
                 b.service_type,
                 b.service_model,
                 b.start_date,

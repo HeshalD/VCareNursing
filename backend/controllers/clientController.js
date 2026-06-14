@@ -2,7 +2,7 @@ const db = require('../config/db');
 
 async function getClientUserAccount(clientId) {
   const result = await db.query(
-    `SELECT cp.client_profile_id, cp.full_name, cp.updated_at, u.user_id, u.is_active, u.mobile_number, u.email
+    `SELECT cp.client_profile_id, cp.client_code, cp.full_name, cp.updated_at, u.user_id, u.is_active, u.mobile_number, u.email
      FROM client_profiles cp
      JOIN users u ON cp.user_id = u.user_id
      WHERE cp.client_profile_id = $1`,

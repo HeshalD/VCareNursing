@@ -58,7 +58,7 @@ const getMyAdvances = async (req, res) => {
     const { staff_profile_id } = staffResult.rows[0];
 
     const advancesResult = await pool.query(
-      `SELECT advance_id, staff_profile_id, amount_requested, status, requested_at, approved_at,
+      `SELECT advance_id, advance_code, staff_profile_id, amount_requested, status, requested_at, approved_at,
               rejected_reason, reviewed_by_user_id, reviewed_by_name
        FROM staff_advances
        WHERE staff_profile_id = $1
@@ -363,6 +363,123 @@ const getPendingAdvances = async (req, res) => {
   }
 };
 
+// GET /api/staff-wallet/my-earnings-breakdown
+// Staff views their own earnings ledger + summary (mirrors admin getCurrentEarningsBreakdown)
+const getMyCurrentEarningsBreakdown = async (req, res) => {
+  const page  = parseInt(req.query.page)  || 1;
+  const limit = parseInt(req.query.limit) || 50;
+  const offset = (page - 1) * limit;
+
+  try {
+    const profileRes = await pool.query(
+      `SELECT sp.staff_profile_id, sp.full_name, sp.current_earnings
+       FROM staff_profiles sp WHERE sp.user_id = $1`,
+      [req.user.user_id]
+    );
+    if (profileRes.rows.length === 0) {
+      return res.status(404).json({ status: 'error', message: 'Staff profile not found' });
+    }
+    const { staff_profile_id, full_name: staff_name, current_earnings } = profileRes.rows[0];
+
+    const [summaryRes, advanceSumRes, countRes, ledgerRes, advancesRes] = await Promise.all([
+      pool.query(`
+        SELECT
+          COALESCE(SUM(CASE WHEN category = 'STAFF_SALARY'      AND transaction_type = 'CREDIT' THEN amount ELSE 0 END), 0) AS total_earned,
+          COALESCE(SUM(CASE WHEN category = 'STAFF_SALARY_PAID' AND transaction_type = 'DEBIT'  THEN amount ELSE 0 END), 0) AS total_paid_out
+        FROM transactions
+        WHERE staff_profile_id = $1
+          AND (category = 'STAFF_SALARY' OR category = 'STAFF_SALARY_PAID')
+          AND status = 'COMPLETED'
+      `, [staff_profile_id]),
+
+      pool.query(`
+        SELECT COALESCE(SUM(amount_requested), 0) AS total_advances_approved
+        FROM staff_advances
+        WHERE staff_profile_id = $1 AND status = 'APPROVED'
+      `, [staff_profile_id]),
+
+      pool.query(`
+        SELECT COUNT(*) AS total_count
+        FROM transactions
+        WHERE staff_profile_id = $1
+          AND (category = 'STAFF_SALARY' OR category = 'STAFF_SALARY_PAID')
+          AND status = 'COMPLETED'
+      `, [staff_profile_id]),
+
+      pool.query(`
+        SELECT *
+        FROM (
+          SELECT
+            t.transaction_id,
+            t.booking_id,
+            t.category,
+            t.amount,
+            t.transaction_type,
+            t.created_at,
+            SUM(
+              CASE WHEN t.transaction_type = 'CREDIT' THEN t.amount ELSE -t.amount END
+            ) OVER (
+              ORDER BY t.created_at ASC, t.transaction_id ASC
+              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            ) AS running_balance,
+            b.service_type,
+            c.full_name  AS client_name,
+            p.full_name  AS patient_name,
+            spt.notes    AS payout_notes,
+            ba.account_nickname AS company_account_name,
+            sba.bank_name       AS staff_bank_name,
+            sba.account_number  AS staff_account_number
+          FROM transactions t
+          LEFT JOIN bookings b             ON t.booking_id = b.booking_id
+          LEFT JOIN client_profiles c      ON b.client_id  = c.client_profile_id
+          LEFT JOIN patient_profiles p     ON b.patient_id = p.patient_id
+          LEFT JOIN staff_payments_tracking spt ON spt.transaction_id = t.transaction_id
+          LEFT JOIN bank_accounts ba            ON spt.company_bank_account_id = ba.account_id
+          LEFT JOIN staff_bank_accounts sba     ON spt.staff_bank_account_id = sba.staff_bank_account_id
+          WHERE t.staff_profile_id = $1
+            AND (t.category = 'STAFF_SALARY' OR t.category = 'STAFF_SALARY_PAID')
+            AND t.status = 'COMPLETED'
+        ) ledger
+        ORDER BY created_at DESC, transaction_id DESC
+        LIMIT $2 OFFSET $3
+      `, [staff_profile_id, limit, offset]),
+
+      pool.query(`
+        SELECT advance_id, advance_code, amount_requested, status, requested_at, approved_at, reviewed_by_name
+        FROM staff_advances
+        WHERE staff_profile_id = $1 AND status = 'APPROVED'
+        ORDER BY approved_at DESC
+      `, [staff_profile_id]),
+    ]);
+
+    const totalCount = parseInt(countRes.rows[0].total_count || 0);
+
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        staff_name,
+        summary: {
+          current_earnings:        parseFloat(current_earnings || 0),
+          total_earned:            parseFloat(summaryRes.rows[0].total_earned || 0),
+          total_paid_out:          parseFloat(summaryRes.rows[0].total_paid_out || 0),
+          total_advances_approved: parseFloat(advanceSumRes.rows[0].total_advances_approved || 0),
+        },
+        ledger:   ledgerRes.rows,
+        advances: advancesRes.rows,
+        pagination: {
+          current_page: page,
+          per_page:     limit,
+          total_count:  totalCount,
+          total_pages:  Math.ceil(totalCount / limit),
+        },
+      },
+    });
+  } catch (error) {
+    console.error('getMyCurrentEarningsBreakdown Error:', error);
+    return res.status(500).json({ status: 'error', message: 'Server error' });
+  }
+};
+
 module.exports = {
   getMyWallet,
   getMyAdvances,
@@ -371,5 +488,6 @@ module.exports = {
   rejectAdvance,
   getAllAdvances,
   updateAdvanceThreshold,
-  getPendingAdvances
+  getPendingAdvances,
+  getMyCurrentEarningsBreakdown,
 };

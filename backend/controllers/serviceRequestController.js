@@ -146,7 +146,12 @@ exports.submitServiceRequest = async (req, res) => {
 // Admin Method to get all leads for the [🏠 HOME] tab
 exports.getAllLeads = async (req, res) => {
     try {
-        const result = await db.query('SELECT * FROM service_requests ORDER BY created_at DESC');
+        const result = await db.query(`
+            SELECT sr.*, b.status AS booking_status, b.booking_id
+            FROM service_requests sr
+            LEFT JOIN bookings b ON b.request_id = sr.request_id
+            ORDER BY sr.created_at DESC
+        `);
         res.status(200).json({ status: 'success', data: result.rows });
     } catch (error) {
         res.status(500).json({ message: "Error fetching leads" });

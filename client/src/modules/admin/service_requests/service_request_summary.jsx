@@ -281,7 +281,7 @@ const ServiceRequestSummaryPage = () => {
                       </span>
                     </div>
                     <p className="mt-0.5 text-xs text-slate-400">
-                      #{request.request_id} &middot; Created {fmt(request.created_at)}
+                      {request.service_request_code || request.request_id} &middot; Created {fmt(request.created_at)}
                     </p>
                   </div>
                 </div>

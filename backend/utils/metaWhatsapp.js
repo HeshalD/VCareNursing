@@ -73,4 +73,12 @@ const sendBookingConfirmed = (mobileNumber, clientName, staffName, date, time, s
 const sendStaffNewAssignment = (mobileNumber, staffName, patientName, location, conditions, startDate) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_staff_new_assignment', 'en', [staffName, patientName, location, conditions, startDate]);
 
-module.exports = { sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendPaymentRecorded, sendBookingConfirmed, sendStaffNewAssignment };
+// Sent to client when they submit a termination request — {{1}} = client name, {{2}} = booking reference, {{3}} = requested end date
+const sendClientTerminationRequested = (mobileNumber, clientName, bookingReference, requestedEndDate) =>
+  sendTemplate(formatNumber(mobileNumber), 'vcare_client_termination_requested', 'en', [clientName, bookingReference, requestedEndDate]);
+
+// Sent to client when their termination request is approved — {{1}} = client name, {{2}} = booking reference, {{3}} = official end date
+const sendClientTerminationApproved = (mobileNumber, clientName, bookingReference, officialEndDate) =>
+  sendTemplate(formatNumber(mobileNumber), 'vcare_client_termination_approved', 'en', [clientName, bookingReference, officialEndDate]);
+
+module.exports = { sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendPaymentRecorded, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved };

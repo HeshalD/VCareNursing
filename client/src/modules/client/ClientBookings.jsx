@@ -316,7 +316,7 @@ const ClientBookings = () => {
                       <tr key={b.booking_id || b.id} style={{ borderBottom: '1px solid #f8fafc' }}>
                         <td style={s.td}>
                           <span style={{ fontFamily: 'monospace', fontWeight: 600, fontSize: 13, color: '#0f172a' }}>
-                            #{b.booking_id || b.id}
+                            {b.booking_code || b.booking_id}
                           </span>
                         </td>
                         <td style={s.td}>
@@ -423,7 +423,7 @@ const ClientBookings = () => {
               <div>
                 <h2 style={{ fontSize: 18, fontWeight: 700, color: '#0f172a', margin: 0 }}>Booking Details</h2>
                 <p style={{ fontSize: 12, color: '#64748b', margin: '4px 0 0' }}>
-                  Booking ID: #{selectedBooking.booking_id || selectedBooking.id}
+                  {selectedBooking.booking_code || selectedBooking.booking_id}
                 </p>
               </div>
               <button onClick={() => setSelectedBooking(null)} style={s.closeBtn}>
@@ -435,7 +435,7 @@ const ClientBookings = () => {
               <div style={{ ...s.infoBlock, marginBottom: 20 }}>
                 <h3 style={s.infoBlockTitle}><Calendar size={16} style={{ color: '#3b82f6' }} /> Booking Information</h3>
                 <div style={s.infoGrid}>
-                  <InfoItem label="Booking ID" value={`#${selectedBooking.booking_id || selectedBooking.id}`} />
+                  <InfoItem label="Booking" value={selectedBooking.booking_code || selectedBooking.booking_id} />
                   <InfoItem label="Status" value={<StatusBadge status={selectedBooking.status} />} />
                   <InfoItem label="Service Type" value={
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
