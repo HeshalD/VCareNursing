@@ -1398,6 +1398,11 @@ exports.createStaffPayout = async (req, res) => {
 
             await client.query(`UPDATE staff_profiles SET current_earnings = $1 WHERE staff_profile_id = $2`, [newEarnings, staff_profile_id]);
 
+            await client.query(
+                `UPDATE staff_wallet SET balance = GREATEST(balance - $1, 0), updated_at = NOW() WHERE staff_profile_id = $2`,
+                [payoutAmount, staff_profile_id]
+            );
+
             // Insert into transactions ledger
             const insertTrans = await client.query(
                 `INSERT INTO transactions (staff_profile_id, category, amount, transaction_type, bank_account_id, payment_method, reference_number, verified_by, status, created_at)
@@ -3166,6 +3171,11 @@ exports.bulkStaffPayouts = async (req, res) => {
             await client.query(
                 `UPDATE staff_profiles SET current_earnings = $1 WHERE staff_profile_id = $2`,
                 [newEarnings, staff_profile_id]
+            );
+
+            await client.query(
+                `UPDATE staff_wallet SET balance = GREATEST(balance - $1, 0), updated_at = NOW() WHERE staff_profile_id = $2`,
+                [payoutAmount, staff_profile_id]
             );
 
             const insertTrans = await client.query(

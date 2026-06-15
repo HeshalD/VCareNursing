@@ -56,4 +56,16 @@ const sendSms = async (mobileNumber, message) => {
   return response.data;
 };
 
-module.exports = { sendSmsOtp, sendSms };
+const sendStaffAdvanceApprovedSms = (mobileNumber, staffName, amount, newBalance) =>
+  sendSms(
+    mobileNumber,
+    `Hi ${staffName}, your advance request of LKR ${amount} has been approved. Your new wallet balance is LKR ${newBalance}. Log in to the VCare staff portal to view your wallet. - VCare Nursing`
+  );
+
+const sendStaffAdvanceRejectedSms = (mobileNumber, staffName, amount, reason) =>
+  sendSms(
+    mobileNumber,
+    `Hi ${staffName}, your advance request of LKR ${amount} could not be approved. Reason: ${reason || 'No reason provided'}. Please contact the VCare Nursing office for more information. - VCare Nursing`
+  );
+
+module.exports = { sendSmsOtp, sendSms, sendStaffAdvanceApprovedSms, sendStaffAdvanceRejectedSms };

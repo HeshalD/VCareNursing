@@ -2,6 +2,8 @@
 
 const { pool } = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
+const { sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected } = require('../utils/metaWhatsapp');
+const { sendStaffAdvanceApprovedSms, sendStaffAdvanceRejectedSms } = require('../utils/sms');
 
 async function getReviewerName(userId) {
   const result = await pool.query(
@@ -85,9 +87,10 @@ const requestAdvance = async (req, res) => {
   try {
     // Get staff profile + wallet balance + threshold
     const result = await pool.query(
-      `SELECT sp.staff_profile_id, sp.advance_threshold_amount,
+      `SELECT sp.staff_profile_id, sp.full_name, u.mobile_number, sp.advance_threshold_amount,
               COALESCE(sw.balance, 0) AS balance
        FROM staff_profiles sp
+       JOIN users u ON u.user_id = sp.user_id
        LEFT JOIN staff_wallet sw ON sw.staff_profile_id = sp.staff_profile_id
        WHERE sp.user_id = $1`,
       [req.user.user_id]
@@ -97,7 +100,7 @@ const requestAdvance = async (req, res) => {
       return res.status(404).json({ status: 'error', message: 'Staff profile not found' });
     }
 
-    const { staff_profile_id, advance_threshold_amount, balance } = result.rows[0];
+    const { staff_profile_id, full_name, mobile_number, advance_threshold_amount, balance } = result.rows[0];
 
     // Threshold check
     if (parseFloat(balance) < parseFloat(advance_threshold_amount)) {
@@ -128,6 +131,12 @@ const requestAdvance = async (req, res) => {
        RETURNING *`,
       [staff_profile_id, amount_requested]
     );
+
+    if (mobile_number) {
+      sendStaffAdvanceRequestSent(mobile_number, full_name, amount_requested).catch((err) =>
+        console.error('[WA] sendStaffAdvanceRequestSent failed:', err.message)
+      );
+    }
 
     res.status(201).json({ status: 'success', data: advance.rows[0] });
   } catch (err) {
@@ -234,6 +243,23 @@ const approveAdvance = async (req, res) => {
       details: { staff_profile_id: advance.staff_profile_id, amount: advance.amount_requested }
     });
 
+    // Notify staff via WhatsApp + SMS (non-blocking)
+    const staffContactRes = await pool.query(
+      `SELECT sp.full_name, u.mobile_number
+       FROM staff_profiles sp
+       JOIN users u ON u.user_id = sp.user_id
+       WHERE sp.staff_profile_id = $1`,
+      [advance.staff_profile_id]
+    );
+    if (staffContactRes.rows.length && staffContactRes.rows[0].mobile_number) {
+      const { full_name, mobile_number } = staffContactRes.rows[0];
+      const newBalance = (parseFloat(walletResult.rows[0].balance) - parseFloat(advance.amount_requested)).toFixed(2);
+      sendStaffAdvanceApproved(mobile_number, full_name, advance.amount_requested, newBalance)
+        .catch((err) => console.error('[WA] sendStaffAdvanceApproved failed:', err.message));
+      sendStaffAdvanceApprovedSms(mobile_number, full_name, advance.amount_requested, newBalance)
+        .catch((err) => console.error('[SMS] sendStaffAdvanceApprovedSms failed:', err.message));
+    }
+
     res.json({ status: 'success', data: updated.rows[0] });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -279,6 +305,22 @@ const rejectAdvance = async (req, res) => {
         reason: reason || null
       }
     });
+
+    // Notify staff via WhatsApp + SMS (non-blocking)
+    const staffContactRes = await pool.query(
+      `SELECT sp.full_name, u.mobile_number
+       FROM staff_profiles sp
+       JOIN users u ON u.user_id = sp.user_id
+       WHERE sp.staff_profile_id = $1`,
+      [result.rows[0].staff_profile_id]
+    );
+    if (staffContactRes.rows.length && staffContactRes.rows[0].mobile_number) {
+      const { full_name, mobile_number } = staffContactRes.rows[0];
+      sendStaffAdvanceRejected(mobile_number, full_name, result.rows[0].amount_requested, reason)
+        .catch((err) => console.error('[WA] sendStaffAdvanceRejected failed:', err.message));
+      sendStaffAdvanceRejectedSms(mobile_number, full_name, result.rows[0].amount_requested, reason)
+        .catch((err) => console.error('[SMS] sendStaffAdvanceRejectedSms failed:', err.message));
+    }
 
     res.json({ status: 'success', data: result.rows[0] });
   } catch (err) {

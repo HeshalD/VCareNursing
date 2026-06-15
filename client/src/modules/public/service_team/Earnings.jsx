@@ -15,6 +15,7 @@ import {
   Info,
   ChevronLeft,
   ChevronRight,
+  MinusCircle,
 } from 'lucide-react';
 import apiClient from '../../../api/api';
 import { useAuth } from '../../../context/AuthContext';
@@ -41,7 +42,10 @@ const formatDateTime = (value) => {
 };
 
 const LedgerRow = ({ entry }) => {
-  const isCredit = entry.transaction_type === 'CREDIT';
+  const isCredit   = entry.transaction_type === 'CREDIT';
+  const isAdvance  = entry.category === 'STAFF_ADVANCE';
+  const isDeduction = entry.category === 'STAFF_DEDUCTION';
+
   return (
     <tr className="hover:bg-slate-50/70 transition-colors">
       <td className="px-4 py-3 text-sm text-slate-500 whitespace-nowrap">
@@ -52,6 +56,16 @@ const LedgerRow = ({ entry }) => {
           <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
             <ArrowUpRight className="h-3 w-3" />
             Earned
+          </span>
+        ) : isAdvance ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700">
+            <Wallet className="h-3 w-3" />
+            Advance
+          </span>
+        ) : isDeduction ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-700">
+            <MinusCircle className="h-3 w-3" />
+            Deduction
           </span>
         ) : (
           <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-700">
@@ -66,6 +80,17 @@ const LedgerRow = ({ entry }) => {
             <p className="text-sm font-medium text-slate-800">{entry.client_name || 'Daily Salary'}</p>
             {entry.patient_name && <p className="text-xs text-slate-400">Care Profile: {entry.patient_name}</p>}
             {entry.service_type  && <p className="text-xs text-slate-400">{entry.service_type}</p>}
+          </div>
+        ) : isAdvance ? (
+          <div>
+            <p className="text-sm font-medium text-slate-800">Salary Advance</p>
+            {entry.reviewed_by_name && (
+              <p className="text-xs text-slate-400">Approved by: {entry.reviewed_by_name}</p>
+            )}
+          </div>
+        ) : isDeduction ? (
+          <div>
+            <p className="text-sm font-medium text-slate-800">{entry.reason || 'Manual deduction'}</p>
           </div>
         ) : (
           <div>
@@ -198,6 +223,31 @@ const Earnings = () => {
 
   const totalLedgerPages = breakdown?.pagination?.total_pages || 1;
 
+  const mergedLedger = useMemo(() => {
+    const ledgerEntries = (breakdown?.ledger || []).map((e) => ({ ...e }));
+    const advanceEntries = (breakdown?.advances || []).map((a) => ({
+      transaction_id: a.advance_id,
+      category: 'STAFF_ADVANCE',
+      transaction_type: 'DEBIT',
+      amount: a.amount_requested,
+      reviewed_by_name: a.reviewed_by_name,
+      created_at: a.approved_at,
+      running_balance: null,
+    }));
+
+    const combined = [...ledgerEntries, ...advanceEntries].sort(
+      (a, b) => new Date(a.created_at) - new Date(b.created_at)
+    );
+
+    let balance = 0;
+    combined.forEach((entry) => {
+      balance += entry.transaction_type === 'CREDIT' ? parseFloat(entry.amount) : -parseFloat(entry.amount);
+      entry.running_balance = balance;
+    });
+
+    return combined.reverse();
+  }, [breakdown?.ledger, breakdown?.advances]);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 font-sans text-slate-900 flex">
@@ -327,10 +377,14 @@ const Earnings = () => {
                   <span className="h-2.5 w-2.5 rounded-full bg-rose-400" />
                   Payout
                 </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />
+                  Advance
+                </span>
               </div>
             </div>
 
-            {!breakdown || breakdown.ledger.length === 0 ? (
+            {mergedLedger.length === 0 ? (
               <div className="p-10 text-center text-slate-500 text-sm">No transactions recorded yet.</div>
             ) : (
               <>
@@ -346,8 +400,8 @@ const Earnings = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {breakdown.ledger.map((entry) => (
-                        <LedgerRow key={entry.transaction_id} entry={entry} />
+                      {mergedLedger.map((entry, i) => (
+                        <LedgerRow key={entry.transaction_id ?? i} entry={entry} />
                       ))}
                     </tbody>
                   </table>

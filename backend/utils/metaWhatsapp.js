@@ -163,6 +163,18 @@ const sendStaffDeductionNotice = (mobileNumber, staffName, amount, reason, date)
 const sendReviewRequest = (mobileNumber, clientName, serviceType, staffName) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_review_request', 'en', [clientName, serviceType, staffName]);
 
+// Sent to staff when their advance request is submitted — {{1}} = staff name, {{2}} = amount requested
+const sendStaffAdvanceRequestSent = (mobileNumber, staffName, amountRequested) =>
+  sendTemplate(formatNumber(mobileNumber), 'vcare_staff_advance_request_sent', 'en', [staffName, String(amountRequested)]);
+
+// Sent to staff when their advance is approved — {{1}} = staff name, {{2}} = amount approved, {{3}} = new wallet balance
+const sendStaffAdvanceApproved = (mobileNumber, staffName, amount, newBalance) =>
+  sendTemplate(formatNumber(mobileNumber), 'vcare_staff_advance_approved', 'en', [staffName, String(amount), String(newBalance)]);
+
+// Sent to staff when their advance is rejected — {{1}} = staff name, {{2}} = amount requested, {{3}} = reason
+const sendStaffAdvanceRejected = (mobileNumber, staffName, amount, reason) =>
+  sendTemplate(formatNumber(mobileNumber), 'vcare_staff_advance_rejected', 'en', [staffName, String(amount), reason || 'No reason provided']);
+
 // Sent when a salary payout is processed — header: salary sheet PDF, body vars:
 //   {{1}} = staff name, {{2}} = month (e.g. "June 2026"),
 //   {{3}} = net payable / current earnings (LKR formatted),
@@ -177,4 +189,4 @@ const sendStaffSalarySheet = (mobileNumber, fullName, monthLabel, netPayable, am
     [{ type: 'document', document: { link: pdfUrl, filename: `Salary_Sheet_${monthLabel.replace(/\s+/g, '_')}.pdf` } }]
   );
 
-module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendPaymentRecorded, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffSalarySheet, sendReviewRequest };
+module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendPaymentRecorded, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected };

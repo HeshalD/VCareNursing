@@ -67,6 +67,7 @@ const SummaryCard = ({ icon: Icon, label, value, sub, tone }) => {
 const LedgerRow = ({ entry }) => {
   const isCredit = entry.transaction_type === 'CREDIT';
   const isDeduction = entry.category === 'STAFF_DEDUCTION';
+  const isAdvance = entry.category === 'STAFF_ADVANCE';
 
   return (
     <tr className="hover:bg-slate-50 transition-colors">
@@ -83,6 +84,11 @@ const LedgerRow = ({ entry }) => {
           <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-700">
             <MinusCircle className="h-3 w-3" />
             Deduction
+          </span>
+        ) : isAdvance ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700">
+            <Wallet className="h-3 w-3" />
+            Advance
           </span>
         ) : (
           <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
@@ -109,6 +115,13 @@ const LedgerRow = ({ entry }) => {
             <p className="text-sm font-medium text-slate-800">{entry.reason || 'Manual deduction'}</p>
             {entry.recorded_by && (
               <p className="text-xs text-slate-400">By: {entry.recorded_by}</p>
+            )}
+          </div>
+        ) : isAdvance ? (
+          <div>
+            <p className="text-sm font-medium text-slate-800">Salary Advance</p>
+            {entry.reviewed_by_name && (
+              <p className="text-xs text-slate-400">Approved by: {entry.reviewed_by_name}</p>
             )}
           </div>
         ) : (
@@ -187,8 +200,17 @@ export default function CurrentEarningsBreakdownPage() {
       created_at: d.created_at,
       running_balance: null,
     }));
+    const advanceEntries = (data?.advances || []).map((a) => ({
+      transaction_id: a.advance_id,
+      category: 'STAFF_ADVANCE',
+      transaction_type: 'DEBIT',
+      amount: a.amount_requested,
+      reviewed_by_name: a.reviewed_by_name,
+      created_at: a.approved_at,
+      running_balance: null,
+    }));
 
-    const combined = [...ledgerEntries, ...deductionEntries].sort(
+    const combined = [...ledgerEntries, ...deductionEntries, ...advanceEntries].sort(
       (a, b) => new Date(a.created_at) - new Date(b.created_at)
     );
 
@@ -209,12 +231,15 @@ export default function CurrentEarningsBreakdownPage() {
     const ledgerRows = mergedLedger.map((e) => {
       const isCredit = e.transaction_type === 'CREDIT';
       const isDeduction = e.category === 'STAFF_DEDUCTION';
-      const type = isCredit ? 'Earned' : isDeduction ? 'Deduction' : 'Payout';
+      const isAdvance = e.category === 'STAFF_ADVANCE';
+      const type = isCredit ? 'Earned' : isDeduction ? 'Deduction' : isAdvance ? 'Advance' : 'Payout';
       let description = '';
       if (isCredit) {
         description = [e.client_name || 'Daily Salary', e.patient_name && `Care Profile: ${e.patient_name}`, e.service_type].filter(Boolean).join(' | ');
       } else if (isDeduction) {
         description = [e.reason || 'Manual deduction', e.recorded_by && `By: ${e.recorded_by}`].filter(Boolean).join(' | ');
+      } else if (isAdvance) {
+        description = ['Salary Advance', e.reviewed_by_name && `Approved by: ${e.reviewed_by_name}`].filter(Boolean).join(' | ');
       } else {
         description = [`Payout${e.company_account_name ? ` via ${e.company_account_name}` : ''}`, e.staff_bank_name && `To: ${e.staff_bank_name}${e.staff_account_number ? ` ···${e.staff_account_number.slice(-4)}` : ''}`, e.paid_by_email && `By: ${e.paid_by_email}`].filter(Boolean).join(' | ');
       }
@@ -400,6 +425,10 @@ export default function CurrentEarningsBreakdownPage() {
                     <span className="inline-flex items-center gap-1">
                       <span className="h-2.5 w-2.5 rounded-full bg-rose-400" />
                       Deduction
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />
+                      Advance
                     </span>
                   </div>
                   <button

@@ -664,8 +664,7 @@ Hi {{1}},
 
 Your advance request has been received and is pending admin approval.
 
-💰 Amount Requested: ${{2}}
-🔖 Reference: #{{3}}
+Amount Requested: LKR{{2}}
 
 You will be notified once a decision has been made.
 ```
@@ -689,7 +688,7 @@ You will be notified once a decision has been made.
 | Template Name | `vcare_staff_advance_approved` |
 | Language | English (US) |
 
-**Header:** (Text) `Advance Approved ✅`
+**Header:** (Text) `Advance Approved`
 
 **Body:**
 ```
@@ -697,8 +696,8 @@ Hi {{1}},
 
 Your advance request has been approved and credited to your wallet.
 
-💰 Amount Approved: ${{2}}
-👜 New Wallet Balance: ${{3}}
+Amount Approved: LKR {{2}}
+New Wallet Balance: LKR {{3}}
 
 Please log in to the staff portal to view your updated wallet.
 ```
@@ -730,9 +729,9 @@ Please log in to the staff portal to view your updated wallet.
 ```
 Hi {{1}},
 
-Your advance request of ${{2}} could not be approved at this time.
+Your advance request of LKR {{2}} could not be approved at this time.
 
-📝 Reason: {{3}}
+Reason: {{3}}
 
 If you have any questions, please contact the VCare Nursing office.
 ```
