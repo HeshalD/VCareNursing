@@ -3,7 +3,7 @@ import {
   Users, Calendar, DollarSign, Activity,
   Settings, LogOut, Bell, Search,
   ShieldCheck, FileText, SendHorizontal, Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet, Landmark,
-  ChevronLeft, ChevronRight, ClipboardList, History, HeartPulse, ArrowLeftRight, Banknote
+  ChevronLeft, ChevronRight, ClipboardList, History, HeartPulse, ArrowLeftRight, Banknote, Star
 } from 'lucide-react';
 import logo from '../../../assets/Logo/VCareLogo.png';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -159,6 +159,13 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
             label="Change Requests"
             path="/admin/change-requests"
             active={isActive('/admin/change-requests')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
+            icon={Star}
+            label="Reviews"
+            path="/admin/reviews"
+            active={isActive('/admin/reviews')}
             collapsed={collapsed}
           />
           <SidebarItem

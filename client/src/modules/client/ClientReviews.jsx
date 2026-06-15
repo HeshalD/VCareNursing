@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import {
   Loader2, AlertCircle, RefreshCw,
   ChevronLeft, ChevronRight, User, Calendar,
-  Users, Clock, PenLine, ArrowRight, MessageCircle
+  Users, Clock, PenLine, ArrowRight, MessageCircle,
+  Star, X, BookOpen, Check
 } from 'lucide-react';
 import apiClient from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
@@ -32,9 +33,54 @@ const ClientReviews = () => {
     mostReviewedCount: 0,
   });
 
+  const [reviewableBookings, setReviewableBookings] = useState([]);
+  const [showReviewForm, setShowReviewForm] = useState(false);
+  const [selectedBooking, setSelectedBooking] = useState(null);
+  const [reviewRating, setReviewRating] = useState(0);
+  const [reviewText, setReviewText] = useState('');
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewError, setReviewError] = useState('');
+  const [reviewSuccess, setReviewSuccess] = useState('');
+
   useEffect(() => {
-    if (user) fetchData();
+    if (user) {
+      fetchData();
+      fetchReviewableBookings();
+    }
   }, [user]);
+
+  const fetchReviewableBookings = async () => {
+    try {
+      const res = await apiClient.getReviewableBookings();
+      setReviewableBookings(res.data || []);
+    } catch {
+      // non-fatal
+    }
+  };
+
+  const handleSubmitReview = async () => {
+    if (!selectedBooking || reviewRating === 0 || !reviewText.trim()) return;
+    setReviewSubmitting(true);
+    setReviewError('');
+    try {
+      await apiClient.createStaffReview({
+        staff_profile_id: selectedBooking.staff_profile_id,
+        rating: reviewRating,
+        review_text: reviewText,
+        booking_id: selectedBooking.booking_id,
+      });
+      setReviewSuccess('Review submitted successfully!');
+      setShowReviewForm(false);
+      setSelectedBooking(null);
+      setReviewRating(0);
+      setReviewText('');
+      await Promise.all([fetchData(pagination.page), fetchReviewableBookings()]);
+    } catch (err) {
+      setReviewError(err.message || 'Failed to submit review');
+    } finally {
+      setReviewSubmitting(false);
+    }
+  };
 
   const fetchData = async (page = 1) => {
     setLoading(true);
@@ -118,6 +164,103 @@ const ClientReviews = () => {
   return (
     <div style={s.pageWrapper}>
       <style>{keyframes}</style>
+
+      {/* Write Review Modal */}
+      {showReviewForm && (
+        <div style={s.modalOverlay}>
+          <div style={s.modalBox}>
+            <div style={s.modalHeader}>
+              <p style={{ fontSize: 15, fontWeight: 600, color: '#0f172a', margin: 0 }}>Write a Review</p>
+              <button onClick={() => { setShowReviewForm(false); setReviewError(''); }} style={s.iconBtn}>
+                <X size={18} />
+              </button>
+            </div>
+            <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {reviewError && (
+                <div style={s.alertError}><AlertCircle size={14} style={{ color: '#dc2626', flexShrink: 0 }} /><span>{reviewError}</span></div>
+              )}
+
+              {/* Booking picker */}
+              <div>
+                <p style={s.fieldLabel}>Select Booking</p>
+                <select
+                  value={selectedBooking?.booking_id || ''}
+                  onChange={(e) => {
+                    const bk = reviewableBookings.find(b => b.booking_id === e.target.value);
+                    setSelectedBooking(bk || null);
+                  }}
+                  style={s.select}
+                >
+                  <option value="">— Choose a booking —</option>
+                  {reviewableBookings.map(b => (
+                    <option key={b.booking_id} value={b.booking_id}>
+                      {b.service_type} · {b.staff_name} · {formatDate(b.start_date)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Staff info */}
+              {selectedBooking && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: '#f8fafc', borderRadius: 10, border: '1px solid #e2e8f0' }}>
+                  <div style={s.avatar}><User size={14} style={{ color: '#64748b' }} /></div>
+                  <div>
+                    <p style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', margin: 0 }}>{selectedBooking.staff_name}</p>
+                    <p style={{ fontSize: 12, color: '#64748b', margin: 0 }}>{selectedBooking.designation || 'Staff'} · {selectedBooking.service_type}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Star rating */}
+              <div>
+                <p style={s.fieldLabel}>Rating</p>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {[1, 2, 3, 4, 5].map(n => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setReviewRating(n)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2 }}
+                    >
+                      <Star
+                        size={28}
+                        style={{ color: n <= reviewRating ? '#f59e0b' : '#cbd5e1', fill: n <= reviewRating ? '#f59e0b' : 'none', transition: 'color 0.1s' }}
+                      />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Review text */}
+              <div>
+                <p style={s.fieldLabel}>Your Review</p>
+                <textarea
+                  rows={4}
+                  value={reviewText}
+                  onChange={(e) => setReviewText(e.target.value)}
+                  placeholder="Share your experience with this caregiver..."
+                  style={s.textarea}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button onClick={() => { setShowReviewForm(false); setReviewError(''); }} style={{ ...s.ghostBtn, flex: 1, justifyContent: 'center' }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSubmitReview}
+                  disabled={!selectedBooking || reviewRating === 0 || !reviewText.trim() || reviewSubmitting}
+                  style={{ ...s.primaryBtn, flex: 1, justifyContent: 'center', opacity: (!selectedBooking || reviewRating === 0 || !reviewText.trim() || reviewSubmitting) ? 0.5 : 1 }}
+                >
+                  {reviewSubmitting ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Check size={14} />}
+                  {reviewSubmitting ? 'Submitting...' : 'Submit Review'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <main style={s.main}>
         {/* Header */}
         <header style={s.pageHeader}>
@@ -125,13 +268,26 @@ const ClientReviews = () => {
             <p style={s.breadcrumb}>Account</p>
             <h1 style={s.pageTitle}>My Reviews</h1>
           </div>
-          <button onClick={() => navigate('/services/view-staff')} style={s.primaryBtn}>
-            Browse Staff
-            <ArrowRight size={14} />
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {reviewableBookings.length > 0 && (
+              <button onClick={() => { setShowReviewForm(true); setReviewError(''); setReviewSuccess(''); }} style={s.primaryBtn}>
+                <PenLine size={14} /> Write a Review
+              </button>
+            )}
+            <button onClick={() => navigate('/services/view-staff')} style={{ ...s.primaryBtn, background: '#334155' }}>
+              Browse Staff
+              <ArrowRight size={14} />
+            </button>
+          </div>
         </header>
 
         {/* Alerts */}
+        {reviewSuccess && (
+          <div style={{ ...s.alertError, background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#166534', marginBottom: 16 }}>
+            <Check size={15} style={{ color: '#16a34a', flexShrink: 0 }} />
+            <span>{reviewSuccess}</span>
+          </div>
+        )}
         {error && (
           <div style={s.alertError}>
             <AlertCircle size={15} style={{ color: '#dc2626', flexShrink: 0 }} />
@@ -229,7 +385,20 @@ const ClientReviews = () => {
                         </div>
                       </div>
                     </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      {[1,2,3,4,5].map(n => (
+                        <Star key={n} size={13} style={{ color: n <= review.rating ? '#f59e0b' : '#e2e8f0', fill: n <= review.rating ? '#f59e0b' : '#e2e8f0' }} />
+                      ))}
+                    </div>
                   </div>
+                  {review.booking_service_type && (
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginBottom: 10, background: '#ede9fe', borderRadius: 20, padding: '3px 10px' }}>
+                      <BookOpen size={11} style={{ color: '#7c3aed' }} />
+                      <span style={{ fontSize: 11, fontWeight: 600, color: '#7c3aed' }}>
+                        {review.booking_service_type} · {formatDate(review.booking_start_date)}
+                      </span>
+                    </div>
+                  )}
                   <p style={{ fontSize: 14, color: '#334155', lineHeight: 1.6, margin: 0 }}>
                     {review.review_text}
                   </p>
@@ -429,6 +598,43 @@ const s = {
   /* Empty state */
   emptyState: {
     textAlign: 'center', padding: '48px 24px',
+  },
+
+  /* Review form modal */
+  modalOverlay: {
+    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    zIndex: 50, padding: 16,
+  },
+  modalBox: {
+    background: '#fff', borderRadius: 16, width: '100%', maxWidth: 480,
+    boxShadow: '0 20px 60px rgba(0,0,0,0.15)', overflow: 'hidden',
+  },
+  modalHeader: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    padding: '16px 24px', borderBottom: '1px solid #f1f5f9',
+  },
+  iconBtn: {
+    background: 'none', border: 'none', cursor: 'pointer',
+    color: '#94a3b8', display: 'flex', alignItems: 'center', justifyContent: 'center',
+    padding: 4, borderRadius: 6,
+  },
+  fieldLabel: {
+    fontSize: 11, fontWeight: 600, color: '#64748b',
+    textTransform: 'uppercase', letterSpacing: '0.07em',
+    margin: '0 0 6px',
+  },
+  select: {
+    width: '100%', padding: '9px 12px', fontSize: 13,
+    border: '1px solid #cbd5e1', borderRadius: 10,
+    background: '#fff', color: '#0f172a', outline: 'none',
+    fontFamily: "'DM Sans', sans-serif",
+  },
+  textarea: {
+    width: '100%', padding: '10px 12px', fontSize: 13,
+    border: '1px solid #cbd5e1', borderRadius: 10,
+    resize: 'vertical', fontFamily: "'DM Sans', sans-serif",
+    color: '#0f172a', outline: 'none', minHeight: 100,
   },
 };
 

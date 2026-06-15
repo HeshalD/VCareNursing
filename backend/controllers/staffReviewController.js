@@ -1,4 +1,6 @@
 const db = require('../config/db');
+const { logActivity } = require('../utils/activityLogger');
+const { sendReviewRequest: sendReviewRequestWA } = require('../utils/metaWhatsapp');
 
 // Helper function to find staff profile associated with a client profile
 async function getStaffProfileByClientProfileId(client_profile_id) {
@@ -21,11 +23,10 @@ async function getStaffProfileByClientProfileId(client_profile_id) {
 
 // Create a new staff review
 exports.createReview = async (req, res) => {
-  const { staff_profile_id, rating, review_text } = req.body;
-  const user_id = req.user?.user_id; // Get user_id from authenticated user
+  const { staff_profile_id, rating, review_text, booking_id } = req.body;
+  const user_id = req.user?.user_id;
 
   try {
-    // Fetch client_profile_id from database
     let client_profile_id;
     if (user_id) {
       const clientResult = await db.pool.query(
@@ -40,54 +41,59 @@ exports.createReview = async (req, res) => {
       return res.status(401).json({ message: "User not authenticated" });
     }
 
-    // Validation
     if (!staff_profile_id || !rating || !review_text) {
-      return res.status(400).json({ 
-        message: "Missing required fields: staff_profile_id, rating, review_text" 
-      });
+      return res.status(400).json({ message: "Missing required fields: staff_profile_id, rating, review_text" });
     }
 
     if (rating < 1 || rating > 5) {
-      return res.status(400).json({ 
-        message: "Rating must be between 1 and 5" 
-      });
+      return res.status(400).json({ message: "Rating must be between 1 and 5" });
     }
 
-    // Check if staff exists
     const staffCheck = await db.pool.query(
       'SELECT staff_profile_id FROM staff_profiles WHERE staff_profile_id = $1',
       [staff_profile_id]
     );
-
     if (staffCheck.rows.length === 0) {
       return res.status(404).json({ message: "Staff profile not found" });
     }
 
-    // Check if the client is also a staff member trying to review their own profile
     const associatedStaff = await getStaffProfileByClientProfileId(client_profile_id);
     if (associatedStaff && associatedStaff.staff_profile_id === parseInt(staff_profile_id)) {
-      return res.status(403).json({ 
-        message: "You cannot review your own staff profile" 
-      });
+      return res.status(403).json({ message: "You cannot review your own staff profile" });
     }
 
-    // Create the review
+    // Booking-level enforcement: one review per booking
+    if (booking_id) {
+      const bookingCheck = await db.pool.query(
+        'SELECT booking_id, status FROM bookings WHERE booking_id = $1 AND client_id = $2',
+        [booking_id, client_profile_id]
+      );
+      if (bookingCheck.rows.length === 0) {
+        return res.status(403).json({ message: "Booking not found or does not belong to this client" });
+      }
+      if (!['COMPLETED', 'TERMINATED'].includes(bookingCheck.rows[0].status)) {
+        return res.status(400).json({ message: "You can only review completed or terminated bookings" });
+      }
+      const dupCheck = await db.pool.query(
+        'SELECT review_id FROM staff_reviews WHERE booking_id = $1 AND client_profile_id = $2',
+        [booking_id, client_profile_id]
+      );
+      if (dupCheck.rows.length > 0) {
+        return res.status(409).json({ message: "You have already reviewed this booking" });
+      }
+    }
+
     const result = await db.pool.query(
-      `INSERT INTO staff_reviews (staff_profile_id, client_profile_id, rating, review_text)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO staff_reviews (staff_profile_id, client_profile_id, rating, review_text, booking_id)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [staff_profile_id, client_profile_id, rating, review_text]
+      [staff_profile_id, client_profile_id, rating, review_text, booking_id || null]
     );
 
     const newReview = result.rows[0];
-
-    // Update staff's average rating and total reviews
     await updateStaffRating(staff_profile_id);
 
-    res.status(201).json({
-      message: "Review created successfully",
-      review: newReview
-    });
+    res.status(201).json({ message: "Review created successfully", review: newReview });
 
   } catch (error) {
     console.error("Error creating review:", error);
@@ -97,18 +103,24 @@ exports.createReview = async (req, res) => {
 
 // Get all reviews (with pagination and filtering)
 exports.getAllReviews = async (req, res) => {
-  const { page = 1, limit = 10, is_visible, min_rating, max_rating, staff_profile_id } = req.query;
+  const { page = 1, limit = 10, is_visible, min_rating, max_rating, staff_profile_id, search } = req.query;
   const offset = (page - 1) * limit;
 
   try {
     let query = `
-      SELECT sr.*, sp.full_name as staff_name, cp.full_name as client_name
+      SELECT sr.*,
+             sp.full_name as staff_name,
+             cp.full_name as client_name,
+             b.service_type as booking_service_type,
+             b.status as booking_status,
+             b.start_date as booking_start_date
       FROM staff_reviews sr
       LEFT JOIN staff_profiles sp ON sr.staff_profile_id = sp.staff_profile_id
       LEFT JOIN client_profiles cp ON sr.client_profile_id = cp.client_profile_id
+      LEFT JOIN bookings b ON sr.booking_id = b.booking_id
       WHERE 1=1
     `;
-    
+
     const queryParams = [];
     let paramIndex = 1;
 
@@ -136,37 +148,54 @@ exports.getAllReviews = async (req, res) => {
       paramIndex++;
     }
 
+    if (search) {
+      query += ` AND (sp.full_name ILIKE $${paramIndex} OR cp.full_name ILIKE $${paramIndex} OR sr.review_text ILIKE $${paramIndex})`;
+      queryParams.push(`%${search}%`);
+      paramIndex++;
+    }
+
     query += ` ORDER BY sr.created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
     queryParams.push(limit, offset);
 
     const result = await db.pool.query(query, queryParams);
 
     // Get total count for pagination
-    let countQuery = 'SELECT COUNT(*) FROM staff_reviews WHERE 1=1';
+    let countQuery = `
+      SELECT COUNT(*) FROM staff_reviews sr
+      LEFT JOIN staff_profiles sp ON sr.staff_profile_id = sp.staff_profile_id
+      LEFT JOIN client_profiles cp ON sr.client_profile_id = cp.client_profile_id
+      WHERE 1=1
+    `;
     const countParams = [];
     let countIndex = 1;
 
     if (is_visible !== undefined) {
-      countQuery += ` AND is_visible = $${countIndex}`;
+      countQuery += ` AND sr.is_visible = $${countIndex}`;
       countParams.push(is_visible === 'true');
       countIndex++;
     }
 
     if (min_rating) {
-      countQuery += ` AND rating >= $${countIndex}`;
+      countQuery += ` AND sr.rating >= $${countIndex}`;
       countParams.push(min_rating);
       countIndex++;
     }
 
     if (max_rating) {
-      countQuery += ` AND rating <= $${countIndex}`;
+      countQuery += ` AND sr.rating <= $${countIndex}`;
       countParams.push(max_rating);
       countIndex++;
     }
 
     if (staff_profile_id) {
-      countQuery += ` AND staff_profile_id = $${countIndex}`;
+      countQuery += ` AND sr.staff_profile_id = $${countIndex}`;
       countParams.push(staff_profile_id);
+      countIndex++;
+    }
+
+    if (search) {
+      countQuery += ` AND (sp.full_name ILIKE $${countIndex} OR cp.full_name ILIKE $${countIndex} OR sr.review_text ILIKE $${countIndex})`;
+      countParams.push(`%${search}%`);
       countIndex++;
     }
 
@@ -401,6 +430,29 @@ exports.toggleReviewVisibility = async (req, res) => {
     // Update staff's average rating since visibility changed
     await updateStaffRating(updatedReview.staff_profile_id);
 
+    // Activity log (non-fatal)
+    try {
+      const actorRole = Array.isArray(req.user.role) ? req.user.role[0] : req.user.role;
+      const actorNameResult = await db.pool.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+      const actorName = actorNameResult.rows[0]?.full_name || 'Admin';
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName,
+        actorRole: typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole),
+        actionType: 'REVIEW_VISIBILITY_TOGGLED',
+        entityType: 'STAFF_REVIEW',
+        entityId: String(updatedReview.review_id),
+        details: {
+          is_visible: updatedReview.is_visible,
+          staff_profile_id: updatedReview.staff_profile_id,
+          client_profile_id: updatedReview.client_profile_id,
+          rating: updatedReview.rating,
+        }
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (toggleReviewVisibility):', logErr.message);
+    }
+
     res.json({
       message: `Review ${updatedReview.is_visible ? 'shown' : 'hidden'} successfully`,
       review: updatedReview
@@ -538,16 +590,20 @@ exports.getReviewsByClientId = async (req, res) => {
 
   try {
     const result = await db.pool.query(
-      `SELECT sr.*, sp.full_name as staff_name
+      `SELECT sr.*,
+              sp.full_name as staff_name,
+              b.service_type as booking_service_type,
+              b.status as booking_status,
+              b.start_date as booking_start_date
        FROM staff_reviews sr
        LEFT JOIN staff_profiles sp ON sr.staff_profile_id = sp.staff_profile_id
+       LEFT JOIN bookings b ON sr.booking_id = b.booking_id
        WHERE sr.client_profile_id = $1
        ORDER BY sr.created_at DESC
        LIMIT $2 OFFSET $3`,
       [client_id, limit, offset]
     );
 
-    // Get total count
     const countResult = await db.pool.query(
       'SELECT COUNT(*) FROM staff_reviews WHERE client_profile_id = $1',
       [client_id]
@@ -568,5 +624,200 @@ exports.getReviewsByClientId = async (req, res) => {
   } catch (error) {
     console.error("Error fetching client reviews:", error);
     res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// Get completed/terminated bookings this client can still review
+exports.getReviewableBookings = async (req, res) => {
+  const user_id = req.user?.user_id;
+  try {
+    const clientRes = await db.pool.query(
+      'SELECT client_profile_id FROM client_profiles WHERE user_id = $1',
+      [user_id]
+    );
+    if (clientRes.rows.length === 0) {
+      return res.status(404).json({ message: 'Client profile not found' });
+    }
+    const clientId = clientRes.rows[0].client_profile_id;
+
+    const result = await db.pool.query(
+      `SELECT
+         b.booking_id,
+         b.service_type,
+         b.service_model,
+         b.start_date,
+         b.status,
+         sp.full_name as staff_name,
+         sp.staff_profile_id,
+         sp.designation
+       FROM bookings b
+       LEFT JOIN LATERAL (
+         SELECT bsa.staff_profile_id
+         FROM booking_staff_assignments bsa
+         WHERE bsa.booking_id = b.booking_id
+         ORDER BY bsa.assigned_on DESC
+         LIMIT 1
+       ) last_bsa ON true
+       LEFT JOIN staff_profiles sp ON COALESCE(b.assigned_staff_id, last_bsa.staff_profile_id) = sp.staff_profile_id
+       WHERE b.client_id = $1
+         AND b.status IN ('COMPLETED', 'TERMINATED')
+         AND NOT EXISTS (
+           SELECT 1 FROM staff_reviews sr
+           WHERE sr.booking_id = b.booking_id AND sr.client_profile_id = $1
+         )
+         AND COALESCE(b.assigned_staff_id, last_bsa.staff_profile_id) IS NOT NULL
+       ORDER BY b.start_date DESC`,
+      [clientId]
+    );
+
+    res.status(200).json({ status: 'success', data: result.rows });
+  } catch (error) {
+    console.error('Error fetching reviewable bookings:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+// Admin: completed/terminated bookings that have no review yet
+exports.getUnreviewedBookings = async (req, res) => {
+  const { page = 1, limit = 10, search } = req.query;
+  const offset = (parseInt(page) - 1) * parseInt(limit);
+  const params = [];
+  let paramIdx = 1;
+
+  let searchClause = '';
+  if (search && search.trim()) {
+    searchClause = ` AND (cp.full_name ILIKE $${paramIdx} OR sp.full_name ILIKE $${paramIdx} OR b.service_type ILIKE $${paramIdx})`;
+    params.push(`%${search.trim()}%`);
+    paramIdx++;
+  }
+
+  const baseFrom = `
+    FROM bookings b
+    JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+    JOIN users u ON cp.user_id = u.user_id
+    LEFT JOIN LATERAL (
+      SELECT bsa.staff_profile_id
+      FROM booking_staff_assignments bsa
+      WHERE bsa.booking_id = b.booking_id
+      ORDER BY bsa.assigned_on DESC
+      LIMIT 1
+    ) last_bsa ON true
+    LEFT JOIN staff_profiles sp ON COALESCE(b.assigned_staff_id, last_bsa.staff_profile_id) = sp.staff_profile_id
+    WHERE b.status IN ('COMPLETED', 'TERMINATED')
+      AND NOT EXISTS (
+        SELECT 1 FROM staff_reviews sr WHERE sr.booking_id = b.booking_id
+      )
+    ${searchClause}
+  `;
+
+  try {
+    const countRes = await db.pool.query(`SELECT COUNT(*) ${baseFrom}`, params);
+    const total = parseInt(countRes.rows[0].count);
+
+    const dataRes = await db.pool.query(
+      `SELECT
+         b.booking_id, b.service_type, b.status, b.start_date, b.end_date,
+         cp.full_name as client_name, cp.client_profile_id,
+         u.mobile_number as client_mobile,
+         sp.full_name as staff_name, sp.staff_profile_id
+       ${baseFrom}
+       ORDER BY COALESCE(b.end_date, b.start_date) DESC NULLS LAST
+       LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
+      [...params, parseInt(limit), offset]
+    );
+
+    res.json({
+      bookings: dataRes.rows,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit)),
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching unreviewed bookings:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+// Admin: send WhatsApp review request to client for a completed booking
+exports.sendReviewRequest = async (req, res) => {
+  const { booking_id } = req.body;
+  if (!booking_id) return res.status(400).json({ message: 'booking_id is required' });
+
+  try {
+    const result = await db.pool.query(
+      `SELECT
+         b.booking_id, b.service_type, b.status,
+         cp.full_name as client_name, cp.client_profile_id,
+         u.mobile_number as client_mobile,
+         sp.full_name as staff_name
+       FROM bookings b
+       JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+       JOIN users u ON cp.user_id = u.user_id
+       LEFT JOIN LATERAL (
+         SELECT bsa.staff_profile_id
+         FROM booking_staff_assignments bsa
+         WHERE bsa.booking_id = b.booking_id
+         ORDER BY bsa.assigned_on DESC
+         LIMIT 1
+       ) last_bsa ON true
+       LEFT JOIN staff_profiles sp ON COALESCE(b.assigned_staff_id, last_bsa.staff_profile_id) = sp.staff_profile_id
+       WHERE b.booking_id = $1`,
+      [booking_id]
+    );
+
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Booking not found' });
+
+    const booking = result.rows[0];
+
+    if (!['COMPLETED', 'TERMINATED'].includes(booking.status)) {
+      return res.status(400).json({ message: 'Review requests can only be sent for completed or terminated bookings' });
+    }
+
+    const dupCheck = await db.pool.query('SELECT review_id FROM staff_reviews WHERE booking_id = $1', [booking_id]);
+    if (dupCheck.rows.length > 0) {
+      return res.status(409).json({ message: 'This booking already has a review' });
+    }
+
+    if (!booking.client_mobile) {
+      return res.status(400).json({ message: 'Client has no mobile number on record' });
+    }
+
+    await sendReviewRequestWA(
+      booking.client_mobile,
+      booking.client_name,
+      booking.service_type || 'Care',
+      booking.staff_name || 'your caregiver'
+    );
+
+    // Activity log (non-fatal)
+    try {
+      const actorRole = Array.isArray(req.user.role) ? req.user.role[0] : req.user.role;
+      const actorNameResult = await db.pool.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+      const actorName = actorNameResult.rows[0]?.full_name || 'Admin';
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName,
+        actorRole: typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole),
+        actionType: 'REVIEW_REQUEST_SENT',
+        entityType: 'BOOKING',
+        entityId: String(booking_id),
+        details: {
+          client_name: booking.client_name,
+          client_mobile: booking.client_mobile,
+          staff_name: booking.staff_name,
+          service_type: booking.service_type,
+        }
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (sendReviewRequest):', logErr.message);
+    }
+
+    res.json({ message: 'Review request sent successfully' });
+  } catch (err) {
+    console.error('Error sending review request:', err);
+    res.status(500).json({ message: 'Failed to send review request' });
   }
 };

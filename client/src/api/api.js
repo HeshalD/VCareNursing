@@ -281,6 +281,12 @@ class ApiClient {
     return this.request(`/client/${clientId}/bookings`);
   }
 
+  async getAdminClientBookingsPaginated(clientId, { active_page = 1, recent_page = 1, page_size = 5, search = '' } = {}) {
+    const params = new URLSearchParams({ active_page, recent_page, page_size });
+    if (search) params.set('search', search);
+    return this.request(`/client/${clientId}/bookings-paginated?${params.toString()}`);
+  }
+
   async getClientProfileByUserId(userId) {
     try {
       return this.request(`/client/profile/user/${userId}`);
@@ -1186,6 +1192,34 @@ class ApiClient {
 
   async getClientReviews(clientProfileId, page = 1, limit = 10) {
     return this.request(`/staff-reviews/client/${clientProfileId}?page=${page}&limit=${limit}`);
+  }
+
+  async getReviewableBookings() {
+    return this.request('/staff-reviews/reviewable');
+  }
+
+  async getAdminAllReviews({ page = 1, limit = 10, is_visible, search = '' } = {}) {
+    const params = new URLSearchParams({ page, limit });
+    if (is_visible !== undefined && is_visible !== '') params.set('is_visible', is_visible);
+    if (search) params.set('search', search);
+    return this.request(`/staff-reviews?${params.toString()}`);
+  }
+
+  async toggleReviewVisibility(reviewId) {
+    return this.request(`/staff-reviews/${reviewId}/visibility`, { method: 'PATCH' });
+  }
+
+  async getUnreviewedBookings({ page = 1, limit = 10, search = '' } = {}) {
+    const params = new URLSearchParams({ page, limit });
+    if (search) params.set('search', search);
+    return this.request(`/staff-reviews/unreviewed-bookings?${params.toString()}`);
+  }
+
+  async sendReviewRequest(bookingId) {
+    return this.request('/staff-reviews/send-review-request', {
+      method: 'POST',
+      body: JSON.stringify({ booking_id: bookingId }),
+    });
   }
 
   // Finances endpoints

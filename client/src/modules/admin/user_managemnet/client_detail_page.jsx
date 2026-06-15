@@ -15,6 +15,7 @@ import {
   Home,
   Loader2,
   MapPin,
+  MessageCircle,
   Phone,
   Plus,
   ReceiptText,
@@ -147,7 +148,15 @@ const ClientDetailPage = () => {
   const [editNoteText, setEditNoteText] = useState('');
   const [editNoteType, setEditNoteType] = useState('GENERAL');
 
+  const [bookingsPag, setBookingsPag] = useState(null);
+  const [bookingsPagLoading, setBookingsPagLoading] = useState(false);
+  const [activeBkPage, setActiveBkPage] = useState(1);
+  const [recentBkPage, setRecentBkPage] = useState(1);
+  const [bookingSearch, setBookingSearch] = useState('');
+
   const [showRecordPayment, setShowRecordPayment] = useState(false);
+  const [sendingReviewId, setSendingReviewId] = useState(null);
+  const [sentReviewIds, setSentReviewIds] = useState(new Set());
 
   const emptyPatientForm = { full_name: '', age: '', gender: '', relationship_to_client: '', medical_condition: '', residential_address: '', emergency_contact_name: '', emergency_contact_number: '' };
   const [showAddPatient, setShowAddPatient] = useState(false);
@@ -203,6 +212,24 @@ const ClientDetailPage = () => {
   }, [clientId]);
 
   useEffect(() => { setTxPage(1); }, [clientTransactions]);
+
+  const fetchBookingsPag = async ({ active_page: ap = activeBkPage, recent_page: rp = recentBkPage, search: s = bookingSearch } = {}) => {
+    if (!clientId) return;
+    try {
+      setBookingsPagLoading(true);
+      const response = await apiClient.getAdminClientBookingsPaginated(clientId, { active_page: ap, recent_page: rp, search: s });
+      setBookingsPag(response);
+    } catch {
+      // non-fatal
+    } finally {
+      setBookingsPagLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeSection === 'bookings') fetchBookingsPag();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSection]);
 
   const handleAddNote = async () => {
     if (!noteText.trim()) return;
@@ -351,6 +378,18 @@ const ClientDetailPage = () => {
     }
   };
 
+  const handleSendReviewRequest = async (bookingId) => {
+    setSendingReviewId(bookingId);
+    try {
+      await apiClient.sendReviewRequest(bookingId);
+      setSentReviewIds((prev) => new Set([...prev, bookingId]));
+    } catch (err) {
+      setError(err.message || 'Failed to send review request');
+    } finally {
+      setSendingReviewId(null);
+    }
+  };
+
   const sectionConfig = [
     { id: 'overview', label: 'Overview', icon: Users },
     { id: 'payments', label: 'Payments', icon: BadgeDollarSign },
@@ -410,85 +449,225 @@ const ClientDetailPage = () => {
           </SectionList>
         );
 
-      case 'bookings':
-        return activeBookings.length === 0 ? (
-          <EmptyState title="No booking records yet" />
-        ) : (
-          <SectionList>
-            {activeBookings.map((booking, index) => {
-              const bookingStart = booking.start_date;
-              const bookingEnd = booking.actual_end_time || booking.scheduled_end_time;
-              const bookingDays = bookingStart
-                ? Math.max(1, Math.ceil((new Date(bookingEnd || new Date()) - new Date(bookingStart)) / 86400000))
-                : null;
-              return (
-                <ExpandableRow
-                  key={booking.booking_id || index}
-                  summary={
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                      <span className="font-semibold text-slate-900">{booking.service_type || 'Booking'}</span>
-                      <StatusBadge status={booking.status} />
-                      <span className="text-sm text-slate-500">{formatDate(booking.start_date)}</span>
-                      <span className="text-sm text-slate-500">{booking.current_staff_name || 'No staff assigned'}</span>
-                      <span className="font-semibold text-slate-700">{formatMoney(booking.amount_quotated || booking.total_amount || 0)}</span>
-                    </div>
-                  }
-                >
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    <InfoRow label="Booking ID" value={booking.booking_id} />
-                    <InfoRow label="Status" value={booking.status || '-'} />
-                    <InfoRow label="Service Model" value={booking.service_model || '-'} />
-                    <InfoRow label="Start Date" value={formatDate(booking.start_date)} />
-                    <InfoRow label="Patient" value={booking.patient_name || '-'} />
-                    <InfoRow label="Assigned Staff" value={booking.current_staff_name || 'Not assigned'} />
-                    <InfoRow label="Quoted Amount" value={formatMoney(booking.amount_quotated || booking.total_amount || 0)} />
-                    <InfoRow label="Paid" value={formatMoney(booking.amount_paid || 0)} />
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Days Worked</p>
-                      <div className="mt-1">
-                        {bookingDays !== null ? (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
-                            {bookingDays} {bookingDays === 1 ? 'day' : 'days'}
-                            {!bookingEnd && <span className="text-blue-400"> (ongoing)</span>}
-                          </span>
-                        ) : (
-                          <span className="text-sm font-medium text-slate-400">-</span>
-                        )}
-                      </div>
-                    </div>
+      case 'bookings': {
+        if (bookingsPagLoading) {
+          return (
+            <div className="flex items-center gap-2 py-10 text-sm text-slate-500">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading bookings...
+            </div>
+          );
+        }
+
+        const renderBookingRow = (booking, index, { showSwapStaff = false } = {}) => {
+          const bookingEnd = booking.actual_end_time || booking.scheduled_end_time;
+          const bookingDays = booking.start_date
+            ? Math.max(1, Math.ceil((new Date(bookingEnd || new Date()) - new Date(booking.start_date)) / 86400000))
+            : null;
+          return (
+            <ExpandableRow
+              key={booking.booking_id || index}
+              summary={
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                  <span className="font-semibold text-slate-900">{booking.service_type || 'Booking'}</span>
+                  <StatusBadge status={booking.status} />
+                  <span className="text-sm text-slate-500">{formatDate(booking.start_date)}</span>
+                  <span className="text-sm text-slate-500">{booking.current_staff_name || 'No staff assigned'}</span>
+                  <span className="font-semibold text-slate-700">{formatMoney(booking.amount_quotated || booking.total_amount || 0)}</span>
+                  {booking.is_reviewed ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                      <Check className="h-3 w-3" /> Reviewed
+                    </span>
+                  ) : ['COMPLETED', 'TERMINATED'].includes((booking.status || '').toUpperCase()) ? (
+                    <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-600 ring-1 ring-inset ring-amber-200">
+                      Not Reviewed
+                    </span>
+                  ) : null}
+                </div>
+              }
+            >
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <InfoRow label="Booking ID" value={booking.booking_id} />
+                <InfoRow label="Status" value={booking.status || '-'} />
+                <InfoRow label="Service Model" value={booking.service_model || '-'} />
+                <InfoRow label="Start Date" value={formatDate(booking.start_date)} />
+                <InfoRow label="Patient" value={booking.patient_name || '-'} />
+                <InfoRow label="Assigned Staff" value={booking.current_staff_name || 'Not assigned'} />
+                <InfoRow label="Quoted Amount" value={formatMoney(booking.amount_quotated || booking.total_amount || 0)} />
+                <InfoRow label="Paid" value={formatMoney(booking.amount_paid || 0)} />
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Days Worked</p>
+                  <div className="mt-1">
+                    {bookingDays !== null ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700">
+                        {bookingDays} {bookingDays === 1 ? 'day' : 'days'}
+                        {!bookingEnd && <span className="text-blue-400"> (ongoing)</span>}
+                      </span>
+                    ) : (
+                      <span className="text-sm font-medium text-slate-400">-</span>
+                    )}
                   </div>
-                  {booking.booking_id && (
-                    <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-4">
-                      <button
-                        type="button"
-                        onClick={() => navigate(`/admin/bookings/${booking.booking_id}/detail`)}
-                        className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                      >
-                        <ArrowRight className="h-3.5 w-3.5" /> View Booking
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => navigate(`/admin/bookings/${booking.booking_id}/detail?section=staff`)}
-                        className="inline-flex items-center gap-2 rounded-lg bg-violet-600 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-700"
-                      >
-                        <ArrowRight className="h-3.5 w-3.5" /> Swap Staff Member
-                      </button>
-                      {!['TERMINATED', 'COMPLETED', 'CANCELLED'].includes((booking.status || '').toUpperCase()) && (
-                        <button
-                          type="button"
-                          onClick={() => navigate(`/admin/bookings/${booking.booking_id}/detail?section=actions`)}
-                          className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-700"
-                        >
-                          <ArrowRight className="h-3.5 w-3.5" /> End Booking
-                        </button>
-                      )}
-                    </div>
+                </div>
+              </div>
+              {booking.booking_id && (
+                <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-200 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/admin/bookings/${booking.booking_id}/detail`)}
+                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    <ArrowRight className="h-3.5 w-3.5" /> View Booking
+                  </button>
+                  {showSwapStaff && (
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/admin/bookings/${booking.booking_id}/detail?section=staff`)}
+                      className="inline-flex items-center gap-2 rounded-lg bg-violet-600 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-700"
+                    >
+                      <ArrowRight className="h-3.5 w-3.5" /> Swap Staff Member
+                    </button>
                   )}
-                </ExpandableRow>
-              );
-            })}
-          </SectionList>
+                  {!['TERMINATED', 'COMPLETED', 'CANCELLED'].includes((booking.status || '').toUpperCase()) && (
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/admin/bookings/${booking.booking_id}/detail?section=actions`)}
+                      className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-700"
+                    >
+                      <ArrowRight className="h-3.5 w-3.5" /> End Booking
+                    </button>
+                  )}
+                  {['TERMINATED', 'COMPLETED'].includes((booking.status || '').toUpperCase()) && !booking.is_reviewed && (
+                    sentReviewIds.has(booking.booking_id) ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                        <Check className="h-3.5 w-3.5" /> Review request sent
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleSendReviewRequest(booking.booking_id)}
+                        disabled={sendingReviewId === booking.booking_id || !clientProfile.mobile_number}
+                        title={!clientProfile.mobile_number ? 'Client has no mobile number on record' : 'Send WhatsApp review request'}
+                        className="inline-flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2 text-xs font-semibold text-green-700 ring-1 ring-green-200 hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <MessageCircle className="h-3.5 w-3.5" />
+                        {sendingReviewId === booking.booking_id ? 'Sending…' : 'Send Review Request'}
+                      </button>
+                    )
+                  )}
+                </div>
+              )}
+            </ExpandableRow>
+          );
+        };
+
+        const renderPager = ({ total, page, total_pages }, onPrev, onNext) => (
+          total_pages > 1 && (
+            <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3">
+              <p className="text-xs text-slate-500">
+                Page {page} of {total_pages} &middot; {total} total
+              </p>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={onPrev}
+                  disabled={page === 1}
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" /> Prev
+                </button>
+                <button
+                  type="button"
+                  onClick={onNext}
+                  disabled={page === total_pages}
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Next <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          )
         );
+
+        const activePag = bookingsPag?.active_bookings;
+        const recentPag = bookingsPag?.recent_bookings;
+
+        return (
+          <div className="space-y-6">
+            {/* Search bar */}
+            <div className="relative">
+              <input
+                type="text"
+                value={bookingSearch}
+                onChange={(e) => {
+                  const s = e.target.value;
+                  setBookingSearch(s);
+                  setActiveBkPage(1);
+                  setRecentBkPage(1);
+                  fetchBookingsPag({ active_page: 1, recent_page: 1, search: s });
+                }}
+                placeholder="Search by ID, service, patient, or staff..."
+                className="w-full rounded-xl border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500"
+              />
+              <CalendarDays className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              {bookingSearch && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBookingSearch('');
+                    setActiveBkPage(1);
+                    setRecentBkPage(1);
+                    fetchBookingsPag({ active_page: 1, recent_page: 1, search: '' });
+                  }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+
+            {/* Active bookings */}
+            <div>
+              <div className="mb-3 flex items-center gap-2">
+                <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                <h3 className="text-sm font-bold text-slate-900">Active Bookings</h3>
+                {activePag && <span className="text-xs text-slate-400">({activePag.total} total)</span>}
+              </div>
+              {!activePag || activePag.total === 0 ? (
+                <EmptyState title="No active bookings" />
+              ) : (
+                <div className="overflow-hidden rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
+                  {activePag.data.map((b, i) => renderBookingRow(b, i, { showSwapStaff: true }))}
+                  {renderPager(
+                    activePag,
+                    () => { const p = activeBkPage - 1; setActiveBkPage(p); fetchBookingsPag({ active_page: p, recent_page: recentBkPage }); },
+                    () => { const p = activeBkPage + 1; setActiveBkPage(p); fetchBookingsPag({ active_page: p, recent_page: recentBkPage }); },
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Recent / past bookings */}
+            <div>
+              <div className="mb-3 flex items-center gap-2">
+                <span className="inline-flex h-2 w-2 rounded-full bg-slate-400" />
+                <h3 className="text-sm font-bold text-slate-900">Recent Bookings</h3>
+                {recentPag && <span className="text-xs text-slate-400">({recentPag.total} total)</span>}
+              </div>
+              {!recentPag || recentPag.total === 0 ? (
+                <EmptyState title="No past bookings" />
+              ) : (
+                <div className="overflow-hidden rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
+                  {recentPag.data.map((b, i) => renderBookingRow(b, i, { showSwapStaff: false }))}
+                  {renderPager(
+                    recentPag,
+                    () => { const p = recentBkPage - 1; setRecentBkPage(p); fetchBookingsPag({ active_page: activeBkPage, recent_page: p }); },
+                    () => { const p = recentBkPage + 1; setRecentBkPage(p); fetchBookingsPag({ active_page: activeBkPage, recent_page: p }); },
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
 
       case 'quotes':
         return recentQuotes.length === 0 ? (

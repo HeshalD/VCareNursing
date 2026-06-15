@@ -185,6 +185,13 @@ const BookingDetailPage = () => {
   const [settlementAction, setSettlementAction] = useState('WALLET_DEPOSIT');
   const [settlementNote, setSettlementNote] = useState('');
 
+  // actions modal (complete / terminate)
+  const [showActionsModal, setShowActionsModal]     = useState(false);
+  const [actionsModalStep, setActionsModalStep]     = useState(1);
+  const [actionsModalMode, setActionsModalMode]     = useState(null); // 'complete' | 'terminate'
+  const [actionsModalLoading, setActionsModalLoading] = useState(false);
+  const [actionsModalError, setActionsModalError]   = useState('');
+
   // statement export
   const [statementStartDate, setStatementStartDate] = useState(toDateInputValue(addDays(new Date(), -30)));
   const [statementEndDate, setStatementEndDate]     = useState(toDateInputValue(new Date()));
@@ -528,6 +535,73 @@ const BookingDetailPage = () => {
     }
   };
 
+  const handleActionsModalOpen = () => {
+    setActionsModalStep(1);
+    setActionsModalMode(null);
+    setActionsModalError('');
+    setActualEndTime(toDatetimeLocalValue(new Date()));
+    setReason('');
+    setSettlementAction(remainingBalance > 0 ? 'WALLET_DEPOSIT' : 'NO_REFUND');
+    setSettlementNote('');
+    setShowActionsModal(true);
+  };
+
+  const handleActionsModalClose = () => {
+    setShowActionsModal(false);
+    setActionsModalStep(1);
+    setActionsModalMode(null);
+    setActionsModalError('');
+  };
+
+  const handleActionsModalBack = () => {
+    setActionsModalError('');
+    if (actionsModalStep === 3 && remainingBalance <= 0) {
+      setActionsModalStep(1);
+    } else {
+      setActionsModalStep((s) => s - 1);
+    }
+  };
+
+  const handleActionsModalNext = () => {
+    if (actionsModalStep === 1) {
+      if (!actionsModalMode) return;
+      setActionsModalStep(remainingBalance > 0 ? 2 : 3);
+    } else if (actionsModalStep === 2) {
+      if (settlementAction === 'NO_REFUND' && !settlementNote.trim()) {
+        setActionsModalError('A settlement note is required when choosing no refund.');
+        return;
+      }
+      setActionsModalError('');
+      setActionsModalStep(3);
+    }
+  };
+
+  const handleActionsModalSubmit = async () => {
+    if (!bookingId || !actionsModalMode) return;
+    try {
+      setActionsModalLoading(true);
+      setActionsModalError('');
+      const payload = {
+        actual_end_time:   actualEndTime ? new Date(actualEndTime).toISOString() : new Date().toISOString(),
+        settlement_action: remainingBalance > 0 ? settlementAction : 'NO_REFUND',
+        settlement_note:   settlementNote.trim() || null,
+        reason:            reason.trim() || `${actionsModalMode === 'complete' ? 'Completed' : 'Terminated'} via admin panel`,
+      };
+      apiClient.setToken(adminToken);
+      if (actionsModalMode === 'complete') {
+        await apiClient.completeBooking(bookingId, payload);
+      } else {
+        await apiClient.adminTerminateBooking(bookingId, payload);
+      }
+      handleActionsModalClose();
+      await fetchBookingDetail();
+    } catch (err) {
+      setActionsModalError(err?.message || `Failed to ${actionsModalMode} booking`);
+    } finally {
+      setActionsModalLoading(false);
+    }
+  };
+
   // ── tab config ───────────────────────────────────────────────────────────────
 
   const bookingStatus       = (bookingSummary.status || '').toLowerCase();
@@ -624,7 +698,7 @@ const BookingDetailPage = () => {
               </button>
               {!isTerminatedBooking && (
                 <button
-                  onClick={() => setActiveSection('settlement')}
+                  onClick={handleActionsModalOpen}
                   className="inline-flex items-center gap-2 bg-[#137A6B] border-none rounded-lg px-4 py-2 text-sm font-semibold text-white hover:bg-[#0F6559] transition"
                 >
                   <ShieldCheck className="h-4 w-4" /> Actions
@@ -1415,6 +1489,251 @@ const BookingDetailPage = () => {
         )}
 
       </div>
+
+      {/* ═══════════════════════════════════════════════════════════════════
+          ACTIONS MODAL — Complete / Terminate booking
+      ═══════════════════════════════════════════════════════════════════ */}
+      {showActionsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]">
+
+            {/* Header */}
+            <div className="flex items-start justify-between p-6 border-b border-[#ECE7DF] shrink-0">
+              <div>
+                <h2 className="text-lg font-bold text-[#2A2722]">Close Out Booking</h2>
+                <p className="text-sm text-[#9A9488] mt-0.5">
+                  {actionsModalStep === 1
+                    ? 'Choose how to close this booking'
+                    : actionsModalStep === 2
+                    ? 'Decide what to do with the remaining balance'
+                    : 'Review and confirm — this action is irreversible'}
+                </p>
+              </div>
+              <button onClick={handleActionsModalClose} className="p-1.5 rounded-lg hover:bg-[#F6F3EC] transition ml-4 shrink-0">
+                <XCircle className="h-5 w-5 text-[#A39D91]" />
+              </button>
+            </div>
+
+            {/* Step progress bar */}
+            {(() => {
+              const total = remainingBalance > 0 ? 3 : 2;
+              const current = actionsModalStep === 3 ? total : actionsModalStep;
+              return (
+                <div className="flex items-center gap-2 px-6 pt-4 shrink-0">
+                  {Array.from({ length: total }, (_, i) => i + 1).map((s) => (
+                    <div
+                      key={s}
+                      className={`h-1.5 flex-1 rounded-full transition-all ${s <= current ? 'bg-[#137A6B]' : 'bg-[#E7E1D6]'}`}
+                    />
+                  ))}
+                  <span className="text-xs text-[#9A9488] ml-1 shrink-0">Step {current} of {total}</span>
+                </div>
+              );
+            })()}
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+
+              {/* ── Step 1: Choose action ── */}
+              {actionsModalStep === 1 && (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      { mode: 'complete',   icon: CheckCircle, label: 'Complete',   desc: 'Service finished as planned',        activeBorder: 'border-[#137A6B] bg-[#E4F1ED]', activeIcon: 'text-[#137A6B]' },
+                      { mode: 'terminate',  icon: XCircle,     label: 'Terminate',  desc: 'End early before service concludes', activeBorder: 'border-[#BC4338] bg-rose-50',    activeIcon: 'text-[#BC4338]' },
+                    ].map(({ mode, icon: Icon, label, desc, activeBorder, activeIcon }) => (
+                      <div
+                        key={mode}
+                        onClick={() => setActionsModalMode(mode)}
+                        className={`cursor-pointer rounded-xl p-4 border-2 transition ${actionsModalMode === mode ? activeBorder : 'border-[#E7E1D6] hover:border-slate-300'}`}
+                      >
+                        <Icon className={`h-5 w-5 mb-2 ${actionsModalMode === mode ? activeIcon : 'text-[#C4BFB5]'}`} />
+                        <div className="text-sm font-bold text-[#2A2722]">{label}</div>
+                        <div className="text-xs text-[#7A756A] mt-0.5">{desc}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {actionsModalMode && (
+                    <>
+                      <div>
+                        <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Actual end date & time</label>
+                        <input
+                          type="datetime-local"
+                          value={actualEndTime}
+                          onChange={(e) => setActualEndTime(e.target.value)}
+                          className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8] text-[#6F6A60]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">
+                          Reason <span className="text-[#C4BFB5] font-normal">(optional)</span>
+                        </label>
+                        <textarea
+                          rows={3}
+                          value={reason}
+                          onChange={(e) => setReason(e.target.value)}
+                          placeholder={actionsModalMode === 'complete' ? 'e.g. Service completed as per contract' : 'e.g. Client requested early termination'}
+                          className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8] resize-none"
+                        />
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+
+              {/* ── Step 2: Settlement ── */}
+              {actionsModalStep === 2 && (
+                <>
+                  <div className="rounded-xl border border-[#ECE7DF] bg-[#FBF9F4] p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-[#9A9488] mb-1">Client's remaining balance</div>
+                    <div className="text-2xl font-extrabold text-[#2A2722] tracking-tight">{formatMoney(remainingBalance)}</div>
+                    <div className="text-xs text-[#7A756A] mt-1">The client has prepaid more than the amount invoiced so far.</div>
+                  </div>
+
+                  <div className="flex flex-col gap-2.5">
+                    {[
+                      { value: 'WALLET_DEPOSIT', icon: Wallet,      label: 'Credit to client wallet',  desc: `Add ${formatMoney(remainingBalance)} to the client's wallet for future services.`,                                                         activeCls: 'border-violet-400 bg-violet-50', activeIcon: 'text-violet-600' },
+                      { value: 'BANK_REFUND',    icon: DollarSign,  label: 'Process bank refund',      desc: `Return ${formatMoney(remainingBalance)} to the client's bank account. You will complete the transfer separately.`,                         activeCls: 'border-blue-400 bg-blue-50',    activeIcon: 'text-blue-600'   },
+                      { value: 'NO_REFUND',      icon: XCircle,     label: 'Write off · no refund',    desc: 'Forfeit the remaining balance. A written explanation is required.',                                                                          activeCls: 'border-[#BC4338] bg-rose-50',   activeIcon: 'text-[#BC4338]'  },
+                    ].map(({ value, icon: Icon, label, desc, activeCls, activeIcon }) => (
+                      <div
+                        key={value}
+                        onClick={() => { setSettlementAction(value); setActionsModalError(''); }}
+                        className={`cursor-pointer rounded-xl p-4 border-2 transition flex items-start gap-3 ${settlementAction === value ? activeCls : 'border-[#E7E1D6] hover:border-slate-300'}`}
+                      >
+                        <Icon className={`h-5 w-5 mt-0.5 flex-shrink-0 ${settlementAction === value ? activeIcon : 'text-[#C4BFB5]'}`} />
+                        <div>
+                          <div className="text-sm font-bold text-[#2A2722]">{label}</div>
+                          <div className="text-xs text-[#7A756A] mt-0.5">{desc}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">
+                      Settlement note
+                      {settlementAction === 'NO_REFUND'
+                        ? <span className="text-[#BC4338] ml-1">*</span>
+                        : <span className="text-[#C4BFB5] font-normal ml-1">(optional)</span>}
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={settlementNote}
+                      onChange={(e) => { setSettlementNote(e.target.value); setActionsModalError(''); }}
+                      placeholder={settlementAction === 'NO_REFUND' ? 'Required — explain why no refund is being issued' : 'Any additional notes about this settlement…'}
+                      className={`w-full border rounded-xl px-3 py-2.5 text-sm outline-none bg-[#FCFBF8] resize-none ${actionsModalError ? 'border-rose-300 focus:border-rose-400' : 'border-[#E2DCD0] focus:border-[#137A6B]'}`}
+                    />
+                  </div>
+
+                  {actionsModalError && (
+                    <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{actionsModalError}</div>
+                  )}
+                </>
+              )}
+
+              {/* ── Step 3: Confirmation ── */}
+              {actionsModalStep === 3 && (
+                <>
+                  <div className="rounded-xl bg-amber-50 border border-amber-200 p-4">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <div className="text-sm font-bold text-amber-900">This action is irreversible</div>
+                        <div className="text-xs text-amber-700 mt-1">
+                          Once confirmed, this booking will be permanently{' '}
+                          {actionsModalMode === 'complete' ? 'marked as completed' : 'terminated'}.
+                          The assigned staff member will be freed and marked as available.
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-[#ECE7DF] bg-[#FBF9F4] p-4">
+                    <div className="text-xs font-bold uppercase tracking-wider text-[#9A9488] mb-3">Summary</div>
+                    <div className="flex flex-col gap-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-[#6F6A60]">Action</span>
+                        <span className={`text-sm font-bold ${actionsModalMode === 'complete' ? 'text-[#137A6B]' : 'text-[#BC4338]'}`}>
+                          {actionsModalMode === 'complete' ? 'Complete booking' : 'Terminate booking'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-[#6F6A60]">Booking</span>
+                        <span className="text-sm font-semibold font-mono text-[#2A2722]">{bookingSummary.booking_code || bookingId}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-[#6F6A60]">End time</span>
+                        <span className="text-sm font-semibold text-[#2A2722]">{formatDateTime(actualEndTime)}</span>
+                      </div>
+                      {remainingBalance > 0 && (
+                        <>
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm text-[#6F6A60]">Remaining balance</span>
+                            <span className="text-sm font-bold text-[#2A2722]">{formatMoney(remainingBalance)}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm text-[#6F6A60]">Settlement</span>
+                            <span className="text-sm font-semibold text-[#2A2722]">
+                              {settlementAction === 'WALLET_DEPOSIT' ? 'Credit to wallet'
+                               : settlementAction === 'BANK_REFUND'  ? 'Bank refund'
+                               : 'Write off (no refund)'}
+                            </span>
+                          </div>
+                        </>
+                      )}
+                      {reason.trim() && (
+                        <div className="flex items-start justify-between gap-4">
+                          <span className="text-sm text-[#6F6A60] shrink-0">Reason</span>
+                          <span className="text-sm font-semibold text-[#2A2722] text-right">{reason.trim()}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {actionsModalError && (
+                    <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{actionsModalError}</div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between px-6 py-4 border-t border-[#ECE7DF] shrink-0">
+              <button
+                onClick={actionsModalStep === 1 ? handleActionsModalClose : handleActionsModalBack}
+                disabled={actionsModalLoading}
+                className="text-sm font-semibold text-[#7A756A] hover:text-[#2A2722] transition disabled:opacity-40"
+              >
+                {actionsModalStep === 1 ? 'Cancel' : '← Back'}
+              </button>
+              {actionsModalStep < 3 ? (
+                <button
+                  onClick={handleActionsModalNext}
+                  disabled={actionsModalStep === 1 && !actionsModalMode}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-[#137A6B] hover:bg-[#0F6559] rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Continue →
+                </button>
+              ) : (
+                <button
+                  onClick={handleActionsModalSubmit}
+                  disabled={actionsModalLoading}
+                  className={`inline-flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white rounded-xl transition disabled:opacity-60 disabled:cursor-not-allowed ${
+                    actionsModalMode === 'complete' ? 'bg-[#137A6B] hover:bg-[#0F6559]' : 'bg-[#BC4338] hover:bg-[#A03830]'
+                  }`}
+                >
+                  {actionsModalLoading
+                    ? <Loader2 className="h-4 w-4 animate-spin" />
+                    : actionsModalMode === 'complete' ? <CheckCircle className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
+                  {actionsModalLoading ? 'Processing…' : `Confirm ${actionsModalMode === 'complete' ? 'Complete' : 'Terminate'}`}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ═══════════════════════════════════════════════════════════════════
           STAFF SWAP MODAL (unchanged logic)

@@ -181,7 +181,7 @@ const finalizeBookingState = async (req, res, nextStatus, actorLabel, includeTer
                 status: 'error',
                 message: 'settlement_action is required when there is a remaining balance',
                 remaining_balance: remainingBalance,
-                allowed_actions: ['WALLET_DEPOSIT', 'NO_REFUND']
+                allowed_actions: ['WALLET_DEPOSIT', 'BANK_REFUND', 'NO_REFUND']
             });
         }
 
@@ -257,6 +257,61 @@ const finalizeBookingState = async (req, res, nextStatus, actorLabel, includeTer
         );
 
         await client.query('COMMIT');
+
+        try {
+            const actorRole = Array.isArray(req.user.role) ? req.user.role[0] : req.user.role;
+            const actorNameResult = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+            const actorName = actorNameResult.rows[0]?.full_name || 'Admin';
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole),
+                actionType: nextStatus === 'COMPLETED' ? 'BOOKING_COMPLETED' : 'BOOKING_TERMINATED',
+                entityType: 'BOOKING',
+                entityId: String(booking_id),
+                details: {
+                    booking_id,
+                    client_name: booking.client_name,
+                    status: nextStatus,
+                    settlement_action: settlement_action || 'NO_REFUND',
+                    remaining_balance: settlementResult.remaining_balance,
+                    reason: reason || null,
+                },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (finalizeBookingState):', logErr.message);
+        }
+
+        // Fire-and-forget: notify assigned staff their assignment has ended
+        if (booking.assigned_staff_id) {
+            (async () => {
+                try {
+                    const endDateStr = endTime.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+                    const staffRes = await db.query(
+                        `SELECT u.mobile_number, sp.full_name, sr.patient_name
+                         FROM staff_profiles sp
+                         JOIN users u ON sp.user_id = u.user_id
+                         LEFT JOIN bookings b ON b.booking_id = $2
+                         LEFT JOIN service_requests sr ON sr.request_id = b.request_id
+                         WHERE sp.staff_profile_id = $1`,
+                        [booking.assigned_staff_id, booking_id]
+                    );
+                    if (staffRes.rows.length > 0) {
+                        const { mobile_number, full_name, patient_name } = staffRes.rows[0];
+                        const patientDisplay = patient_name || booking.client_name || 'the patient';
+                        const smsText = nextStatus === 'COMPLETED'
+                            ? `VCare: Hi ${full_name}, your assignment for ${patientDisplay} has been completed successfully on ${endDateStr}. Thank you for your dedication and service.`
+                            : `VCare: Hi ${full_name}, your assignment for ${patientDisplay} has ended on ${endDateStr}. Please contact the VCare office to confirm your next steps.`;
+                        await Promise.allSettled([
+                            sendStaffAssignmentTerminated(mobile_number, full_name, patientDisplay, endDateStr),
+                            sendSms(mobile_number, smsText),
+                        ]);
+                    }
+                } catch (e) {
+                    console.error('[finalizeBookingState] Staff notification error:', e.message);
+                }
+            })();
+        }
 
         return res.status(200).json({
             status: 'success',

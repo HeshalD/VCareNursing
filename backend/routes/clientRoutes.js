@@ -16,6 +16,7 @@ router.get('/all-bookings', clientController.getAllBookingsForClient);
 router.get('/service-history/:client_id', clientController.getClientServiceHistory);
 // Admin: enriched booking history for dashboard
 router.get('/:client_id/bookings', protect, restrictTo('SUPER_ADMIN'), clientController.getAdminClientBookings);
+router.get('/:client_id/bookings-paginated', protect, restrictTo('SUPER_ADMIN'), clientController.getAdminClientBookingsPaginated);
 router.get('/:client_id/notes', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingNotesController.getClientNotes);
 router.post('/:client_id/notes', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingNotesController.addClientNote);
 router.patch('/:client_id/notes/:note_id', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingNotesController.updateClientNote);

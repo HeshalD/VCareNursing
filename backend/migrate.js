@@ -1274,6 +1274,14 @@ async function runMigration() {
     ALTER COLUMN review_code SET DEFAULT 'RV-' || LPAD(nextval('review_code_seq')::text, 7, '0')
   `);
 
+  // Link reviews to a specific booking (one review per booking per client)
+  await db.query(`ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS booking_id UUID REFERENCES bookings(booking_id) ON DELETE SET NULL`);
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_review_per_booking
+    ON staff_reviews(booking_id, client_profile_id)
+    WHERE booking_id IS NOT NULL
+  `);
+
   // =========================================================
   // SEED DEFAULT PRESET ITEMS
   // =========================================================

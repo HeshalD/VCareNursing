@@ -875,6 +875,98 @@ exports.getAllBookingsForClient = async (req, res) => {
     }
   };
 
+exports.getAdminClientBookingsPaginated = async (req, res) => {
+  const { client_id } = req.params;
+  const page_size = Math.min(parseInt(req.query.page_size) || 5, 20);
+  const active_page = Math.max(1, parseInt(req.query.active_page) || 1);
+  const recent_page = Math.max(1, parseInt(req.query.recent_page) || 1);
+
+  try {
+    const result = await db.query(
+      `SELECT
+         b.booking_id,
+         b.request_id,
+         b.patient_id,
+         b.service_type,
+         b.service_model,
+         b.service_mode,
+         b.status,
+         b.preferred_gender,
+         b.start_date,
+         b.created_at,
+         b.assigned_staff_id,
+         b.amount_quotated,
+         b.amount_paid,
+         b.scheduled_end_time,
+         b.actual_end_time,
+         p.full_name as patient_name,
+         sp.full_name as current_staff_name,
+         sp.designation as current_staff_designation,
+         q.quote_id,
+         q.estimate_number,
+         q.total_amount,
+         q.daily_rate,
+         q.qty_days,
+         COALESCE(tx.total_invoiced, 0) as total_invoiced,
+         COALESCE(tx.total_paid, 0) as total_paid,
+         EXISTS(SELECT 1 FROM staff_reviews sr WHERE sr.booking_id = b.booking_id) AS is_reviewed
+       FROM bookings b
+       LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+       LEFT JOIN LATERAL (
+         SELECT bsa.staff_profile_id
+         FROM booking_staff_assignments bsa
+         WHERE bsa.booking_id = b.booking_id AND bsa.status = 'ACTIVE'
+         ORDER BY bsa.assigned_on DESC
+         LIMIT 1
+       ) active_bsa ON true
+       LEFT JOIN staff_profiles sp ON COALESCE(b.assigned_staff_id, active_bsa.staff_profile_id) = sp.staff_profile_id
+       LEFT JOIN service_requests sr ON b.request_id = sr.request_id
+       LEFT JOIN quotations q ON sr.active_quote_id = q.quote_id
+       LEFT JOIN LATERAL (
+         SELECT
+           SUM(CASE WHEN t.transaction_type = 'DEBIT' THEN t.amount ELSE 0 END) as total_invoiced,
+           SUM(CASE WHEN t.transaction_type = 'CREDIT' THEN t.amount ELSE 0 END) as total_paid
+         FROM transactions t
+         WHERE t.booking_id = b.booking_id
+       ) tx ON true
+       WHERE b.client_id = $1
+       ORDER BY b.created_at DESC`,
+      [client_id]
+    );
+
+    const search = (req.query.search || '').trim().toLowerCase();
+    const all = result.rows.filter((b) => {
+      if (!search) return true;
+      return (
+        String(b.booking_id || '').toLowerCase().includes(search) ||
+        (b.service_type || '').toLowerCase().includes(search) ||
+        (b.patient_name || '').toLowerCase().includes(search) ||
+        (b.current_staff_name || '').toLowerCase().includes(search) ||
+        (b.status || '').toLowerCase().includes(search)
+      );
+    });
+    const active = all.filter((b) => b.status === 'ACTIVE');
+    const recent = all.filter((b) => b.status !== 'ACTIVE');
+
+    const paginate = (arr, page) => {
+      const total = arr.length;
+      const total_pages = Math.max(1, Math.ceil(total / page_size));
+      const safe_page = Math.min(page, total_pages);
+      const start = (safe_page - 1) * page_size;
+      return { data: arr.slice(start, start + page_size), total, page: safe_page, page_size, total_pages };
+    };
+
+    res.status(200).json({
+      status: 'success',
+      active_bookings: paginate(active, active_page),
+      recent_bookings: paginate(recent, recent_page),
+    });
+  } catch (error) {
+    console.error('Error fetching paginated client bookings:', error);
+    res.status(500).json({ message: 'Error fetching paginated client bookings' });
+  }
+};
+
 // 4.5. Get all client service requests, quotes, and payments in chronological order
 exports.getClientServiceHistory = async (req, res) => {
   const { client_id } = req.params;

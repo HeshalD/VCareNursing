@@ -159,6 +159,10 @@ const sendStaffForceTerminated = (mobileNumber, staffName, patientName, endDate)
 const sendStaffDeductionNotice = (mobileNumber, staffName, amount, reason, date) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_staff_deduction', 'en', [staffName, amount, reason, date]);
 
+// Sent to client requesting a review for a completed booking — {{1}} = client name, {{2}} = service type, {{3}} = staff name
+const sendReviewRequest = (mobileNumber, clientName, serviceType, staffName) =>
+  sendTemplate(formatNumber(mobileNumber), 'vcare_review_request', 'en', [clientName, serviceType, staffName]);
+
 // Sent when a salary payout is processed — header: salary sheet PDF, body vars:
 //   {{1}} = staff name, {{2}} = month (e.g. "June 2026"),
 //   {{3}} = net payable / current earnings (LKR formatted),
@@ -167,10 +171,10 @@ const sendStaffDeductionNotice = (mobileNumber, staffName, amount, reason, date)
 const sendStaffSalarySheet = (mobileNumber, fullName, monthLabel, netPayable, amount, paymentDate, paymentMethod, referenceNumber, pdfUrl) =>
   sendTemplate(
     formatNumber(mobileNumber),
-    'vcare_staff_salary_sheet_v2',
+    'vcare_staff_salary_sheet_v3',
     'en',
     [fullName, monthLabel, netPayable, amount, paymentDate, paymentMethod, referenceNumber || 'N/A'],
     [{ type: 'document', document: { link: pdfUrl, filename: `Salary_Sheet_${monthLabel.replace(/\s+/g, '_')}.pdf` } }]
   );
 
-module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendPaymentRecorded, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffSalarySheet };
+module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendPaymentRecorded, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffSalarySheet, sendReviewRequest };

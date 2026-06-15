@@ -12,6 +12,8 @@ import {
   ChevronUp,
   ClipboardList,
   DollarSign,
+  Eye,
+  EyeOff,
   History,
   Landmark,
   Loader2,
@@ -188,6 +190,8 @@ const StaffDetailPage = () => {
   const [deductionSubmitting, setDeductionSubmitting] = useState(false);
   const [deductionError, setDeductionError] = useState('');
   const [deductionSuccess, setDeductionSuccess] = useState('');
+  const [reviewToggles, setReviewToggles] = useState({});
+  const [togglingReviewId, setTogglingReviewId] = useState(null);
 
   const profile = detail?.profile || {};
   const overviewEarnings = detail?.earnings || {};
@@ -696,6 +700,18 @@ const StaffDetailPage = () => {
     </Card>
   );
 
+  const handleToggleReview = async (reviewId, currentVisible) => {
+    setTogglingReviewId(reviewId);
+    try {
+      await runAdminRequest(() => apiClient.toggleReviewVisibility(reviewId));
+      setReviewToggles(prev => ({ ...prev, [reviewId]: !currentVisible }));
+    } catch (err) {
+      console.error('Failed to toggle review visibility', err);
+    } finally {
+      setTogglingReviewId(null);
+    }
+  };
+
   const renderReviews = () => {
     const distribution = safeArray(overviewReviews.distribution);
     const recentReviews = safeArray(overviewReviews.recent);
@@ -726,28 +742,63 @@ const StaffDetailPage = () => {
           )}
         </Card>
 
-        <Card title="Recent Reviews" subtitle="Latest visible reviews for this staff member">
+        <Card title="Recent Reviews" subtitle="Latest reviews for this staff member — toggle visibility to show or hide from the public">
           {recentReviews.length === 0 ? (
             <EmptyState title="No reviews available" subtitle="Recent staff reviews will appear here." />
           ) : (
             <div className="space-y-4">
-              {recentReviews.map((review, index) => (
-                <div key={review.review_id || index} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className="font-semibold text-slate-900">{review.client_name || 'Client'}</p>
-                      {review.review_code && (
-                        <p className="text-xs font-mono font-medium text-slate-400">{review.review_code}</p>
-                      )}
-                      <p className="text-sm text-slate-500">{formatDateTime(review.created_at)}</p>
+              {recentReviews.map((review, index) => {
+                const isVisible = reviewToggles[review.review_id] ?? review.is_visible ?? true;
+                return (
+                  <div
+                    key={review.review_id || index}
+                    className={`rounded-2xl border border-slate-200 bg-slate-50 p-4 transition-opacity ${!isVisible ? 'opacity-60' : ''}`}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-slate-900">{review.client_name || 'Client'}</p>
+                        {review.review_code && (
+                          <p className="text-xs font-mono font-medium text-slate-400">{review.review_code}</p>
+                        )}
+                        <p className="text-sm text-slate-500">{formatDateTime(review.created_at)}</p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">
+                          <Star className="h-3 w-3" /> {review.rating || '-'}
+                        </span>
+                        {isVisible ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
+                            <Eye className="h-3 w-3" /> Active
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-500 ring-1 ring-slate-200">
+                            <EyeOff className="h-3 w-3" /> Hidden
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleToggleReview(review.review_id, isVisible)}
+                          disabled={togglingReviewId === review.review_id}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                            isVisible
+                              ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 ring-1 ring-rose-200'
+                              : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100 ring-1 ring-emerald-200'
+                          }`}
+                        >
+                          {togglingReviewId === review.review_id ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : isVisible ? (
+                            <><EyeOff className="h-3 w-3" /> Deactivate</>
+                          ) : (
+                            <><Eye className="h-3 w-3" /> Activate</>
+                          )}
+                        </button>
+                      </div>
                     </div>
-                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">
-                      <Star className="h-3 w-3" /> {review.rating || '-'}
-                    </span>
+                    <p className="mt-3 whitespace-pre-wrap text-sm text-slate-600">{review.review_text || '-'}</p>
                   </div>
-                  <p className="mt-3 whitespace-pre-wrap text-sm text-slate-600">{review.review_text || '-'}</p>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </Card>

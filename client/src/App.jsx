@@ -65,6 +65,7 @@ import StaffSettings from './modules/public/service_team/StaffSettings';
 import StaffChangeRequestPage from './modules/public/service_team/StaffChangeRequestPage';
 import ChangeRequestsPage from './modules/admin/change_requests/ChangeRequestsPage';
 import ActivityLogPage from './modules/admin/activity_log/ActivityLogPage';
+import AdminReviewsPage from './modules/admin/reviews/AdminReviewsPage';
 import QuotationsPage from './modules/admin/service_quotes/quotations';
 import QuotationDetailsPage from './modules/admin/service_quotes/quotation_details';
 import ServiceRequestSummaryPage from './modules/admin/service_requests/service_request_summary';
@@ -290,6 +291,11 @@ function App() {
             <Route path="/admin/activity-log" element={
               <AdminAuthProvider>
                 <ActivityLogPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/reviews" element={
+              <AdminAuthProvider>
+                <AdminReviewsPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/transactions" element={
