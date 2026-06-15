@@ -38,7 +38,9 @@ const ProxyUserManagement = () => {
     date_of_birth: '',
     nic_number: '',
     nic_front: null,
-    nic_back: null
+    nic_back: null,
+    staff_code: '',
+    admin_remarks: ''
   });
 
   const [profilePicturePreview, setProfilePicturePreview] = useState('');
@@ -164,7 +166,9 @@ const ProxyUserManagement = () => {
       date_of_birth: '',
       nic_number: '',
       nic_front: null,
-      nic_back: null
+      nic_back: null,
+      staff_code: '',
+      admin_remarks: ''
     });
     setProfilePicturePreview('');
     setDocumentPreviews([]);
@@ -193,7 +197,9 @@ const ProxyUserManagement = () => {
       date_of_birth: worker.date_of_birth || '',
       nic_number: worker.nic_number || '',
       nic_front: null,
-      nic_back: null
+      nic_back: null,
+      staff_code: worker.staff_code || '',
+      admin_remarks: worker.admin_remarks || ''
     });
     setProfilePicturePreview(worker.profile_picture_url || '');
     setDocumentPreviews([]);
@@ -245,8 +251,8 @@ const ProxyUserManagement = () => {
 
     try {
       // Validate required fields
-      if (!formData.full_name || !formData.designation || !formData.gender || !formData.date_of_birth || !formData.nic_number || !formData.nic_front || !formData.nic_back) {
-        setError('Please fill in all required fields: Full Name, Designation, Gender, Date of Birth, NIC Number, NIC Front and Back photos');
+      if (!formData.full_name || !formData.designation || !formData.gender || !formData.date_of_birth || !formData.nic_number || !formData.nic_front || !formData.nic_back || !formData.staff_code || !formData.admin_remarks) {
+        setError('Please fill in all required fields: Full Name, Designation, Gender, Date of Birth, NIC Number, NIC Front and Back photos, Staff Code, and Admin Remarks');
         setFormLoading(false);
         return;
       }
@@ -265,6 +271,8 @@ const ProxyUserManagement = () => {
       submitData.append('willing_to_live_in', formData.willing_to_live_in);
       submitData.append('date_of_birth', formData.date_of_birth);
       submitData.append('nic_number', formData.nic_number);
+      submitData.append('staff_code', formData.staff_code);
+      submitData.append('admin_remarks', formData.admin_remarks);
 
       if (formData.profile_picture) {
         submitData.append('profile_picture', formData.profile_picture);
@@ -322,6 +330,8 @@ const ProxyUserManagement = () => {
       submitData.append('willing_to_live_in', formData.willing_to_live_in);
       submitData.append('date_of_birth', formData.date_of_birth);
       submitData.append('nic_number', formData.nic_number);
+      if (formData.staff_code) submitData.append('staff_code', formData.staff_code);
+      if (formData.admin_remarks) submitData.append('admin_remarks', formData.admin_remarks);
 
       if (formData.profile_picture) {
         submitData.append('profile_picture', formData.profile_picture);
@@ -855,6 +865,38 @@ const ProxyUserManagement = () => {
                 placeholder="e.g. 123456789V"
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
+            </div>
+
+            {/* Staff Code & Admin Remarks */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Staff Code {!isEditMode && <span className="text-red-500">*</span>}
+                </label>
+                <input
+                  type="text"
+                  name="staff_code"
+                  value={formData.staff_code}
+                  onChange={handleInputChange}
+                  required={!isEditMode}
+                  placeholder="e.g. VC-0042"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Admin Remarks {!isEditMode && <span className="text-red-500">*</span>}
+                </label>
+                <textarea
+                  name="admin_remarks"
+                  value={formData.admin_remarks}
+                  onChange={handleInputChange}
+                  required={!isEditMode}
+                  rows={3}
+                  placeholder="Internal notes about this staff member..."
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+                />
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
