@@ -839,6 +839,50 @@ class ApiClient {
     return this.request(`/staff/${staffProfileId}/total-earnings-breakdown`);
   }
 
+  async getStaffSalariesOverview(showAll = false) {
+    return this.request(`/staff/salaries/overview${showAll ? '?all=true' : ''}`);
+  }
+
+  async getStaffSalariesExportData() {
+    return this.request('/staff/salaries/full-export');
+  }
+
+  async getStaffBookingSalaryBreakdown(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/booking-salary-breakdown`);
+  }
+
+  async getStaffMonthlyEarnings(staffProfileId, year, month) {
+    return this.request(`/staff/${staffProfileId}/monthly-earnings?year=${year}&month=${month}`);
+  }
+
+  async getSalarySheetLedger() {
+    return this.request('/staff/salary-sheets/ledger');
+  }
+
+  async resendSalarySheetNotification(staffPaymentId) {
+    return this.request(`/staff/salary-sheets/${staffPaymentId}/send-notification`, { method: 'POST' });
+  }
+
+  async bulkResendSalarySheetNotifications(staffPaymentIds, mode = 'selective') {
+    return this.request('/staff/salary-sheets/bulk-send-notifications', {
+      method: 'POST',
+      body: JSON.stringify({ staff_payment_ids: staffPaymentIds, mode }),
+    });
+  }
+
+  async bulkStaffPayouts(payouts, companyBankAccountId, paymentMethod, referenceNumber, notes) {
+    return this.request('/staff/salaries/bulk-payouts', {
+      method: 'POST',
+      body: JSON.stringify({
+        payouts,
+        company_bank_account_id: companyBankAccountId,
+        payment_method: paymentMethod,
+        reference_number: referenceNumber,
+        notes,
+      }),
+    });
+  }
+
   async getStaffCurrentEarningsBreakdown(staffProfileId, filters = {}) {
     const queryParams = new URLSearchParams(filters).toString();
     const url = queryParams
@@ -868,6 +912,19 @@ class ApiClient {
   async deleteStaffBankAccount(staffProfileId, bankAccountId) {
     return this.request(`/staff/${staffProfileId}/bank-accounts/${bankAccountId}`, {
       method: 'DELETE',
+    });
+  }
+
+  async getStaffDeductions(staffProfileId, filters = {}) {
+    const queryParams = new URLSearchParams(filters).toString();
+    const url = queryParams ? `/staff/${staffProfileId}/deductions?${queryParams}` : `/staff/${staffProfileId}/deductions`;
+    return this.request(url);
+  }
+
+  async createStaffDeduction(staffProfileId, data) {
+    return this.request(`/staff/${staffProfileId}/deductions`, {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
   }
 
@@ -974,10 +1031,18 @@ class ApiClient {
     return this.request('/bookings/terminations/pending');
   }
 
-  async approveTerminationRequest(terminationId, finalEndDate) {
+  async getTerminationHistory() {
+    return this.request('/bookings/terminations/history');
+  }
+
+  async approveTerminationRequest(terminationId, finalEndDate, settlementAction, settlementNote) {
     return this.request(`/bookings/terminations/approve/${terminationId}`, {
       method: 'POST',
-      body: JSON.stringify({ final_end_date: finalEndDate }),
+      body: JSON.stringify({
+        final_end_date: finalEndDate,
+        settlement_action: settlementAction,
+        settlement_note: settlementNote || null,
+      }),
     });
   }
 

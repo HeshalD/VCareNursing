@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Eye, XCircle, Loader2, Calendar, User, Activity, Clock, CheckCircle, AlertCircle, Search, RefreshCw, Stethoscope, Baby, Heart } from 'lucide-react';
+import { Eye, XCircle, Loader2, Calendar, User, Activity, Clock, CheckCircle, AlertCircle, Search, RefreshCw, Stethoscope, Baby, Heart, AlertTriangle } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
@@ -8,6 +8,7 @@ import { useAdminAuth } from '../../../context/AdminAuthContext';
 const STATUS_FILTERS = [
   { key: 'ALL', label: 'All Bookings' },
   { key: 'ACTIVE', label: 'Active' },
+  { key: 'EXPIRING_SOON', label: 'Expiring Soon' },
   { key: 'PENDING_TERMINATION', label: 'Pending Termination' },
   { key: 'TERMINATED', label: 'Terminated' },
   { key: 'COMPLETED', label: 'Completed' },
@@ -99,20 +100,25 @@ const Bookings = () => {
     const q = searchQuery.toLowerCase().trim();
     return bookings.filter((b) => {
       const details = bookingDetails[b.booking_id];
-      const matchesStatus = statusFilter === 'ALL' || b.status === statusFilter;
-      if (!matchesStatus) return false;
+      if (statusFilter === 'EXPIRING_SOON') {
+        if (!b.is_expiring_soon) return false;
+      } else {
+        const matchesStatus = statusFilter === 'ALL' || b.status === statusFilter;
+        if (!matchesStatus) return false;
+      }
       if (!q) return true;
       const bookingCode = (b.booking_code || String(b.booking_id)).toLowerCase();
-      const clientName = (details?.client_name || `client ${b.client_id}`).toLowerCase();
-      const patientName = (details?.patient_name || `patient ${b.patient_id}`).toLowerCase();
+      const clientName = (details?.client_name || b.client_name || `client ${b.client_id}`).toLowerCase();
+      const patientName = (details?.patient_name || b.patient_name || `patient ${b.patient_id}`).toLowerCase();
       return bookingCode.includes(q) || clientName.includes(q) || patientName.includes(q);
     });
   }, [bookings, bookingDetails, searchQuery, statusFilter]);
 
   const statusCounts = useMemo(() => {
-    const counts = { ALL: bookings.length };
+    const counts = { ALL: bookings.length, EXPIRING_SOON: 0 };
     bookings.forEach((b) => {
       counts[b.status] = (counts[b.status] || 0) + 1;
+      if (b.is_expiring_soon) counts.EXPIRING_SOON++;
     });
     return counts;
   }, [bookings]);
@@ -164,14 +170,19 @@ const Bookings = () => {
   return (
     <AdminLayout title="Bookings" subtitle={`${bookings.length} total bookings`}>
       {/* Stats Row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         {[
           { label: 'Total', value: bookings.length, color: 'blue', icon: Calendar },
           { label: 'Active', value: statusCounts['ACTIVE'] || 0, color: 'green', icon: CheckCircle },
+          { label: 'Expiring Soon', value: statusCounts['EXPIRING_SOON'] || 0, color: 'orange', icon: AlertTriangle, onClick: () => setStatusFilter('EXPIRING_SOON') },
           { label: 'Pending Termination', value: statusCounts['PENDING_TERMINATION'] || 0, color: 'amber', icon: Clock },
           { label: 'Terminated', value: (statusCounts['TERMINATED'] || 0) + (statusCounts['COMPLETED'] || 0), color: 'slate', icon: Activity },
-        ].map(({ label, value, color, icon: Icon }) => (
-          <div key={label} className="bg-white rounded-xl border border-slate-200 p-5 flex items-center justify-between">
+        ].map(({ label, value, color, icon: Icon, onClick }) => (
+          <div
+            key={label}
+            onClick={onClick}
+            className={`bg-white rounded-xl border p-5 flex items-center justify-between ${onClick ? 'cursor-pointer hover:border-orange-300 hover:shadow-sm transition-all' : ''} ${statusFilter === 'EXPIRING_SOON' && label === 'Expiring Soon' ? 'border-orange-400 ring-1 ring-orange-300' : 'border-slate-200'}`}
+          >
             <div>
               <p className="text-xs font-medium text-slate-500 mb-1">{label}</p>
               <p className={`text-2xl font-bold text-${color}-600`}>{value}</p>
@@ -269,7 +280,7 @@ const Bookings = () => {
                     const ServiceIcon = getServiceIcon(b.service_type);
                     const details = bookingDetails[b.booking_id];
                     return (
-                      <tr key={b.booking_id || b.id} className="hover:bg-slate-50/70 transition-colors group">
+                      <tr key={b.booking_id || b.id} className={`hover:bg-slate-50/70 transition-colors group ${b.is_expiring_soon ? 'bg-orange-50/40' : ''}`}>
                         <td className="px-6 py-4">
                           <span className="font-mono text-sm font-semibold text-slate-700">{b.booking_code || `#${b.booking_id}`}</span>
                         </td>
@@ -308,7 +319,17 @@ const Bookings = () => {
                           </p>
                         </td>
                         <td className="px-6 py-4">
-                          {getStatusBadge(b.status)}
+                          <div className="flex flex-col gap-1.5">
+                            {getStatusBadge(b.status)}
+                            {b.is_expiring_soon && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-50 text-orange-700 ring-1 ring-orange-400/30">
+                                <AlertTriangle className="w-3 h-3" />
+                                {b.balance_days_remaining !== null && b.balance_days_remaining <= 0
+                                  ? 'Balance exhausted'
+                                  : `~${b.balance_days_remaining}d left`}
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-6 py-4 text-right">
                           <button

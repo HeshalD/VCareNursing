@@ -14,7 +14,12 @@ import {
   Activity,
   ChevronDown,
   ChevronUp,
+  Wallet,
+  History,
 } from 'lucide-react';
+
+const formatMoney = (v) =>
+  new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 }).format(Number(v || 0));
 
 const URGENCY_CONFIG = {
   IMMEDIATE: {
@@ -72,24 +77,36 @@ const fmtDt = (d) =>
 
 const TerminationRequests = () => {
   const [terminationRequests, setTerminationRequests] = useState([]);
+  const [historyRequests, setHistoryRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [urgencyFilter, setUrgencyFilter] = useState('all');
   const [expandedId, setExpandedId] = useState(null);
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyExpanded, setHistoryExpanded] = useState(null);
+
+  // Modal state
+  const [modal, setModal] = useState(null); // null | request object
+  const [modalFinalEndDate, setModalFinalEndDate] = useState('');
+  const [settlementAction, setSettlementAction] = useState('WALLET_DEPOSIT');
+  const [settlementNote, setSettlementNote] = useState('');
   const [approveLoading, setApproveLoading] = useState(false);
   const [approveError, setApproveError] = useState(null);
-  const [finalEndDate, setFinalEndDate] = useState(new Date().toISOString().split('T')[0]);
 
   useEffect(() => {
-    fetchTerminationRequests();
+    fetchAll();
   }, []);
 
-  const fetchTerminationRequests = async () => {
+  const fetchAll = async () => {
     try {
       setLoading(true);
-      const response = await apiClient.getPendingTerminationRequests();
-      setTerminationRequests(response.data || []);
+      const [pendingRes, historyRes] = await Promise.all([
+        apiClient.getPendingTerminationRequests(),
+        apiClient.getTerminationHistory(),
+      ]);
+      setTerminationRequests(pendingRes.data || []);
+      setHistoryRequests(historyRes.data || []);
     } catch (err) {
       console.error('Termination Requests fetch error:', err);
       setError(`Failed to fetch termination requests: ${err.message || 'Unknown error'}`);
@@ -97,6 +114,8 @@ const TerminationRequests = () => {
       setLoading(false);
     }
   };
+
+  const fetchTerminationRequests = fetchAll;
 
   const filteredRequests = terminationRequests.filter((req) => {
     const matchesSearch =
@@ -109,22 +128,42 @@ const TerminationRequests = () => {
   });
 
   const handleToggle = (id) => {
-    if (expandedId === id) {
-      setExpandedId(null);
-      setApproveError(null);
-    } else {
-      setExpandedId(id);
-      setFinalEndDate(new Date().toISOString().split('T')[0]);
-      setApproveError(null);
-    }
+    setExpandedId(expandedId === id ? null : id);
   };
 
-  const submitApproval = async (e, terminationId) => {
+  const openModal = (e, request) => {
     e.stopPropagation();
+    setModal(request);
+    setModalFinalEndDate(
+      request.requested_end_date
+        ? new Date(request.requested_end_date).toISOString().split('T')[0]
+        : new Date().toISOString().split('T')[0]
+    );
+    setSettlementAction('WALLET_DEPOSIT');
+    setSettlementNote('');
+    setApproveError(null);
+  };
+
+  const closeModal = () => {
+    setModal(null);
+    setApproveError(null);
+  };
+
+  const submitApproval = async () => {
+    if (settlementAction === 'NO_REFUND' && !settlementNote.trim()) {
+      setApproveError('A settlement note is required when selecting no refund.');
+      return;
+    }
     try {
       setApproveLoading(true);
       setApproveError(null);
-      await apiClient.approveTerminationRequest(terminationId, finalEndDate);
+      await apiClient.approveTerminationRequest(
+        modal.termination_id,
+        modalFinalEndDate,
+        settlementAction,
+        settlementNote.trim() || null,
+      );
+      closeModal();
       setExpandedId(null);
       fetchTerminationRequests();
     } catch (err) {
@@ -241,7 +280,6 @@ const TerminationRequests = () => {
                   const isExpanded = expandedId === request.termination_id;
                   return (
                     <React.Fragment key={request.termination_id}>
-                      {/* Summary Row */}
                       <tr
                         className={`transition-colors cursor-pointer select-none ${
                           isExpanded ? 'bg-blue-50 border-l-2 border-l-blue-500' : 'hover:bg-slate-50'
@@ -285,38 +323,25 @@ const TerminationRequests = () => {
                         </td>
                       </tr>
 
-                      {/* Expanded Detail Row */}
                       {isExpanded && (
                         <tr>
                           <td colSpan={7} className="bg-slate-50 border-b border-slate-200 border-l-2 border-l-blue-500">
                             <div className="px-6 py-6 space-y-4">
-                              {/* Three-column info grid */}
                               <div className="grid grid-cols-3 gap-4">
-                                {/* Booking Info */}
                                 <div className="bg-white rounded-lg border border-slate-200 p-4 space-y-3">
-                                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
-                                    Booking Information
-                                  </p>
+                                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Booking Information</p>
                                   <Field label="Booking Code" value={request.booking_code || request.booking_id} mono />
-                                  <Field
-                                    label="Service Type"
-                                    value={request.service_type?.replace(/[{}]/g, '') || 'General Service'}
-                                  />
+                                  <Field label="Service Type" value={request.service_type?.replace(/[{}]/g, '') || 'General Service'} />
                                   <Field label="Service Start Date" value={fmt(request.start_date)} />
                                   <Field label="Request Submitted" value={fmtDt(request.request_date)} />
                                 </div>
 
-                                {/* Client & Care Profile */}
                                 <div className="bg-white rounded-lg border border-slate-200 p-4 space-y-3">
-                                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
-                                    Client & Care Profile
-                                  </p>
+                                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Client & Care Profile</p>
                                   <Field label="Client Name" value={request.client_name} />
                                   <Field label="Care Profile" value={request.patient_name} />
                                   <div>
-                                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">
-                                      Location
-                                    </p>
+                                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Location</p>
                                     <div className="flex items-start gap-1.5">
                                       <MapPin className="w-3.5 h-3.5 text-slate-400 mt-0.5 flex-shrink-0" />
                                       <p className="text-sm font-medium text-slate-900">{request.location || '—'}</p>
@@ -324,91 +349,46 @@ const TerminationRequests = () => {
                                   </div>
                                 </div>
 
-                                {/* Staff & Urgency */}
                                 <div className="bg-white rounded-lg border border-slate-200 p-4 space-y-3">
-                                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
-                                    Staff & Termination
-                                  </p>
+                                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Staff & Termination</p>
                                   <div className="flex items-center gap-2.5">
                                     <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0">
                                       <User className="w-4 h-4 text-slate-500" />
                                     </div>
                                     <div>
-                                      <p className="text-sm font-semibold text-slate-900">
-                                        {request.staff_name || 'Not assigned'}
-                                      </p>
-                                      <p className="text-xs text-slate-400">
-                                        {request.staff_code || request.staff_profile_id || ''}
-                                      </p>
+                                      <p className="text-sm font-semibold text-slate-900">{request.staff_name || 'Not assigned'}</p>
+                                      <p className="text-xs text-slate-400">{request.staff_code || request.staff_profile_id || ''}</p>
                                     </div>
                                   </div>
                                   <div>
-                                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1.5">
-                                      Urgency
-                                    </p>
+                                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Urgency</p>
                                     <UrgencyBadge urgency={request.urgency} />
                                   </div>
-                                  <Field
-                                    label="Requested End Date"
-                                    value={fmt(request.requested_end_date)}
-                                  />
+                                  <Field label="Requested End Date" value={fmt(request.requested_end_date)} />
                                 </div>
                               </div>
 
-                              {/* Reason */}
                               <div className="bg-white rounded-lg border border-slate-200 p-4">
-                                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">
-                                  Reason for Termination
-                                </p>
-                                <p className="text-sm text-slate-700 leading-relaxed">
-                                  {request.reason || 'No reason provided.'}
-                                </p>
+                                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Reason for Termination</p>
+                                <p className="text-sm text-slate-700 leading-relaxed">{request.reason || 'No reason provided.'}</p>
                               </div>
 
-                              {/* Approval */}
                               <div className="bg-white rounded-lg border border-green-200 p-4">
-                                <div className="flex items-start justify-between gap-6">
+                                <div className="flex items-center justify-between gap-6">
                                   <div>
                                     <p className="text-sm font-semibold text-slate-900">Approve Termination</p>
                                     <p className="text-xs text-slate-500 mt-0.5">
-                                      Finalises the termination and processes any applicable refunds. The staff
-                                      member will be marked as available for new assignments.
+                                      Finalises the termination and processes settlement. The staff member will be marked as available.
                                     </p>
                                   </div>
-                                  <div className="flex items-end gap-3 flex-shrink-0">
-                                    <div>
-                                      <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                                        Final End Date <span className="text-red-500">*</span>
-                                      </label>
-                                      <input
-                                        type="date"
-                                        value={finalEndDate}
-                                        onChange={(e) => setFinalEndDate(e.target.value)}
-                                        onClick={(e) => e.stopPropagation()}
-                                        min={new Date().toISOString().split('T')[0]}
-                                        className="px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                                      />
-                                    </div>
-                                    <button
-                                      onClick={(e) => submitApproval(e, request.termination_id)}
-                                      disabled={approveLoading}
-                                      className="inline-flex items-center gap-2 px-5 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                      {approveLoading ? (
-                                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                      ) : (
-                                        <CheckCircle className="w-4 h-4" />
-                                      )}
-                                      Approve
-                                    </button>
-                                  </div>
+                                  <button
+                                    onClick={(e) => openModal(e, request)}
+                                    className="inline-flex items-center gap-2 px-5 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 transition-colors"
+                                  >
+                                    <CheckCircle className="w-4 h-4" />
+                                    Approve
+                                  </button>
                                 </div>
-                                {approveError && (
-                                  <p className="mt-3 text-xs text-red-600 flex items-center gap-1.5">
-                                    <XCircle className="w-3.5 h-3.5 flex-shrink-0" />
-                                    {approveError}
-                                  </p>
-                                )}
                               </div>
                             </div>
                           </td>
@@ -422,6 +402,307 @@ const TerminationRequests = () => {
           </div>
         )}
       </div>
+
+      {/* Past Terminations */}
+      <div className="mt-10">
+        <div className="flex items-center gap-3 mb-4">
+          <History className="w-5 h-5 text-slate-400" />
+          <h2 className="text-base font-semibold text-slate-900">Past Terminations</h2>
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">
+            {historyRequests.length}
+          </span>
+        </div>
+
+        <div className="bg-white rounded-lg border border-slate-200 p-3 mb-3">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search past terminations..."
+              value={historySearch}
+              onChange={(e) => setHistorySearch(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+          {historyRequests.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 gap-3">
+              <History className="w-8 h-8 text-slate-300" />
+              <p className="text-slate-500 text-sm">No past terminations yet</p>
+            </div>
+          ) : (() => {
+            const filtered = historyRequests.filter((r) =>
+              r.client_name?.toLowerCase().includes(historySearch.toLowerCase()) ||
+              r.patient_name?.toLowerCase().includes(historySearch.toLowerCase()) ||
+              r.staff_name?.toLowerCase().includes(historySearch.toLowerCase()) ||
+              r.termination_code?.toLowerCase().includes(historySearch.toLowerCase()) ||
+              r.booking_code?.toLowerCase().includes(historySearch.toLowerCase())
+            );
+            if (filtered.length === 0) {
+              return (
+                <div className="flex flex-col items-center justify-center py-12 gap-3">
+                  <Search className="w-8 h-8 text-slate-300" />
+                  <p className="text-slate-500 text-sm">No results match your search</p>
+                </div>
+              );
+            }
+            return (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr>
+                      {['Ref', 'Client & Care Profile', 'Staff', 'Urgency', 'Official End Date', 'Status', 'Submitted', ''].map((h) => (
+                        <th key={h} className="px-5 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filtered.map((r) => {
+                      const isEx = historyExpanded === r.termination_id;
+                      return (
+                        <React.Fragment key={r.termination_id}>
+                          <tr
+                            className={`transition-colors cursor-pointer select-none ${isEx ? 'bg-slate-50 border-l-2 border-l-slate-400' : 'hover:bg-slate-50'}`}
+                            onClick={() => setHistoryExpanded(isEx ? null : r.termination_id)}
+                          >
+                            <td className="px-5 py-4">
+                              <p className="text-xs font-mono text-slate-400">{r.termination_code}</p>
+                              <p className="text-sm font-semibold font-mono text-slate-700">{r.booking_code || r.booking_id}</p>
+                            </td>
+                            <td className="px-5 py-4">
+                              <p className="text-sm font-semibold text-slate-900">{r.client_name}</p>
+                              <p className="text-xs text-slate-500 mt-0.5">{r.patient_name}</p>
+                            </td>
+                            <td className="px-5 py-4">
+                              <p className="text-sm text-slate-700">{r.staff_name || '—'}</p>
+                            </td>
+                            <td className="px-5 py-4">
+                              <UrgencyBadge urgency={r.urgency} />
+                            </td>
+                            <td className="px-5 py-4 text-sm text-slate-600">
+                              {r.official_end_date ? fmt(r.official_end_date) : '—'}
+                            </td>
+                            <td className="px-5 py-4">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                r.status === 'APPROVED' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'
+                              }`}>
+                                {r.status}
+                              </span>
+                            </td>
+                            <td className="px-5 py-4 text-sm text-slate-500">{fmtDt(r.request_date)}</td>
+                            <td className="px-5 py-4 text-right pr-5">
+                              {isEx ? <ChevronUp className="w-4 h-4 text-slate-400 inline" /> : <ChevronDown className="w-4 h-4 text-slate-400 inline" />}
+                            </td>
+                          </tr>
+                          {isEx && (
+                            <tr>
+                              <td colSpan={8} className="bg-slate-50 border-b border-slate-200 border-l-2 border-l-slate-400">
+                                <div className="px-6 py-5 space-y-4">
+                                  <div className="grid grid-cols-3 gap-4">
+                                    <div className="bg-white rounded-lg border border-slate-200 p-4 space-y-3">
+                                      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Booking</p>
+                                      <Field label="Booking Code" value={r.booking_code || r.booking_id} mono />
+                                      <Field label="Service Type" value={r.service_type?.replace(/[{}]/g, '') || 'General'} />
+                                      <Field label="Service Start" value={fmt(r.start_date)} />
+                                      <Field label="Official End" value={r.official_end_date ? fmt(r.official_end_date) : '—'} />
+                                    </div>
+                                    <div className="bg-white rounded-lg border border-slate-200 p-4 space-y-3">
+                                      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Client & Care Profile</p>
+                                      <Field label="Client" value={r.client_name} />
+                                      <Field label="Care Profile" value={r.patient_name} />
+                                      <div>
+                                        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Location</p>
+                                        <div className="flex items-start gap-1.5">
+                                          <MapPin className="w-3.5 h-3.5 text-slate-400 mt-0.5 flex-shrink-0" />
+                                          <p className="text-sm font-medium text-slate-900">{r.location || '—'}</p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <div className="bg-white rounded-lg border border-slate-200 p-4 space-y-3">
+                                      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Financials</p>
+                                      <Field label="Total Paid" value={formatMoney(r.total_paid)} />
+                                      <Field label="Total Invoiced" value={formatMoney(r.total_invoiced)} />
+                                      <div>
+                                        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Remaining Balance</p>
+                                        <p className={`text-sm font-semibold ${Number(r.remaining_balance) > 0 ? 'text-emerald-700' : 'text-slate-500'}`}>
+                                          {formatMoney(r.remaining_balance)}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="bg-white rounded-lg border border-slate-200 p-4">
+                                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Reason</p>
+                                    <p className="text-sm text-slate-700 leading-relaxed">{r.reason || 'No reason provided.'}</p>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
+        </div>
+      </div>
+
+      {/* Approval Modal */}
+      {modal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={closeModal} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg border border-slate-200" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">Approve Termination</h2>
+                <p className="text-xs text-slate-500 mt-0.5">{modal.client_name} · {modal.booking_code || modal.booking_id}</p>
+              </div>
+              <button onClick={closeModal} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors">
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="px-6 py-5 space-y-5">
+              {/* Financial summary */}
+              {(() => {
+                const totalPaid = Number(modal.total_paid || 0);
+                const totalInvoiced = Number(modal.total_invoiced || 0);
+                const remainingBalance = Number(modal.remaining_balance || 0);
+                return (
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                      <p className="text-xs text-slate-500 mb-0.5">Total Paid</p>
+                      <p className="text-sm font-semibold text-slate-900">{formatMoney(totalPaid)}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                      <p className="text-xs text-slate-500 mb-0.5">Total Invoiced</p>
+                      <p className="text-sm font-semibold text-slate-900">{formatMoney(totalInvoiced)}</p>
+                    </div>
+                    <div className={`rounded-lg border p-3 ${remainingBalance > 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-100'}`}>
+                      <p className="text-xs text-slate-500 mb-0.5">Remaining Balance</p>
+                      <p className={`text-sm font-semibold ${remainingBalance > 0 ? 'text-emerald-700' : 'text-slate-400'}`}>{formatMoney(remainingBalance)}</p>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Final end date */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+                  Official End Date <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={modalFinalEndDate}
+                  onChange={(e) => setModalFinalEndDate(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                />
+              </div>
+
+              {/* Settlement action */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide">Settlement Action</label>
+                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                    settlementAction === 'WALLET_DEPOSIT' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                  }`}>
+                    {settlementAction === 'WALLET_DEPOSIT' ? 'Refund available' : 'No refund'}
+                  </span>
+                </div>
+                <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <label className={`flex cursor-pointer items-start gap-3 rounded-lg bg-white p-3 text-sm text-slate-700 ring-1 transition ${
+                    settlementAction === 'WALLET_DEPOSIT' ? 'ring-green-400' : 'ring-slate-200 hover:ring-green-300'
+                  }`}>
+                    <input
+                      type="radio"
+                      name="settlementAction"
+                      value="WALLET_DEPOSIT"
+                      checked={settlementAction === 'WALLET_DEPOSIT'}
+                      onChange={(e) => setSettlementAction(e.target.value)}
+                      className="mt-1 accent-green-600"
+                    />
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <Wallet className="w-3.5 h-3.5 text-emerald-600" />
+                        <span className="font-semibold text-slate-900">Deposit to wallet</span>
+                      </div>
+                      <span className="block text-xs text-slate-500 mt-0.5">Return the remaining balance to the client's VCare wallet.</span>
+                    </div>
+                  </label>
+                  <label className={`flex cursor-pointer items-start gap-3 rounded-lg bg-white p-3 text-sm text-slate-700 ring-1 transition ${
+                    settlementAction === 'NO_REFUND' ? 'ring-amber-400' : 'ring-slate-200 hover:ring-amber-300'
+                  }`}>
+                    <input
+                      type="radio"
+                      name="settlementAction"
+                      value="NO_REFUND"
+                      checked={settlementAction === 'NO_REFUND'}
+                      onChange={(e) => setSettlementAction(e.target.value)}
+                      className="mt-1 accent-amber-500"
+                    />
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <XCircle className="w-3.5 h-3.5 text-amber-600" />
+                        <span className="font-semibold text-slate-900">No refund</span>
+                      </div>
+                      <span className="block text-xs text-slate-500 mt-0.5">Retain the remaining balance with the booking record.</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Settlement note */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+                  Settlement Note {settlementAction === 'NO_REFUND' && <span className="text-red-500">*</span>}
+                </label>
+                <textarea
+                  value={settlementNote}
+                  onChange={(e) => setSettlementNote(e.target.value)}
+                  rows={3}
+                  placeholder={settlementAction === 'NO_REFUND' ? 'Required — explain why no refund is being issued' : 'Optional note about the settlement decision'}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
+                />
+              </div>
+
+              {approveError && (
+                <div className="flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                  <XCircle className="w-4 h-4 flex-shrink-0" />
+                  {approveError}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-200">
+              <button
+                onClick={closeModal}
+                className="px-4 py-2 text-sm font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitApproval}
+                disabled={approveLoading || !modalFinalEndDate}
+                className="inline-flex items-center gap-2 px-5 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {approveLoading ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <CheckCircle className="w-4 h-4" />
+                )}
+                Confirm Approval
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AdminLayout>
   );
 };

@@ -117,6 +117,9 @@ router.post(
 // GET /api/admin/terminations/pending
 router.get('/terminations/pending', protect, restrictTo('SUPER_ADMIN', 'ADMIN'), bookingController.getPendingTerminationRequests);
 
+// GET /api/admin/terminations/history
+router.get('/terminations/history', protect, restrictTo('SUPER_ADMIN', 'ADMIN'), bookingController.getTerminationHistory);
+
 // POST /api/admin/terminations/:termination_id/approve
 router.post('/terminations/approve/:termination_id', protect, restrictTo('SUPER_ADMIN', 'ADMIN'), bookingController.approveTerminationRequest);
 

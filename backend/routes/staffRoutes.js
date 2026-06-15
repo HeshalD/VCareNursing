@@ -91,9 +91,73 @@ router.get(
 // Create staff profile with file upload support
 router.post('/proxy-create', uploadApplicationFiles, protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), staffController.createStaffProfile);
 
+// Admin: Staff salaries overview (all staff with outstanding payables)
 router.get(
-    '/:staff_profile_id/assignments', 
-    protect, 
+  '/salaries/overview',
+  protect,
+  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  staffController.getStaffSalariesOverview
+);
+
+// Admin: Bulk payout for multiple staff
+router.post(
+  '/salaries/bulk-payouts',
+  protect,
+  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  staffController.bulkStaffPayouts
+);
+
+// Admin: Full export data for Excel download
+router.get(
+  '/salaries/full-export',
+  protect,
+  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  staffController.getStaffSalariesExportData
+);
+
+// Admin: Salary sheet PDF ledger
+router.get(
+  '/salary-sheets/ledger',
+  protect,
+  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  staffController.getSalarySheetLedger
+);
+
+// Admin: Bulk resend salary sheet notifications (must be before /:id route)
+router.post(
+  '/salary-sheets/bulk-send-notifications',
+  protect,
+  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  staffController.bulkResendSalarySheetNotifications
+);
+
+// Admin: Resend WhatsApp + SMS for a single salary sheet payout
+router.post(
+  '/salary-sheets/:staff_payment_id/send-notification',
+  protect,
+  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  staffController.resendSalarySheetNotification
+);
+
+// Admin: Per-booking salary breakdown for a staff member
+router.get(
+  '/:staff_profile_id/booking-salary-breakdown',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getStaffBookingSalaryBreakdown
+);
+
+// Admin: Monthly earnings breakdown for a staff member (Pay Modal preview)
+router.get(
+  '/:staff_profile_id/monthly-earnings',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getStaffMonthlyEarnings
+);
+
+router.get(
+    '/:staff_profile_id/assignments',
+    protect,
     staffController.getStaffAssignments
 );
 
@@ -216,6 +280,21 @@ router.post(
   protect,
   restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
   staffController.createStaffPayout
+);
+
+// Deductions
+router.get(
+  '/:staff_profile_id/deductions',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getStaffDeductions
+);
+
+router.post(
+  '/:staff_profile_id/deductions',
+  protect,
+  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  staffController.createStaffDeduction
 );
 
 // Update staff status to unavailable

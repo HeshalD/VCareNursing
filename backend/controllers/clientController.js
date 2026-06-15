@@ -1,4 +1,15 @@
 const db = require('../config/db');
+const { logActivity } = require('../utils/activityLogger');
+
+async function getActorName(userId) {
+  const result = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [userId]);
+  return result.rows[0]?.full_name || 'Admin';
+}
+
+function extractActorRole(role) {
+  const raw = Array.isArray(role) ? role[0] : role;
+  return typeof raw === 'string' ? raw.replace(/\{|\}/g, '').split(',')[0].trim() : String(raw);
+}
 
 async function getClientUserAccount(clientId) {
   const result = await db.query(
@@ -162,6 +173,21 @@ exports.deactivateClientProfile = async (req, res) => {
       [clientAccount.user_id]
     );
 
+    try {
+      const actorName = await getActorName(req.user.user_id);
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName,
+        actorRole: extractActorRole(req.user?.role),
+        actionType: 'CLIENT_ACCOUNT_DEACTIVATED',
+        entityType: 'CLIENT',
+        entityId: String(client_id),
+        details: { client_name: clientAccount.full_name },
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (deactivateClientProfile):', logErr.message);
+    }
+
     res.status(200).json({
       status: 'success',
       message: 'Client account deactivated successfully',
@@ -198,6 +224,21 @@ exports.reactivateClientProfile = async (req, res) => {
        WHERE user_id = $1`,
       [clientAccount.user_id]
     );
+
+    try {
+      const actorName = await getActorName(req.user.user_id);
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName,
+        actorRole: extractActorRole(req.user?.role),
+        actionType: 'CLIENT_ACCOUNT_REACTIVATED',
+        entityType: 'CLIENT',
+        entityId: String(client_id),
+        details: { client_name: clientAccount.full_name },
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (reactivateClientProfile):', logErr.message);
+    }
 
     res.status(200).json({
       status: 'success',
@@ -934,7 +975,7 @@ exports.getClientServiceHistory = async (req, res) => {
 exports.getAllClients = async (req, res) => {
   try {
     const clientsRes = await db.query(
-      'SELECT cp.*, u.email, u.created_at as user_created_at FROM client_profiles cp JOIN users u ON cp.user_id = u.user_id ORDER BY cp.created_at DESC'
+      'SELECT cp.*, u.email, u.mobile_number, u.created_at as user_created_at FROM client_profiles cp JOIN users u ON cp.user_id = u.user_id ORDER BY cp.created_at DESC'
     );
 
     res.status(200).json({

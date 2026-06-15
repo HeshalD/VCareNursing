@@ -330,6 +330,21 @@ const updateAdvanceThreshold = async (req, res) => {
       return res.status(404).json({ status: 'error', message: 'Staff profile not found' });
     }
 
+    try {
+      const reviewerName = await getReviewerName(req.user.user_id);
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName: reviewerName,
+        actorRole: Array.isArray(req.user?.role) ? req.user.role[0] : String(req.user?.role),
+        actionType: 'ADVANCE_THRESHOLD_UPDATED',
+        entityType: 'STAFF',
+        entityId: String(staffProfileId),
+        details: { staff_name: result.rows[0].full_name, advance_threshold_amount },
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (updateAdvanceThreshold):', logErr.message);
+    }
+
     res.json({ status: 'success', data: result.rows[0] });
   } catch (err) {
     console.error('updateAdvanceThreshold error:', err);

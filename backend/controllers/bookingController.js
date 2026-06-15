@@ -4,7 +4,7 @@ const { sendWhatsAppMessage } = require('../utils/whatsapp');
 const sendEmail = require('../utils/email');
 const { upload } = require('../config/cloudinaryConfig');
 const { logActivity } = require('../utils/activityLogger');
-const { sendClientTerminationRequested, sendClientTerminationApproved } = require('../utils/metaWhatsapp');
+const { sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendStaffNewAssignment, sendClientStaffSwapped } = require('../utils/metaWhatsapp');
 const { sendSms } = require('../utils/sms');
 
 function extractActorRole(role) {
@@ -964,6 +964,7 @@ exports.getAdminBookingDetail = async (req, res) => {
             data: {
                 booking_summary: {
                     booking_id: booking.booking_id,
+                    booking_code: booking.booking_code,
                     request_id: booking.request_id,
                     status: booking.status,
                     service_type: booking.service_type,
@@ -1402,17 +1403,28 @@ exports.getPendingTerminationRequests = async (req, res) => {
                 c.primary_address as location,
                 p.full_name as patient_name,
                 s.staff_profile_id,
-                s.full_name as staff_name
+                s.full_name as staff_name,
+                COALESCE(fin.total_paid, 0) AS total_paid,
+                COALESCE(fin.total_invoiced, 0) AS total_invoiced,
+                COALESCE(fin.total_paid, 0) - COALESCE(fin.total_invoiced, 0) AS remaining_balance
             FROM service_terminations st
             JOIN bookings b ON st.booking_id = b.booking_id
             JOIN client_profiles c ON b.client_id = c.client_profile_id
             JOIN patient_profiles p ON b.patient_id = p.patient_id
             JOIN staff_profiles s ON b.assigned_staff_id = s.staff_profile_id
+            LEFT JOIN (
+                SELECT
+                    booking_id,
+                    COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' AND COALESCE(category::text, '') <> 'STAFF_SALARY' THEN amount ELSE 0 END), 0) AS total_paid,
+                    COALESCE(SUM(CASE WHEN transaction_type = 'DEBIT' THEN amount ELSE 0 END), 0) AS total_invoiced
+                FROM transactions
+                GROUP BY booking_id
+            ) fin ON fin.booking_id = b.booking_id
             WHERE st.status = 'PENDING'
-            ORDER BY 
+            ORDER BY
                 CASE WHEN st.urgency = 'IMMEDIATE' THEN 1
                      WHEN st.urgency = 'TODAY' THEN 2
-                     ELSE 3 END, 
+                     ELSE 3 END,
                 st.created_at ASC;
         `;
 
@@ -1430,9 +1442,64 @@ exports.getPendingTerminationRequests = async (req, res) => {
     }
 };
 
+exports.getTerminationHistory = async (req, res) => {
+    try {
+        const query = `
+            SELECT
+                st.termination_id,
+                st.termination_code,
+                st.urgency,
+                st.requested_end_date,
+                st.end_date as official_end_date,
+                st.status,
+                st.reason,
+                st.created_at as request_date,
+                b.booking_id,
+                b.booking_code,
+                b.start_date,
+                b.service_type,
+                c.full_name as client_name,
+                c.primary_address as location,
+                p.full_name as patient_name,
+                s.staff_profile_id,
+                s.full_name as staff_name,
+                COALESCE(fin.total_paid, 0) AS total_paid,
+                COALESCE(fin.total_invoiced, 0) AS total_invoiced,
+                COALESCE(fin.total_paid, 0) - COALESCE(fin.total_invoiced, 0) AS remaining_balance
+            FROM service_terminations st
+            JOIN bookings b ON st.booking_id = b.booking_id
+            JOIN client_profiles c ON b.client_id = c.client_profile_id
+            JOIN patient_profiles p ON b.patient_id = p.patient_id
+            JOIN staff_profiles s ON b.assigned_staff_id = s.staff_profile_id
+            LEFT JOIN (
+                SELECT
+                    booking_id,
+                    COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' AND COALESCE(category::text, '') <> 'STAFF_SALARY' THEN amount ELSE 0 END), 0) AS total_paid,
+                    COALESCE(SUM(CASE WHEN transaction_type = 'DEBIT' THEN amount ELSE 0 END), 0) AS total_invoiced
+                FROM transactions
+                GROUP BY booking_id
+            ) fin ON fin.booking_id = b.booking_id
+            WHERE st.status != 'PENDING'
+            ORDER BY st.created_at DESC;
+        `;
+
+        const result = await db.query(query);
+
+        res.status(200).json({
+            status: 'success',
+            count: result.rowCount,
+            data: result.rows
+        });
+
+    } catch (error) {
+        console.error("Get Termination History Error:", error);
+        res.status(500).json({ message: "Failed to fetch termination history." });
+    }
+};
+
 exports.approveTerminationRequest = async (req, res) => {
     const { termination_id } = req.params;
-    const { final_end_date } = req.body; // Admin can optionally override the exact stop time
+    const { final_end_date, settlement_action = 'WALLET_DEPOSIT', settlement_note } = req.body;
 
     const client = await db.pool.connect();
 
@@ -1495,7 +1562,7 @@ exports.approveTerminationRequest = async (req, res) => {
 
         // A. Fetch the Financial Contract (The Quote)
         const financeRes = await client.query(
-            `SELECT b.start_date, b.client_id, q.daily_rate, q.qty_days, q.registration_fee 
+            `SELECT b.start_date, b.client_id, q.daily_rate, q.qty_days, q.registration_fee
      FROM bookings b
      JOIN service_requests sr ON b.request_id = sr.request_id
      JOIN quotations q ON sr.active_quote_id = q.quote_id
@@ -1507,46 +1574,32 @@ exports.approveTerminationRequest = async (req, res) => {
             const financeData = financeRes.rows[0];
             const { start_date, client_id, daily_rate, qty_days } = financeData;
 
-            // B. Calculate Days Worked
-            // We calculate the difference in milliseconds, convert to days, and round up.
-            // (e.g., if they worked 2.1 days, it counts as 3 billable days for the nurse's sake)
             const diffTime = officialEndDate.getTime() - new Date(start_date).getTime();
             let daysWorked = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-            // Edge Case: If they cancel before the nurse even arrives (same day or future)
             if (daysWorked < 0) daysWorked = 0;
-            // Edge Case: Minimum 1 day charge if they cancel a few hours after the nurse arrives
             if (daysWorked === 0 && diffTime > 0) daysWorked = 1;
 
-            // C. Calculate Unused Days
             const unusedDays = qty_days - daysWorked;
 
-            // D. Process the Wallet Refund
             if (unusedDays > 0) {
-                // They paid for more days than they used!
                 const refundAmount = unusedDays * daily_rate;
 
-                // Add the exact refund amount to the Client's Wallet
-                await client.query(
-                    `UPDATE client_profiles 
-             SET wallet_balance = wallet_balance + $1 
-             WHERE client_profile_id = $2`,
-                    [refundAmount, client_id]
-                );
-
-                console.log(`SETTLEMENT: Credited Rs. ${refundAmount} for ${unusedDays} unused days to Client ${client_id}`);
-
-                // Optional: You can insert a record into a `wallet_transactions` table here 
-                // to keep a history of "Why" they got this money.
+                if (settlement_action === 'WALLET_DEPOSIT') {
+                    await client.query(
+                        `UPDATE client_profiles
+                 SET wallet_balance = wallet_balance + $1
+                 WHERE client_profile_id = $2`,
+                        [refundAmount, client_id]
+                    );
+                    console.log(`SETTLEMENT: Credited Rs. ${refundAmount} for ${unusedDays} unused days to Client ${client_id}`);
+                } else {
+                    console.log(`SETTLEMENT: No-refund selected. Rs. ${refundAmount} retained. Note: ${settlement_note || 'none'}`);
+                }
 
             } else if (unusedDays < 0) {
-                // SCENARIO: They overstayed their prepaid quote! 
-                // e.g., Paid for 14 days, stopped on day 16.
                 const amountOwed = Math.abs(unusedDays) * daily_rate;
                 console.log(`SETTLEMENT ALERT: Client ${client_id} overstayed by ${Math.abs(unusedDays)} days and owes Rs. ${amountOwed}`);
-
-                // Here, instead of a refund, you would trigger an alert for your accountant 
-                // to send a final Post-Paid Invoice to the client for the extra days.
             } else {
                 console.log(`SETTLEMENT: Perfect match. 0 unused days. No wallet changes.`);
             }
@@ -1577,6 +1630,8 @@ exports.approveTerminationRequest = async (req, res) => {
                     },
                 });
 
+                const endDateStr = officialEndDate.toLocaleDateString('en-GB');
+
                 const clientRes = await db.query(
                     `SELECT u.mobile_number, cp.full_name
                      FROM client_profiles cp
@@ -1586,7 +1641,6 @@ exports.approveTerminationRequest = async (req, res) => {
                 );
                 if (clientRes.rows.length > 0) {
                     const { mobile_number, full_name } = clientRes.rows[0];
-                    const endDateStr = officialEndDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
                     const ref = request.termination_code;
 
                     await Promise.allSettled([
@@ -1595,6 +1649,28 @@ exports.approveTerminationRequest = async (req, res) => {
                             `VCare: Hi ${full_name}, your termination request (${ref}) has been approved. Official end date: ${endDateStr}. Please contact us regarding any eligible refund.`
                         ),
                     ]);
+                }
+
+                if (request.assigned_staff_id) {
+                    const staffRes = await db.query(
+                        `SELECT u.mobile_number, sp.full_name, sr.patient_name
+                         FROM staff_profiles sp
+                         JOIN users u ON sp.user_id = u.user_id
+                         LEFT JOIN bookings b ON b.booking_id = $2
+                         LEFT JOIN service_requests sr ON sr.request_id = b.request_id
+                         WHERE sp.staff_profile_id = $1`,
+                        [request.assigned_staff_id, request.booking_id]
+                    );
+                    if (staffRes.rows.length > 0) {
+                        const { mobile_number, full_name, patient_name } = staffRes.rows[0];
+                        const patientDisplay = patient_name || 'the patient';
+                        await Promise.allSettled([
+                            sendStaffAssignmentTerminated(mobile_number, full_name, patientDisplay, endDateStr),
+                            sendSms(mobile_number,
+                                `VCare: Hi ${full_name}, your assignment for ${patientDisplay} has ended. End date: ${endDateStr}. Thank you for your dedication and service.`
+                            ),
+                        ]);
+                    }
                 }
             } catch (e) {
                 console.error('[approveTermination] Post-commit error:', e.message);
@@ -1762,6 +1838,56 @@ exports.forceStopBooking = async (req, res) => {
 
         await client.query('COMMIT');
 
+        // Fire-and-forget: notify client and staff
+        (async () => {
+            try {
+                const endDateStr = officialEndDate.toLocaleDateString('en-GB');
+
+                const infoRes = await db.query(
+                    `SELECT
+                        cp.full_name AS client_name, cu.mobile_number AS client_mobile,
+                        sp.full_name AS staff_name, su.mobile_number AS staff_mobile,
+                        sr.patient_name
+                     FROM bookings b
+                     JOIN client_profiles cp ON cp.client_profile_id = b.client_id
+                     JOIN users cu ON cu.user_id = cp.user_id
+                     LEFT JOIN staff_profiles sp ON sp.staff_profile_id = b.assigned_staff_id
+                     LEFT JOIN users su ON su.user_id = sp.user_id
+                     LEFT JOIN service_requests sr ON sr.request_id = b.request_id
+                     WHERE b.booking_id = $1`,
+                    [booking_id]
+                );
+
+                if (infoRes.rows.length > 0) {
+                    const { client_name, client_mobile, staff_name, staff_mobile, patient_name } = infoRes.rows[0];
+                    const patientDisplay = patient_name || 'the patient';
+                    const notifications = [];
+
+                    if (client_mobile) {
+                        notifications.push(
+                            sendClientForceTerminated(client_mobile, client_name, patientDisplay, endDateStr),
+                            sendSms(client_mobile,
+                                `VCare: Hi ${client_name}, your care arrangement for ${patientDisplay} has been ended effective ${endDateStr}. Please contact us if you have any questions.`
+                            )
+                        );
+                    }
+
+                    if (staff_mobile) {
+                        notifications.push(
+                            sendStaffForceTerminated(staff_mobile, staff_name, patientDisplay, endDateStr),
+                            sendSms(staff_mobile,
+                                `VCare: Hi ${staff_name}, your assignment for ${patientDisplay} has been ended effective ${endDateStr}. Please contact the VCare office to confirm your availability.`
+                            )
+                        );
+                    }
+
+                    await Promise.allSettled(notifications);
+                }
+            } catch (e) {
+                console.error('[forceStopBooking] Post-commit notification error:', e.message);
+            }
+        })();
+
         res.status(200).json({
             status: 'success',
             message: "Service forcefully stopped. Staff member is now available.",
@@ -1810,13 +1936,36 @@ exports.getAllBookings = async (req, res) => {
                 s.full_name as staff_name,
                 us.mobile_number as staff_mobile,
                 s.profile_picture_url,
-                us.email as staff_email
+                us.email as staff_email,
+                CASE
+                    WHEN b.status = 'ACTIVE' AND b.daily_rate > 0 THEN
+                        ROUND(
+                            (COALESCE(bill.total_paid, 0) - COALESCE(bill.total_invoiced, 0))
+                            / b.daily_rate, 1
+                        )
+                    ELSE NULL
+                END AS balance_days_remaining,
+                CASE
+                    WHEN b.status = 'ACTIVE'
+                    AND b.daily_rate > 0
+                    AND (COALESCE(bill.total_paid, 0) - COALESCE(bill.total_invoiced, 0)) / b.daily_rate <= 1
+                    THEN true
+                    ELSE false
+                END AS is_expiring_soon
             FROM bookings b
             LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
             LEFT JOIN users uc ON c.user_id = uc.user_id
             LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
             LEFT JOIN staff_profiles s ON b.assigned_staff_id = s.staff_profile_id
             LEFT JOIN users us ON s.user_id = us.user_id
+            LEFT JOIN (
+                SELECT
+                    booking_id,
+                    COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' AND COALESCE(category::text, '') != 'STAFF_SALARY' THEN amount ELSE 0 END), 0) AS total_paid,
+                    COALESCE(SUM(CASE WHEN transaction_type = 'DEBIT' THEN amount ELSE 0 END), 0) AS total_invoiced
+                FROM transactions
+                GROUP BY booking_id
+            ) bill ON bill.booking_id = b.booking_id
             ORDER BY b.created_at DESC
         `;
 
@@ -2136,22 +2285,63 @@ exports.swapStaff = async (req, res) => {
             console.error('Activity log error (non-fatal):', logErr);
         }
 
-        // 9. Notifications — stubbed out, ready for WhatsApp go-live
-        // await sendBookingConfirmation(
-        //     booking.client_mobile,
-        //     booking.client_name,
-        //     newStaff.full_name,
-        //     booking.patient_name,
-        //     new Date().toDateString()
-        // );
-        // await sendWhatsAppMessage(
-        //     booking.old_staff_mobile,
-        //     `Your assignment for patient ${booking.patient_name} has ended. You are now available for new bookings.`
-        // );
-        // await sendWhatsAppMessage(
-        //     newStaff.staff_mobile,
-        //     `New Assignment: You have been assigned to care for ${booking.patient_name} at ${booking.client_name}'s address. Please log in to the app for full details.`
-        // );
+        // 9. Fire-and-forget notifications
+        (async () => {
+            try {
+                const swapDate = new Date().toLocaleDateString('en-GB');
+
+                const supplementRes = await db.query(
+                    `SELECT COALESCE(sr.location_address, cp.primary_address, '') AS location,
+                            COALESCE(p.medical_condition, 'None specified') AS conditions
+                     FROM bookings b
+                     LEFT JOIN service_requests sr ON b.request_id = sr.request_id
+                     LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+                     LEFT JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+                     WHERE b.booking_id = $1`,
+                    [booking_id]
+                );
+
+                const supp = supplementRes.rows[0] || {};
+                const patientName = bookingDetail.patient_name || 'the patient';
+                const location = supp.location || 'the client location';
+                const conditions = supp.conditions || 'None specified';
+                const clientMobile = bookingDetail.client_mobile;
+                const clientName = bookingDetail.client_name;
+                const oldMobile = bookingDetail.old_staff_mobile;
+                const notifications = [];
+
+                if (oldMobile && currentStaffName) {
+                    notifications.push(
+                        sendStaffAssignmentTerminated(oldMobile, currentStaffName, patientName, swapDate),
+                        sendSms(oldMobile,
+                            `VCare: Hi ${currentStaffName}, your assignment for ${patientName} has ended. End date: ${swapDate}. Thank you for your dedication and service.`
+                        )
+                    );
+                }
+
+                if (newStaff.staff_mobile) {
+                    notifications.push(
+                        sendStaffNewAssignment(newStaff.staff_mobile, newStaff.full_name, patientName, location, conditions, swapDate),
+                        sendSms(newStaff.staff_mobile,
+                            `VCare: Hi ${newStaff.full_name}, you have a new assignment for ${patientName} at ${location}. Please contact the VCare office for full details.`
+                        )
+                    );
+                }
+
+                if (clientMobile) {
+                    notifications.push(
+                        sendClientStaffSwapped(clientMobile, clientName, patientName, newStaff.full_name, swapDate),
+                        sendSms(clientMobile,
+                            `VCare: Hi ${clientName}, your caregiver for ${patientName} has been updated to ${newStaff.full_name}. Contact us if you have any questions.`
+                        )
+                    );
+                }
+
+                await Promise.allSettled(notifications);
+            } catch (notifErr) {
+                console.error('[swapStaff] Notification error (non-fatal):', notifErr.message);
+            }
+        })();
 
         res.status(200).json({
             status: 'success',

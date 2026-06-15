@@ -188,6 +188,15 @@ async function runMigration() {
     END $$;
   `);
 
+  // Manual deductions applied to staff earnings
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'STAFF_DEDUCTION';
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
   await db.query(`
     DO $$ BEGIN
       CREATE TYPE transaction_type_enum AS ENUM (
@@ -571,8 +580,19 @@ async function runMigration() {
         paid_by UUID REFERENCES users(user_id),
         paid_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
         status VARCHAR(20) DEFAULT 'COMPLETED',
+        salary_sheet_url TEXT,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+
+    await db.query(`
+      ALTER TABLE staff_payments_tracking
+      ADD COLUMN IF NOT EXISTS salary_sheet_url TEXT;
+    `);
+
+    await db.query(`
+      ALTER TABLE staff_payments_tracking
+      ADD COLUMN IF NOT EXISTS notification_sent_at TIMESTAMP WITH TIME ZONE;
     `);
 
     await db.query(`

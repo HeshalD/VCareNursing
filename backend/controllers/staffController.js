@@ -1,5 +1,302 @@
 const db = require('../config/db');
 const { sendWhatsAppMessage } = require('../utils/whatsapp');
+const { sendStaffDeductionNotice, sendStaffSalarySheet } = require('../utils/metaWhatsapp');
+const { sendSms } = require('../utils/sms');
+const { logActivity } = require('../utils/activityLogger');
+const { generateAndUploadSalarySheet } = require('../utils/salaryPdf');
+
+const _MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const _METHOD_LABELS = { BANK_TRANSFER: 'Bank Transfer', CASH: 'Cash', CHEQUE: 'Cheque' };
+
+async function _sendSalaryPayoutNotifications(staffProfileId, payoutAmount, paymentMethod, referenceNumber, notes, staffPaymentId, monthYear, autoSend) {
+    const staffRes = await db.query(`
+        SELECT sp.full_name, sp.designation, u.mobile_number
+        FROM staff_profiles sp
+        JOIN users u ON sp.user_id = u.user_id
+        WHERE sp.staff_profile_id = $1
+    `, [staffProfileId]);
+
+    if (!staffRes.rows.length || !staffRes.rows[0].mobile_number) return;
+    const staff = staffRes.rows[0];
+
+    const params = [staffProfileId];
+    let joinMonthFilter = '';   // for queries where transactions is aliased as "t"
+    let plainMonthFilter = '';  // for standalone queries with no alias
+    if (monthYear) {
+        params.push(monthYear.year, monthYear.month);
+        const yi = params.length - 1;
+        const mi = params.length;
+        joinMonthFilter  = `AND EXTRACT(YEAR FROM t.created_at) = $${yi} AND EXTRACT(MONTH FROM t.created_at) = $${mi}`;
+        plainMonthFilter = `AND EXTRACT(YEAR FROM created_at) = $${yi} AND EXTRACT(MONTH FROM created_at) = $${mi}`;
+    }
+
+    const breakdownRes = await db.query(`
+        SELECT
+            bsa.booking_id, b.booking_code,
+            bsa.service_start_date, bsa.service_end_date, bsa.daily_rate,
+            cp.full_name AS client_name,
+            pp.full_name AS patient_name,
+            COALESCE(json_agg(
+                json_build_object('date', t.created_at::date, 'amount', t.amount)
+                ORDER BY t.created_at
+            ) FILTER (WHERE t.transaction_id IS NOT NULL), '[]'::json) AS daily_entries,
+            COALESCE(SUM(t.amount), 0) AS total_salary_earned
+        FROM booking_staff_assignments bsa
+        JOIN bookings b ON bsa.booking_id = b.booking_id
+        LEFT JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+        LEFT JOIN patient_profiles pp ON b.patient_id = pp.patient_id
+        LEFT JOIN transactions t
+            ON t.staff_profile_id = bsa.staff_profile_id
+            AND t.booking_id = bsa.booking_id
+            AND t.category = 'STAFF_SALARY'
+            ${joinMonthFilter}
+        WHERE bsa.staff_profile_id = $1
+        GROUP BY bsa.assignment_id, bsa.booking_id, b.booking_code,
+                 bsa.service_start_date, bsa.service_end_date, bsa.daily_rate,
+                 cp.full_name, pp.full_name
+        HAVING COALESCE(SUM(t.amount), 0) > 0
+        ORDER BY bsa.service_start_date DESC
+    `, params);
+
+    const deductionsRes = await db.query(`
+        SELECT amount, notes AS reason, created_at
+        FROM transactions
+        WHERE staff_profile_id = $1 AND category = 'STAFF_DEDUCTION' ${plainMonthFilter}
+        ORDER BY created_at
+    `, params);
+
+    const advancesRes = await db.query(`
+        SELECT amount, notes, created_at
+        FROM transactions
+        WHERE staff_profile_id = $1 AND category = 'STAFF_ADVANCE' ${plainMonthFilter}
+        ORDER BY created_at
+    `, params);
+
+    // Previous payouts in the same period (exclude the current one just inserted)
+    let priorPayoutsRes = { rows: [] };
+    if (monthYear && staffPaymentId) {
+        priorPayoutsRes = await db.query(`
+            SELECT amount_paid, paid_at, payment_method, reference_number
+            FROM staff_payments_tracking
+            WHERE staff_profile_id = $1
+              AND EXTRACT(YEAR FROM paid_at) = $2 AND EXTRACT(MONTH FROM paid_at) = $3
+              AND staff_payment_id != $4
+            ORDER BY paid_at
+        `, [staffProfileId, monthYear.year, monthYear.month, staffPaymentId]);
+    }
+
+    // Outstanding balance carried over from all months before the selected one
+    let previous_leftover = 0;
+    if (monthYear) {
+        const [preTxnRes, prePayRes] = await Promise.all([
+            db.query(`
+                SELECT
+                    COALESCE(SUM(CASE WHEN category = 'STAFF_SALARY'    THEN amount ELSE 0 END), 0) AS pre_gross,
+                    COALESCE(SUM(CASE WHEN category = 'STAFF_DEDUCTION' THEN amount ELSE 0 END), 0) AS pre_deductions,
+                    COALESCE(SUM(CASE WHEN category = 'STAFF_ADVANCE'   THEN amount ELSE 0 END), 0) AS pre_advances
+                FROM transactions
+                WHERE staff_profile_id = $1
+                  AND category IN ('STAFF_SALARY', 'STAFF_DEDUCTION', 'STAFF_ADVANCE')
+                  AND (
+                      EXTRACT(YEAR  FROM created_at)::int < $2
+                   OR (EXTRACT(YEAR  FROM created_at)::int = $2 AND EXTRACT(MONTH FROM created_at)::int < $3)
+                  )
+            `, [staffProfileId, monthYear.year, monthYear.month]),
+            db.query(`
+                SELECT COALESCE(SUM(amount_paid), 0) AS pre_payouts
+                FROM staff_payments_tracking
+                WHERE staff_profile_id = $1
+                  AND (
+                      EXTRACT(YEAR  FROM paid_at)::int < $2
+                   OR (EXTRACT(YEAR  FROM paid_at)::int = $2 AND EXTRACT(MONTH FROM paid_at)::int < $3)
+                  )
+            `, [staffProfileId, monthYear.year, monthYear.month]),
+        ]);
+        const pre = preTxnRes.rows[0];
+        previous_leftover = Math.max(
+            0,
+            parseFloat(pre.pre_gross) - parseFloat(pre.pre_deductions) - parseFloat(pre.pre_advances) - parseFloat(prePayRes.rows[0].pre_payouts)
+        );
+    }
+
+    const now = new Date();
+    const monthLabel = monthYear
+        ? `${_MONTH_NAMES[monthYear.month - 1]} ${monthYear.year}`
+        : `${_MONTH_NAMES[now.getMonth()]} ${now.getFullYear()}`;
+    const paymentDate = now.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    const lkrFmt = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
+    const formattedAmount = lkrFmt.format(payoutAmount);
+
+    // Net payable = what was outstanding before this payout (shown in the template)
+    const _grossTotal        = breakdownRes.rows.reduce((s, r) => s + parseFloat(r.total_salary_earned || 0), 0);
+    const _totalDeductions   = deductionsRes.rows.reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+    const _totalAdvances     = advancesRes.rows.reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+    const _totalPriorPayouts = priorPayoutsRes.rows.reduce((s, r) => s + parseFloat(r.amount_paid || 0), 0);
+    const _monthNet          = Math.max(0, _grossTotal - _totalDeductions - _totalAdvances - _totalPriorPayouts);
+    const _netPayable        = _monthNet + previous_leftover;
+    const formattedNetPayable = lkrFmt.format(_netPayable);
+
+    const pdfUrl = await generateAndUploadSalarySheet({
+        staff_name: staff.full_name,
+        designation: staff.designation,
+        payment_amount: payoutAmount,
+        payment_date: paymentDate,
+        payment_method: paymentMethod,
+        reference_number: referenceNumber,
+        notes,
+        month_label: monthLabel,
+        generated_at: paymentDate,
+        breakdown: breakdownRes.rows,
+        deductions: deductionsRes.rows,
+        advances: advancesRes.rows,
+        prior_payouts: priorPayoutsRes.rows,
+        previous_leftover,
+    });
+
+    if (staffPaymentId) {
+        await db.query(
+            `UPDATE staff_payments_tracking SET salary_sheet_url = $1 WHERE staff_payment_id = $2`,
+            [pdfUrl, staffPaymentId]
+        );
+    }
+
+    if (autoSend) {
+        const methodLabel = _METHOD_LABELS[paymentMethod] || paymentMethod || 'Bank Transfer';
+
+        await sendStaffSalarySheet(
+            staff.mobile_number,
+            staff.full_name,
+            monthLabel,
+            formattedNetPayable,
+            formattedAmount,
+            paymentDate,
+            methodLabel,
+            referenceNumber || 'N/A',
+            pdfUrl
+        );
+
+        await sendSms(
+            staff.mobile_number,
+            `VCare Nursing: Your ${monthLabel} salary of ${formattedAmount} has been paid via ${methodLabel}.${referenceNumber ? ' Ref: ' + referenceNumber + '.' : ''} Net payable was ${formattedNetPayable}. Check WhatsApp for your full salary sheet.`
+        );
+    }
+}
+
+// Resend WhatsApp + SMS for an existing payout record (no PDF regeneration)
+async function _sendNotificationForPayoutId(staffPaymentId) {
+    const payoutRes = await db.query(`
+        SELECT spt.*, sp.full_name, sp.designation, u.mobile_number
+        FROM staff_payments_tracking spt
+        JOIN staff_profiles sp ON spt.staff_profile_id = sp.staff_profile_id
+        JOIN users u ON sp.user_id = u.user_id
+        WHERE spt.staff_payment_id = $1
+    `, [staffPaymentId]);
+
+    if (!payoutRes.rows.length) throw new Error('Payout record not found');
+    const payout = payoutRes.rows[0];
+    if (!payout.salary_sheet_url) throw new Error('No salary sheet PDF associated with this payout');
+    if (!payout.mobile_number) throw new Error('Staff member has no mobile number');
+
+    const paidAt = new Date(payout.paid_at);
+    const monthYear = { year: paidAt.getFullYear(), month: paidAt.getMonth() + 1 };
+    const label = `${_MONTH_NAMES[monthYear.month - 1]} ${monthYear.year}`;
+    const paymentDate = paidAt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    const lkrFmt = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
+
+    const params = [payout.staff_profile_id, monthYear.year, monthYear.month];
+    const joinMonthFilter = `AND EXTRACT(YEAR FROM t.created_at) = $2 AND EXTRACT(MONTH FROM t.created_at) = $3`;
+    const plainMonthFilter = `AND EXTRACT(YEAR FROM created_at) = $2 AND EXTRACT(MONTH FROM created_at) = $3`;
+
+    const [breakdownRes, deductionsRes, advancesRes] = await Promise.all([
+        db.query(`
+            SELECT COALESCE(SUM(t.amount), 0) AS total_salary_earned
+            FROM booking_staff_assignments bsa
+            JOIN bookings b ON bsa.booking_id = b.booking_id
+            LEFT JOIN transactions t
+                ON t.staff_profile_id = bsa.staff_profile_id
+                AND t.booking_id = bsa.booking_id
+                AND t.category = 'STAFF_SALARY'
+                ${joinMonthFilter}
+            WHERE bsa.staff_profile_id = $1
+            GROUP BY bsa.assignment_id
+            HAVING COALESCE(SUM(t.amount), 0) > 0
+        `, params),
+        db.query(`SELECT amount FROM transactions WHERE staff_profile_id = $1 AND category = 'STAFF_DEDUCTION' ${plainMonthFilter} ORDER BY created_at`, params),
+        db.query(`SELECT amount FROM transactions WHERE staff_profile_id = $1 AND category = 'STAFF_ADVANCE' ${plainMonthFilter} ORDER BY created_at`, params),
+    ]);
+
+    const priorPayoutsRes = await db.query(`
+        SELECT amount_paid FROM staff_payments_tracking
+        WHERE staff_profile_id = $1
+          AND EXTRACT(YEAR FROM paid_at) = $2 AND EXTRACT(MONTH FROM paid_at) = $3
+          AND staff_payment_id != $4
+        ORDER BY paid_at
+    `, [payout.staff_profile_id, monthYear.year, monthYear.month, staffPaymentId]);
+
+    const [preTxnRes, prePayRes] = await Promise.all([
+        db.query(`
+            SELECT
+                COALESCE(SUM(CASE WHEN category = 'STAFF_SALARY'    THEN amount ELSE 0 END), 0) AS pre_gross,
+                COALESCE(SUM(CASE WHEN category = 'STAFF_DEDUCTION' THEN amount ELSE 0 END), 0) AS pre_deductions,
+                COALESCE(SUM(CASE WHEN category = 'STAFF_ADVANCE'   THEN amount ELSE 0 END), 0) AS pre_advances
+            FROM transactions
+            WHERE staff_profile_id = $1
+              AND category IN ('STAFF_SALARY', 'STAFF_DEDUCTION', 'STAFF_ADVANCE')
+              AND (EXTRACT(YEAR FROM created_at)::int < $2 OR (EXTRACT(YEAR FROM created_at)::int = $2 AND EXTRACT(MONTH FROM created_at)::int < $3))
+        `, [payout.staff_profile_id, monthYear.year, monthYear.month]),
+        db.query(`
+            SELECT COALESCE(SUM(amount_paid), 0) AS pre_payouts
+            FROM staff_payments_tracking
+            WHERE staff_profile_id = $1
+              AND (EXTRACT(YEAR FROM paid_at)::int < $2 OR (EXTRACT(YEAR FROM paid_at)::int = $2 AND EXTRACT(MONTH FROM paid_at)::int < $3))
+        `, [payout.staff_profile_id, monthYear.year, monthYear.month]),
+    ]);
+
+    const pre = preTxnRes.rows[0];
+    const previous_leftover = Math.max(0,
+        parseFloat(pre.pre_gross) - parseFloat(pre.pre_deductions) - parseFloat(pre.pre_advances) - parseFloat(prePayRes.rows[0].pre_payouts)
+    );
+    const _grossTotal        = breakdownRes.rows.reduce((s, r) => s + parseFloat(r.total_salary_earned || 0), 0);
+    const _totalDeductions   = deductionsRes.rows.reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+    const _totalAdvances     = advancesRes.rows.reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+    const _totalPriorPayouts = priorPayoutsRes.rows.reduce((s, r) => s + parseFloat(r.amount_paid || 0), 0);
+    const _netPayable        = Math.max(0, _grossTotal - _totalDeductions - _totalAdvances - _totalPriorPayouts) + previous_leftover;
+
+    const formattedAmount     = lkrFmt.format(payout.amount_paid);
+    const formattedNetPayable = lkrFmt.format(_netPayable);
+    const methodLabel         = _METHOD_LABELS[payout.payment_method] || payout.payment_method || 'Bank Transfer';
+
+    let anySent = false;
+
+    try {
+        await sendStaffSalarySheet(
+            payout.mobile_number, payout.full_name, label,
+            formattedNetPayable, formattedAmount, paymentDate,
+            methodLabel, payout.reference_number || 'N/A', payout.salary_sheet_url
+        );
+        anySent = true;
+    } catch (waErr) {
+        const waMsg = waErr.response?.data?.error?.message ?? waErr.message;
+        console.error(`[Salary Notification] WhatsApp failed for payout ${staffPaymentId}: ${waMsg}`);
+    }
+
+    try {
+        await sendSms(
+            payout.mobile_number,
+            `VCare Nursing: Your ${label} salary of ${formattedAmount} has been paid via ${methodLabel}.${payout.reference_number ? ' Ref: ' + payout.reference_number + '.' : ''} Net payable was ${formattedNetPayable}. Check WhatsApp for your full salary sheet.`
+        );
+        anySent = true;
+    } catch (smsErr) {
+        console.error(`[Salary Notification] SMS failed for payout ${staffPaymentId}:`, smsErr.message);
+    }
+
+    if (!anySent) throw new Error('Both WhatsApp and SMS failed — check server logs');
+
+    await db.query(
+        `UPDATE staff_payments_tracking SET notification_sent_at = NOW() WHERE staff_payment_id = $1`,
+        [staffPaymentId]
+    );
+}
 
 const getUploadedFileUrl = (files, fieldName) => (files && files[fieldName] && files[fieldName][0]) ? files[fieldName][0].path : null;
 
@@ -573,6 +870,23 @@ exports.createStaffBankAccount = async (req, res) => {
             [staff_profile_id, account_holder_name, bank_name, branch_name || null, account_number, currency || 'LKR']
         );
 
+        try {
+            const actorNameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+            const actorName = actorNameRes.rows[0]?.full_name || 'Admin';
+            const actorRole = Array.isArray(req.user?.role) ? req.user.role[0] : req.user?.role;
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole),
+                actionType: 'STAFF_BANK_ACCOUNT_CREATED',
+                entityType: 'STAFF_BANK_ACCOUNT',
+                entityId: String(insertRes.rows[0].staff_bank_account_id),
+                details: { staff_profile_id, bank_name, account_holder_name },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (createStaffBankAccount):', logErr.message);
+        }
+
         return res.status(201).json({ status: 'success', data: insertRes.rows[0] });
 
     } catch (error) {
@@ -609,6 +923,24 @@ exports.updateStaffBankAccount = async (req, res) => {
         `;
 
         const updateRes = await db.query(updateQuery, [account_holder_name, bank_name, branch_name, account_number, currency, is_verified, is_active, staff_bank_account_id]);
+
+        try {
+            const actorNameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+            const actorName = actorNameRes.rows[0]?.full_name || 'Admin';
+            const actorRole = Array.isArray(req.user?.role) ? req.user.role[0] : req.user?.role;
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole),
+                actionType: 'STAFF_BANK_ACCOUNT_UPDATED',
+                entityType: 'STAFF_BANK_ACCOUNT',
+                entityId: String(staff_bank_account_id),
+                details: { staff_profile_id, bank_name, account_holder_name },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (updateStaffBankAccount):', logErr.message);
+        }
+
         return res.status(200).json({ status: 'success', data: updateRes.rows[0] });
 
     } catch (error) {
@@ -629,6 +961,24 @@ exports.deleteStaffBankAccount = async (req, res) => {
         }
 
         await db.query('UPDATE staff_bank_accounts SET is_active = false WHERE staff_bank_account_id = $1', [staff_bank_account_id]);
+
+        try {
+            const actorNameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+            const actorName = actorNameRes.rows[0]?.full_name || 'Admin';
+            const actorRole = Array.isArray(req.user?.role) ? req.user.role[0] : req.user?.role;
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole),
+                actionType: 'STAFF_BANK_ACCOUNT_DELETED',
+                entityType: 'STAFF_BANK_ACCOUNT',
+                entityId: String(staff_bank_account_id),
+                details: { staff_profile_id },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (deleteStaffBankAccount):', logErr.message);
+        }
+
         return res.status(200).json({ status: 'success', message: 'Bank account deactivated' });
 
     } catch (error) {
@@ -671,6 +1021,23 @@ exports.deactivateStaffAccount = async (req, res) => {
         );
 
         await client.query('COMMIT');
+
+        try {
+            const actorNameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+            const actorName = actorNameRes.rows[0]?.full_name || 'Admin';
+            const actorRole = Array.isArray(req.user?.role) ? req.user.role[0] : req.user?.role;
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole),
+                actionType: 'STAFF_ACCOUNT_DEACTIVATED',
+                entityType: 'STAFF',
+                entityId: String(staff_profile_id),
+                details: { staff_name: updateRes.rows[0].full_name },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (deactivateStaffAccount):', logErr.message);
+        }
 
         return res.status(200).json({
             status: 'success',
@@ -720,6 +1087,23 @@ exports.reactivateStaffAccount = async (req, res) => {
         );
 
         await client.query('COMMIT');
+
+        try {
+            const actorNameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+            const actorName = actorNameRes.rows[0]?.full_name || 'Admin';
+            const actorRole = Array.isArray(req.user?.role) ? req.user.role[0] : req.user?.role;
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole),
+                actionType: 'STAFF_ACCOUNT_REACTIVATED',
+                entityType: 'STAFF',
+                entityId: String(staff_profile_id),
+                details: { staff_name: updateRes.rows[0].full_name },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (reactivateStaffAccount):', logErr.message);
+        }
 
         return res.status(200).json({
             status: 'success',
@@ -979,7 +1363,8 @@ exports.createStaffPayout = async (req, res) => {
             staff_bank_account_id,
             payment_method,
             reference_number,
-            notes
+            notes,
+            month_year,
         } = req.body;
 
         if (!amount || isNaN(amount) || Number(amount) <= 0) {
@@ -1023,13 +1408,35 @@ exports.createStaffPayout = async (req, res) => {
             const transaction_id = insertTrans.rows[0].transaction_id;
 
             // Insert into staff_payments_tracking for audit
-            await client.query(
+            const insertPayment = await client.query(
                 `INSERT INTO staff_payments_tracking (staff_profile_id, company_bank_account_id, staff_bank_account_id, transaction_id, amount_paid, payment_method, reference_number, notes, paid_by, paid_at, status, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'COMPLETED', NOW())`,
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'COMPLETED', NOW())
+                 RETURNING staff_payment_id`,
                 [staff_profile_id, company_bank_account_id || null, staff_bank_account_id || null, transaction_id, payoutAmount, payment_method || null, reference_number || null, notes || null, req.user.user_id]
             );
+            const staffPaymentId = insertPayment.rows[0].staff_payment_id;
 
             await client.query('COMMIT');
+
+            try {
+                const actorNameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+                const actorName = actorNameRes.rows[0]?.full_name || 'Admin';
+                const actorRole = Array.isArray(req.user?.role) ? req.user.role[0] : req.user?.role;
+                await logActivity({
+                    actorUserId: req.user.user_id,
+                    actorName,
+                    actorRole: typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole),
+                    actionType: 'STAFF_PAYOUT_CREATED',
+                    entityType: 'STAFF_PAYOUT',
+                    entityId: String(transaction_id),
+                    details: { staff_profile_id, amount: payoutAmount, payment_method: payment_method || null },
+                });
+            } catch (logErr) {
+                console.error('Activity log failed (createStaffPayout):', logErr.message);
+            }
+
+            _sendSalaryPayoutNotifications(staff_profile_id, payoutAmount, payment_method, reference_number, notes, staffPaymentId, month_year || null, false)
+                .catch(err => console.error('[Salary Notification] createStaffPayout:', err.message));
 
             return res.status(201).json({ status: 'success', message: 'Payout recorded', data: { transaction_id } });
 
@@ -1040,6 +1447,156 @@ exports.createStaffPayout = async (req, res) => {
         } finally {
             client.release();
         }
+};
+
+// Apply a manual deduction to a staff member's earnings and wallet
+exports.createStaffDeduction = async (req, res) => {
+    const { staff_profile_id } = req.params;
+    const { amount, reason } = req.body;
+
+    if (!amount || isNaN(amount) || Number(amount) <= 0) {
+        return res.status(400).json({ status: 'error', message: 'Invalid amount' });
+    }
+    if (!reason || !String(reason).trim()) {
+        return res.status(400).json({ status: 'error', message: 'Reason is required' });
+    }
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const sel = await client.query(
+            `SELECT sp.current_earnings, sp.full_name, u.mobile_number,
+                    COALESCE(sw.balance, 0) AS wallet_balance
+             FROM staff_profiles sp
+             JOIN users u ON u.user_id = sp.user_id
+             LEFT JOIN staff_wallet sw ON sw.staff_profile_id = sp.staff_profile_id
+             WHERE sp.staff_profile_id = $1
+             FOR UPDATE OF sp`,
+            [staff_profile_id]
+        );
+
+        if (!sel.rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Staff profile not found' });
+        }
+
+        const { current_earnings, full_name, mobile_number, wallet_balance } = sel.rows[0];
+        const deductionAmount = parseFloat(amount);
+        const trimmedReason = String(reason).trim();
+
+        const newEarnings = Math.max(0, parseFloat(current_earnings || 0) - deductionAmount).toFixed(2);
+        await client.query(
+            `UPDATE staff_profiles SET current_earnings = $1 WHERE staff_profile_id = $2`,
+            [newEarnings, staff_profile_id]
+        );
+
+        await client.query(
+            `UPDATE staff_wallet SET balance = GREATEST(balance - $1, 0), updated_at = NOW()
+             WHERE staff_profile_id = $2`,
+            [deductionAmount, staff_profile_id]
+        );
+
+        const insertTrans = await client.query(
+            `INSERT INTO transactions (staff_profile_id, category, amount, transaction_type, notes, created_by, verified_by, status, created_at)
+             VALUES ($1, 'STAFF_DEDUCTION', $2, 'DEBIT', $3, $4, $4, 'COMPLETED', NOW())
+             RETURNING transaction_id`,
+            [staff_profile_id, deductionAmount, trimmedReason, req.user.user_id]
+        );
+        const transaction_id = insertTrans.rows[0].transaction_id;
+
+        await client.query(
+            `INSERT INTO staff_wallet_transactions (staff_profile_id, type, amount, reason, reference_id, created_at)
+             VALUES ($1, 'DEBIT', $2, 'MANUAL_DEDUCTION', $3, NOW())`,
+            [staff_profile_id, deductionAmount, transaction_id]
+        );
+
+        await client.query('COMMIT');
+
+        try {
+            const actorNameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+            const actorName = actorNameRes.rows[0]?.full_name || 'Admin';
+            const actorRole = Array.isArray(req.user?.role) ? req.user.role[0] : req.user?.role;
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole),
+                actionType: 'DEDUCTION_APPLIED',
+                entityType: 'STAFF',
+                entityId: String(staff_profile_id),
+                details: { staff_name: full_name, amount: deductionAmount, reason: trimmedReason },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (createStaffDeduction):', logErr.message);
+        }
+
+        if (mobile_number) {
+            const formattedDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+            const formattedAmount = `Rs. ${deductionAmount.toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+            try {
+                await sendStaffDeductionNotice(mobile_number, full_name, formattedAmount, trimmedReason, formattedDate);
+            } catch (waErr) {
+                console.error('WhatsApp deduction notice failed:', waErr.message);
+            }
+
+            try {
+                await sendSms(mobile_number, `VCare: Dear ${full_name}, a deduction of ${formattedAmount} has been applied to your earnings. Reason: ${trimmedReason}. Date: ${formattedDate}. Contact us for queries.`);
+            } catch (smsErr) {
+                console.error('SMS deduction notice failed:', smsErr.message);
+            }
+        }
+
+        return res.status(201).json({ status: 'success', message: 'Deduction applied', data: { transaction_id } });
+
+    } catch (error) {
+        console.error('createStaffDeduction Error:', error);
+        try { await client.query('ROLLBACK'); } catch (e) { /* ignore */ }
+        return res.status(500).json({ status: 'error', message: 'Server error while applying deduction' });
+    } finally {
+        client.release();
+    }
+};
+
+// Get deduction history for a staff member
+exports.getStaffDeductions = async (req, res) => {
+    const { staff_profile_id } = req.params;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
+
+    try {
+        const [countRes, dataRes] = await Promise.all([
+            db.query(
+                `SELECT COUNT(*) AS total_count FROM transactions WHERE staff_profile_id = $1 AND category = 'STAFF_DEDUCTION'`,
+                [staff_profile_id]
+            ),
+            db.query(
+                `SELECT t.transaction_id, t.amount, t.notes AS reason, t.created_at, t.status,
+                        sp.full_name AS recorded_by
+                 FROM transactions t
+                 LEFT JOIN staff_profiles sp ON sp.user_id = t.created_by
+                 WHERE t.staff_profile_id = $1 AND t.category = 'STAFF_DEDUCTION'
+                 ORDER BY t.created_at DESC
+                 LIMIT $2 OFFSET $3`,
+                [staff_profile_id, limit, offset]
+            ),
+        ]);
+
+        return res.json({
+            status: 'success',
+            data: dataRes.rows,
+            pagination: {
+                current_page: page,
+                per_page: limit,
+                total_count: parseInt(countRes.rows[0].total_count),
+                total_pages: Math.ceil(parseInt(countRes.rows[0].total_count) / limit),
+            },
+        });
+    } catch (error) {
+        console.error('getStaffDeductions Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error' });
+    }
 };
 
 // Get staff members by their role
@@ -1634,6 +2191,23 @@ exports.updateStaffProfile = async (req, res) => {
         const userResult = await db.query(userQuery, [existingStaff.user_id]);
         const user = userResult.rows[0];
 
+        try {
+            const actorNameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+            const actorName = actorNameRes.rows[0]?.full_name || 'Admin';
+            const actorRole = Array.isArray(req.user?.role) ? req.user.role[0] : req.user?.role;
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole),
+                actionType: 'STAFF_PROFILE_UPDATED',
+                entityType: 'STAFF',
+                entityId: String(staff_profile_id),
+                details: { staff_name: result.rows[0].full_name, updated_fields: Object.keys(req.body) },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (updateStaffProfile):', logErr.message);
+        }
+
         res.status(200).json({
             status: 'success',
             message: 'Staff profile updated successfully',
@@ -1673,12 +2247,15 @@ exports.createStaffProfile = async (req, res) => {
         date_of_birth,
         email,
         mobile_number,
-        role
+        role,
+        nic_number
     } = req.body;
 
     // Extract file URLs from multer/Cloudinary
     const uploadedDocuments = req.files && req.files.documents ? req.files.documents.map(file => file.path) : [];
     const uploadedProfilePicture = req.files && req.files.profile_picture ? req.files.profile_picture[0].path : null;
+    const uploadedNicFront = req.files && req.files.nic_front ? req.files.nic_front[0].path : null;
+    const uploadedNicBack = req.files && req.files.nic_back ? req.files.nic_back[0].path : null;
 
     try {
         // Validate required fields
@@ -1839,6 +2416,24 @@ exports.createStaffProfile = async (req, res) => {
         ];
 
         const result = await db.query(insertQuery, insertValues);
+
+        // Activity log (non-fatal)
+        try {
+            const actorRole = Array.isArray(req.user.role) ? req.user.role[0] : req.user.role;
+            const actorNameResult = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+            const actorName = actorNameResult.rows[0]?.full_name || 'Admin';
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole),
+                actionType: 'STAFF_PROFILE_CREATED',
+                entityType: 'STAFF_PROFILE',
+                entityId: String(result.rows[0].staff_profile_id),
+                details: { full_name, email, mobile_number, designation, role: userRole }
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (createStaffProfile):', logErr.message);
+        }
 
         // Send WhatsApp notification with temporary password and email
         const messageBody = `Hello ${full_name}!
@@ -2173,10 +2768,706 @@ exports.getTopRatedStaff = async (req, res) => {
 
     } catch (error) {
         console.error('Get Top Rated Staff Error:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             status: 'error',
-            message: 'Server error while fetching top rated staff members' 
+            message: 'Server error while fetching top rated staff members'
         });
+    }
+};
+
+// Admin: Aggregate salary overview for all staff
+exports.getStaffSalariesOverview = async (req, res) => {
+    const showAll = req.query.all === 'true';
+    try {
+        const result = await db.query(`
+            SELECT
+                sp.staff_profile_id,
+                sp.full_name,
+                sp.designation,
+                sp.current_status,
+                COALESCE(sp.current_earnings, 0) AS current_earnings,
+                u.mobile_number,
+                COALESCE(earned.total_earned, 0) AS total_earned,
+                COALESCE(paid.total_paid, 0) AS total_paid_out,
+                last_pay.paid_at AS last_paid_at,
+                sba.staff_bank_account_id,
+                sba.bank_name,
+                sba.account_number,
+                sba.account_holder_name
+            FROM staff_profiles sp
+            JOIN users u ON sp.user_id = u.user_id
+            LEFT JOIN (
+                SELECT staff_profile_id, SUM(amount) AS total_earned
+                FROM transactions WHERE category = 'STAFF_SALARY'
+                GROUP BY staff_profile_id
+            ) earned ON earned.staff_profile_id = sp.staff_profile_id
+            LEFT JOIN (
+                SELECT staff_profile_id, SUM(amount_paid) AS total_paid
+                FROM staff_payments_tracking
+                GROUP BY staff_profile_id
+            ) paid ON paid.staff_profile_id = sp.staff_profile_id
+            LEFT JOIN LATERAL (
+                SELECT paid_at FROM staff_payments_tracking
+                WHERE staff_profile_id = sp.staff_profile_id
+                ORDER BY paid_at DESC LIMIT 1
+            ) last_pay ON true
+            LEFT JOIN LATERAL (
+                SELECT staff_bank_account_id, bank_name, account_number, account_holder_name
+                FROM staff_bank_accounts
+                WHERE staff_profile_id = sp.staff_profile_id
+                ORDER BY created_at ASC LIMIT 1
+            ) sba ON true
+            ${showAll ? '' : 'WHERE sp.current_earnings > 0'}
+            ORDER BY sp.current_earnings DESC
+        `);
+
+        const totalOutstanding = result.rows.reduce((sum, r) => sum + parseFloat(r.current_earnings), 0);
+
+        res.status(200).json({
+            status: 'success',
+            data: {
+                staff: result.rows,
+                total_outstanding: totalOutstanding,
+                staff_count: result.rows.length
+            }
+        });
+    } catch (error) {
+        console.error('getStaffSalariesOverview Error:', error);
+        res.status(500).json({ status: 'error', message: 'Server error while fetching salary overview' });
+    }
+};
+
+// Admin: Per-booking salary breakdown for a single staff member
+exports.getStaffBookingSalaryBreakdown = async (req, res) => {
+    const { staff_profile_id } = req.params;
+    try {
+        const staffRes = await db.query(
+            `SELECT sp.full_name, sp.designation, COALESCE(sp.current_earnings, 0) AS current_earnings
+             FROM staff_profiles sp WHERE sp.staff_profile_id = $1`,
+            [staff_profile_id]
+        );
+        if (!staffRes.rows.length) {
+            return res.status(404).json({ status: 'error', message: 'Staff not found' });
+        }
+
+        const breakdownRes = await db.query(`
+            SELECT
+                bsa.assignment_id,
+                bsa.booking_id,
+                b.booking_code,
+                bsa.service_start_date,
+                bsa.service_end_date,
+                bsa.daily_rate,
+                bsa.amount_allocated,
+                bsa.status,
+                pp.patient_id,
+                pp.full_name AS patient_name,
+                COALESCE(
+                    json_agg(
+                        json_build_object('date', t.created_at::date, 'amount', t.amount)
+                        ORDER BY t.created_at
+                    ) FILTER (WHERE t.transaction_id IS NOT NULL),
+                    '[]'::json
+                ) AS daily_entries,
+                COALESCE(SUM(t.amount), 0) AS total_salary_earned
+            FROM booking_staff_assignments bsa
+            JOIN bookings b ON bsa.booking_id = b.booking_id
+            LEFT JOIN patient_profiles pp ON b.patient_id = pp.patient_id
+            LEFT JOIN transactions t
+                ON t.staff_profile_id = bsa.staff_profile_id
+                AND t.booking_id = bsa.booking_id
+                AND t.category = 'STAFF_SALARY'
+            WHERE bsa.staff_profile_id = $1
+            GROUP BY bsa.assignment_id, bsa.booking_id, b.booking_code,
+                     bsa.service_start_date, bsa.service_end_date,
+                     bsa.daily_rate, bsa.amount_allocated, bsa.status,
+                     pp.patient_id, pp.full_name
+            ORDER BY bsa.service_start_date DESC
+        `, [staff_profile_id]);
+
+        const [payoutsRes, deductionsRes, advancesRes] = await Promise.all([
+            db.query(`
+                SELECT
+                    spt.staff_payment_id,
+                    spt.amount_paid,
+                    spt.payment_method,
+                    spt.reference_number,
+                    spt.notes,
+                    spt.paid_at,
+                    spt.status,
+                    spt.salary_sheet_url,
+                    ba.account_nickname AS company_account,
+                    sba.bank_name AS staff_bank_name,
+                    sba.account_number AS staff_account_number
+                FROM staff_payments_tracking spt
+                LEFT JOIN bank_accounts ba ON spt.company_bank_account_id = ba.account_id
+                LEFT JOIN staff_bank_accounts sba ON spt.staff_bank_account_id = sba.staff_bank_account_id
+                WHERE spt.staff_profile_id = $1
+                ORDER BY spt.paid_at DESC
+            `, [staff_profile_id]),
+            db.query(`
+                SELECT amount, notes AS reason, created_at
+                FROM transactions
+                WHERE staff_profile_id = $1 AND category = 'STAFF_DEDUCTION'
+                ORDER BY created_at
+            `, [staff_profile_id]),
+            db.query(`
+                SELECT amount, notes, created_at
+                FROM transactions
+                WHERE staff_profile_id = $1 AND category = 'STAFF_ADVANCE'
+                ORDER BY created_at
+            `, [staff_profile_id]),
+        ]);
+
+        const gross_total = breakdownRes.rows.reduce((s, r) => s + parseFloat(r.total_salary_earned || 0), 0);
+        const total_deductions = deductionsRes.rows.reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+        const total_advances = advancesRes.rows.reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+        const total_paid_out = payoutsRes.rows.reduce((s, r) => s + parseFloat(r.amount_paid || 0), 0);
+        const net_current_earnings = Math.max(0, gross_total - total_deductions - total_advances - total_paid_out);
+
+        res.status(200).json({
+            status: 'success',
+            data: {
+                staff: staffRes.rows[0],
+                breakdown: breakdownRes.rows,
+                deductions: deductionsRes.rows,
+                advances: advancesRes.rows,
+                payouts: payoutsRes.rows,
+                gross_total,
+                total_deductions,
+                total_advances,
+                total_paid_out,
+                net_current_earnings,
+            }
+        });
+    } catch (error) {
+        console.error('getStaffBookingSalaryBreakdown Error:', error);
+        res.status(500).json({ status: 'error', message: 'Server error while fetching salary breakdown' });
+    }
+};
+
+// Admin: Monthly earnings breakdown for a staff member (used in individual Pay Modal preview)
+exports.getStaffMonthlyEarnings = async (req, res) => {
+    const { staff_profile_id } = req.params;
+    const { year, month } = req.query;
+    if (!year || !month) {
+        return res.status(400).json({ status: 'error', message: 'year and month are required' });
+    }
+    try {
+        const staffRes = await db.query(
+            `SELECT sp.full_name, sp.designation, COALESCE(sp.current_earnings, 0) AS current_earnings
+             FROM staff_profiles sp WHERE sp.staff_profile_id = $1`,
+            [staff_profile_id]
+        );
+        if (!staffRes.rows.length) {
+            return res.status(404).json({ status: 'error', message: 'Staff not found' });
+        }
+
+        const breakdownRes = await db.query(`
+            SELECT
+                bsa.assignment_id,
+                bsa.booking_id,
+                b.booking_code,
+                bsa.service_start_date,
+                bsa.service_end_date,
+                bsa.daily_rate,
+                bsa.status,
+                cp.full_name AS client_name,
+                pp.full_name AS patient_name,
+                COALESCE(
+                    json_agg(
+                        json_build_object('date', t.created_at::date, 'amount', t.amount)
+                        ORDER BY t.created_at
+                    ) FILTER (WHERE t.transaction_id IS NOT NULL),
+                    '[]'::json
+                ) AS daily_entries,
+                COALESCE(SUM(t.amount), 0) AS total_salary_earned
+            FROM booking_staff_assignments bsa
+            JOIN bookings b ON bsa.booking_id = b.booking_id
+            LEFT JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+            LEFT JOIN patient_profiles pp ON b.patient_id = pp.patient_id
+            LEFT JOIN transactions t
+                ON t.staff_profile_id = bsa.staff_profile_id
+                AND t.booking_id = bsa.booking_id
+                AND t.category = 'STAFF_SALARY'
+                AND EXTRACT(YEAR FROM t.created_at) = $2
+                AND EXTRACT(MONTH FROM t.created_at) = $3
+            WHERE bsa.staff_profile_id = $1
+            GROUP BY bsa.assignment_id, bsa.booking_id, b.booking_code,
+                     bsa.service_start_date, bsa.service_end_date,
+                     bsa.daily_rate, bsa.status, cp.full_name, pp.full_name
+            HAVING COALESCE(SUM(t.amount), 0) > 0
+            ORDER BY bsa.service_start_date DESC
+        `, [staff_profile_id, parseInt(year), parseInt(month)]);
+
+        const deductionsRes = await db.query(`
+            SELECT amount, notes AS reason, created_at
+            FROM transactions
+            WHERE staff_profile_id = $1 AND category = 'STAFF_DEDUCTION'
+              AND EXTRACT(YEAR FROM created_at) = $2 AND EXTRACT(MONTH FROM created_at) = $3
+            ORDER BY created_at
+        `, [staff_profile_id, parseInt(year), parseInt(month)]);
+
+        const advancesRes = await db.query(`
+            SELECT amount, notes, created_at
+            FROM transactions
+            WHERE staff_profile_id = $1 AND category = 'STAFF_ADVANCE'
+              AND EXTRACT(YEAR FROM created_at) = $2 AND EXTRACT(MONTH FROM created_at) = $3
+            ORDER BY created_at
+        `, [staff_profile_id, parseInt(year), parseInt(month)]);
+
+        const payoutsRes = await db.query(`
+            SELECT amount_paid, paid_at, payment_method, reference_number
+            FROM staff_payments_tracking
+            WHERE staff_profile_id = $1
+              AND EXTRACT(YEAR FROM paid_at) = $2 AND EXTRACT(MONTH FROM paid_at) = $3
+            ORDER BY paid_at
+        `, [staff_profile_id, parseInt(year), parseInt(month)]);
+
+        // Transactions and payouts strictly before the selected month — to compute carried-over outstanding
+        const [preTxnRes, prePayoutsRes] = await Promise.all([
+            db.query(`
+                SELECT
+                    COALESCE(SUM(CASE WHEN category = 'STAFF_SALARY'    THEN amount ELSE 0 END), 0) AS pre_gross,
+                    COALESCE(SUM(CASE WHEN category = 'STAFF_DEDUCTION' THEN amount ELSE 0 END), 0) AS pre_deductions,
+                    COALESCE(SUM(CASE WHEN category = 'STAFF_ADVANCE'   THEN amount ELSE 0 END), 0) AS pre_advances
+                FROM transactions
+                WHERE staff_profile_id = $1
+                  AND category IN ('STAFF_SALARY', 'STAFF_DEDUCTION', 'STAFF_ADVANCE')
+                  AND (
+                      EXTRACT(YEAR  FROM created_at)::int < $2
+                   OR (EXTRACT(YEAR  FROM created_at)::int = $2 AND EXTRACT(MONTH FROM created_at)::int < $3)
+                  )
+            `, [staff_profile_id, parseInt(year), parseInt(month)]),
+            db.query(`
+                SELECT COALESCE(SUM(amount_paid), 0) AS pre_payouts
+                FROM staff_payments_tracking
+                WHERE staff_profile_id = $1
+                  AND (
+                      EXTRACT(YEAR  FROM paid_at)::int < $2
+                   OR (EXTRACT(YEAR  FROM paid_at)::int = $2 AND EXTRACT(MONTH FROM paid_at)::int < $3)
+                  )
+            `, [staff_profile_id, parseInt(year), parseInt(month)]),
+        ]);
+
+        const gross_total = breakdownRes.rows.reduce((s, r) => s + parseFloat(r.total_salary_earned || 0), 0);
+        const total_deductions = deductionsRes.rows.reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+        const total_advances = advancesRes.rows.reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+        const total_payouts = payoutsRes.rows.reduce((s, r) => s + parseFloat(r.amount_paid || 0), 0);
+        const month_net = Math.max(0, gross_total - total_deductions - total_advances - total_payouts);
+
+        const pre = preTxnRes.rows[0];
+        const previous_leftover = Math.max(
+            0,
+            parseFloat(pre.pre_gross) - parseFloat(pre.pre_deductions) - parseFloat(pre.pre_advances) - parseFloat(prePayoutsRes.rows[0].pre_payouts)
+        );
+
+        const month_total = month_net + previous_leftover;
+
+        res.status(200).json({
+            status: 'success',
+            data: {
+                staff: staffRes.rows[0],
+                breakdown: breakdownRes.rows,
+                deductions: deductionsRes.rows,
+                advances: advancesRes.rows,
+                payouts: payoutsRes.rows,
+                gross_total,
+                total_deductions,
+                total_advances,
+                total_payouts,
+                month_net,
+                previous_leftover,
+                month_total,
+            }
+        });
+    } catch (error) {
+        console.error('getStaffMonthlyEarnings Error:', error);
+        res.status(500).json({ status: 'error', message: 'Server error' });
+    }
+};
+
+// Admin: Ledger of all generated salary sheet PDFs
+exports.getSalarySheetLedger = async (req, res) => {
+    try {
+        const result = await db.query(`
+            SELECT
+                spt.staff_payment_id,
+                spt.staff_profile_id,
+                spt.amount_paid,
+                spt.payment_method,
+                spt.reference_number,
+                spt.notes,
+                spt.paid_at,
+                spt.status,
+                spt.salary_sheet_url,
+                spt.notification_sent_at,
+                sp.full_name AS staff_name,
+                sp.designation,
+                ba.account_nickname AS company_account,
+                sba.bank_name AS staff_bank_name
+            FROM staff_payments_tracking spt
+            JOIN staff_profiles sp ON spt.staff_profile_id = sp.staff_profile_id
+            LEFT JOIN bank_accounts ba ON spt.company_bank_account_id = ba.account_id
+            LEFT JOIN staff_bank_accounts sba ON spt.staff_bank_account_id = sba.staff_bank_account_id
+            WHERE spt.salary_sheet_url IS NOT NULL
+            ORDER BY spt.paid_at DESC
+        `);
+        res.status(200).json({ status: 'success', data: result.rows });
+    } catch (error) {
+        console.error('getSalarySheetLedger Error:', error);
+        res.status(500).json({ status: 'error', message: 'Server error' });
+    }
+};
+
+// Admin: Bulk payout for multiple staff members
+exports.bulkStaffPayouts = async (req, res) => {
+    const { payouts, company_bank_account_id, payment_method, reference_number, notes } = req.body;
+
+    if (!Array.isArray(payouts) || payouts.length === 0) {
+        return res.status(400).json({ status: 'error', message: 'payouts array is required' });
+    }
+
+    const results = [];
+
+    for (const item of payouts) {
+        const { staff_profile_id, amount, staff_bank_account_id } = item;
+
+        if (!staff_profile_id || !amount || isNaN(amount) || Number(amount) <= 0) {
+            results.push({ staff_profile_id, status: 'error', message: 'Invalid staff_profile_id or amount' });
+            continue;
+        }
+
+        const client = await db.pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            const sel = await client.query(
+                `SELECT current_earnings FROM staff_profiles WHERE staff_profile_id = $1 FOR UPDATE`,
+                [staff_profile_id]
+            );
+
+            if (!sel.rows.length) {
+                await client.query('ROLLBACK');
+                results.push({ staff_profile_id, status: 'error', message: 'Staff not found' });
+                continue;
+            }
+
+            const currentEarnings = parseFloat(sel.rows[0].current_earnings || 0);
+            const payoutAmount = parseFloat(amount);
+
+            if (payoutAmount > currentEarnings) {
+                await client.query('ROLLBACK');
+                results.push({ staff_profile_id, status: 'error', message: 'Insufficient balance' });
+                continue;
+            }
+
+            const newEarnings = (currentEarnings - payoutAmount).toFixed(2);
+            await client.query(
+                `UPDATE staff_profiles SET current_earnings = $1 WHERE staff_profile_id = $2`,
+                [newEarnings, staff_profile_id]
+            );
+
+            const insertTrans = await client.query(
+                `INSERT INTO transactions (staff_profile_id, category, amount, transaction_type, bank_account_id, payment_method, reference_number, verified_by, status, created_at)
+                 VALUES ($1, 'STAFF_SALARY_PAID', $2, 'DEBIT', $3, $4, $5, $6, 'COMPLETED', NOW())
+                 RETURNING transaction_id`,
+                [staff_profile_id, payoutAmount, company_bank_account_id || null, payment_method || 'BANK_TRANSFER', reference_number || null, req.user.user_id]
+            );
+
+            const transaction_id = insertTrans.rows[0].transaction_id;
+
+            const insertBulkPayment = await client.query(
+                `INSERT INTO staff_payments_tracking (staff_profile_id, company_bank_account_id, staff_bank_account_id, transaction_id, amount_paid, payment_method, reference_number, notes, paid_by, paid_at, status, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'COMPLETED', NOW())
+                 RETURNING staff_payment_id`,
+                [staff_profile_id, company_bank_account_id || null, staff_bank_account_id || null, transaction_id, payoutAmount, payment_method || 'BANK_TRANSFER', reference_number || null, notes || null, req.user.user_id]
+            );
+            const bulkStaffPaymentId = insertBulkPayment.rows[0].staff_payment_id;
+
+            await client.query('COMMIT');
+
+            try {
+                const actorNameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+                const actorName = actorNameRes.rows[0]?.full_name || 'Admin';
+                const actorRole = Array.isArray(req.user?.role) ? req.user.role[0] : req.user?.role;
+                await logActivity({
+                    actorUserId: req.user.user_id,
+                    actorName,
+                    actorRole: typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole),
+                    actionType: 'STAFF_PAYOUT_CREATED',
+                    entityType: 'STAFF_PAYOUT',
+                    entityId: String(transaction_id),
+                    details: { staff_profile_id, amount: payoutAmount, payment_method: payment_method || 'BANK_TRANSFER', bulk: true },
+                });
+            } catch (logErr) {
+                console.error('Activity log failed (bulkStaffPayouts):', logErr.message);
+            }
+
+            const _now = new Date();
+            const _bulkMonthYear = { year: _now.getFullYear(), month: _now.getMonth() + 1 };
+            _sendSalaryPayoutNotifications(staff_profile_id, payoutAmount, payment_method || 'BANK_TRANSFER', reference_number, notes, bulkStaffPaymentId, _bulkMonthYear, true)
+                .catch(err => console.error('[Salary Notification] bulkStaffPayouts:', err.message));
+
+            results.push({ staff_profile_id, status: 'success', transaction_id });
+        } catch (error) {
+            console.error('bulkStaffPayouts item error:', error);
+            try { await client.query('ROLLBACK'); } catch (e) { /* ignore */ }
+            results.push({ staff_profile_id, status: 'error', message: 'Server error' });
+        } finally {
+            client.release();
+        }
+    }
+
+    const allOk = results.every(r => r.status === 'success');
+    const anyOk = results.some(r => r.status === 'success');
+    return res.status(200).json({
+        status: allOk ? 'success' : anyOk ? 'partial' : 'error',
+        message: allOk ? 'All payouts processed' : anyOk ? 'Some payouts failed' : 'All payouts failed',
+        results
+    });
+};
+
+// Admin: Resend WhatsApp + SMS for a single salary sheet payout
+exports.resendSalarySheetNotification = async (req, res) => {
+    const { staff_payment_id } = req.params;
+    try {
+        await _sendNotificationForPayoutId(staff_payment_id);
+        res.status(200).json({ status: 'success', message: 'Notification sent successfully' });
+
+        // Activity log — non-fatal, fire after response
+        try {
+            const payoutRes = await db.query(`
+                SELECT spt.amount_paid, spt.payment_method, spt.paid_at, sp.full_name AS staff_name
+                FROM staff_payments_tracking spt
+                JOIN staff_profiles sp ON spt.staff_profile_id = sp.staff_profile_id
+                WHERE spt.staff_payment_id = $1
+            `, [staff_payment_id]);
+            const p = payoutRes.rows[0];
+            const monthLabel = p ? new Date(p.paid_at).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }) : '';
+            const actorRole = Array.isArray(req.user.role) ? req.user.role[0] : req.user.role;
+            const actorNameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+            const actorName = actorNameRes.rows[0]?.full_name || 'Admin';
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole),
+                actionType: 'SALARY_SHEET_NOTIFICATION_SENT',
+                entityType: 'SALARY_SHEET',
+                entityId: String(staff_payment_id),
+                details: {
+                    mode: 'individual',
+                    staff_name: p?.staff_name,
+                    month: monthLabel,
+                    amount_paid: p?.amount_paid,
+                    payment_method: p?.payment_method,
+                },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (resendSalarySheetNotification):', logErr.message);
+        }
+    } catch (error) {
+        console.error('resendSalarySheetNotification Error:', error);
+        res.status(error.message === 'Payout record not found' ? 404 : 500)
+           .json({ status: 'error', message: error.message || 'Server error' });
+    }
+};
+
+// Admin: Bulk resend WhatsApp + SMS for multiple salary sheet payouts
+exports.bulkResendSalarySheetNotifications = async (req, res) => {
+    const { staff_payment_ids, mode = 'selective' } = req.body;
+
+    if (!Array.isArray(staff_payment_ids) || staff_payment_ids.length === 0) {
+        return res.status(400).json({ status: 'error', message: 'staff_payment_ids array is required' });
+    }
+
+    const results = [];
+    for (const id of staff_payment_ids) {
+        try {
+            await _sendNotificationForPayoutId(id);
+            results.push({ staff_payment_id: id, status: 'success' });
+        } catch (err) {
+            console.error(`bulkResendSalarySheetNotifications: error for ${id}:`, err.message);
+            results.push({ staff_payment_id: id, status: 'error', message: err.message });
+        }
+    }
+
+    const successCount = results.filter(r => r.status === 'success').length;
+    const failCount = results.length - successCount;
+    res.status(200).json({ status: 'success', results, successCount, total: staff_payment_ids.length });
+
+    // Activity log — non-fatal, fire after response
+    // mode: 'selective' = user picked specific checkboxes, 'all' = send all in view, 'unsent' = send unsent only
+    if (successCount > 0) {
+        try {
+            const actionType = mode === 'selective'
+                ? 'SALARY_SHEET_NOTIFICATIONS_SENT_SELECTIVE'
+                : 'SALARY_SHEET_NOTIFICATIONS_SENT_BULK';
+            const actorRole = Array.isArray(req.user.role) ? req.user.role[0] : req.user.role;
+            const actorNameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+            const actorName = actorNameRes.rows[0]?.full_name || 'Admin';
+
+            const successIds = results.filter(r => r.status === 'success').map(r => r.staff_payment_id);
+
+            // For selective sends, look up the specific sheets that were sent
+            let sent_sheets = undefined;
+            if (mode === 'selective' && successIds.length > 0) {
+                const sheetsRes = await db.query(`
+                    SELECT spt.staff_payment_id, spt.amount_paid, spt.payment_method, spt.reference_number, spt.paid_at,
+                           sp.full_name AS staff_name, sp.designation
+                    FROM staff_payments_tracking spt
+                    JOIN staff_profiles sp ON spt.staff_profile_id = sp.staff_profile_id
+                    WHERE spt.staff_payment_id = ANY($1::uuid[])
+                    ORDER BY sp.full_name
+                `, [successIds]);
+                sent_sheets = sheetsRes.rows.map(r => ({
+                    staff_payment_id: r.staff_payment_id,
+                    staff_name: r.staff_name,
+                    designation: r.designation,
+                    month: new Date(r.paid_at).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }),
+                    amount_paid: r.amount_paid,
+                    payment_method: r.payment_method,
+                    reference_number: r.reference_number || null,
+                }));
+            }
+
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole),
+                actionType,
+                entityType: 'SALARY_SHEET',
+                entityId: null,
+                details: {
+                    mode,
+                    success_count: successCount,
+                    fail_count: failCount,
+                    total: staff_payment_ids.length,
+                    ...(sent_sheets !== undefined && { sent_sheets }),
+                    failed_ids: results.filter(r => r.status === 'error').map(r => r.staff_payment_id),
+                },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (bulkResendSalarySheetNotifications):', logErr.message);
+        }
+    }
+};
+
+// Admin: Full export data for Excel download (all staff, all transactions)
+exports.getStaffSalariesExportData = async (req, res) => {
+    try {
+        const [overviewRes, salaryRes, payoutRes] = await Promise.all([
+            db.query(`
+                SELECT
+                    sp.staff_profile_id,
+                    sp.full_name,
+                    sp.designation,
+                    sp.current_status,
+                    COALESCE(sp.current_earnings, 0) AS current_earnings,
+                    u.mobile_number,
+                    COALESCE(earned.total_earned, 0) AS total_earned,
+                    COALESCE(paid.total_paid, 0) AS total_paid_out,
+                    last_pay.paid_at AS last_paid_at,
+                    sba.bank_name,
+                    sba.account_number
+                FROM staff_profiles sp
+                JOIN users u ON sp.user_id = u.user_id
+                LEFT JOIN (
+                    SELECT staff_profile_id, SUM(amount) AS total_earned
+                    FROM transactions WHERE category = 'STAFF_SALARY'
+                    GROUP BY staff_profile_id
+                ) earned ON earned.staff_profile_id = sp.staff_profile_id
+                LEFT JOIN (
+                    SELECT staff_profile_id, SUM(amount_paid) AS total_paid
+                    FROM staff_payments_tracking GROUP BY staff_profile_id
+                ) paid ON paid.staff_profile_id = sp.staff_profile_id
+                LEFT JOIN LATERAL (
+                    SELECT paid_at FROM staff_payments_tracking
+                    WHERE staff_profile_id = sp.staff_profile_id
+                    ORDER BY paid_at DESC LIMIT 1
+                ) last_pay ON true
+                LEFT JOIN LATERAL (
+                    SELECT bank_name, account_number
+                    FROM staff_bank_accounts
+                    WHERE staff_profile_id = sp.staff_profile_id
+                    ORDER BY created_at ASC LIMIT 1
+                ) sba ON true
+                ORDER BY sp.full_name ASC
+            `),
+            db.query(`
+                SELECT
+                    sp.staff_profile_id,
+                    sp.full_name,
+                    sp.designation,
+                    b.booking_code,
+                    pp.full_name AS patient_name,
+                    bsa.daily_rate,
+                    bsa.service_start_date,
+                    bsa.service_end_date,
+                    t.created_at AS earned_date,
+                    t.amount AS earned_amount
+                FROM transactions t
+                JOIN staff_profiles sp ON t.staff_profile_id = sp.staff_profile_id
+                LEFT JOIN bookings b ON t.booking_id = b.booking_id
+                LEFT JOIN booking_staff_assignments bsa
+                    ON bsa.booking_id = t.booking_id AND bsa.staff_profile_id = t.staff_profile_id
+                LEFT JOIN patient_profiles pp ON b.patient_id = pp.patient_id
+                WHERE t.category = 'STAFF_SALARY'
+                ORDER BY t.created_at DESC
+            `),
+            db.query(`
+                SELECT
+                    sp.staff_profile_id,
+                    sp.full_name,
+                    spt.amount_paid,
+                    spt.payment_method,
+                    spt.reference_number,
+                    spt.notes,
+                    spt.paid_at,
+                    spt.status,
+                    ba.account_nickname AS company_account,
+                    sba.bank_name AS staff_bank_name,
+                    sba.account_number AS staff_account_number
+                FROM staff_payments_tracking spt
+                JOIN staff_profiles sp ON spt.staff_profile_id = sp.staff_profile_id
+                LEFT JOIN bank_accounts ba ON spt.company_bank_account_id = ba.account_id
+                LEFT JOIN staff_bank_accounts sba ON spt.staff_bank_account_id = sba.staff_bank_account_id
+                ORDER BY spt.paid_at DESC
+            `)
+        ]);
+
+        try {
+            const actorNameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+            const actorName = actorNameRes.rows[0]?.full_name || 'Admin';
+            const actorRole = Array.isArray(req.user?.role) ? req.user.role[0] : req.user?.role;
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole),
+                actionType: 'SALARY_EXPORT_DOWNLOADED',
+                entityType: 'SALARY_REPORT',
+                entityId: 'all',
+                details: {
+                    staff_count: overviewRes.rows.length,
+                    salary_transaction_count: salaryRes.rows.length,
+                    payout_count: payoutRes.rows.length,
+                },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (getStaffSalariesExportData):', logErr.message);
+        }
+
+        res.status(200).json({
+            status: 'success',
+            data: {
+                staff_overview: overviewRes.rows,
+                salary_transactions: salaryRes.rows,
+                payout_transactions: payoutRes.rows
+            }
+        });
+    } catch (error) {
+        console.error('getStaffSalariesExportData Error:', error);
+        res.status(500).json({ status: 'error', message: 'Server error while fetching export data' });
     }
 };
 

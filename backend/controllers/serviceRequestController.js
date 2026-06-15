@@ -391,6 +391,30 @@ exports.createServiceRequest = async (req, res) => {
         ];
 
         const result = await db.query(insertQuery, insertValues);
+        const newRequest = result.rows[0];
+
+        // Log activity (non-fatal)
+        try {
+            const actorName = await getActorName(req.user.user_id);
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: extractActorRole(req.user.role),
+                actionType: 'SERVICE_REQUEST_CREATED',
+                entityType: 'SERVICE_REQUEST',
+                entityId: newRequest.request_id,
+                details: {
+                    payer_name,
+                    payer_mobile,
+                    patient_name,
+                    service_type,
+                    client_id: client_id || null,
+                    proxy: true
+                }
+            });
+        } catch (logErr) {
+            console.error('Activity log error (non-fatal):', logErr);
+        }
 
         // Send SMS + WhatsApp confirmation (non-fatal)
         sendServiceRequestNotifications(payer_mobile, payer_name, service_type, start_date).catch(() => {});
@@ -398,7 +422,7 @@ exports.createServiceRequest = async (req, res) => {
         res.status(201).json({
             status: 'success',
             message: 'Service request created successfully',
-            data: result.rows[0]
+            data: newRequest
         });
 
     } catch (error) {

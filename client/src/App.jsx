@@ -77,6 +77,8 @@ import CurrentEarningsBreakdownPage from './modules/admin/user_managemnet/Curren
 import PatientsPage from './modules/admin/patients/patients';
 import PatientDetailPage from './modules/admin/patients/patient_details';
 import TransactionsPage from './modules/admin/transactions/TransactionsPage';
+import StaffSalariesPage from './modules/admin/salaries/StaffSalariesPage';
+import SalarySheetLedgerPage from './modules/admin/salaries/SalarySheetLedgerPage';
 
 function App() {
   return (
@@ -293,6 +295,16 @@ function App() {
             <Route path="/admin/transactions" element={
               <AdminAuthProvider>
                 <TransactionsPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/salaries" element={
+              <AdminAuthProvider>
+                <StaffSalariesPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/salary-sheets" element={
+              <AdminAuthProvider>
+                <SalarySheetLedgerPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/settings" element={

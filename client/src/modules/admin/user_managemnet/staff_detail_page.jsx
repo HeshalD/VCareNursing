@@ -17,6 +17,7 @@ import {
   Loader2,
   Mail,
   MapPin,
+  MinusCircle,
   Pencil,
   Phone,
   Plus,
@@ -182,6 +183,11 @@ const StaffDetailPage = () => {
   const [expandedRequestId, setExpandedRequestId] = useState(null);
   const [requestLogs, setRequestLogs] = useState({});
   const [loadingLogs, setLoadingLogs] = useState({});
+  const [deductions, setDeductions] = useState([]);
+  const [deductionForm, setDeductionForm] = useState({ amount: '', reason: '' });
+  const [deductionSubmitting, setDeductionSubmitting] = useState(false);
+  const [deductionError, setDeductionError] = useState('');
+  const [deductionSuccess, setDeductionSuccess] = useState('');
 
   const profile = detail?.profile || {};
   const overviewEarnings = detail?.earnings || {};
@@ -197,6 +203,7 @@ const StaffDetailPage = () => {
     { id: 'booking-history', label: 'Booking History', icon: History },
     { id: 'reviews', label: 'Reviews', icon: Star },
     { id: 'payouts', label: 'Payouts', icon: Wallet },
+    { id: 'deductions', label: 'Deductions', icon: MinusCircle },
     { id: 'bank-accounts', label: 'Bank Accounts', icon: Landmark },
     { id: 'change-history', label: 'Change History', icon: ClipboardList },
   ]), []);
@@ -247,10 +254,11 @@ const StaffDetailPage = () => {
       runAdminRequest(() => apiClient.getStaffBankAccounts(staffProfileId)),
       runAdminRequest(() => apiClient.getBankAccounts()),
       runAdminRequest(() => apiClient.getAllChangeRequests({ staff_profile_id: staffProfileId })),
+      runAdminRequest(() => apiClient.getStaffDeductions(staffProfileId, { page: 1, limit: 50 })),
     ]);
 
     const nextErrors = {};
-    const [detailRes, earningsRes, earningsTxRes, currentBookingRes, historyRes, payoutsSummaryRes, payoutsRes, bankAccountsRes, companyBankAccountsRes, changeRequestsRes] = results;
+    const [detailRes, earningsRes, earningsTxRes, currentBookingRes, historyRes, payoutsSummaryRes, payoutsRes, bankAccountsRes, companyBankAccountsRes, changeRequestsRes, deductionsRes] = results;
 
     if (detailRes.status === 'fulfilled') {
       setDetail(detailRes.value?.data || null);
@@ -319,6 +327,12 @@ const StaffDetailPage = () => {
       setChangeRequests(safeArray(changeRequestsRes.value?.data));
     } else {
       nextErrors.changeRequests = changeRequestsRes.reason?.message || 'Failed to load change requests';
+    }
+
+    if (deductionsRes.status === 'fulfilled') {
+      setDeductions(safeArray(deductionsRes.value?.data));
+    } else {
+      nextErrors.deductions = deductionsRes.reason?.message || 'Failed to load deductions';
     }
 
     setSectionErrors(nextErrors);
@@ -1114,6 +1128,125 @@ const StaffDetailPage = () => {
     );
   };
 
+  const submitDeduction = async (event) => {
+    event.preventDefault();
+    setDeductionError('');
+    setDeductionSuccess('');
+    try {
+      setDeductionSubmitting(true);
+      await runAdminRequest(() => apiClient.createStaffDeduction(staffProfileId, {
+        amount: deductionForm.amount,
+        reason: deductionForm.reason,
+      }));
+      setDeductionSuccess('Deduction applied. WhatsApp and SMS sent to staff member.');
+      setDeductionForm({ amount: '', reason: '' });
+      await loadPage();
+    } catch (err) {
+      setDeductionError(err?.message || 'Failed to apply deduction');
+    } finally {
+      setDeductionSubmitting(false);
+    }
+  };
+
+  const renderDeductions = () => {
+    const totalDeducted = deductions.reduce((sum, d) => sum + parseFloat(d.amount || 0), 0);
+
+    return (
+      <div className="space-y-6">
+        <div className="grid gap-4 md:grid-cols-2">
+          <StatCard icon={MinusCircle} label="Total Deducted" value={formatMoney(totalDeducted)} tone="rose" />
+          <StatCard icon={Activity} label="Total Entries" value={deductions.length} tone="slate" />
+        </div>
+
+        <Card title="Apply Deduction" subtitle="Deduct an amount from this staff member's earnings. A WhatsApp message and SMS will be sent automatically.">
+          <form onSubmit={submitDeduction} className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="space-y-2 text-sm font-medium text-slate-700">
+                <span>Amount (LKR) <span className="text-rose-500">*</span></span>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={deductionForm.amount}
+                  onChange={(e) => { setDeductionForm((f) => ({ ...f, amount: e.target.value })); setDeductionError(''); setDeductionSuccess(''); }}
+                  className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none transition focus:border-rose-500"
+                  placeholder="0.00"
+                  required
+                />
+              </label>
+              <label className="space-y-2 text-sm font-medium text-slate-700">
+                <span>Reason for Deduction <span className="text-rose-500">*</span></span>
+                <input
+                  type="text"
+                  value={deductionForm.reason}
+                  onChange={(e) => { setDeductionForm((f) => ({ ...f, reason: e.target.value })); setDeductionError(''); setDeductionSuccess(''); }}
+                  className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none transition focus:border-rose-500"
+                  placeholder="e.g. Uniform deposit, Advance repayment…"
+                  required
+                />
+              </label>
+            </div>
+
+            {deductionError && (
+              <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                <AlertCircle className="h-4 w-4 flex-shrink-0" /> {deductionError}
+              </div>
+            )}
+            {deductionSuccess && (
+              <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                <Check className="h-4 w-4 flex-shrink-0" /> {deductionSuccess}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={deductionSubmitting}
+              className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
+            >
+              {deductionSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <MinusCircle className="h-4 w-4" />}
+              Apply Deduction
+            </button>
+          </form>
+        </Card>
+
+        <Card title="Deduction History" subtitle="All deductions applied to this staff member">
+          {sectionLoadErrors.deductions ? (
+            <EmptyState title="Failed to load deductions" subtitle={sectionLoadErrors.deductions} />
+          ) : deductions.length === 0 ? (
+            <EmptyState title="No deductions recorded" subtitle="Applied deductions will appear here." />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-slate-200 text-sm">
+                <thead className="bg-slate-50">
+                  <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <th className="px-4 py-3">Date</th>
+                    <th className="px-4 py-3">Reason</th>
+                    <th className="px-4 py-3">Recorded By</th>
+                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3 text-right">Amount</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {deductions.map((d, index) => (
+                    <tr key={d.transaction_id || index} className="hover:bg-slate-50/60">
+                      <td className="px-4 py-3 text-slate-600">{formatDateTime(d.created_at)}</td>
+                      <td className="px-4 py-3 text-slate-900">{d.reason || '-'}</td>
+                      <td className="px-4 py-3 text-slate-600">{d.recorded_by || 'Admin'}</td>
+                      <td className="px-4 py-3">
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(d.status)}`}>{d.status || '-'}</span>
+                      </td>
+                      <td className="px-4 py-3 text-right font-semibold text-rose-700">{formatMoney(d.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      </div>
+    );
+  };
+
   const openAddBankModal = () => setBankModal({
     isOpen: true, mode: 'add', editing: null,
     form: { account_holder_name: '', bank_name: '', branch_name: '', account_number: '', currency: 'LKR' },
@@ -1490,6 +1623,7 @@ const StaffDetailPage = () => {
           {activeSection === 'booking-history' && renderBookingHistory()}
           {activeSection === 'reviews' && renderReviews()}
           {activeSection === 'payouts' && renderPayouts()}
+          {activeSection === 'deductions' && renderDeductions()}
           {activeSection === 'bank-accounts' && renderBankAccounts()}
           {activeSection === 'change-history' && renderChangeHistory()}
         </div>

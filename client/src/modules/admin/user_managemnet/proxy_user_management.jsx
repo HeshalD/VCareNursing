@@ -35,11 +35,16 @@ const ProxyUserManagement = () => {
     gender: '',
     role: [],
     willing_to_live_in: false,
-    date_of_birth: ''
+    date_of_birth: '',
+    nic_number: '',
+    nic_front: null,
+    nic_back: null
   });
 
   const [profilePicturePreview, setProfilePicturePreview] = useState('');
   const [documentPreviews, setDocumentPreviews] = useState([]);
+  const [nicFrontPreview, setNicFrontPreview] = useState('');
+  const [nicBackPreview, setNicBackPreview] = useState('');
   const [formLoading, setFormLoading] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
@@ -114,6 +119,34 @@ const ProxyUserManagement = () => {
     setDocumentPreviews(prev => prev.filter(p => p.name !== fileName));
   };
 
+  const handleNicFrontChange = (file) => {
+    if (file) {
+      setFormData(prev => ({ ...prev, nic_front: file }));
+      const reader = new FileReader();
+      reader.onloadend = () => setNicFrontPreview(reader.result);
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleNicFrontDelete = () => {
+    setFormData(prev => ({ ...prev, nic_front: null }));
+    setNicFrontPreview('');
+  };
+
+  const handleNicBackChange = (file) => {
+    if (file) {
+      setFormData(prev => ({ ...prev, nic_back: file }));
+      const reader = new FileReader();
+      reader.onloadend = () => setNicBackPreview(reader.result);
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleNicBackDelete = () => {
+    setFormData(prev => ({ ...prev, nic_back: null }));
+    setNicBackPreview('');
+  };
+
   const handleAddStaff = () => {
     setFormData({
       user_id: '',
@@ -128,10 +161,15 @@ const ProxyUserManagement = () => {
       profile_picture: null,
       gender: '',
       willing_to_live_in: false,
-      date_of_birth: ''
+      date_of_birth: '',
+      nic_number: '',
+      nic_front: null,
+      nic_back: null
     });
     setProfilePicturePreview('');
     setDocumentPreviews([]);
+    setNicFrontPreview('');
+    setNicBackPreview('');
     setIsEditMode(false);
     setSelectedWorker(null);
     setShowAddForm(!showAddForm);
@@ -152,10 +190,15 @@ const ProxyUserManagement = () => {
       gender: worker.gender || '',
       role: worker.role && worker.role.length > 0 ? worker.role : [],
       willing_to_live_in: worker.willing_to_live_in || false,
-      date_of_birth: worker.date_of_birth || ''
+      date_of_birth: worker.date_of_birth || '',
+      nic_number: worker.nic_number || '',
+      nic_front: null,
+      nic_back: null
     });
     setProfilePicturePreview(worker.profile_picture_url || '');
     setDocumentPreviews([]);
+    setNicFrontPreview(worker.nic_front_url || '');
+    setNicBackPreview(worker.nic_back_url || '');
     setSelectedWorker(worker);
     setIsEditMode(true);
     setShowAddForm(true);
@@ -202,8 +245,8 @@ const ProxyUserManagement = () => {
 
     try {
       // Validate required fields
-      if (!formData.full_name || !formData.designation || !formData.gender || !formData.date_of_birth) {
-        setError('Please fill in all required fields: Full Name, Designation, Gender, Date of Birth');
+      if (!formData.full_name || !formData.designation || !formData.gender || !formData.date_of_birth || !formData.nic_number || !formData.nic_front || !formData.nic_back) {
+        setError('Please fill in all required fields: Full Name, Designation, Gender, Date of Birth, NIC Number, NIC Front and Back photos');
         setFormLoading(false);
         return;
       }
@@ -221,24 +264,20 @@ const ProxyUserManagement = () => {
       submitData.append('gender', formData.gender);
       submitData.append('willing_to_live_in', formData.willing_to_live_in);
       submitData.append('date_of_birth', formData.date_of_birth);
-      
+      submitData.append('nic_number', formData.nic_number);
+
       if (formData.profile_picture) {
         submitData.append('profile_picture', formData.profile_picture);
       }
-      
+      if (formData.nic_front) {
+        submitData.append('nic_front', formData.nic_front);
+      }
+      if (formData.nic_back) {
+        submitData.append('nic_back', formData.nic_back);
+      }
+
       formData.documents.forEach((doc, index) => {
         submitData.append(`documents`, doc);
-      });
-
-      // Debug: Log what's being sent
-      console.log('Submitting FormData:', {
-        full_name: formData.full_name,
-        email: formData.email,
-        mobile_number: formData.mobile_number,
-        designation: formData.designation,
-        role: formData.role.length > 0 ? formData.role[0] : 'NURSE',
-        gender: formData.gender,
-        date_of_birth: formData.date_of_birth
       });
 
       await apiClient.createStaffProfile(submitData);
@@ -260,23 +299,16 @@ const ProxyUserManagement = () => {
 
     try {
       // Validate required fields
-      if (!formData.full_name || !formData.designation || !formData.gender || !formData.date_of_birth) {
-        setError('Please fill in all required fields: Full Name, Designation, Gender, Date of Birth');
+      if (!formData.full_name || !formData.designation || !formData.gender || !formData.date_of_birth || !formData.nic_number) {
+        setError('Please fill in all required fields: Full Name, Designation, Gender, Date of Birth, NIC Number');
         setFormLoading(false);
         return;
       }
 
       // Create FormData for file uploads
       const submitData = new FormData();
-      console.log('DEBUG Frontend: formData.user_id =', JSON.stringify(formData.user_id));
-      console.log('DEBUG Frontend: user_id type =', typeof formData.user_id);
-      console.log('DEBUG Frontend: user_id trimmed =', formData.user_id ? formData.user_id.trim() : 'null');
-      
       if (formData.user_id && formData.user_id.trim() !== '') {
         submitData.append('user_id', formData.user_id);
-        console.log('DEBUG Frontend: Adding user_id to FormData');
-      } else {
-        console.log('DEBUG Frontend: NOT adding user_id to FormData (empty/null)');
       }
       submitData.append('full_name', formData.full_name);
       submitData.append('email', formData.email);
@@ -289,25 +321,20 @@ const ProxyUserManagement = () => {
       submitData.append('gender', formData.gender);
       submitData.append('willing_to_live_in', formData.willing_to_live_in);
       submitData.append('date_of_birth', formData.date_of_birth);
-      
+      submitData.append('nic_number', formData.nic_number);
+
       if (formData.profile_picture) {
         submitData.append('profile_picture', formData.profile_picture);
       }
-      
+      if (formData.nic_front) {
+        submitData.append('nic_front', formData.nic_front);
+      }
+      if (formData.nic_back) {
+        submitData.append('nic_back', formData.nic_back);
+      }
+
       formData.documents.forEach((doc, index) => {
         submitData.append(`documents`, doc);
-      });
-
-      // Debug: Log what's being sent
-      console.log('Updating FormData:', {
-        user_id: formData.user_id,
-        full_name: formData.full_name,
-        email: formData.email,
-        mobile_number: formData.mobile_number,
-        designation: formData.designation,
-        role: formData.role.length > 0 ? formData.role[0] : 'NURSE',
-        gender: formData.gender,
-        date_of_birth: formData.date_of_birth
       });
 
       // Update staff profile API call
@@ -814,6 +841,102 @@ const ProxyUserManagement = () => {
                 rows={3}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
+            </div>
+
+            {/* NIC Details */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">NIC Number *</label>
+              <input
+                type="text"
+                name="nic_number"
+                value={formData.nic_number}
+                onChange={handleInputChange}
+                required
+                placeholder="e.g. 123456789V"
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              {/* NIC Front */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">NIC Front Photo *</label>
+                {nicFrontPreview ? (
+                  <div className="relative">
+                    <img
+                      src={nicFrontPreview}
+                      alt="NIC front"
+                      className="w-full h-32 object-cover rounded-lg border-2 border-blue-200 shadow-md"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleNicFrontDelete}
+                      className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow-md"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                    <div className="mt-2">
+                      <input type="file" id="nic-front-reupload" className="hidden" accept="image/*"
+                        onChange={(e) => { const file = e.target.files[0]; if (file) handleNicFrontChange(file); }} />
+                      <label htmlFor="nic-front-reupload"
+                        className="inline-flex items-center gap-1 px-3 py-1 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 cursor-pointer text-xs font-medium">
+                        <Upload className="w-3 h-3" /> Change
+                      </label>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <input type="file" id="nic-front-upload" className="hidden" accept="image/*"
+                      onChange={(e) => { const file = e.target.files[0]; if (file) handleNicFrontChange(file); }} />
+                    <label htmlFor="nic-front-upload"
+                      className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-300 rounded-lg bg-slate-50 hover:bg-slate-100 transition-all cursor-pointer group">
+                      <Upload className="w-6 h-6 text-slate-400 group-hover:text-blue-500 mb-1 transition-colors" />
+                      <p className="text-xs text-slate-500 font-medium">NIC Front</p>
+                      <p className="text-xs text-slate-400">JPG, PNG</p>
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              {/* NIC Back */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">NIC Back Photo *</label>
+                {nicBackPreview ? (
+                  <div className="relative">
+                    <img
+                      src={nicBackPreview}
+                      alt="NIC back"
+                      className="w-full h-32 object-cover rounded-lg border-2 border-blue-200 shadow-md"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleNicBackDelete}
+                      className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow-md"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                    <div className="mt-2">
+                      <input type="file" id="nic-back-reupload" className="hidden" accept="image/*"
+                        onChange={(e) => { const file = e.target.files[0]; if (file) handleNicBackChange(file); }} />
+                      <label htmlFor="nic-back-reupload"
+                        className="inline-flex items-center gap-1 px-3 py-1 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 cursor-pointer text-xs font-medium">
+                        <Upload className="w-3 h-3" /> Change
+                      </label>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <input type="file" id="nic-back-upload" className="hidden" accept="image/*"
+                      onChange={(e) => { const file = e.target.files[0]; if (file) handleNicBackChange(file); }} />
+                    <label htmlFor="nic-back-upload"
+                      className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-300 rounded-lg bg-slate-50 hover:bg-slate-100 transition-all cursor-pointer group">
+                      <Upload className="w-6 h-6 text-slate-400 group-hover:text-blue-500 mb-1 transition-colors" />
+                      <p className="text-xs text-slate-500 font-medium">NIC Back</p>
+                      <p className="text-xs text-slate-400">JPG, PNG</p>
+                    </label>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Profile Picture Upload */}

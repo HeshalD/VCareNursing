@@ -1,7 +1,6 @@
 const db = require('../config/db');
 const html_to_pdf = require('html-pdf-node');
 const estimateTemplate = require('../templates/estimateTemplate');
-const { sendWhatsAppMessage, checkMessageStatus } = require('../utils/whatsapp');
 const { sendClientQuotation } = require('../utils/metaWhatsapp');
 const cloudinary = require('cloudinary').v2;
 const { logActivity } = require('../utils/activityLogger');
@@ -209,8 +208,9 @@ exports.generateAndSendPDF = async (req, res) => {
         // We use a Promise to handle the stream upload
         const uploadToCloudinary = (buffer, fileName) => {
             return new Promise((resolve, reject) => {
-                // Remove .pdf extension from fileName for public_id
-                const publicId = fileName.replace('.pdf', '');
+                // Keep .pdf in public_id so the Cloudinary URL includes the extension
+                // (required for WhatsApp/Twilio to detect the MIME type correctly)
+                const publicId = fileName;
                 
                 cloudinary.uploader.upload(
                     `data:application/pdf;base64,${buffer.toString('base64')}`,
@@ -240,31 +240,8 @@ exports.generateAndSendPDF = async (req, res) => {
             public_id: cloudinaryResponse.public_id
         });
 
-        // 4. Send WhatsApp Document
-        // NOTE: Ensure your sendWhatsAppOtp utility is updated to accept document objects
-        const whatsappMsg = `Hi ${data.payer_name}, please find the official estimate for ${data.patient_name} attached below.`;
-
-        const messageResponse = await sendWhatsAppMessage(data.payer_mobile, whatsappMsg, {
-            type: "document",
-            link: pdfUrl, // The Cloudinary URL
-            filename: `${data.estimate_number}.pdf`
-        });
-        const messageSid = messageResponse.sid;
-
-        // 4.5. Check message status after a short delay
-        setTimeout(async () => {
-            try {
-                const messageStatus = await checkMessageStatus(messageSid);
-                console.log('WhatsApp Debug - Final message status:', messageStatus);
-            } catch (error) {
-                console.log('WhatsApp Debug - Could not check final status:', error.message);
-            }
-        }, 5000); // Check after 5 seconds
-
-        // 5. Send Meta WhatsApp template notification
-        const formattedTotal = `Rs. ${parseFloat(data.total_amount).toLocaleString('en-LK')}`;
-        sendClientQuotation(data.payer_mobile, data.payer_name, data.estimate_number, formattedTotal)
-          .catch(err => console.error('[Meta WA] Quotation template failed:', err.message));
+        // 4. Send quotation template with PDF document header via Meta WhatsApp
+        await sendClientQuotation(data.payer_mobile, data.payer_name, data.estimate_number, pdfUrl);
 
         // 7. Update Status
         await db.query("UPDATE quotations SET status = 'SENT' WHERE quote_id = $1", [quote_id]);
@@ -326,6 +303,16 @@ exports.createPresetItem = async (req, res) => {
             RETURNING *
         `, [name, item_type, description, default_quantity || 1, default_unit_price, sort_order || 0]);
 
+        await safeLog({
+            actorUserId: req.user?.user_id,
+            actorName: await getActorName(req.user?.user_id).catch(() => 'Admin'),
+            actorRole: extractActorRole(req.user?.role),
+            actionType: 'PRESET_ITEM_CREATED',
+            entityType: 'PRESET_ITEM',
+            entityId: String(result.rows[0].preset_id),
+            details: { name, item_type, default_unit_price },
+        });
+
         res.status(201).json({ status: 'success', data: result.rows[0] });
     } catch (error) {
         console.error('Create Preset Item Error:', error);
@@ -350,6 +337,16 @@ exports.updatePresetItem = async (req, res) => {
             return res.status(404).json({ message: 'Preset item not found' });
         }
 
+        await safeLog({
+            actorUserId: req.user?.user_id,
+            actorName: await getActorName(req.user?.user_id).catch(() => 'Admin'),
+            actorRole: extractActorRole(req.user?.role),
+            actionType: 'PRESET_ITEM_UPDATED',
+            entityType: 'PRESET_ITEM',
+            entityId: String(preset_id),
+            details: { name, item_type, default_unit_price },
+        });
+
         res.status(200).json({ status: 'success', data: result.rows[0] });
     } catch (error) {
         console.error('Update Preset Item Error:', error);
@@ -368,6 +365,16 @@ exports.deletePresetItem = async (req, res) => {
         if (result.rows.length === 0) {
             return res.status(404).json({ message: 'Preset item not found' });
         }
+
+        await safeLog({
+            actorUserId: req.user?.user_id,
+            actorName: await getActorName(req.user?.user_id).catch(() => 'Admin'),
+            actorRole: extractActorRole(req.user?.role),
+            actionType: 'PRESET_ITEM_DELETED',
+            entityType: 'PRESET_ITEM',
+            entityId: String(preset_id),
+            details: { preset_id },
+        });
 
         res.status(200).json({ status: 'success', message: 'Preset item deactivated' });
     } catch (error) {

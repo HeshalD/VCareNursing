@@ -2,6 +2,12 @@ const db = require('../config/db');
 const { generateStatementPDF } = require('../utils/statement');
 const cloudinary = require('cloudinary').v2;
 const { sendWhatsAppMessage } = require('../utils/whatsapp');
+const { logActivity } = require('../utils/activityLogger');
+
+async function getActorName(userId) {
+    const result = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [userId]);
+    return result.rows[0]?.full_name || 'Admin';
+}
 
 async function saveStatementRecord({ client_id, period_start, period_end, opening_balance, total_invoiced, total_paid, balance_due, pdf_url, delivery_method, generated_by }) {
     try {
@@ -338,6 +344,16 @@ exports.downloadClientStatement = async (req, res) => {
             generated_by: req.user?.user_id || null,
         });
 
+        getActorName(req.user?.user_id).then(actorName => logActivity({
+            actorUserId: req.user?.user_id,
+            actorName,
+            actorRole: Array.isArray(req.user?.role) ? req.user.role[0] : String(req.user?.role),
+            actionType: 'STATEMENT_DOWNLOADED',
+            entityType: 'CLIENT',
+            entityId: String(client_id),
+            details: { period_start: start_date, period_end: end_date, client_name: clientName },
+        })).catch(err => console.error('Activity log failed (downloadClientStatement):', err.message));
+
     } catch (error) {
         clearTimeout(requestTimeout);
         console.error("❌ PDF Generation Error:", error);
@@ -397,6 +413,16 @@ exports.sendClientStatementToWhatsApp = async (req, res) => {
             delivery_method: 'WHATSAPP',
             generated_by: req.user?.user_id || null,
         });
+
+        getActorName(req.user?.user_id).then(actorName => logActivity({
+            actorUserId: req.user?.user_id,
+            actorName,
+            actorRole: Array.isArray(req.user?.role) ? req.user.role[0] : String(req.user?.role),
+            actionType: 'STATEMENT_SENT_WHATSAPP',
+            entityType: 'CLIENT',
+            entityId: String(client_id),
+            details: { period_start: start_date, period_end: end_date, client_name: clientName },
+        })).catch(err => console.error('Activity log failed (sendClientStatementToWhatsApp):', err.message));
 
         return res.status(200).json({
             status: 'success',

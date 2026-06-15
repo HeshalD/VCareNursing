@@ -33,8 +33,9 @@
 | 23b | `vcare_client_termination_rejected` | Utility | Client name, booking reference |
 | 24 | `vcare_booking_completed_client` | Utility | Client name, staff name, completion date |
 | 25 | `vcare_client_wallet_refund` | Utility | Client name, refund amount, reason |
+| 26 | `vcare_staff_salary_sheet` | Utility | Staff name, month, amount paid, date, method + PDF header |
 
-**Total: 28 templates — 3 Authentication, 25 Utility**
+**Total: 29 templates — 3 Authentication, 26 Utility**
 
 > **Template limit:** WhatsApp Business accounts allow up to **250 templates** by default.
 > 28 templates is well within this limit. You can always request a higher limit from Meta if needed.
@@ -452,12 +453,12 @@ Hi {{1}},
 
 You have been assigned to a new booking. Here are the details:
 
-👤 Patient: {{2}}
-📅 Start Date: {{3}}
-📅 End Date: {{4}}
-💰 Daily Rate: ${{5}}
+Patient: {{2}}
+Location: {{3}}
+Conditions: {{4}}
+Start Date: ${{5}}
 
-Please log in to the staff portal for the full assignment details and any additional instructions.
+Please log in to the staff portal for the full assignment details.
 ```
 
 **Footer:** `VCare Nursing`
@@ -467,11 +468,12 @@ Please log in to the staff portal for the full assignment details and any additi
 **At send time, pass:**
 - `{{1}}` = `staff.full_name`
 - `{{2}}` = `patient_name`
-- `{{3}}` = `service_start_date` (formatted, e.g. `18 June 2026`)
-- `{{4}}` = `service_end_date` (formatted, or `"Ongoing"` if open-ended)
-- `{{5}}` = `daily_rate`
+- `{{3}}` = `location`
+- `{{4}}` = `conditions`
+- `{{5}}` = `service_start_date` (formatted, e.g. `18/06/2026`)
 
-**Sample values:** `{{1}}` = `Sarah`, `{{2}}` = `John Perera`, `{{3}}` = `18 June 2026`, `{{4}}` = `25 June 2026`, `{{5}}` = `85.00`
+
+**Sample values:** `{{1}}` = `Sarah`, `{{2}}` = `John Perera`, `{{3}}` = `3rd Street, Colombo`, `{{4}}` = `High Blood Pressure, Diebetics`, `{{5}}` = `25/06/2026`
 
 ---
 
@@ -803,8 +805,8 @@ Hi {{1}},
 
 We have received your request to terminate your booking.
 
-🔖 Booking Reference: {{2}}
-📅 Requested End Date: {{3}}
+Booking Reference: {{2}}
+Requested End Date: {{3}}
 
 Our team is reviewing your request and will get back to you shortly. If this is urgent, please contact us directly.
 ```
@@ -836,10 +838,9 @@ Hi {{1}},
 
 Your termination request for booking {{2}} has been approved.
 
-📅 Official End Date: {{3}}
-💰 Wallet Refund: ${{4}}
+Official End Date: {{3}}
 
-Any eligible refund has been credited to your VCare wallet. Please log in to your account to view your booking summary and updated balance.
+Please contact our staff regarding any eligible refund. 
 ```
 
 **Footer:** `VCare Nursing`
@@ -950,6 +951,49 @@ Please log in to your account to view your updated wallet balance.
 - `{{3}}` = `settlement_notes` (e.g. `"Unused booking days refunded"`)
 
 **Sample values:** `{{1}}` = `Emily`, `{{2}}` = `120.00`, `{{3}}` = `Unused booking days refunded`
+
+---
+
+---
+
+### 26. `vcare_staff_salary_sheet`
+
+| Field | Value |
+|---|---|
+| Category | **Utility** |
+| Template Name | `vcare_staff_salary_sheet` |
+| Language | English (US) |
+
+**Header:** Document (PDF) — *Dynamic URL* (the generated salary sheet PDF)
+
+**Body:**
+```
+Hi {{1}},
+
+Your salary for *{{2}}* has been processed! 
+
+Amount Paid: *{{3}}*
+Payment Date: {{4}}
+Method: {{5}}
+
+Your detailed salary sheet is attached above. 
+
+Thank you for your hard work and dedication.
+```
+
+**Footer:** `VCare Nursing`
+
+**At send time, pass:**
+- Header: `{ type: 'document', document: { link: pdfUrl, filename: 'Salary_Sheet_June_2026.pdf' } }`
+- `{{1}}` = `staff.full_name` (e.g. `Sarah`)
+- `{{2}}` = `monthLabel` (e.g. `June 2026`)
+- `{{3}}` = formatted amount with currency (e.g. `LKR 15,000.00`)
+- `{{4}}` = `paymentDate` (e.g. `15 Jun 2026`)
+- `{{5}}` = payment method label (e.g. `Bank Transfer`)
+
+**Sample values:** `{{1}}` = `Sarah`, `{{2}}` = `June 2026`, `{{3}}` = `LKR 15,000.00`, `{{4}}` = `15 Jun 2026`, `{{5}}` = `Bank Transfer`
+
+> **Note:** Triggered automatically when admin processes a salary payout (individual or bulk) from the Staff Salaries page. The PDF is generated server-side, uploaded to Cloudinary, and the URL is passed as the document header. An SMS is also sent concurrently (no PDF — just a short text summary). See `backend/utils/salaryPdf.js` and `backend/templates/salarySheetTemplate.js`.
 
 ---
 
