@@ -380,6 +380,8 @@ exports.getStaffByUserID = async (req, res) => {
                 sp.advance_threshold_amount,
                 sp.willing_to_live_in,
                 sp.date_of_birth,
+                sp.location,
+                sp.nic_number,
                 sp.created_at,
                 u.user_id,
                 u.email,

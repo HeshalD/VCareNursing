@@ -285,9 +285,16 @@ exports.login = async (req, res) => {
     const staffProfile = staffRes.rows[0] || null;
 
     // 4. Generate JWT Token
-    // We embed the user_id, full_name, mobile_number, gender, and primary_address in the JWT payload
-    // Priority: client profile full_name > staff profile full_name > fallback
-    const fullName = clientProfile?.full_name || staffProfile?.full_name || null;
+    // Priority: client profile > staff profile > internal_staff (for COORDINATOR/ACCOUNTS)
+    let fullName = clientProfile?.full_name || staffProfile?.full_name || null;
+
+    if (!fullName) {
+      const internalStaffRes = await db.query(
+        'SELECT full_name FROM internal_staff WHERE user_id = $1',
+        [user.user_id]
+      );
+      fullName = internalStaffRes.rows[0]?.full_name || null;
+    }
     
     const tokenPayload = { 
       id: user.user_id, 

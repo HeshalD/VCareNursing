@@ -928,7 +928,7 @@ const WorkerRegistrationPage = () => {
                           </div>
                         </div>
                           <div>
-                          <label className="text-sm font-semibold text-slate-600 block mb-1">District / City</label>
+                          <label className="text-sm font-semibold text-slate-600 block mb-1">City</label>
                           <input
                             type="text"
                             className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 placeholder:text-slate-400 ${

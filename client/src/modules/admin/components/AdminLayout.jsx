@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Users, Calendar, DollarSign, Activity,
   Settings, LogOut, Bell, Search,
@@ -7,19 +7,47 @@ import {
 } from 'lucide-react';
 import logo from '../../../assets/Logo/VCareLogo.png';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useAdminAuth } from '../../../context/AdminAuthContext';
+
+const ROLE_LABELS = {
+  SUPER_ADMIN: 'Super Admin',
+  COORDINATOR: 'Coordinator',
+  ACCOUNTS: 'Accounts',
+};
+
+const parseToken = (token) => {
+  try {
+    return JSON.parse(atob(token.split('.')[1]));
+  } catch {
+    return null;
+  }
+};
 
 const AdminLayout = ({ children, title, subtitle, actions }) => {
   const location = useLocation();
   const navigate = useNavigate();
+  const { adminToken } = useAdminAuth();
   const [collapsed, setCollapsed] = useState(false);
+
+  const adminInfo = useMemo(() => {
+    if (!adminToken) return { name: 'Admin User', roleLabel: 'Admin' };
+    const payload = parseToken(adminToken);
+    if (!payload) return { name: 'Admin User', roleLabel: 'Admin' };
+    const rawRole = typeof payload.role === 'string'
+      ? payload.role.replace(/[{}]/g, '').split(',')[0].trim()
+      : 'Admin';
+    return {
+      name: payload.full_name || (rawRole === 'SUPER_ADMIN' ? 'Admin' : payload.mobile_number) || 'Admin',
+      roleLabel: ROLE_LABELS[rawRole] || rawRole,
+    };
+  }, [adminToken]);
 
   const isActive = (path) => location.pathname === path;
 
   const handleLogout = () => {
-    // Clear any authentication tokens/user data here if needed
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    navigate('/');
+    localStorage.removeItem('adminToken');
+    localStorage.removeItem('adminUser');
+    navigate('/admin');
   };
 
   return (
@@ -235,11 +263,14 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
             </button>
             <div className="flex items-center gap-3 pl-6 border-l border-slate-200">
               <div className="text-right hidden sm:block">
-                <p className="font-bold text-sm text-slate-900">Admin User</p>
-                <p className="text-xs text-slate-500">Super Admin</p>
+                <p className="font-bold text-sm text-slate-900">{adminInfo.name}</p>
+                <p className="text-xs text-slate-500">{adminInfo.roleLabel}</p>
               </div>
               <div className="w-10 h-10 bg-slate-200 rounded-full overflow-hidden border-2 border-slate-100">
-                <img src="https://ui-avatars.com/api/?name=Admin+User&background=0D8ABC&color=fff" alt="Admin" />
+                <img
+                  src={`https://ui-avatars.com/api/?name=${encodeURIComponent(adminInfo.name)}&background=0D8ABC&color=fff`}
+                  alt={adminInfo.name}
+                />
               </div>
             </div>
           </div>
