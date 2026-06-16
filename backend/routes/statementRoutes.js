@@ -9,5 +9,7 @@ router.get('/:client_id', protect, restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDI
 
 router.post('/download/:client_id', protect, restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'), statementController.downloadClientStatement);
 router.post('/whatsapp/:client_id', protect, restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'), statementController.sendClientStatementToWhatsApp);
+router.post('/whatsapp-resend/:statement_id', protect, restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'), statementController.resendStatementFromHistory);
+router.delete('/:statement_id', protect, restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'), statementController.deleteStatement);
 
 module.exports = router;

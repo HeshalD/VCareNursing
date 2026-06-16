@@ -1,7 +1,7 @@
 const db = require('../config/db');
 const { generateStatementPDF } = require('../utils/statement');
 const cloudinary = require('cloudinary').v2;
-const { sendWhatsAppMessage } = require('../utils/whatsapp');
+const { sendClientBookingStatement } = require('../utils/metaWhatsapp');
 const { logActivity } = require('../utils/activityLogger');
 
 async function getActorName(userId) {
@@ -120,7 +120,7 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
             openingBalance: parseFloat(openingBalance || 0).toFixed(2),
             invoicedAmount: parseFloat(totalInvoiced || 0).toFixed(2),
             amountPaid: parseFloat(totalPaid || 0).toFixed(2),
-            balance: parseFloat(currentBalance || 0).toFixed(2)
+            balanceDue: parseFloat(currentBalance || 0).toFixed(2)
         },
         ledger: statementLines.map((line) => ({
             date: new Date(line.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
@@ -145,6 +145,23 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
         statementLines,
         pdfData
     };
+};
+
+exports.deleteStatement = async (req, res) => {
+    const { statement_id } = req.params;
+    try {
+        const result = await db.query(
+            'DELETE FROM saved_statements WHERE statement_id = $1 RETURNING statement_id, client_id',
+            [statement_id]
+        );
+        if (!result.rows.length) {
+            return res.status(404).json({ message: 'Statement not found.' });
+        }
+        return res.status(200).json({ status: 'success', message: 'Statement deleted.' });
+    } catch (error) {
+        console.error('deleteStatement error:', error);
+        return res.status(500).json({ message: 'Failed to delete statement.' });
+    }
 };
 
 exports.getSavedStatements = async (req, res) => {
@@ -368,12 +385,115 @@ exports.downloadClientStatement = async (req, res) => {
     }
 };
 
+exports.resendStatementFromHistory = async (req, res) => {
+    const { statement_id } = req.params;
+
+    try {
+        const stmtRes = await db.query(
+            `SELECT ss.*, cp.full_name AS client_name, u.mobile_number AS client_mobile
+             FROM saved_statements ss
+             JOIN client_profiles cp ON cp.client_profile_id = ss.client_id
+             JOIN users u ON u.user_id = cp.user_id
+             WHERE ss.statement_id = $1`,
+            [statement_id]
+        );
+
+        if (!stmtRes.rows.length) {
+            return res.status(404).json({ message: 'Statement record not found.' });
+        }
+
+        const stmt = stmtRes.rows[0];
+
+        // Best-effort: find most recent booking for this client to get context for the template
+        const bookingRes = await db.query(
+            `SELECT b.booking_code, p.full_name AS patient_name
+             FROM bookings b
+             LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+             WHERE b.client_id = $1
+             ORDER BY b.start_date DESC
+             LIMIT 1`,
+            [stmt.client_id]
+        );
+        const bookingCode = bookingRes.rows[0]?.booking_code || 'N/A';
+        const patientName = bookingRes.rows[0]?.patient_name || 'N/A';
+
+        let pdfUrl = stmt.pdf_url;
+
+        // If this was a download-only record (no stored PDF), generate and upload now
+        if (!pdfUrl) {
+            const payload = await buildStatementPayload(stmt.client_id, stmt.period_start, stmt.period_end);
+            const pdfBuffer = await generateStatementPDF(payload.pdfData);
+            const pdfUpload = await new Promise((resolve, reject) => {
+                cloudinary.uploader.upload(
+                    `data:application/pdf;base64,${pdfBuffer.toString('base64')}`,
+                    { resource_type: 'raw', folder: 'statements', public_id: `Statement_${stmt.client_id}_${Date.now()}` },
+                    (error, result) => { if (error) return reject(error); resolve(result); }
+                );
+            });
+            pdfUrl = pdfUpload.secure_url;
+            await db.query('UPDATE saved_statements SET pdf_url = $1 WHERE statement_id = $2', [pdfUrl, statement_id]);
+        }
+
+        const fmtAmt = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const periodStart = new Date(stmt.period_start).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+        const periodEnd = new Date(stmt.period_end).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+        const filename = `Statement_${bookingCode}_${stmt.client_name.replace(/\s+/g, '_')}.pdf`;
+
+        await sendClientBookingStatement(
+            stmt.client_mobile,
+            stmt.client_name,
+            periodStart,
+            periodEnd,
+            bookingCode,
+            patientName,
+            fmtAmt(stmt.total_invoiced),
+            fmtAmt(stmt.total_paid),
+            fmtAmt(stmt.balance_due),
+            pdfUrl,
+            filename
+        );
+
+        getActorName(req.user?.user_id).then(actorName => logActivity({
+            actorUserId: req.user?.user_id,
+            actorName,
+            actorRole: Array.isArray(req.user?.role) ? req.user.role[0] : String(req.user?.role),
+            actionType: 'STATEMENT_SENT_WHATSAPP',
+            entityType: 'CLIENT',
+            entityId: String(stmt.client_id),
+            details: { period_start: stmt.period_start, period_end: stmt.period_end, client_name: stmt.client_name, statement_id, booking_code: bookingCode },
+        })).catch(err => console.error('Activity log failed (resendStatementFromHistory):', err.message));
+
+        return res.status(200).json({ status: 'success', message: 'Statement sent via WhatsApp', data: { pdf_link: pdfUrl } });
+    } catch (error) {
+        console.error('Error resending statement via WhatsApp:', error);
+        return res.status(500).json({ message: 'Failed to resend statement via WhatsApp' });
+    }
+};
+
 exports.sendClientStatementToWhatsApp = async (req, res) => {
     const { client_id } = req.params;
     const { start_date, end_date } = normalizeDateRange(req);
+    const booking_id = req.body?.booking_id || null;
 
     try {
         const { clientName, clientMobile, openingBalance, totalInvoiced, totalPaid, currentBalance, pdfData } = await buildStatementPayload(client_id, start_date, end_date);
+
+        // Fetch booking context for the template
+        let bookingCode = 'N/A';
+        let patientName = 'N/A';
+        if (booking_id) {
+            const bookingRes = await db.query(
+                `SELECT b.booking_code, p.full_name AS patient_name
+                 FROM bookings b
+                 LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+                 WHERE b.booking_id = $1`,
+                [booking_id]
+            );
+            if (bookingRes.rows.length) {
+                bookingCode = bookingRes.rows[0].booking_code || 'N/A';
+                patientName = bookingRes.rows[0].patient_name || 'N/A';
+            }
+        }
 
         const pdfBuffer = await generateStatementPDF(pdfData);
         const pdfUpload = await new Promise((resolve, reject) => {
@@ -391,14 +511,21 @@ exports.sendClientStatementToWhatsApp = async (req, res) => {
             );
         });
 
-        const message = await sendWhatsAppMessage(
+        const fmtAmt = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const filename = `Statement_${bookingCode}_${clientName.replace(/\s+/g, '_')}.pdf`;
+
+        await sendClientBookingStatement(
             clientMobile,
-            `Hi ${clientName}, your statement for ${pdfData.periodStart} to ${pdfData.periodEnd} is attached.`,
-            {
-                type: 'document',
-                link: pdfUpload.secure_url,
-                filename: `Statement_${clientName.replace(/\s+/g, '_')}.pdf`
-            }
+            clientName,
+            pdfData.periodStart,
+            pdfData.periodEnd,
+            bookingCode,
+            patientName,
+            fmtAmt(totalInvoiced),
+            fmtAmt(totalPaid),
+            fmtAmt(currentBalance),
+            pdfUpload.secure_url,
+            filename
         );
 
         saveStatementRecord({
@@ -421,16 +548,13 @@ exports.sendClientStatementToWhatsApp = async (req, res) => {
             actionType: 'STATEMENT_SENT_WHATSAPP',
             entityType: 'CLIENT',
             entityId: String(client_id),
-            details: { period_start: start_date, period_end: end_date, client_name: clientName },
+            details: { period_start: start_date, period_end: end_date, client_name: clientName, booking_id, booking_code: bookingCode },
         })).catch(err => console.error('Activity log failed (sendClientStatementToWhatsApp):', err.message));
 
         return res.status(200).json({
             status: 'success',
             message: 'Statement generated and sent via WhatsApp',
-            data: {
-                pdf_link: pdfUpload.secure_url,
-                whatsapp_message_sid: message.sid
-            }
+            data: { pdf_link: pdfUpload.secure_url }
         });
     } catch (error) {
         console.error('Error sending statement via WhatsApp:', error);

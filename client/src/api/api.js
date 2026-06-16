@@ -1053,11 +1053,12 @@ class ApiClient {
   }
 
   // Statement endpoints
-  async getClientStatement(clientId, dateRange) {
-    return this.request(`/statement/${clientId}`, {
-      method: 'POST',
-      body: JSON.stringify(dateRange),
-    });
+  async getClientStatement(clientId, dateRange = {}) {
+    const params = new URLSearchParams();
+    if (dateRange.start_date) params.set('start_date', dateRange.start_date);
+    if (dateRange.end_date) params.set('end_date', dateRange.end_date);
+    const qs = params.toString();
+    return this.request(`/statement/${clientId}${qs ? `?${qs}` : ''}`);
   }
 
   async getClientTransactions(clientId) {
@@ -1096,6 +1097,18 @@ class ApiClient {
     return this.request(`/statement/whatsapp/${clientId}`, {
       method: 'POST',
       body: JSON.stringify(dateRange),
+    });
+  }
+
+  async resendStatementWhatsApp(statementId) {
+    return this.request(`/statement/whatsapp-resend/${statementId}`, {
+      method: 'POST',
+    });
+  }
+
+  async deleteStatement(statementId) {
+    return this.request(`/statement/${statementId}`, {
+      method: 'DELETE',
     });
   }
 

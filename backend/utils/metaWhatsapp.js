@@ -175,6 +175,38 @@ const sendStaffAdvanceApproved = (mobileNumber, staffName, amount, newBalance) =
 const sendStaffAdvanceRejected = (mobileNumber, staffName, amount, reason) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_staff_advance_rejected', 'en', [staffName, String(amount), reason || 'No reason provided']);
 
+// Sent when a booking statement is ready — header: statement PDF, body vars:
+//   {{1}} = client name, {{2}} = period start (e.g. "01 Jan 2026"), {{3}} = period end,
+//   {{4}} = booking code, {{5}} = patient name,
+//   {{6}} = total invoiced (LKR), {{7}} = total paid (LKR), {{8}} = balance due (LKR)
+//
+// META TEMPLATE SPEC — vcare_client_booking_statement (UTILITY, en)
+// Header: DOCUMENT
+// Body:
+//   Hi {{1}},
+//
+//   Your booking statement is ready for the period *{{2}}* to *{{3}}*.
+//
+//   📋 *Booking Ref:* {{4}}
+//   👤 *Patient:* {{5}}
+//
+//   📊 *Account Summary:*
+//   • Invoiced:  LKR {{6}}
+//   • Paid:      LKR {{7}}
+//   • Balance:   LKR {{8}}
+//
+//   Please refer to the attached PDF for the full transaction details.
+//
+//   Thank you for choosing VCare Nursing.
+const sendClientBookingStatement = (mobileNumber, clientName, periodStart, periodEnd, bookingCode, patientName, invoiced, paid, balance, pdfUrl, filename) =>
+  sendTemplate(
+    formatNumber(mobileNumber),
+    'vcare_client_booking_statement',
+    'en',
+    [clientName, periodStart, periodEnd, bookingCode, patientName, invoiced, paid, balance],
+    [{ type: 'document', document: { link: pdfUrl, filename } }]
+  );
+
 // Sent when a salary payout is processed — header: salary sheet PDF, body vars:
 //   {{1}} = staff name, {{2}} = month (e.g. "June 2026"),
 //   {{3}} = net payable / current earnings (LKR formatted),
@@ -189,4 +221,4 @@ const sendStaffSalarySheet = (mobileNumber, fullName, monthLabel, netPayable, am
     [{ type: 'document', document: { link: pdfUrl, filename: `Salary_Sheet_${monthLabel.replace(/\s+/g, '_')}.pdf` } }]
   );
 
-module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendPaymentRecorded, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected };
+module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendPaymentRecorded, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected, sendClientBookingStatement };
