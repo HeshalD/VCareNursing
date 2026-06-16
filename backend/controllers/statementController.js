@@ -9,13 +9,13 @@ async function getActorName(userId) {
     return result.rows[0]?.full_name || 'Admin';
 }
 
-async function saveStatementRecord({ client_id, period_start, period_end, opening_balance, total_invoiced, total_paid, balance_due, pdf_url, delivery_method, generated_by }) {
+async function saveStatementRecord({ client_id, period_start, period_end, opening_balance, total_invoiced, total_paid, balance_due, pdf_url, delivery_method, generated_by, statement_source }) {
     try {
         await db.query(
             `INSERT INTO saved_statements
-               (client_id, period_start, period_end, opening_balance, total_invoiced, total_paid, balance_due, pdf_url, delivery_method, generated_by)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-            [client_id, period_start, period_end, opening_balance, total_invoiced, total_paid, balance_due, pdf_url || null, delivery_method, generated_by || null]
+               (client_id, period_start, period_end, opening_balance, total_invoiced, total_paid, balance_due, pdf_url, delivery_method, generated_by, statement_source)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            [client_id, period_start, period_end, opening_balance, total_invoiced, total_paid, balance_due, pdf_url || null, delivery_method, generated_by || null, statement_source || 'BOOKING']
         );
     } catch (err) {
         console.error('saveStatementRecord failed (non-fatal):', err.message);
@@ -150,14 +150,31 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
 exports.deleteStatement = async (req, res) => {
     const { statement_id } = req.params;
     try {
-        const result = await db.query(
-            'DELETE FROM saved_statements WHERE statement_id = $1 RETURNING statement_id, client_id',
+        const infoRes = await db.query(
+            `SELECT ss.client_id, ss.statement_source, cp.full_name AS client_name
+             FROM saved_statements ss
+             LEFT JOIN client_profiles cp ON cp.client_profile_id = ss.client_id
+             WHERE ss.statement_id = $1`,
             [statement_id]
         );
-        if (!result.rows.length) {
+        if (!infoRes.rows.length) {
             return res.status(404).json({ message: 'Statement not found.' });
         }
-        return res.status(200).json({ status: 'success', message: 'Statement deleted.' });
+        const info = infoRes.rows[0];
+
+        await db.query('DELETE FROM saved_statements WHERE statement_id = $1', [statement_id]);
+
+        res.status(200).json({ status: 'success', message: 'Statement deleted.' });
+
+        getActorName(req.user?.user_id).then(actorName => logActivity({
+            actorUserId: req.user?.user_id,
+            actorName,
+            actorRole: Array.isArray(req.user?.role) ? req.user.role[0] : String(req.user?.role),
+            actionType: 'STATEMENT_DELETED',
+            entityType: 'STATEMENT',
+            entityId: String(statement_id),
+            details: { client_id: info.client_id, client_name: info.client_name, statement_source: info.statement_source || 'BOOKING' },
+        })).catch(err => console.error('Activity log failed (deleteStatement):', err.message));
     } catch (error) {
         console.error('deleteStatement error:', error);
         return res.status(500).json({ message: 'Failed to delete statement.' });
@@ -359,16 +376,18 @@ exports.downloadClientStatement = async (req, res) => {
             pdf_url: null,
             delivery_method: 'DOWNLOAD',
             generated_by: req.user?.user_id || null,
+            statement_source: req.body?.statement_source || 'BOOKING',
         });
 
+        const actionType = req.body?.action_intent === 'generate' ? 'STATEMENT_GENERATED' : 'STATEMENT_DOWNLOADED';
         getActorName(req.user?.user_id).then(actorName => logActivity({
             actorUserId: req.user?.user_id,
             actorName,
             actorRole: Array.isArray(req.user?.role) ? req.user.role[0] : String(req.user?.role),
-            actionType: 'STATEMENT_DOWNLOADED',
+            actionType,
             entityType: 'CLIENT',
             entityId: String(client_id),
-            details: { period_start: start_date, period_end: end_date, client_name: clientName },
+            details: { period_start: start_date, period_end: end_date, client_name: clientName, statement_source: req.body?.statement_source || 'BOOKING' },
         })).catch(err => console.error('Activity log failed (downloadClientStatement):', err.message));
 
     } catch (error) {
@@ -539,6 +558,7 @@ exports.sendClientStatementToWhatsApp = async (req, res) => {
             pdf_url: pdfUpload.secure_url,
             delivery_method: 'WHATSAPP',
             generated_by: req.user?.user_id || null,
+            statement_source: req.body?.statement_source || 'BOOKING',
         });
 
         getActorName(req.user?.user_id).then(actorName => logActivity({

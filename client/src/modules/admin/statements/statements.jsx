@@ -4,7 +4,7 @@ import {
   Eye, XCircle, Loader2, Calendar, Activity, Clock, CheckCircle,
   FileText, Download, MessageSquare, Stethoscope, Baby, Heart,
   ChevronDown, ChevronRight, Infinity as InfinityIcon, Trash2, Search,
-  X, CheckSquare, Square, Archive,
+  X, CheckSquare, Square, Archive, Users, Mail, Phone,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -96,7 +96,7 @@ const BOOKING_BULK_CFG = {
   },
 };
 
-const BulkBookingModal = ({ bookings, params, periodLabel, adminToken, mode, onClose, onSuccess }) => {
+const BulkBookingModal = ({ bookings, params, periodLabel, adminToken, mode, source, onClose, onSuccess }) => {
   const cfg = BOOKING_BULK_CFG[mode];
   const [results, setResults] = useState(() =>
     bookings.map((b) => ({ booking: b, status: 'pending' }))
@@ -116,9 +116,9 @@ const BulkBookingModal = ({ bookings, params, periodLabel, adminToken, mode, onC
         apiClient.setToken(adminToken);
 
         if (mode === 'whatsapp') {
-          await apiClient.sendClientStatementToWhatsApp(bookings[i].client_profile_id, params);
+          await apiClient.sendClientStatementToWhatsApp(bookings[i].client_profile_id, { ...params, statement_source: source || 'BOOKING' });
         } else {
-          const blob = await apiClient.downloadClientStatement(bookings[i].client_profile_id, params);
+          const blob = await apiClient.downloadClientStatement(bookings[i].client_profile_id, { ...params, statement_source: source || 'BOOKING', action_intent: mode === 'save' ? 'generate' : 'download' });
           if (mode === 'download') {
             const safe = bookings[i].client_name.replace(/[^a-zA-Z0-9_-]/g, '_');
             blobsRef.current.push({ blob, filename: `Statement_${safe}.pdf` });
@@ -434,6 +434,7 @@ const Statements = () => {
   // Search
   const [bookingSearch, setBookingSearch] = useState('');
   const [historySearch, setHistorySearch] = useState('');
+  const [historySourceFilter, setHistorySourceFilter] = useState('');
 
   // Status filter
   const [bookingStatusFilter, setBookingStatusFilter] = useState('');
@@ -445,6 +446,21 @@ const Statements = () => {
   // History bulk selection + modal
   const [selectedHistory, setSelectedHistory] = useState(new Set());
   const [historyBulkAction, setHistoryBulkAction] = useState(null); // 'download' | 'whatsapp'
+
+  // View mode toggle
+  const [viewMode, setViewMode] = useState('booking'); // 'booking' | 'client'
+
+  // Client mode data
+  const [clients, setClients] = useState([]);
+  const [clientsLoading, setClientsLoading] = useState(false);
+
+  // Client mode search/filter
+  const [clientSearch, setClientSearch] = useState('');
+  const [clientStatusFilter, setClientStatusFilter] = useState('');
+
+  // Client mode bulk selection + modal
+  const [selectedClients, setSelectedClients] = useState(new Set());
+  const [clientBulkAction, setClientBulkAction] = useState(null);
 
   const hasActivePeriod =
     isAllTime ||
@@ -477,12 +493,65 @@ const Statements = () => {
 
   const filteredHistory = useMemo(() => {
     const q = historySearch.trim().toLowerCase();
-    if (!q) return savedStatements;
-    return savedStatements.filter((s) =>
-      [s.client_name, s.statement_code, s.period_start, s.period_end, s.delivery_method]
-        .some((v) => v && String(v).toLowerCase().includes(q))
-    );
-  }, [savedStatements, historySearch]);
+    return savedStatements.filter((s) => {
+      if (historySourceFilter && (s.statement_source || 'BOOKING') !== historySourceFilter) return false;
+      if (!q) return true;
+      return [s.client_name, s.statement_code, s.period_start, s.period_end, s.delivery_method]
+        .some((v) => v && String(v).toLowerCase().includes(q));
+    });
+  }, [savedStatements, historySearch, historySourceFilter]);
+
+  // Client mode derived state
+  const filteredClients = useMemo(() => {
+    const q = clientSearch.trim().toLowerCase();
+    return clients.filter((c) => {
+      if (clientStatusFilter === 'active' && !c.is_active) return false;
+      if (clientStatusFilter === 'inactive' && c.is_active) return false;
+      if (!q) return true;
+      return [c.full_name, c.mobile_number, c.email, c.client_code, c.client_type]
+        .some((v) => v && String(v).toLowerCase().includes(q));
+    });
+  }, [clients, clientSearch, clientStatusFilter]);
+
+  const selectedClientItems = useMemo(
+    () => clients
+      .filter((c) => selectedClients.has(c.client_profile_id))
+      .map((c) => ({
+        client_profile_id: c.client_profile_id,
+        client_name: c.full_name,
+        patient_name: c.mobile_number || '',
+        booking_code: null,
+        booking_id: c.client_profile_id,
+      })),
+    [clients, selectedClients]
+  );
+
+  const allClientsChecked =
+    filteredClients.length > 0 && filteredClients.every((c) => selectedClients.has(c.client_profile_id));
+
+  const toggleClientSelect = (clientId) => {
+    setSelectedClients((prev) => {
+      const next = new Set(prev);
+      next.has(clientId) ? next.delete(clientId) : next.add(clientId);
+      return next;
+    });
+  };
+
+  const toggleAllClients = () => {
+    if (allClientsChecked) {
+      setSelectedClients((prev) => {
+        const next = new Set(prev);
+        filteredClients.forEach((c) => next.delete(c.client_profile_id));
+        return next;
+      });
+    } else {
+      setSelectedClients((prev) => {
+        const next = new Set(prev);
+        filteredClients.forEach((c) => next.add(c.client_profile_id));
+        return next;
+      });
+    }
+  };
 
   // Bookings selection helpers
   const selectedBookings = useMemo(
@@ -567,6 +636,7 @@ const Statements = () => {
     setIsFromBookingStart(fromStart);
     setFromBookingStartEndMonth(fromStartEndMonth);
     setSelected(new Set());
+    setSelectedClients(new Set());
     setClientTransactions({});
     setTxVisible({});
     setExpandedBookings(new Set());
@@ -642,6 +712,21 @@ const Statements = () => {
     }));
   };
 
+  const fetchClients = async () => {
+    try {
+      setClientsLoading(true);
+      const orig = apiClient.token;
+      apiClient.setToken(adminToken);
+      const response = await apiClient.getAllClients();
+      apiClient.setToken(orig);
+      setClients(response.data || []);
+    } catch (err) {
+      console.error('Error fetching clients:', err);
+    } finally {
+      setClientsLoading(false);
+    }
+  };
+
   const fetchSavedStatements = async () => {
     setHistoryLoading(true);
     try {
@@ -680,6 +765,7 @@ const Statements = () => {
     if (adminToken) {
       fetchBookings();
       fetchSavedStatements();
+      fetchClients();
     }
   }, [adminToken]);
 
@@ -691,13 +777,40 @@ const Statements = () => {
       const orig = apiClient.token;
       apiClient.setToken(adminToken);
       const params = isAllTime ? {} : isFromBookingStart ? { end_date: globalEndDate } : { start_date: globalStartDate, end_date: globalEndDate };
-      const response = await apiClient.downloadClientStatement(booking.client_profile_id, params);
+      const response = await apiClient.downloadClientStatement(booking.client_profile_id, { ...params, statement_source: 'BOOKING', action_intent: 'download' });
       apiClient.setToken(orig);
       const blob = new Blob([response], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `Statement_${booking.client_name.replace(/\s+/g, '_')}_${isAllTime ? 'AllTime' : `${globalStartDate}_to_${globalEndDate}`}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      fetchSavedStatements();
+    } catch (err) {
+      alert('Failed to download statement. Please try again.');
+    } finally {
+      setActionLoading((prev) => ({ ...prev, [key]: false }));
+    }
+  };
+
+  const handleClientDownload = async (client) => {
+    if (!hasActivePeriod) { alert('Please select a date range above first.'); return; }
+    const key = `${client.client_profile_id}-download`;
+    setActionLoading((prev) => ({ ...prev, [key]: true }));
+    try {
+      const orig = apiClient.token;
+      apiClient.setToken(adminToken);
+      const params = isAllTime ? {} : isFromBookingStart ? { end_date: globalEndDate } : { start_date: globalStartDate, end_date: globalEndDate };
+      const response = await apiClient.downloadClientStatement(client.client_profile_id, { ...params, statement_source: 'CLIENT', action_intent: 'download' });
+      apiClient.setToken(orig);
+      const blob = new Blob([response], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Statement_${(client.full_name || 'Client').replace(/\s+/g, '_')}_${isAllTime ? 'AllTime' : `${globalStartDate}_to_${globalEndDate}`}.pdf`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -805,15 +918,55 @@ const Statements = () => {
   }
 
   return (
-    <AdminLayout title="Client Statements" subtitle={`${bookings.length} bookings`} >
+    <AdminLayout title="Client Statements" subtitle={viewMode === 'booking' ? `${bookings.length} bookings` : `${clients.length} clients`} >
+
+      {/* Mode toggle */}
+      <div className="flex items-center gap-2 mb-5">
+        <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+          <button
+            onClick={() => { setViewMode('booking'); setSelectedClients(new Set()); }}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              viewMode === 'booking'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <FileText className="w-4 h-4" />
+            Booking Mode
+          </button>
+          <button
+            onClick={() => { setViewMode('client'); setSelected(new Set()); }}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              viewMode === 'client'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            Client Mode
+          </button>
+        </div>
+        <span className="text-xs text-slate-400">
+          {viewMode === 'booking'
+            ? 'Statements grouped by booking'
+            : 'Statements grouped by client'}
+        </span>
+      </div>
+
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        {[
-          { label: 'Total Bookings', value: bookings.length, color: 'blue', Icon: FileText },
-          { label: 'Active', value: bookings.filter((b) => b.status === 'ACTIVE').length, color: 'green', Icon: CheckCircle },
-          { label: 'Pending Termination', value: bookings.filter((b) => b.status === 'PENDING_TERMINATION').length, color: 'yellow', Icon: Clock },
-          { label: 'Terminated', value: bookings.filter((b) => b.status === 'TERMINATED').length, color: 'red', Icon: Activity },
-        ].map(({ label, value, color, Icon }) => (
+        {(viewMode === 'booking' ? [
+            { label: 'Total Bookings', value: bookings.length, color: 'blue', Icon: FileText },
+            { label: 'Active', value: bookings.filter((b) => b.status === 'ACTIVE').length, color: 'green', Icon: CheckCircle },
+            { label: 'Pending Termination', value: bookings.filter((b) => b.status === 'PENDING_TERMINATION').length, color: 'yellow', Icon: Clock },
+            { label: 'Terminated', value: bookings.filter((b) => b.status === 'TERMINATED').length, color: 'red', Icon: Activity },
+          ] : [
+            { label: 'Total Clients', value: clients.length, color: 'blue', Icon: FileText },
+            { label: 'Active Clients', value: clients.filter((c) => c.is_active).length, color: 'green', Icon: CheckCircle },
+            { label: 'Inactive Clients', value: clients.filter((c) => !c.is_active).length, color: 'red', Icon: Activity },
+            { label: 'Statements in History', value: savedStatements.length, color: 'yellow', Icon: Clock },
+          ]
+        ).map(({ label, value, color, Icon }) => (
           <div key={label} className="bg-white rounded-xl border border-slate-200 p-5">
             <div className="flex items-center justify-between">
               <div>
@@ -940,8 +1093,8 @@ const Statements = () => {
         )}
       </div>
 
-      {/* Booking Cards */}
-      <div className="mb-8">
+      {/* ── Booking Cards (booking mode only) ─────────────────────────────── */}
+      {viewMode === 'booking' && <div className="mb-8">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div className="flex items-center gap-2 shrink-0">
             <button onClick={toggleAll} className="p-0.5 text-slate-400 hover:text-blue-600 transition-colors">
@@ -1289,7 +1442,341 @@ const Statements = () => {
             })
           )}
         </div>
-      </div>
+      </div>}
+
+      {/* ── Client Cards (client mode only) ───────────────────────────────── */}
+      {viewMode === 'client' && (
+        <div className="mb-8">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <div className="flex items-center gap-2 shrink-0">
+              <button onClick={toggleAllClients} className="p-0.5 text-slate-400 hover:text-blue-600 transition-colors">
+                {allClientsChecked
+                  ? <CheckSquare className="w-4 h-4 text-blue-600" />
+                  : <Square className="w-4 h-4" />}
+              </button>
+              <h3 className="text-sm font-semibold text-slate-700">
+                Client Statements
+                <span className="ml-2 text-xs font-normal text-slate-400">
+                  {hasActivePeriod
+                    ? '— click a row to expand transactions, or check to select'
+                    : '— select a period above to enable transaction previews'}
+                </span>
+              </h3>
+            </div>
+            <div className="flex items-center gap-2 ml-auto">
+              {/* Status filter pills */}
+              <div className="flex items-center gap-1">
+                {[
+                  { label: 'All', value: '' },
+                  { label: 'Active', value: 'active' },
+                  { label: 'Inactive', value: 'inactive' },
+                ].map(({ label, value }) => (
+                  <button
+                    key={value}
+                    onClick={() => setClientStatusFilter(value)}
+                    className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                      clientStatusFilter === value
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    {label}
+                    <span className="ml-1 opacity-70">
+                      ({value === '' ? clients.length : value === 'active' ? clients.filter(c => c.is_active).length : clients.filter(c => !c.is_active).length})
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {/* Search */}
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                <input
+                  type="text"
+                  value={clientSearch}
+                  onChange={(e) => setClientSearch(e.target.value)}
+                  placeholder="Search clients…"
+                  className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-44"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Client selection action bar */}
+          {selectedClients.size > 0 && (
+            <div className={`flex items-center justify-between gap-3 mb-3 px-4 py-2.5 rounded-xl border ${
+              hasActivePeriod ? 'bg-blue-50 border-blue-200' : 'bg-amber-50 border-amber-200'
+            }`}>
+              <div className="flex items-center gap-2">
+                <span className={`text-sm font-semibold ${hasActivePeriod ? 'text-blue-800' : 'text-amber-800'}`}>
+                  {selectedClients.size} client{selectedClients.size > 1 ? 's' : ''} selected
+                </span>
+                <button
+                  onClick={() => setSelectedClients(new Set())}
+                  className="text-xs text-slate-400 hover:text-slate-600 underline"
+                >
+                  Clear
+                </button>
+              </div>
+              {!hasActivePeriod ? (
+                <span className="text-xs text-amber-700">Select a date period above to generate statements</span>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setClientBulkAction('save')}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    Generate {selectedClients.size}
+                  </button>
+                  <button
+                    onClick={() => setClientBulkAction('download')}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 text-white text-xs font-bold rounded-lg hover:bg-violet-700 transition-colors"
+                  >
+                    <Archive className="w-3.5 h-3.5" />
+                    ZIP
+                  </button>
+                  <button
+                    onClick={() => setClientBulkAction('whatsapp')}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white text-xs font-bold rounded-lg hover:bg-green-700 transition-colors"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" />
+                    WhatsApp
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="rounded-xl border border-slate-200 overflow-hidden bg-white divide-y divide-slate-100">
+            {clientsLoading ? (
+              <div className="flex flex-col items-center justify-center h-40 gap-2">
+                <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+                <p className="text-sm text-slate-400">Loading clients...</p>
+              </div>
+            ) : filteredClients.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-40 gap-2">
+                <Users className="w-8 h-8 text-slate-200" />
+                <p className="text-sm text-slate-400">{clientSearch ? 'No clients match your search' : 'No clients found'}</p>
+              </div>
+            ) : (
+              filteredClients.map((client) => {
+                const isExpanded = expandedBookings.has(client.client_profile_id);
+                const txData = clientTransactions[client.client_profile_id];
+                const dlKey = `${client.client_profile_id}-download`;
+                const visibleCount = txVisible[client.client_profile_id] || PAGE_SIZE;
+                const ledger = txData?.ledger || [];
+                const shownLedger = ledger.slice(0, visibleCount);
+                const hasMore = visibleCount < ledger.length;
+                const remaining = ledger.length - visibleCount;
+
+                return (
+                  <div key={client.client_profile_id}>
+                    {/* Client header row — clickable to expand */}
+                    <div
+                      onClick={() => toggleBooking(client.client_profile_id, client.client_profile_id)}
+                      className={`px-5 py-4 flex items-start gap-4 cursor-pointer hover:bg-slate-50 transition-colors ${
+                        selectedClients.has(client.client_profile_id) ? 'bg-blue-50/40' : ''
+                      }`}
+                    >
+                      {/* Checkbox */}
+                      <div
+                        className="pt-0.5 shrink-0"
+                        onClick={(e) => { e.stopPropagation(); toggleClientSelect(client.client_profile_id); }}
+                      >
+                        {selectedClients.has(client.client_profile_id)
+                          ? <CheckSquare className="w-4 h-4 text-blue-600" />
+                          : <Square className="w-4 h-4 text-slate-300 hover:text-slate-500 transition-colors" />}
+                      </div>
+                      {/* Chevron */}
+                      <div className="pt-0.5 text-slate-400 shrink-0">
+                        {hasActivePeriod ? (
+                          isExpanded
+                            ? <ChevronDown className="w-4 h-4 text-blue-500" />
+                            : <ChevronRight className="w-4 h-4" />
+                        ) : (
+                          <ChevronRight className="w-4 h-4 opacity-30" />
+                        )}
+                      </div>
+
+                      {/* Client info grid */}
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-6 gap-y-2 flex-1 min-w-0">
+                        <div>
+                          <p className="text-xs text-slate-400 mb-0.5">Client</p>
+                          <p className="text-sm font-semibold text-slate-900 truncate">{client.full_name}</p>
+                          <p className="text-xs text-slate-500 truncate">{client.client_code}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400 mb-0.5">Phone</p>
+                          <div className="flex items-center gap-1">
+                            <Phone className="w-3 h-3 text-slate-400 shrink-0" />
+                            <p className="text-sm font-medium text-slate-900 truncate">{client.mobile_number || '—'}</p>
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400 mb-0.5">Email</p>
+                          <div className="flex items-center gap-1">
+                            <Mail className="w-3 h-3 text-slate-400 shrink-0" />
+                            <p className="text-sm font-medium text-slate-900 truncate">{client.email || '—'}</p>
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400 mb-0.5">Type</p>
+                          <p className="text-sm font-medium text-slate-900 truncate">{client.client_type || '—'}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400 mb-0.5">Address</p>
+                          <p className="text-sm text-slate-900 truncate">{client.primary_address || '—'}</p>
+                          {!isExpanded && txData && !txData.loading && txData.summary && (
+                            <p className="text-xs text-slate-400 mt-1">
+                              {ledger.length} txn
+                              {txData.summary.balance_due != null && (
+                                <> · Bal: <span className={Number(txData.summary.balance_due) < 0 ? 'text-rose-500' : 'text-emerald-600'}>
+                                  LKR {fmt(txData.summary.balance_due)}
+                                </span></>
+                              )}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Action buttons */}
+                      <div
+                        className="flex flex-col gap-1.5 shrink-0"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          onClick={() => navigate(`/admin/users/${client.client_profile_id}/detail`)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-100 text-slate-700 text-xs font-medium rounded-lg hover:bg-slate-200 transition-colors"
+                        >
+                          <Eye className="w-3 h-3" />
+                          View
+                        </button>
+                        <button
+                          onClick={() => handleClientDownload(client)}
+                          disabled={actionLoading[dlKey]}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-60"
+                        >
+                          {actionLoading[dlKey] ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                          {actionLoading[dlKey] ? 'PDF...' : 'PDF'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Transactions panel — only when expanded */}
+                    {isExpanded && (
+                      <div className="border-t border-slate-100 bg-slate-50">
+                        <div className="px-5 py-3 flex items-center justify-between border-b border-slate-100">
+                          <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">
+                            Transactions · {periodLabel}
+                          </span>
+                          {txData?.summary && !txData.loading && (
+                            <div className="flex items-center gap-4 text-xs">
+                              <span className="text-slate-500">
+                                Opening: <span className="font-medium text-slate-700">LKR {fmt(txData.summary.opening_balance)}</span>
+                              </span>
+                              <span className="text-rose-600 font-medium">
+                                Invoiced: LKR {fmt(txData.summary.invoiced_amount)}
+                              </span>
+                              <span className="text-emerald-600 font-medium">
+                                Paid: LKR {fmt(txData.summary.amount_paid)}
+                              </span>
+                              <span className={`font-bold ${Number(txData.summary.balance_due) < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                Balance: LKR {fmt(txData.summary.balance_due)}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        {!txData || txData.loading ? (
+                          <div className="flex items-center justify-center gap-2 py-8">
+                            <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+                            <span className="text-xs text-slate-400">Loading transactions...</span>
+                          </div>
+                        ) : txData.error ? (
+                          <div className="px-5 py-4 flex items-center gap-3">
+                            <XCircle className="w-4 h-4 text-red-400 shrink-0" />
+                            <span className="text-xs text-red-500">Failed to load: {txData.error}</span>
+                            <button
+                              onClick={() => fetchForClient(client.client_profile_id)}
+                              className="text-xs text-blue-500 hover:underline ml-auto"
+                            >
+                              Retry
+                            </button>
+                          </div>
+                        ) : ledger.length === 0 ? (
+                          <div className="px-5 py-8 text-center">
+                            <FileText className="w-6 h-6 text-slate-200 mx-auto mb-2" />
+                            <p className="text-xs text-slate-400">No transactions in this period</p>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-xs">
+                                <thead>
+                                  <tr className="bg-slate-100 text-slate-500 font-semibold uppercase tracking-wide">
+                                    <th className="px-5 py-2 text-left">Date</th>
+                                    <th className="px-5 py-2 text-left">Category</th>
+                                    <th className="px-5 py-2 text-left">Details</th>
+                                    <th className="px-5 py-2 text-right">Invoice (LKR)</th>
+                                    <th className="px-5 py-2 text-right">Payment (LKR)</th>
+                                    <th className="px-5 py-2 text-right">Balance (LKR)</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                  {shownLedger.map((tx) => (
+                                    <tr
+                                      key={tx.transaction_id}
+                                      className={tx.row_type === 'INVOICE' ? 'hover:bg-rose-50/60' : 'hover:bg-emerald-50/60'}
+                                    >
+                                      <td className="px-5 py-2 text-slate-600 whitespace-nowrap">{fmtDate(tx.date)}</td>
+                                      <td className="px-5 py-2 text-slate-600">{tx.transactions || '—'}</td>
+                                      <td className="px-5 py-2 text-slate-500 max-w-[180px] truncate" title={tx.details}>
+                                        {tx.details || '—'}
+                                      </td>
+                                      <td className="px-5 py-2 text-right font-medium text-rose-600">
+                                        {tx.amount_invoiced ? fmt(tx.amount_invoiced) : '—'}
+                                      </td>
+                                      <td className="px-5 py-2 text-right font-medium text-emerald-600">
+                                        {tx.amount_paid ? fmt(tx.amount_paid) : '—'}
+                                      </td>
+                                      <td className="px-5 py-2 text-right font-semibold text-slate-800">
+                                        {fmt(tx.balance)}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                            {hasMore && (
+                              <div className="px-5 py-3 border-t border-slate-100 flex items-center justify-between">
+                                <span className="text-xs text-slate-400">
+                                  Showing {shownLedger.length} of {ledger.length} transactions
+                                </span>
+                                <button
+                                  onClick={() => loadMore(client.client_profile_id, ledger.length)}
+                                  className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
+                                >
+                                  Load {Math.min(PAGE_SIZE, remaining)} more
+                                  <ChevronDown className="w-3 h-3" />
+                                </button>
+                              </div>
+                            )}
+                            {!hasMore && ledger.length > PAGE_SIZE && (
+                              <div className="px-5 py-2 border-t border-slate-100">
+                                <span className="text-xs text-slate-400">All {ledger.length} transactions shown</span>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Statement History */}
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -1307,6 +1794,25 @@ const Statements = () => {
             </div>
           </div>
           <div className="flex items-center gap-2 ml-auto">
+            <div className="flex items-center gap-1">
+              {[
+                { label: 'All', value: '' },
+                { label: 'Booking', value: 'BOOKING' },
+                { label: 'Client', value: 'CLIENT' },
+              ].map(({ label, value }) => (
+                <button
+                  key={value}
+                  onClick={() => setHistorySourceFilter(value)}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                    historySourceFilter === value
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
               <input
@@ -1410,14 +1916,24 @@ const Statements = () => {
                       </span>
                     </td>
                     <td className="px-5 py-3">
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
-                        s.delivery_method === 'WHATSAPP' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
-                      }`}>
-                        {s.delivery_method === 'WHATSAPP'
-                          ? <MessageSquare className="w-3 h-3" />
-                          : <Download className="w-3 h-3" />}
-                        {s.delivery_method === 'WHATSAPP' ? 'WhatsApp' : 'Download'}
-                      </span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
+                          s.delivery_method === 'WHATSAPP' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
+                        }`}>
+                          {s.delivery_method === 'WHATSAPP'
+                            ? <MessageSquare className="w-3 h-3" />
+                            : <Download className="w-3 h-3" />}
+                          {s.delivery_method === 'WHATSAPP' ? 'WhatsApp' : 'Download'}
+                        </span>
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
+                          s.statement_source === 'CLIENT' ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-600'
+                        }`}>
+                          {s.statement_source === 'CLIENT'
+                            ? <Users className="w-3 h-3" />
+                            : <FileText className="w-3 h-3" />}
+                          {s.statement_source === 'CLIENT' ? 'Client' : 'Booking'}
+                        </span>
+                      </div>
                     </td>
                     <td className="px-5 py-3 text-xs text-slate-500 whitespace-nowrap">
                       {new Date(s.created_at).toLocaleDateString('en-GB', {
@@ -1481,6 +1997,7 @@ const Statements = () => {
       {bulkAction && (
         <BulkBookingModal
           mode={bulkAction}
+          source="BOOKING"
           bookings={selectedBookings}
           params={
             isAllTime ? {} :
@@ -1506,6 +2023,27 @@ const Statements = () => {
           onClose={() => setHistoryBulkAction(null)}
           onSuccess={() => {
             setSelectedHistory(new Set());
+            fetchSavedStatements();
+          }}
+        />
+      )}
+
+      {/* Client bulk action modal */}
+      {clientBulkAction && (
+        <BulkBookingModal
+          mode={clientBulkAction}
+          source="CLIENT"
+          bookings={selectedClientItems}
+          params={
+            isAllTime ? {} :
+            isFromBookingStart ? { end_date: globalEndDate } :
+            { start_date: globalStartDate, end_date: globalEndDate }
+          }
+          periodLabel={periodLabel}
+          adminToken={adminToken}
+          onClose={() => setClientBulkAction(null)}
+          onSuccess={() => {
+            setSelectedClients(new Set());
             fetchSavedStatements();
           }}
         />

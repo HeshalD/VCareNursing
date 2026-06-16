@@ -1250,6 +1250,8 @@ async function runMigration() {
     ALTER COLUMN application_code SET DEFAULT 'SA-' || LPAD(nextval('staff_application_code_seq')::text, 5, '0')
   `);
 
+  await db.query(`ALTER TABLE saved_statements ADD COLUMN IF NOT EXISTS statement_source VARCHAR(10) DEFAULT 'BOOKING'`);
+
   await db.query(`CREATE SEQUENCE IF NOT EXISTS statement_code_seq START 1`);
   await db.query(`ALTER TABLE saved_statements ADD COLUMN IF NOT EXISTS statement_code VARCHAR(15) UNIQUE`);
   await db.query(`
