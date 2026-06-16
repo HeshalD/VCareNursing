@@ -279,14 +279,9 @@ const BookingDetailPage = () => {
   const isCheque            = paymentForm.payment_method === 'CHEQUE';
 
   const plannedDays = useMemo(() => {
-    if (bookingSummary.qty_days) return Number(bookingSummary.qty_days);
-    if (bookingSummary.start_date && bookingSummary.scheduled_end_time) {
-      return Math.ceil(
-        (new Date(bookingSummary.scheduled_end_time) - new Date(bookingSummary.start_date)) / 86400000
-      );
-    }
-    return 0;
-  }, [bookingSummary.qty_days, bookingSummary.start_date, bookingSummary.scheduled_end_time]);
+    if (!dailyRate || dailyRate === 0) return 0;
+    return Math.floor(totalPaid / dailyRate);
+  }, [totalPaid, dailyRate]);
 
   const servedDays = useMemo(() => {
     if (!bookingSummary.start_date) return 0;
@@ -335,14 +330,9 @@ const BookingDetailPage = () => {
     const bookingStart = bookingSummary.start_date ? new Date(bookingSummary.start_date) : null;
     if (bookingStart) bookingStart.setHours(0, 0, 0, 0);
 
-    return sorted.map((row, i) => {
-      const nextRow = sorted[i + 1];
-      // If no explicit end date, infer it as the day before the next assignment starts
-      const effectiveEnd = row.endDate
-        ? row.endDate
-        : nextRow
-          ? (() => { const d = new Date(nextRow.startDate); d.setDate(d.getDate() - 1); return d.toISOString(); })()
-          : null;
+    return sorted.map((row) => {
+      // service_end_date is set by the backend on swap/completion — null means ongoing
+      const effectiveEnd = row.endDate || null;
 
       const startD = row.startDate ? new Date(row.startDate) : null;
       if (startD) startD.setHours(0, 0, 0, 0);

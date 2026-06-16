@@ -202,6 +202,14 @@ const finalizeBookingState = async (req, res, nextStatus, actorLabel, includeTer
             [nextStatus, endTime, booking_id]
         );
 
+        // Close the active staff assignment with the booking's end date
+        await client.query(
+            `UPDATE booking_staff_assignments
+             SET service_end_date = $1, status = 'COMPLETED'
+             WHERE booking_id = $2 AND status = 'ACTIVE'`,
+            [endTime.toISOString().split('T')[0], booking_id]
+        );
+
         if (booking.assigned_staff_id) {
             await client.query(
                 `UPDATE staff_profiles
@@ -2130,6 +2138,7 @@ exports.swapStaff = async (req, res) => {
         new_staff_id,
         swap_reason,
         arrival_time,
+        new_staff_start_date,
         // Optional overrides
         new_daily_rate,
         new_ot_rate,
@@ -2271,7 +2280,39 @@ exports.swapStaff = async (req, res) => {
             ]
         );
 
-        // 5. Build the booking update dynamically
+        // 5. Update booking_staff_assignments for the swap
+        //    - Close the old assignment (service_end_date = swap date from modal)
+        //    - Open a new assignment for the incoming staff starting the next day
+        const swapDate = new_staff_start_date
+            ? new Date(new_staff_start_date)
+            : new Date();
+        swapDate.setHours(0, 0, 0, 0);
+
+        const oldEndDateStr = swapDate.toISOString().split('T')[0];
+
+        const newStartDate = new Date(swapDate);
+        newStartDate.setDate(newStartDate.getDate() + 1);
+        const newStartDateStr = newStartDate.toISOString().split('T')[0];
+
+        if (activeAssignment) {
+            await client.query(
+                `UPDATE booking_staff_assignments
+                 SET service_end_date = $1, status = 'COMPLETED'
+                 WHERE assignment_id = $2`,
+                [oldEndDateStr, activeAssignment.assignment_id]
+            );
+        }
+
+        const newDailyRate = new_daily_rate ?? bookingDetail.daily_rate ?? bookingDetail.quote_daily_rate ?? 0;
+        await client.query(
+            `INSERT INTO booking_staff_assignments
+                (booking_id, staff_profile_id, assigned_on, assigned_by, daily_rate,
+                 service_start_date, service_end_date, amount_allocated, status)
+             VALUES ($1, $2, NOW(), $3, $4, $5, NULL, NULL, 'ACTIVE')`,
+            [booking_id, new_staff_id, req.user.user_id, newDailyRate, newStartDateStr]
+        );
+
+        // 6. Build the booking update dynamically
         // Only override fields the admin explicitly passed in
         let updateFields = [`assigned_staff_id = $1`];
         let updateValues = [new_staff_id];
@@ -2302,13 +2343,13 @@ exports.swapStaff = async (req, res) => {
             updateValues
         );
 
-        // 6. Free old staff member
+        // 7. Free old staff member
         await client.query(
             `UPDATE staff_profiles SET current_status = 'AVAILABLE' WHERE staff_profile_id = $1`,
             [oldStaffId]
         );
 
-        // 7. Lock new staff member
+        // 8. Lock new staff member
         await client.query(
             `UPDATE staff_profiles SET current_status = 'ASSIGNED' WHERE staff_profile_id = $1`,
             [new_staff_id]

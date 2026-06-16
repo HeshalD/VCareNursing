@@ -312,53 +312,17 @@ exports.assignStaffToBooking = async (req, res) => {
       });
     }
 
-    // Get current assignments for this booking
-    const currentAssignmentsQuery = `
-      SELECT COALESCE(SUM(amount_allocated), 0) as total_allocated
-      FROM booking_staff_assignments
-      WHERE booking_id = $1 
-        AND status = 'ACTIVE'
-    `;
-    const currentAssignmentsResult = await db.query(currentAssignmentsQuery, [booking_id]);
-    const totalAllocated = parseFloat(currentAssignmentsResult.rows[0].total_allocated || 0);
+    const amount_allocated = amount_paid;
 
-    // Calculate amount to allocate for this assignment
-    const amount_allocated = amount_paid - totalAllocated;
-
-    // Validation: Check budget
-    if (amount_allocated <= 0) {
-      return res.status(400).json({
-        status: 'error',
-        message: `No budget remaining. Total allocated (${totalAllocated}) already equals amount paid (${amount_paid})`,
-        current_allocation: totalAllocated,
-        amount_paid: amount_paid
-      });
-    }
-
-    // Validation: Cannot exceed total quotation amount
-    if (totalAllocated + amount_allocated > parseFloat(booking.total_amount)) {
-      return res.status(400).json({
-        status: 'error',
-        message: `Total allocation would exceed quotation amount (${booking.total_amount})`,
-        total_allocated: totalAllocated,
-        proposed_allocation: amount_allocated,
-        quotation_total: parseFloat(booking.total_amount)
-      });
-    }
-
-    // Calculate service_end_date: service_start_date + (amount_allocated / daily_rate)
-    const daysOfService = Math.floor(amount_allocated / staffDailyRate);
-    const service_end_date = new Date(startDate);
-    service_end_date.setDate(service_end_date.getDate() + daysOfService);
-
-    // Create assignment record
+    // Create assignment record — service_end_date is left null and set when the booking
+    // ends (COMPLETED/TERMINATED) or a staff swap occurs
     const insertQuery = `
-      INSERT INTO booking_staff_assignments 
-        (booking_id, staff_profile_id, assigned_on, assigned_by, daily_rate, 
+      INSERT INTO booking_staff_assignments
+        (booking_id, staff_profile_id, assigned_on, assigned_by, daily_rate,
          service_start_date, service_end_date, amount_allocated, status, notes)
-      VALUES 
-        ($1, $2, NOW(), $3, $4, $5, $6, $7, 'ACTIVE', $8)
-      RETURNING 
+      VALUES
+        ($1, $2, NOW(), $3, $4, $5, NULL, $6, 'ACTIVE', $7)
+      RETURNING
         assignment_id, booking_id, staff_profile_id, assigned_on, daily_rate,
         service_start_date, service_end_date, amount_allocated, status
     `;
@@ -369,7 +333,6 @@ exports.assignStaffToBooking = async (req, res) => {
       assigned_by,
       staffDailyRate,
       service_start_date,
-      service_end_date.toISOString().split('T')[0],
       amount_allocated,
       notes || null
     ];
@@ -493,14 +456,12 @@ exports.assignStaffToBooking = async (req, res) => {
         service_start_date: assignment.service_start_date,
         service_end_date: assignment.service_end_date,
         amount_allocated: parseFloat(assignment.amount_allocated),
-        days_allocated: daysOfService,
         ot_rate: bookingOtRate,
         status: assignment.status
       },
       assignment_summary: {
         amount_paid: amount_paid,
-        total_allocated: totalAllocated + amount_allocated,
-        remaining_budget: parseFloat((booking.total_amount - (totalAllocated + amount_allocated)).toFixed(2))
+        amount_allocated: amount_allocated
       }
     });
   } catch (error) {
