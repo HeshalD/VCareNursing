@@ -21,6 +21,8 @@ const staffChangeRequestRoutes = require('./routes/staffChangeRequestRoutes');
 const activityLogRoutes = require('./routes/activityLogRoutes');
 const clientPaymentRoutes = require('./routes/clientPaymentRoutes');
 const transactionRoutes = require('./routes/transactionRoutes');
+const permissionsRoutes = require('./routes/permissionsRoutes');
+const internalStaffRoutes = require('./routes/internalStaffRoutes');
 
 const startDailyInvoicing = require('./cron/dailyInvoicing');
 
@@ -103,6 +105,8 @@ app.use('/api/staff-change-requests', staffChangeRequestRoutes);
 app.use('/api/activity-log', activityLogRoutes);
 app.use('/api/client-payments', clientPaymentRoutes);
 app.use('/api/transactions', transactionRoutes);
+app.use('/api/permissions', permissionsRoutes);
+app.use('/api/internal-staff', internalStaffRoutes);
 
 // Health check endpoint for Render
 app.get('/health', (req, res) => {

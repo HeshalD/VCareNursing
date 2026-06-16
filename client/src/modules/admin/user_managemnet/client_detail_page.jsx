@@ -413,6 +413,7 @@ const ClientDetailPage = () => {
     { icon: Wallet, label: 'Invoiced Through Daily Invoicing', value: formatMoney(statementSummary.total_invoiced), tone: 'blue' },
     { icon: ShieldAlert, label: overdueDisplayLabel, value: formatMoney(overdueSummary.total_overdue_amount), tone: overdueTone },
     { icon: CalendarDays, label: 'Bookings', value: bookingSummary.total_bookings || 0, tone: 'violet' },
+    { icon: Wallet, label: 'Wallet Balance', value: formatMoney(clientProfile.wallet_balance), tone: 'amber' },
   ];
 
   const transactionSummary = detail?.transaction_summary || {};
@@ -1400,7 +1401,7 @@ const ClientDetailPage = () => {
               </div>
             </div>
           </div>
-          <div className="grid grid-cols-2 divide-x divide-slate-100 border-t border-slate-100 sm:grid-cols-4">
+          <div className="grid grid-cols-2 divide-x divide-slate-100 border-t border-slate-100 sm:grid-cols-5">
             <div className="px-5 py-3.5">
               <p className="text-xs font-medium text-slate-500">Payments Made</p>
               <p className="mt-0.5 text-base font-bold text-slate-900">{formatMoney(paymentSummary.total_paid)}</p>
@@ -1418,6 +1419,10 @@ const ClientDetailPage = () => {
             <div className="px-5 py-3.5">
               <p className="text-xs font-medium text-slate-500">Total Bookings</p>
               <p className="mt-0.5 text-base font-bold text-slate-900">{bookingSummary.total_bookings || 0}</p>
+            </div>
+            <div className="px-5 py-3.5">
+              <p className="text-xs font-medium text-slate-500">Wallet Balance</p>
+              <p className="mt-0.5 text-base font-bold text-amber-600">{formatMoney(clientProfile.wallet_balance)}</p>
             </div>
           </div>
         </div>

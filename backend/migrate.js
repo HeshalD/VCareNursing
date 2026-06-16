@@ -808,6 +808,25 @@ async function runMigration() {
   `);
 
   // =========================================================
+  // RBAC: Per-user permission grants
+  // =========================================================
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS staff_permissions (
+      user_id    UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+      permission_key VARCHAR(100) NOT NULL,
+      granted_by UUID REFERENCES users(user_id),
+      granted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, permission_key)
+    );
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_staff_permissions_user
+    ON staff_permissions (user_id);
+  `);
+
+  // =========================================================
   // ALTER TABLE: Add payment tracking columns
   // =========================================================
 
@@ -1282,6 +1301,12 @@ async function runMigration() {
     CREATE UNIQUE INDEX IF NOT EXISTS uniq_review_per_booking
     ON staff_reviews(booking_id, client_profile_id)
     WHERE booking_id IS NOT NULL
+  `);
+
+  // Link internal_staff to a users login account (only for COORDINATOR/ACCOUNTS roles)
+  await db.query(`
+    ALTER TABLE internal_staff
+    ADD COLUMN IF NOT EXISTS user_id UUID UNIQUE REFERENCES users(user_id) ON DELETE SET NULL
   `);
 
   // =========================================================

@@ -3,7 +3,7 @@ import {
   Users, Calendar, DollarSign, Activity,
   Settings, LogOut, Bell, Search,
   ShieldCheck, FileText, SendHorizontal, Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet, Landmark,
-  ChevronLeft, ChevronRight, ClipboardList, History, HeartPulse, ArrowLeftRight, Banknote, Star
+  ChevronLeft, ChevronRight, ClipboardList, History, HeartPulse, ArrowLeftRight, Banknote, Star, Lock, UserCog
 } from 'lucide-react';
 import logo from '../../../assets/Logo/VCareLogo.png';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -54,6 +54,13 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
             label="User Management"
             path="/admin/users"
             active={isActive('/admin/users') || isActive('/admin/proxy-user-management')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
+            icon={UserCog}
+            label="Internal Staff"
+            path="/admin/internal-staff"
+            active={isActive('/admin/internal-staff')}
             collapsed={collapsed}
           />
           <SidebarItem
@@ -166,6 +173,13 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
             label="Reviews"
             path="/admin/reviews"
             active={isActive('/admin/reviews')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
+            icon={Lock}
+            label="Permissions"
+            path="/admin/permissions"
+            active={isActive('/admin/permissions')}
             collapsed={collapsed}
           />
           <SidebarItem

@@ -80,6 +80,8 @@ import PatientDetailPage from './modules/admin/patients/patient_details';
 import TransactionsPage from './modules/admin/transactions/TransactionsPage';
 import StaffSalariesPage from './modules/admin/salaries/StaffSalariesPage';
 import SalarySheetLedgerPage from './modules/admin/salaries/SalarySheetLedgerPage';
+import StaffPermissionsPage from './modules/admin/permissions/StaffPermissionsPage';
+import InternalStaffPage from './modules/admin/internal_staff/InternalStaffPage';
 
 function App() {
   return (
@@ -311,6 +313,16 @@ function App() {
             <Route path="/admin/salary-sheets" element={
               <AdminAuthProvider>
                 <SalarySheetLedgerPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/permissions" element={
+              <AdminAuthProvider>
+                <StaffPermissionsPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/internal-staff" element={
+              <AdminAuthProvider>
+                <InternalStaffPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/settings" element={

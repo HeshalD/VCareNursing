@@ -1586,6 +1586,51 @@ class ApiClient {
       body: JSON.stringify(transactionData),
     });
   }
+
+  // Permissions endpoints
+  async getPermissionsRegistry() {
+    return this.request('/permissions/registry');
+  }
+
+  async getAdminUsers() {
+    return this.request('/permissions/admin-users');
+  }
+
+  async getUserPermissions(userId) {
+    return this.request(`/permissions/users/${userId}`);
+  }
+
+  async setUserPermissions(userId, permissions) {
+    return this.request(`/permissions/users/${userId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ permissions }),
+    });
+  }
+
+  // Internal Staff endpoints
+  async listInternalStaff() {
+    return this.request('/internal-staff');
+  }
+
+  async createInternalStaff(data) {
+    return this.request('/internal-staff', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateInternalStaff(id, data) {
+    return this.request(`/internal-staff/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteInternalStaff(id) {
+    return this.request(`/internal-staff/${id}`, {
+      method: 'DELETE',
+    });
+  }
 }
 
 // Create and export a singleton instance

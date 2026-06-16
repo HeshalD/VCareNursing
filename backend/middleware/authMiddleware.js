@@ -1,6 +1,60 @@
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 
+// ── Permission cache ──────────────────────────────────────────────────────────
+// Avoids a DB round-trip on every protected request.
+// Entries expire after 5 minutes or are explicitly invalidated on permission changes.
+const _permCache = new Map(); // userId -> { perms: Set<string>, cachedAt: number }
+const CACHE_TTL = 5 * 60 * 1000;
+
+function _parseRoles(rawRole) {
+  if (Array.isArray(rawRole)) {
+    return rawRole.map(r => (typeof r === 'string' ? r.replace(/\{|\}/g, '').trim() : String(r)));
+  }
+  if (typeof rawRole === 'string') {
+    return rawRole.replace(/\{|\}/g, '').split(',').map(r => r.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+exports.invalidatePermissionCache = (userId) => {
+  _permCache.delete(userId);
+};
+
+// LAYER 3: Does the user have a specific permission?
+// Usage: requirePermission('BOOKING_SWAP_STAFF')
+// SUPER_ADMIN always passes. All others are checked against staff_permissions.
+exports.requirePermission = (permissionKey) => async (req, res, next) => {
+  try {
+    const roles = _parseRoles(req.user.role);
+    if (roles.includes('SUPER_ADMIN')) return next();
+
+    const userId = req.user.user_id;
+    const now = Date.now();
+    let cached = _permCache.get(userId);
+
+    if (!cached || now - cached.cachedAt > CACHE_TTL) {
+      const result = await db.query(
+        'SELECT permission_key FROM staff_permissions WHERE user_id = $1',
+        [userId]
+      );
+      cached = {
+        perms: new Set(result.rows.map(r => r.permission_key)),
+        cachedAt: now,
+      };
+      _permCache.set(userId, cached);
+    }
+
+    if (!cached.perms.has(permissionKey)) {
+      return res.status(403).json({ message: 'Permission Denied: You do not have access to this action.' });
+    }
+    next();
+  } catch (err) {
+    console.error('requirePermission error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
 // LAYER 1: Is the user logged in?
 exports.protect = async (req, res, next) => {
   try {
