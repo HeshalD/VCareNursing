@@ -814,6 +814,10 @@ class ApiClient {
     return this.request(url);
   }
 
+  async getStaffAttendanceCalendar(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/attendance-calendar`);
+  }
+
   async getStaffEarningsSummary(staffProfileId) {
     return this.request(`/staff/${staffProfileId}/earnings-summary`);
   }
@@ -1087,6 +1091,24 @@ class ApiClient {
         settlement_action: settlementAction,
         settlement_note: settlementNote || null,
       }),
+    });
+  }
+
+  // ── Scheduled actions / Upcoming Events ────────────────────────────────
+
+  async getUpcomingEvents() {
+    return this.request('/scheduled-actions/upcoming');
+  }
+
+  async cancelScheduledAction(actionId) {
+    return this.request(`/scheduled-actions/${actionId}/cancel`, {
+      method: 'POST',
+    });
+  }
+
+  async executeScheduledActionNow(actionId) {
+    return this.request(`/scheduled-actions/${actionId}/execute-now`, {
+      method: 'POST',
     });
   }
 

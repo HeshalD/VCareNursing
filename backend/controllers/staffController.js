@@ -743,6 +743,54 @@ exports.getBookingHistory = async (req, res) => {
     }
 };
 
+// Full assignment span + daily attendance history for the staff calendar view.
+// Unlike getBookingHistory (paginated, recent-first), this returns everything
+// needed to render a continuous past/future calendar: every assignment this
+// staff member has ever had (so future-dated/ongoing assignments show as
+// "scheduled"), and every staff_daily_attendance row (so each day can be
+// marked paid/pending/skipped with who decided it).
+exports.getAttendanceCalendar = async (req, res) => {
+    const { staff_profile_id } = req.params;
+
+    try {
+        const [assignmentsRes, attendanceRes] = await Promise.all([
+            db.query(`
+                SELECT
+                    bsa.assignment_id, bsa.booking_id, bsa.service_start_date, bsa.service_end_date,
+                    bsa.daily_rate, bsa.status as assignment_status,
+                    b.booking_code, b.status as booking_status, b.service_type, b.service_model,
+                    c.full_name as client_name, p.full_name as patient_name
+                FROM booking_staff_assignments bsa
+                LEFT JOIN bookings b ON bsa.booking_id = b.booking_id
+                LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
+                LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+                WHERE bsa.staff_profile_id = $1
+                ORDER BY bsa.service_start_date ASC
+            `, [staff_profile_id]),
+            db.query(`
+                SELECT
+                    attendance_id, booking_id, assignment_id, service_date::text as service_date,
+                    in_time, out_time, hours_served, entry_mode, salary_status, salary_amount,
+                    decided_by_name, decided_at, notes
+                FROM staff_daily_attendance
+                WHERE staff_profile_id = $1
+                ORDER BY service_date ASC
+            `, [staff_profile_id])
+        ]);
+
+        return res.status(200).json({
+            status: 'success',
+            data: {
+                assignments: assignmentsRes.rows,
+                attendance: attendanceRes.rows
+            }
+        });
+    } catch (error) {
+        console.error('getAttendanceCalendar Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error while fetching attendance calendar' });
+    }
+};
+
 // Paginated payouts history for a staff member
 exports.getPayouts = async (req, res) => {
     const { staff_profile_id } = req.params;

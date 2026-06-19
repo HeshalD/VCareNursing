@@ -44,6 +44,7 @@ import StaffRoster from './modules/admin/service_requests/staff_roster';
 import Bookings from './modules/admin/bookings/Bookings';
 import ClientBookings from './modules/client/ClientBookings';
 import TerminationRequests from './modules/admin/termination_requests/termination_requests';
+import UpcomingEvents from './modules/admin/upcoming_events/UpcomingEvents';
 import Statements from './modules/admin/statements/statements';
 import Earnings from './modules/public/service_team/Earnings';
 import AdvanceRequests from './modules/admin/advance_requests/advance_requests';
@@ -172,6 +173,11 @@ function App() {
             <Route path="/admin/termination-requests" element={
               <AdminAuthProvider>
                 <TerminationRequests />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/upcoming-events" element={
+              <AdminAuthProvider>
+                <UpcomingEvents />
               </AdminAuthProvider>
             } />
             <Route path="/admin/quote-builder/:requestId?" element={

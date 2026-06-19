@@ -404,8 +404,11 @@ const BookingDetailPageV2 = () => {
     try {
       setSwapModalSubmitting(true); setSwapModalError('');
       apiClient.setToken(adminToken);
-      await apiClient.swapBookingStaff(bookingId, { new_staff_id: swapModalSelectedStaff.staff_profile_id, swap_reason: swapModalReason.trim(), new_staff_start_date: swapModalStartDate });
+      const response = await apiClient.swapBookingStaff(bookingId, { new_staff_id: swapModalSelectedStaff.staff_profile_id, swap_reason: swapModalReason.trim(), new_staff_start_date: swapModalStartDate });
       closeSwapModal(); await fetchDetail();
+      if (response?.scheduled) {
+        window.alert(response.message || 'Staff swap scheduled for the future date.');
+      }
     } catch (err) { setSwapModalError(err?.message || 'Failed to swap staff'); }
     finally { setSwapModalSubmitting(false); }
   };
@@ -436,9 +439,13 @@ const BookingDetailPageV2 = () => {
       setActionsModalLoading(true); setActionsModalError('');
       const payload = { actual_end_time: actualEndTime ? new Date(actualEndTime).toISOString() : new Date().toISOString(), settlement_action: remainingBalance > 0 ? settlementAction : 'NO_REFUND', settlement_note: settlementNote.trim() || null, reason: reason.trim() || `${actionsModalMode === 'complete' ? 'Completed' : 'Terminated'} via admin panel` };
       apiClient.setToken(adminToken);
-      if (actionsModalMode === 'complete') await apiClient.completeBooking(bookingId, payload);
-      else await apiClient.adminTerminateBooking(bookingId, payload);
+      const response = actionsModalMode === 'complete'
+        ? await apiClient.completeBooking(bookingId, payload)
+        : await apiClient.adminTerminateBooking(bookingId, payload);
       closeActionsModal(); await fetchDetail();
+      if (response?.scheduled) {
+        window.alert(response.message || 'This has been scheduled for the future date. The booking stays active and billed until then.');
+      }
     } catch (err) { setActionsModalError(err?.message || `Failed to ${actionsModalMode} booking`); }
     finally { setActionsModalLoading(false); }
   };
@@ -1133,6 +1140,11 @@ const BookingDetailPageV2 = () => {
                     <div>
                       <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Actual end time</label>
                       <input type="datetime-local" value={actualEndTime} onChange={e => setActualEndTime(e.target.value)} style={inp} />
+                      {actualEndTime && actualEndTime.slice(0, 10) > toDateInput(new Date()) && (
+                        <p style={{ margin: '6px 0 0', fontSize: 11.5, color: '#B8893D' }}>
+                          Future date — this will be scheduled. The booking stays active and billed until then, then completes/terminates automatically.
+                        </p>
+                      )}
                     </div>
                     {remainingBalance > 0 && (
                       <div>
@@ -1448,6 +1460,11 @@ const BookingDetailPageV2 = () => {
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">New staff start date <span className="text-rose-500">*</span></label>
                     <input type="date" value={swapModalStartDate} onChange={e => setSwapModalStartDate(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                    {swapModalStartDate > toDateInput(new Date()) && (
+                      <p className="text-xs text-amber-600 mt-1.5">
+                        Future date — the swap will be scheduled. {normCurrentStaff?.name || 'Current staff'} keeps working until then; the new staff is reserved in the meantime.
+                      </p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Reason for swap <span className="text-rose-500">*</span></label>

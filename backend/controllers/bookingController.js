@@ -7,6 +7,20 @@ const { logActivity } = require('../utils/activityLogger');
 const { sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendStaffNewAssignment, sendClientStaffSwapped } = require('../utils/metaWhatsapp');
 const { sendSms } = require('../utils/sms');
 const { createServiceInvoice } = require('../services/billingService');
+const {
+    getBookingFinancialTotals,
+    getBookingSettlementSnapshot,
+    applyBookingSettlement
+} = require('../services/bookingSettlement');
+const {
+    getBusinessDate,
+    toDateStr,
+    isFutureDate,
+    enqueueScheduledAction,
+    hasOpenAction,
+    executeTermination,
+    executeCompletion,
+} = require('../services/scheduledActions');
 
 function extractActorRole(role) {
     const raw = Array.isArray(role) ? role[0] : role;
@@ -31,120 +45,12 @@ exports.uploadPaymentSlip = (req, res, next) => {
     });
 };
 
-const getBookingFinancialTotals = async (client, booking_id) => {
-    const result = await client.query(
-        `SELECT
-            COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' AND COALESCE(category::text, '') <> 'STAFF_SALARY' THEN amount ELSE 0 END), 0) as total_paid,
-            COALESCE(SUM(CASE WHEN transaction_type = 'DEBIT' THEN amount ELSE 0 END), 0) as total_invoiced
-         FROM transactions
-         WHERE booking_id = $1`,
-        [booking_id]
-    );
-
-    return {
-        total_paid: parseFloat(result.rows[0]?.total_paid || 0),
-        total_invoiced: parseFloat(result.rows[0]?.total_invoiced || 0)
-    };
-};
-
-const getBookingSettlementSnapshot = async (client, booking_id) => {
-    const bookingResult = await client.query(
-        `SELECT
-            b.booking_id,
-            b.booking_code,
-            b.status,
-            b.assigned_staff_id,
-            b.client_id,
-            b.start_date,
-            b.scheduled_end_time,
-            b.actual_end_time,
-            b.daily_rate,
-            b.ot_rate,
-            c.full_name as client_name,
-            c.wallet_balance,
-            sr.active_quote_id as quote_id,
-            q.total_amount,
-            q.daily_rate as quote_daily_rate
-         FROM bookings b
-         LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
-         LEFT JOIN service_requests sr ON b.request_id = sr.request_id
-         LEFT JOIN quotations q ON sr.active_quote_id = q.quote_id
-         WHERE b.booking_id = $1
-         FOR UPDATE OF b`,
-        [booking_id]
-    );
-
-    if (bookingResult.rows.length === 0) {
-        return null;
-    }
-
-    const booking = bookingResult.rows[0];
-
-    const { total_paid: totalPaid, total_invoiced: totalInvoiced } = await getBookingFinancialTotals(client, booking_id);
-
-    return {
-        ...booking,
-        total_paid: totalPaid,
-        total_invoiced: totalInvoiced,
-        remaining_balance: Math.max(totalPaid - totalInvoiced, 0),
-        amount_owed: Math.max(totalInvoiced - totalPaid, 0)
-    };
-};
-
-const applyBookingSettlement = async (client, booking, settlementAction, settlementNote, reason, actorLabel) => {
-    const remainingBalance = parseFloat(booking.remaining_balance || 0);
-    let walletDepositedAmount = 0;
-
-    if (settlementAction === 'WALLET_DEPOSIT' && remainingBalance > 0) {
-        walletDepositedAmount = remainingBalance;
-
-        await client.query(
-            `UPDATE client_profiles
-             SET wallet_balance = wallet_balance + $1
-             WHERE client_profile_id = $2`,
-            [walletDepositedAmount, booking.client_id]
-        );
-    }
-
-    const settlementNotes = [
-        `${actorLabel}`,
-        reason ? `Reason: ${reason}` : null,
-        settlementAction ? `Settlement action: ${settlementAction}` : null,
-        remainingBalance > 0 ? `Remaining balance: Rs.${remainingBalance.toFixed(2)}` : 'No remaining balance',
-        settlementNote ? `Note: ${settlementNote}` : null
-    ].filter(Boolean).join(' | ');
-
-    await client.query(
-        `INSERT INTO transactions (
-            client_id,
-            booking_id,
-            category,
-            transaction_type,
-            amount,
-            status,
-            notes,
-            created_at
-        ) VALUES ($1, $2, $3, 'CREDIT', $4, 'COMPLETED', $5, NOW())`,
-        [
-            booking.client_id,
-            booking.booking_id,
-            'WALLET_REFUND',
-            walletDepositedAmount,
-            settlementNotes
-        ]
-    );
-
-    return {
-        remaining_balance: remainingBalance,
-        wallet_deposited_amount: walletDepositedAmount,
-        settlement_notes: settlementNotes
-    };
-};
 
 const finalizeBookingState = async (req, res, nextStatus, actorLabel, includeTerminationLog = false) => {
     const { booking_id } = req.params;
     const {
         actual_end_time,
+        effective_date,
         settlement_action,
         settlement_note,
         reason
@@ -173,7 +79,6 @@ const finalizeBookingState = async (req, res, nextStatus, actorLabel, includeTer
             });
         }
 
-        const endTime = actual_end_time ? new Date(actual_end_time) : new Date();
         const remainingBalance = parseFloat(booking.remaining_balance || 0);
 
         if (remainingBalance > 0 && !settlement_action) {
@@ -194,6 +99,73 @@ const finalizeBookingState = async (req, res, nextStatus, actorLabel, includeTer
                 remaining_balance: remainingBalance
             });
         }
+
+        // If the admin chose a future date, defer execution: leave the booking running
+        // (still billed) and enqueue a scheduled_actions row the cron will execute on the day.
+        const targetDateInput = effective_date || actual_end_time || null;
+        const businessDate = await getBusinessDate(client);
+
+        if (targetDateInput && isFutureDate(toDateStr(targetDateInput), businessDate)) {
+            const actionType = nextStatus === 'COMPLETED' ? 'COMPLETION' : 'TERMINATION';
+
+            const alreadyScheduled = await hasOpenAction(client, booking_id, actionType);
+            if (alreadyScheduled) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    status: 'error',
+                    message: `A ${actionType.toLowerCase()} is already scheduled for this booking.`
+                });
+            }
+
+            let termination_id = null;
+            if (includeTerminationLog) {
+                const pendingTermRes = await client.query(
+                    `SELECT termination_id FROM service_terminations WHERE booking_id = $1 AND status = 'PENDING' FOR UPDATE`,
+                    [booking_id]
+                );
+                const terminationReason = reason || settlement_note || `${actorLabel} booking end (scheduled)`;
+
+                if (pendingTermRes.rows.length > 0) {
+                    termination_id = pendingTermRes.rows[0].termination_id;
+                    await client.query(
+                        `UPDATE service_terminations
+                         SET status = 'SCHEDULED', end_date = $1, reason = COALESCE($2, reason)
+                         WHERE termination_id = $3`,
+                        [targetDateInput, terminationReason, termination_id]
+                    );
+                } else {
+                    const insertRes = await client.query(
+                        `INSERT INTO service_terminations (
+                            booking_id, requested_by, urgency, requested_end_date, end_date, reason, status
+                        ) VALUES ($1, 'ADMIN', 'FUTURE', $2, $2, $3, 'SCHEDULED')
+                        RETURNING termination_id`,
+                        [booking_id, targetDateInput, terminationReason]
+                    );
+                    termination_id = insertRes.rows[0].termination_id;
+                }
+            }
+
+            await enqueueScheduledAction(client, {
+                booking_id,
+                action_type: actionType,
+                effective_date: targetDateInput,
+                payload: { settlement_action: settlement_action || 'NO_REFUND', settlement_note: settlement_note || null },
+                reason: reason || null,
+                termination_id,
+                created_by: req.user?.user_id || null,
+            });
+
+            await client.query('COMMIT');
+
+            return res.status(200).json({
+                status: 'success',
+                scheduled: true,
+                message: `Booking ${nextStatus === 'COMPLETED' ? 'completion' : 'termination'} scheduled for ${toDateStr(targetDateInput)}. It stays active and billed until then.`,
+                data: { booking_id, effective_date: toDateStr(targetDateInput), action_type: actionType }
+            });
+        }
+
+        const endTime = targetDateInput ? new Date(targetDateInput) : new Date();
 
         await client.query(
             `UPDATE bookings
@@ -1739,7 +1711,7 @@ exports.approveTerminationRequest = async (req, res) => {
 
         // 1. Fetch the Termination and Booking Data
         const termRes = await client.query(
-            `SELECT st.*, b.assigned_staff_id, b.client_id, b.start_date 
+            `SELECT st.*, b.assigned_staff_id, b.client_id, b.start_date, b.status as booking_status
              FROM service_terminations st
              JOIN bookings b ON st.booking_id = b.booking_id
              WHERE st.termination_id = $1 FOR UPDATE`,
@@ -1760,153 +1732,62 @@ exports.approveTerminationRequest = async (req, res) => {
 
         // Determine the official end time (Admin override or the requested date)
         const officialEndDate = final_end_date ? new Date(final_end_date) : new Date(request.requested_end_date);
+        const businessDate = await getBusinessDate(client);
 
-        // 2. Update Termination Request Status
-        await client.query(
-            `UPDATE service_terminations SET status = 'APPROVED', end_date = $1 WHERE termination_id = $2`,
-            [officialEndDate, termination_id]
-        );
-
-        // 3. Terminate the Booking
-        await client.query(
-            `UPDATE bookings 
-     SET status = 'TERMINATED', actual_end_time = $2
-     WHERE booking_id = $1`,
-            [request.booking_id, officialEndDate]
-        );
-
-        // 4. Free up the Staff Member! (Crucial for availability)
-        await client.query(
-            `UPDATE staff_profiles 
-             SET current_status = 'AVAILABLE' 
-             WHERE staff_profile_id = $1`,
-            [request.assigned_staff_id]
-        );
-
-        // =========================================================
-        // 5. FINANCIAL SETTLEMENT ENGINE (Wallet Logic)
-        // =========================================================
-
-        // =========================================================
-        // 5. FINANCIAL SETTLEMENT ENGINE
-        // =========================================================
-
-        // A. Fetch the Financial Contract (The Quote)
-        const financeRes = await client.query(
-            `SELECT b.start_date, b.client_id, q.daily_rate, q.qty_days, q.registration_fee
-     FROM bookings b
-     JOIN service_requests sr ON b.request_id = sr.request_id
-     JOIN quotations q ON sr.active_quote_id = q.quote_id
-     WHERE b.booking_id = $1`,
-            [request.booking_id]
-        );
-
-        if (financeRes.rows.length > 0) {
-            const financeData = financeRes.rows[0];
-            const { start_date, client_id, daily_rate, qty_days } = financeData;
-
-            const diffTime = officialEndDate.getTime() - new Date(start_date).getTime();
-            let daysWorked = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-            if (daysWorked < 0) daysWorked = 0;
-            if (daysWorked === 0 && diffTime > 0) daysWorked = 1;
-
-            const unusedDays = qty_days - daysWorked;
-
-            if (unusedDays > 0) {
-                const refundAmount = unusedDays * daily_rate;
-
-                if (settlement_action === 'WALLET_DEPOSIT') {
-                    await client.query(
-                        `UPDATE client_profiles
-                 SET wallet_balance = wallet_balance + $1
-                 WHERE client_profile_id = $2`,
-                        [refundAmount, client_id]
-                    );
-                    console.log(`SETTLEMENT: Credited Rs. ${refundAmount} for ${unusedDays} unused days to Client ${client_id}`);
-                } else {
-                    console.log(`SETTLEMENT: No-refund selected. Rs. ${refundAmount} retained. Note: ${settlement_note || 'none'}`);
-                }
-
-            } else if (unusedDays < 0) {
-                const amountOwed = Math.abs(unusedDays) * daily_rate;
-                console.log(`SETTLEMENT ALERT: Client ${client_id} overstayed by ${Math.abs(unusedDays)} days and owes Rs. ${amountOwed}`);
-            } else {
-                console.log(`SETTLEMENT: Perfect match. 0 unused days. No wallet changes.`);
+        if (isFutureDate(toDateStr(officialEndDate), businessDate)) {
+            // ── FUTURE: defer execution, keep the booking running/billed until then ──
+            const alreadyScheduled = await hasOpenAction(client, request.booking_id, 'TERMINATION');
+            if (alreadyScheduled) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ message: "A termination is already scheduled for this booking." });
             }
+
+            await client.query(
+                `UPDATE service_terminations SET status = 'SCHEDULED', end_date = $1 WHERE termination_id = $2`,
+                [officialEndDate, termination_id]
+            );
+
+            if (request.booking_status === 'PENDING_TERMINATION') {
+                await client.query(`UPDATE bookings SET status = 'ACTIVE' WHERE booking_id = $1`, [request.booking_id]);
+            }
+
+            await enqueueScheduledAction(client, {
+                booking_id: request.booking_id,
+                action_type: 'TERMINATION',
+                effective_date: officialEndDate,
+                payload: { settlement_action, settlement_note: settlement_note || null },
+                termination_id,
+                created_by: req.user?.user_id || null,
+            });
+
+            await client.query('COMMIT');
+
+            return res.status(200).json({
+                status: 'success',
+                scheduled: true,
+                message: `Termination scheduled for ${toDateStr(officialEndDate)}. The booking stays active and billed until then.`,
+                data: { termination_id, booking_id: request.booking_id, effective_date: toDateStr(officialEndDate) }
+            });
         }
-        // =========================================================
+
+        // ── TODAY / PAST: execute immediately ──
+        const actorUserId = req.user?.user_id;
+        const actorRole = extractActorRole(req.user?.role);
+        const actorName = await getActorName(actorUserId);
+
+        const { notify } = await executeTermination(client, {
+            booking_id: request.booking_id,
+            end_date: officialEndDate,
+            settlement_action,
+            settlement_note: settlement_note || null,
+            termination_id,
+            actorLabel: 'Admin approved termination',
+            actor: { user_id: actorUserId, name: actorName, role: actorRole },
+        });
 
         await client.query('COMMIT');
 
-        // 6. Activity log + notifications (fire-and-forget)
-        (async () => {
-            try {
-                const actorUserId = req.user?.user_id;
-                const actorRole = extractActorRole(req.user?.role);
-                const actorName = await getActorName(actorUserId);
-
-                await logActivity({
-                    actorUserId,
-                    actorName,
-                    actorRole,
-                    actionType: 'TERMINATION_APPROVED',
-                    entityType: 'booking',
-                    entityId: null,
-                    details: {
-                        termination_id,
-                        termination_code: request.termination_code,
-                        booking_id: request.booking_id,
-                        official_end_date: officialEndDate,
-                    },
-                });
-
-                const endDateStr = officialEndDate.toLocaleDateString('en-GB');
-
-                const clientRes = await db.query(
-                    `SELECT u.mobile_number, cp.full_name
-                     FROM client_profiles cp
-                     JOIN users u ON cp.user_id = u.user_id
-                     WHERE cp.client_profile_id = $1`,
-                    [request.client_id]
-                );
-                if (clientRes.rows.length > 0) {
-                    const { mobile_number, full_name } = clientRes.rows[0];
-                    const ref = request.termination_code;
-
-                    await Promise.allSettled([
-                        sendClientTerminationApproved(mobile_number, full_name, ref, endDateStr),
-                        sendSms(mobile_number,
-                            `VCare: Hi ${full_name}, your termination request (${ref}) has been approved. Official end date: ${endDateStr}. Please contact us regarding any eligible refund.`
-                        ),
-                    ]);
-                }
-
-                if (request.assigned_staff_id) {
-                    const staffRes = await db.query(
-                        `SELECT u.mobile_number, sp.full_name, sr.patient_name
-                         FROM staff_profiles sp
-                         JOIN users u ON sp.user_id = u.user_id
-                         LEFT JOIN bookings b ON b.booking_id = $2
-                         LEFT JOIN service_requests sr ON sr.request_id = b.request_id
-                         WHERE sp.staff_profile_id = $1`,
-                        [request.assigned_staff_id, request.booking_id]
-                    );
-                    if (staffRes.rows.length > 0) {
-                        const { mobile_number, full_name, patient_name } = staffRes.rows[0];
-                        const patientDisplay = patient_name || 'the patient';
-                        await Promise.allSettled([
-                            sendStaffAssignmentTerminated(mobile_number, full_name, patientDisplay, endDateStr),
-                            sendSms(mobile_number,
-                                `VCare: Hi ${full_name}, your assignment for ${patientDisplay} has ended. End date: ${endDateStr}. Thank you for your dedication and service.`
-                            ),
-                        ]);
-                    }
-                }
-            } catch (e) {
-                console.error('[approveTermination] Post-commit error:', e.message);
-            }
-        })();
+        notify();
 
         res.status(200).json({
             status: 'success',
@@ -1956,31 +1837,73 @@ exports.forceStopBooking = async (req, res) => {
 
         // Determine the official cut-off time
         const officialEndDate = target_end_date ? new Date(target_end_date) : new Date();
+        const businessDate = await getBusinessDate(client);
+        const isFuture = isFutureDate(toDateStr(officialEndDate), businessDate);
+
+        if (isFuture) {
+            const alreadyScheduled = await hasOpenAction(client, booking_id, 'TERMINATION');
+            if (alreadyScheduled) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ message: "A termination is already scheduled for this booking." });
+            }
+        }
 
         // 2. Handle the Paper Trail (service_terminations)
         // Let's check if the client already had a 'PENDING' request that the admin is just force-clearing
         const pendingTermRes = await client.query(
-            `SELECT termination_id FROM service_terminations 
+            `SELECT termination_id FROM service_terminations
              WHERE booking_id = $1 AND status = 'PENDING' FOR UPDATE`,
             [booking_id]
         );
 
+        let termination_id;
         if (pendingTermRes.rows.length > 0) {
             // Client requested it earlier, Admin is approving it now via Force Stop
+            termination_id = pendingTermRes.rows[0].termination_id;
             await client.query(
-                `UPDATE service_terminations 
-                 SET status = 'APPROVED', end_date = $1, reason = COALESCE($2, reason)
-                 WHERE termination_id = $3`,
-                [officialEndDate, reason, pendingTermRes.rows[0].termination_id]
+                `UPDATE service_terminations
+                 SET status = $1, end_date = $2, reason = COALESCE($3, reason)
+                 WHERE termination_id = $4`,
+                [isFuture ? 'SCHEDULED' : 'APPROVED', officialEndDate, reason, termination_id]
             );
         } else {
             // Admin is doing this entirely manually over the phone, so we create the log
-            await client.query(
+            const insertRes = await client.query(
                 `INSERT INTO service_terminations (
                     booking_id, requested_by, urgency, requested_end_date, end_date, reason, status
-                ) VALUES ($1, 'ADMIN', 'IMMEDIATE', $2, $3, $4, 'APPROVED')`,
-                [booking_id, officialEndDate, officialEndDate, reason || 'Admin forced stop via phone request']
+                ) VALUES ($1, 'ADMIN', $2, $3, $3, $4, $5)
+                RETURNING termination_id`,
+                [
+                    booking_id,
+                    isFuture ? 'FUTURE' : 'IMMEDIATE',
+                    officialEndDate,
+                    reason || 'Admin forced stop via phone request',
+                    isFuture ? 'SCHEDULED' : 'APPROVED'
+                ]
             );
+            termination_id = insertRes.rows[0].termination_id;
+        }
+
+        if (isFuture) {
+            // Defer execution: keep the booking running/billed until the target date.
+            await enqueueScheduledAction(client, {
+                booking_id,
+                action_type: 'TERMINATION',
+                effective_date: officialEndDate,
+                payload: { settlement_action: 'WALLET_DEPOSIT' },
+                reason: reason || null,
+                termination_id,
+                created_by: req.user?.user_id || null,
+            });
+
+            await client.query('COMMIT');
+
+            return res.status(200).json({
+                status: 'success',
+                scheduled: true,
+                message: `Service stop scheduled for ${toDateStr(officialEndDate)}. The booking stays active until then.`,
+                data: { booking_id, termination_id, effective_date: toDateStr(officialEndDate) }
+            });
         }
 
         // 3. Terminate the Booking
@@ -2417,6 +2340,65 @@ exports.swapStaff = async (req, res) => {
             return res.status(400).json({
                 status: 'error',
                 message: `${newStaff.full_name} is not available for assignment (status: ${newStaff.current_status})`
+            });
+        }
+
+        // 2.5 If the incoming staff's start date is in the future, defer the swap:
+        //     reserve them now, keep the current nurse working/billed, and let the
+        //     cron flip the booking over on the effective date.
+        const businessDate = await getBusinessDate(client);
+        const requestedSwapDateStr = new_staff_start_date ? toDateStr(new_staff_start_date) : null;
+
+        if (requestedSwapDateStr && isFutureDate(requestedSwapDateStr, businessDate)) {
+            const alreadyScheduled = await hasOpenAction(client, booking_id, 'STAFF_SWAP');
+            if (alreadyScheduled) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ status: 'error', message: 'A staff swap is already scheduled for this booking.' });
+            }
+
+            const newDailyRate = new_daily_rate ?? bookingDetail.daily_rate ?? bookingDetail.quote_daily_rate ?? 0;
+            const insertRes = await client.query(
+                `INSERT INTO booking_staff_assignments
+                    (booking_id, staff_profile_id, assigned_on, assigned_by, daily_rate,
+                     service_start_date, service_end_date, amount_allocated, status)
+                 VALUES ($1, $2, NOW(), $3, $4, $5, NULL, NULL, 'SCHEDULED')
+                 RETURNING assignment_id`,
+                [booking_id, new_staff_id, req.user.user_id, newDailyRate, requestedSwapDateStr]
+            );
+            const newAssignmentId = insertRes.rows[0].assignment_id;
+
+            // Reserve the incoming staff so they aren't double-booked before the swap date.
+            await client.query(
+                `UPDATE staff_profiles SET current_status = 'ASSIGNED' WHERE staff_profile_id = $1`,
+                [new_staff_id]
+            );
+
+            await enqueueScheduledAction(client, {
+                booking_id,
+                action_type: 'STAFF_SWAP',
+                effective_date: requestedSwapDateStr,
+                payload: {
+                    old_staff_id: currentStaffId,
+                    new_staff_id,
+                    new_assignment_id: newAssignmentId,
+                    swap_reason: swap_reason || null,
+                    billing_gap: false,
+                    new_daily_rate: new_daily_rate ?? null,
+                    new_ot_rate: new_ot_rate ?? null,
+                    new_scheduled_end_time: new_scheduled_end_time ?? null,
+                    swapped_by: req.user.user_id,
+                },
+                reason: swap_reason || null,
+                created_by: req.user.user_id,
+            });
+
+            await client.query('COMMIT');
+
+            return res.status(200).json({
+                status: 'success',
+                scheduled: true,
+                message: `Staff swap to ${newStaff.full_name} scheduled for ${requestedSwapDateStr}. ${currentStaffName || 'Current staff'} continues until then.`,
+                data: { booking_id, new_staff_id, effective_date: requestedSwapDateStr }
             });
         }
 

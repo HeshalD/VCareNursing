@@ -185,6 +185,14 @@ router.get(
   staffController.getBookingHistory
 );
 
+// Full attendance calendar (assignment spans + per-day attendance) for staff (admin view)
+router.get(
+  '/:staff_profile_id/attendance-calendar',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getAttendanceCalendar
+);
+
 // Soft deactivate/reactivate staff account
 router.patch(
   '/:staff_profile_id/deactivate',

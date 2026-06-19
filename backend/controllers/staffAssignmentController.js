@@ -2,6 +2,7 @@ const db = require('../config/db');
 const { sendSms } = require('../utils/sms');
 const { sendBookingConfirmed, sendStaffNewAssignment } = require('../utils/metaWhatsapp');
 const { logActivity } = require('../utils/activityLogger');
+const { getBusinessDate, toDateStr, isFutureDate, enqueueScheduledAction, hasOpenAction } = require('../services/scheduledActions');
 
 function extractActorRole(role) {
   const raw = Array.isArray(role) ? role[0] : role;
@@ -314,6 +315,22 @@ exports.assignStaffToBooking = async (req, res) => {
 
     const amount_allocated = amount_paid;
 
+    // If the start date is in the future, defer activation: the assignment is
+    // created SCHEDULED (not billed/paid) and the cron flips it to ACTIVE on the day.
+    const businessDate = await getBusinessDate(db);
+    const startDateStr = toDateStr(service_start_date);
+    const isFuture = isFutureDate(startDateStr, businessDate);
+
+    if (isFuture) {
+      const alreadyScheduled = await hasOpenAction(db, booking_id, 'ASSIGNMENT_START');
+      if (alreadyScheduled) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'A staff assignment is already scheduled for this booking.'
+        });
+      }
+    }
+
     // Create assignment record — service_end_date is left null and set when the booking
     // ends (COMPLETED/TERMINATED) or a staff swap occurs
     const insertQuery = `
@@ -321,7 +338,7 @@ exports.assignStaffToBooking = async (req, res) => {
         (booking_id, staff_profile_id, assigned_on, assigned_by, daily_rate,
          service_start_date, service_end_date, amount_allocated, status, notes)
       VALUES
-        ($1, $2, NOW(), $3, $4, $5, NULL, $6, 'ACTIVE', $7)
+        ($1, $2, NOW(), $3, $4, $5, NULL, $6, $7, $8)
       RETURNING
         assignment_id, booking_id, staff_profile_id, assigned_on, daily_rate,
         service_start_date, service_end_date, amount_allocated, status
@@ -334,12 +351,14 @@ exports.assignStaffToBooking = async (req, res) => {
       staffDailyRate,
       service_start_date,
       amount_allocated,
+      isFuture ? 'SCHEDULED' : 'ACTIVE',
       notes || null
     ];
 
     const insertResult = await db.query(insertQuery, values);
     const assignment = insertResult.rows[0];
 
+    // Reserve the staff member either way so they aren't double-booked.
     await db.query(
       `UPDATE staff_profiles
        SET current_status = 'ASSIGNED'
@@ -347,12 +366,22 @@ exports.assignStaffToBooking = async (req, res) => {
       [staff_profile_id]
     );
 
-    await db.query(
-      `UPDATE bookings
-       SET status = 'ACTIVE', ot_rate = $2, assigned_staff_id = $3
-       WHERE booking_id = $1`,
-      [booking_id, bookingOtRate, staff_profile_id]
-    );
+    if (isFuture) {
+      await enqueueScheduledAction(db, {
+        booking_id,
+        action_type: 'ASSIGNMENT_START',
+        effective_date: startDateStr,
+        payload: { assignment_id: assignment.assignment_id, staff_profile_id, ot_rate: bookingOtRate },
+        created_by: assigned_by,
+      });
+    } else {
+      await db.query(
+        `UPDATE bookings
+         SET status = 'ACTIVE', ot_rate = $2, assigned_staff_id = $3
+         WHERE booking_id = $1`,
+        [booking_id, bookingOtRate, staff_profile_id]
+      );
+    }
 
     (async () => {
       try {
@@ -437,6 +466,7 @@ exports.assignStaffToBooking = async (req, res) => {
             service_start_date,
             service_end_date: assignment.service_end_date,
             amount_allocated: parseFloat(assignment.amount_allocated),
+            scheduled: isFuture,
           },
         });
       } catch (e) {
@@ -446,7 +476,10 @@ exports.assignStaffToBooking = async (req, res) => {
 
     return res.status(201).json({
       status: 'success',
-      message: `${staff.full_name} assigned successfully`,
+      scheduled: isFuture,
+      message: isFuture
+        ? `${staff.full_name} reserved. Assignment starts on ${startDateStr}.`
+        : `${staff.full_name} assigned successfully`,
       data: {
         assignment_id: assignment.assignment_id,
         booking_id: assignment.booking_id,

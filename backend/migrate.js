@@ -1,4 +1,5 @@
 const db = require('./config/db');
+const bcrypt = require('bcrypt');
 
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -685,6 +686,33 @@ async function runMigration() {
       message TEXT,
       sent_at TIMESTAMP DEFAULT NOW()
     );
+  `);
+
+  // Queue of admin actions that must take effect on a future date (executed by
+  // the daily enforcer in cron/scheduledActions.js). The booking stays in its
+  // normal status until execution, so existing 'ACTIVE' queries keep working.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS scheduled_actions (
+      action_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      booking_id UUID NOT NULL REFERENCES bookings(booking_id) ON DELETE CASCADE,
+      action_type VARCHAR(30) NOT NULL,        -- TERMINATION | COMPLETION | STAFF_SWAP | ASSIGNMENT_START
+      effective_date DATE NOT NULL,
+      status VARCHAR(20) DEFAULT 'SCHEDULED',   -- SCHEDULED | EXECUTED | CANCELLED | FAILED
+      payload JSONB NOT NULL DEFAULT '{}',      -- action-specific args
+      reason TEXT,
+      termination_id UUID REFERENCES service_terminations(termination_id),
+      created_by UUID REFERENCES users(user_id),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      executed_at TIMESTAMP WITH TIME ZONE,
+      error_text TEXT
+    );
+  `);
+
+  // At most one open (SCHEDULED) action per booking + type.
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_open_scheduled_action
+      ON scheduled_actions (booking_id, action_type)
+      WHERE status = 'SCHEDULED'
   `);
 
   await db.query(`
@@ -1398,7 +1426,39 @@ async function runMigration() {
 
   await seedQuotePresetItems();
 
+  // =========================================================
+  // SEED DEFAULT SUPER ADMIN USER
+  // =========================================================
+
+  await seedDefaultAdminUser();
+
   console.log('Migration completed successfully!');
+}
+
+async function seedDefaultAdminUser() {
+  try {
+    const mobileNumber = '0000000000';
+
+    const existing = await db.query('SELECT user_id FROM users WHERE mobile_number = $1', [mobileNumber]);
+    if (existing.rows.length > 0) {
+      console.log('Default admin user already seeded. Skipping...');
+      return;
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash('admin@vcare', salt);
+
+    await db.query(
+      `INSERT INTO users (mobile_number, password_hash, is_active, role)
+       VALUES ($1, $2, true, ARRAY['SUPER_ADMIN'::user_role_enum])`,
+      [mobileNumber, passwordHash]
+    );
+
+    console.log('Seeded default SUPER_ADMIN user (mobile_number: 0000000000)');
+  } catch (error) {
+    console.error('Error seeding default admin user:', error.message);
+    // Don't fail migration if seeding fails
+  }
 }
 
 async function seedQuotePresetItems() {

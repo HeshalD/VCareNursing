@@ -157,7 +157,7 @@ const TerminationRequests = () => {
     try {
       setApproveLoading(true);
       setApproveError(null);
-      await apiClient.approveTerminationRequest(
+      const response = await apiClient.approveTerminationRequest(
         modal.termination_id,
         modalFinalEndDate,
         settlementAction,
@@ -166,6 +166,9 @@ const TerminationRequests = () => {
       closeModal();
       setExpandedId(null);
       fetchTerminationRequests();
+      if (response?.scheduled) {
+        window.alert(response.message || 'Termination scheduled for the future date. The booking stays active and billed until then.');
+      }
     } catch (err) {
       console.error('Error approving termination:', err);
       setApproveError(err.message || 'Failed to approve termination.');
@@ -603,6 +606,11 @@ const TerminationRequests = () => {
                   onChange={(e) => setModalFinalEndDate(e.target.value)}
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
                 />
+                {modalFinalEndDate && modalFinalEndDate > new Date().toISOString().split('T')[0] && (
+                  <p className="text-xs text-amber-600 mt-1.5">
+                    This is a future date — the booking will stay active and billed until then, and terminate automatically on {fmt(modalFinalEndDate)}.
+                  </p>
+                )}
               </div>
 
               {/* Settlement action */}

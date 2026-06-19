@@ -13,6 +13,7 @@ import {
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
+import StaffCareTimeline from './StaffCareTimeline';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const moneyFormatter = new Intl.NumberFormat('en-LK', {
@@ -164,6 +165,7 @@ const StaffDetailPageV2 = () => {
   const [deductionSuccess, setDeductionSuccess] = useState('');
   const [reviewToggles, setReviewToggles] = useState({});
   const [togglingReviewId, setTogglingReviewId] = useState(null);
+  const [attendanceCalendar, setAttendanceCalendar] = useState({ assignments: [], attendance: [] });
 
   const profile = detail?.profile || {};
   const overviewEarnings = detail?.earnings || {};
@@ -223,13 +225,14 @@ const StaffDetailPageV2 = () => {
       runAdminRequest(() => apiClient.getBankAccounts()),
       runAdminRequest(() => apiClient.getAllChangeRequests({ staff_profile_id: staffProfileId })),
       runAdminRequest(() => apiClient.getStaffDeductions(staffProfileId, { page: 1, limit: 50 })),
+      runAdminRequest(() => apiClient.getStaffAttendanceCalendar(staffProfileId)),
     ]);
 
     const nextErrors = {};
     const [
       detailRes, earningsRes, earningsTxRes, currentBookingRes, historyRes,
       payoutsSummaryRes, payoutsRes, bankAccountsRes, companyBankAccountsRes,
-      changeRequestsRes, deductionsRes,
+      changeRequestsRes, deductionsRes, attendanceCalendarRes,
     ] = results;
 
     if (detailRes.status === 'fulfilled') {
@@ -274,6 +277,11 @@ const StaffDetailPageV2 = () => {
 
     if (deductionsRes.status === 'fulfilled') setDeductions(safeArray(deductionsRes.value?.data));
     else nextErrors.deductions = deductionsRes.reason?.message;
+
+    if (attendanceCalendarRes.status === 'fulfilled') {
+      const cal = attendanceCalendarRes.value?.data || {};
+      setAttendanceCalendar({ assignments: safeArray(cal.assignments), attendance: safeArray(cal.attendance) });
+    } else nextErrors.attendanceCalendar = attendanceCalendarRes.reason?.message;
 
     setSectionErrors(nextErrors);
     setLoading(false);
@@ -1361,6 +1369,16 @@ const StaffDetailPageV2 = () => {
               <div style={{ fontSize: 12.5, color: '#BC4338', fontWeight: 600, marginTop: 4 }}>awaiting payout</div>
             </div>
           </div>
+
+          {/* WORK & PAY CALENDAR */}
+          {(attendanceCalendar.assignments.length > 0) && (
+            <div style={{ marginBottom: 18 }}>
+              <StaffCareTimeline
+                assignments={attendanceCalendar.assignments}
+                attendanceRecords={attendanceCalendar.attendance}
+              />
+            </div>
+          )}
 
           {/* TABS */}
           <div style={{ display: 'flex', gap: 7, marginBottom: 16, background: '#EEE9E0', padding: 5, borderRadius: 13, width: 'fit-content', maxWidth: '100%', flexWrap: 'wrap' }}>

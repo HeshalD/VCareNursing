@@ -23,6 +23,7 @@ const clientPaymentRoutes = require('./routes/clientPaymentRoutes');
 const transactionRoutes = require('./routes/transactionRoutes');
 const permissionsRoutes = require('./routes/permissionsRoutes');
 const internalStaffRoutes = require('./routes/internalStaffRoutes');
+const scheduledActionsRoutes = require('./routes/scheduledActionsRoutes');
 
 const startDailyInvoicing = require('./cron/dailyInvoicing');
 
@@ -107,6 +108,7 @@ app.use('/api/client-payments', clientPaymentRoutes);
 app.use('/api/transactions', transactionRoutes);
 app.use('/api/permissions', permissionsRoutes);
 app.use('/api/internal-staff', internalStaffRoutes);
+app.use('/api/scheduled-actions', scheduledActionsRoutes);
 
 // Health check endpoint for Render
 app.get('/health', (req, res) => {

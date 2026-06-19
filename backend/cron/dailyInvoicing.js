@@ -6,6 +6,7 @@ const {
   creditStaffSalary,
   createServiceInvoice
 } = require('../services/billingService');
+const { runPreBillingScheduledActions, runPostBillingScheduledActions } = require('./scheduledActions');
 
 const getActiveBookingBalances = async (client) => {
   return client.query(
@@ -80,6 +81,13 @@ const startDailyInvoicing = () => {
       const overdueCount = await flagOverdueBookings(client);
       if (overdueCount > 0) {
         console.log(`⚠️  ${overdueCount} booking(s) flagged as OVERDUE and skipped from invoicing.`);
+      }
+
+      // Step 1.5 — Execute due scheduled assignment starts / staff swaps BEFORE billing,
+      // so today's payroll/invoicing reflects whoever is actually on duty today.
+      const preScheduled = await runPreBillingScheduledActions(client, today);
+      if (preScheduled.executed > 0 || preScheduled.failed > 0) {
+        console.log(`✅ Scheduled actions (pre-billing): ${preScheduled.executed} executed, ${preScheduled.failed} failed.`);
       }
 
       // Step 2 — Fetch active and overdue bookings, then their active staff assignments
@@ -229,6 +237,15 @@ const startDailyInvoicing = () => {
 
       await client.query('COMMIT');
       console.log(`✅ Daily Invoicing Complete: ${staffEarningsCount} staff earnings processed, ${clientInvoiceCount} client invoices created.`);
+
+      // Step 3.5 — Execute due scheduled terminations / completions AFTER billing, so the
+      // effective date is billed/paid as the final served day (matches settlement math).
+      await client.query('BEGIN');
+      const postScheduled = await runPostBillingScheduledActions(client, today);
+      await client.query('COMMIT');
+      if (postScheduled.executed > 0 || postScheduled.failed > 0) {
+        console.log(`✅ Scheduled actions (post-billing): ${postScheduled.executed} executed, ${postScheduled.failed} failed.`);
+      }
 
       // Step 4 — Run credit monitor in its own transaction
       await client.query('BEGIN');
