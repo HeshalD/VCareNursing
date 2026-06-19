@@ -42,7 +42,7 @@ The `activity_log` table columns:
 | Column | Type | Notes |
 |---|---|---|
 | `actor_user_id` | UUID | `req.user.user_id` |
-| `actor_name` | TEXT | looked up from `staff_profiles.full_name`, fallback `'Admin'` |
+| `actor_name` | TEXT | auto-resolved by `logActivity` from `staff_profiles` → `internal_staff` → `client_profiles` → `'Admin'` |
 | `actor_role` | TEXT | first role string from `req.user.role` |
 | `action_type` | TEXT | e.g. `STAFF_PROFILE_CREATED` |
 | `entity_type` | TEXT | e.g. `STAFF_PROFILE` |
@@ -69,15 +69,14 @@ Inside the target function, find where the primary operation succeeds (after `aw
 
 ### 3. Add the non-fatal log block
 
+Do NOT do a manual name lookup — `logActivity` resolves the actor name automatically from the DB (checking `staff_profiles` → `internal_staff` → `client_profiles`).
+
 ```js
 // Activity log (non-fatal)
 try {
     const actorRole = Array.isArray(req.user.role) ? req.user.role[0] : req.user.role;
-    const actorNameResult = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
-    const actorName = actorNameResult.rows[0]?.full_name || 'Admin';
     await logActivity({
         actorUserId: req.user.user_id,
-        actorName,
         actorRole: typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole),
         actionType: '<ACTION_TYPE>',
         entityType: '<ENTITY_TYPE>',

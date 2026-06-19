@@ -6,6 +6,7 @@ const { upload } = require('../config/cloudinaryConfig');
 const { logActivity } = require('../utils/activityLogger');
 const { sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendStaffNewAssignment, sendClientStaffSwapped } = require('../utils/metaWhatsapp');
 const { sendSms } = require('../utils/sms');
+const { createServiceInvoice } = require('../services/billingService');
 
 function extractActorRole(role) {
     const raw = Array.isArray(role) ? role[0] : role;
@@ -879,6 +880,7 @@ exports.getAdminBookingDetail = async (req, res) => {
             b.ot_rate,
             b.amount_quotated,
             b.amount_paid,
+            b.invoicing_mode,
             c.client_profile_id,
             c.full_name as client_name,
             c.primary_address as client_address,
@@ -1042,6 +1044,7 @@ exports.getAdminBookingDetail = async (req, res) => {
                     ot_rate: booking.ot_rate,
                     amount_quotated: booking.amount_quotated,
                     amount_paid: booking.amount_paid,
+                    invoicing_mode: booking.invoicing_mode,
                     quote_id: booking.quote_id,
                     estimate_number: booking.estimate_number,
                     quote_daily_rate: booking.quote_daily_rate,
@@ -1315,6 +1318,171 @@ exports.getBookingStaffAllocationHistory = async (req, res) => {
             status: 'error',
             message: 'Failed to fetch booking staff allocation history'
         });
+    }
+};
+
+/**
+ * @route   GET /api/bookings/:booking_id/daily-invoices
+ * @desc    List booking_daily_invoices rows for a booking (manual confirmation history)
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ */
+exports.getBookingDailyInvoices = async (req, res) => {
+    const { booking_id } = req.params;
+
+    try {
+        const result = await db.query(
+            `SELECT
+                daily_invoice_id, booking_id, service_date::text as service_date, entry_mode,
+                status, amount, transaction_id, decided_by_user_id, decided_by_name, decided_at,
+                notes, created_at, updated_at
+             FROM booking_daily_invoices
+             WHERE booking_id = $1
+             ORDER BY service_date DESC`,
+            [booking_id]
+        );
+
+        res.status(200).json({ status: 'success', data: result.rows });
+    } catch (error) {
+        console.error('Get booking daily invoices error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to fetch daily invoices' });
+    }
+};
+
+/**
+ * @route   POST /api/bookings/:booking_id/daily-invoices
+ * @desc    Admin decision on whether to invoice the client for a given day.
+ *          Always a manual judgement call for SHIFT_BASED/VISITING bookings,
+ *          and for LIVE_IN bookings that have opted into invoicing_mode = 'MANUAL'.
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ * @body    service_date, approve (boolean), amount (optional, defaults to booking.daily_rate)
+ */
+exports.confirmDailyInvoice = async (req, res) => {
+    const { booking_id } = req.params;
+    const { service_date, approve, amount } = req.body;
+
+    if (!service_date || typeof approve !== 'boolean') {
+        return res.status(400).json({ status: 'error', message: 'service_date and approve (boolean) are required' });
+    }
+
+    const client = await db.pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        const existing = await client.query(
+            `SELECT * FROM booking_daily_invoices WHERE booking_id = $1 AND service_date = $2 FOR UPDATE`,
+            [booking_id, service_date]
+        );
+
+        if (existing.rows.length > 0 && existing.rows[0].status !== 'PENDING') {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ status: 'error', message: 'This day has already been decided' });
+        }
+
+        const bookingRes = await client.query(
+            `SELECT booking_id, client_id, daily_rate FROM bookings WHERE booking_id = $1`,
+            [booking_id]
+        );
+
+        if (bookingRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Booking not found' });
+        }
+
+        const booking = bookingRes.rows[0];
+        const decidedByName = await getActorName(req.user?.user_id);
+
+        let transactionId = null;
+        let finalAmount = null;
+
+        if (approve) {
+            finalAmount = amount !== undefined && amount !== null && amount !== ''
+                ? parseFloat(amount)
+                : parseFloat(booking.daily_rate);
+
+            if (Number.isNaN(finalAmount) || finalAmount <= 0) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ status: 'error', message: 'amount must be a positive number' });
+            }
+
+            transactionId = await createServiceInvoice(client, {
+                booking_id,
+                client_id: booking.client_id,
+                amount: finalAmount,
+                notes: `Manually confirmed daily charge for ${service_date}`
+            });
+        }
+
+        const result = await client.query(
+            `INSERT INTO booking_daily_invoices (
+                booking_id, service_date, entry_mode, status, amount, transaction_id,
+                decided_by_user_id, decided_by_name, decided_at
+            ) VALUES ($1, $2, 'MANUAL', $3, $4, $5, $6, $7, NOW())
+            ON CONFLICT (booking_id, service_date)
+            DO UPDATE SET status = EXCLUDED.status,
+                          amount = EXCLUDED.amount,
+                          transaction_id = EXCLUDED.transaction_id,
+                          decided_by_user_id = EXCLUDED.decided_by_user_id,
+                          decided_by_name = EXCLUDED.decided_by_name,
+                          decided_at = NOW(),
+                          updated_at = NOW()
+            RETURNING *`,
+            [booking_id, service_date, approve ? 'INVOICED' : 'SKIPPED', finalAmount, transactionId, req.user?.user_id || null, decidedByName]
+        );
+
+        await client.query('COMMIT');
+        res.status(200).json({ status: 'success', data: result.rows[0] });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Confirm daily invoice error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to confirm daily invoice decision' });
+    } finally {
+        client.release();
+    }
+};
+
+/**
+ * @route   PATCH /api/bookings/:booking_id/invoicing-mode
+ * @desc    Toggle a LIVE_IN booking between automatic nightly invoicing and manual
+ *          per-day confirmation. Only applicable to LIVE_IN bookings — other service
+ *          models are always manual.
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ * @body    invoicing_mode ('AUTO' | 'MANUAL')
+ */
+exports.updateInvoicingMode = async (req, res) => {
+    const { booking_id } = req.params;
+    const { invoicing_mode } = req.body;
+
+    if (!['AUTO', 'MANUAL'].includes(invoicing_mode)) {
+        return res.status(400).json({ status: 'error', message: "invoicing_mode must be 'AUTO' or 'MANUAL'" });
+    }
+
+    try {
+        const bookingRes = await db.query(
+            `SELECT booking_id, service_model FROM bookings WHERE booking_id = $1`,
+            [booking_id]
+        );
+
+        if (bookingRes.rows.length === 0) {
+            return res.status(404).json({ status: 'error', message: 'Booking not found' });
+        }
+
+        if (bookingRes.rows[0].service_model !== 'LIVE_IN') {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Only LIVE_IN bookings support an invoicing mode toggle — other service models are always manual'
+            });
+        }
+
+        const result = await db.query(
+            `UPDATE bookings SET invoicing_mode = $1 WHERE booking_id = $2 RETURNING booking_id, invoicing_mode`,
+            [invoicing_mode, booking_id]
+        );
+
+        res.status(200).json({ status: 'success', data: result.rows[0] });
+    } catch (error) {
+        console.error('Update invoicing mode error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to update invoicing mode' });
     }
 };
 

@@ -1009,6 +1009,44 @@ class ApiClient {
     });
   }
 
+  // ── Daily attendance & manual daily invoicing ──────────────────────────
+
+  async getBookingAttendance(bookingId) {
+    return this.request(`/bookings/${bookingId}/attendance`);
+  }
+
+  async upsertBookingAttendance(bookingId, attendanceData) {
+    return this.request(`/bookings/${bookingId}/attendance`, {
+      method: 'POST',
+      body: JSON.stringify(attendanceData),
+    });
+  }
+
+  async confirmAttendanceSalary(attendanceId, approve) {
+    return this.request(`/bookings/attendance/${attendanceId}/confirm-salary`, {
+      method: 'POST',
+      body: JSON.stringify({ approve }),
+    });
+  }
+
+  async getBookingDailyInvoices(bookingId) {
+    return this.request(`/bookings/${bookingId}/daily-invoices`);
+  }
+
+  async confirmBookingDailyInvoice(bookingId, payload) {
+    return this.request(`/bookings/${bookingId}/daily-invoices`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async updateBookingInvoicingMode(bookingId, invoicing_mode) {
+    return this.request(`/bookings/${bookingId}/invoicing-mode`, {
+      method: 'PATCH',
+      body: JSON.stringify({ invoicing_mode }),
+    });
+  }
+
   async getActiveBookingByClientID(clientId = '') {
     const endpoint = clientId ? `/client/active-bookings/${clientId}` : '/client/active-bookings';
     return this.request(endpoint);

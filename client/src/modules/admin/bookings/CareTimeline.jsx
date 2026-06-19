@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { Wallet, Receipt } from 'lucide-react';
 
 const NURSE_COLORS = [
   { tint: '#FAEEE7', solid: '#C2603F', border: '#E6C8B9' },
@@ -15,13 +16,30 @@ const PILL = {
   upcoming: { bg: 'rgba(213,207,196,.5)', color: '#8A8478', label: 'Upcoming' },
 };
 
+// Colour for the small salary/invoice status icons and their tooltip detail lines.
+const META_COLOR = { PENDING: '#C98A2E', PAID: '#2F8A5B', INVOICED: '#2F8A5B', SKIPPED: '#B4AEA3' };
+const metaLabel = (meta, doneWord) => {
+  if (!meta) return '';
+  if (meta.status === 'PENDING') return 'Action needed';
+  if (meta.status === 'SKIPPED') return 'Skipped';
+  return `${doneWord} Rs ${Number(meta.amount || 0).toLocaleString('en-US')}`;
+};
+
 const fmtShort = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 const fmtFull  = (d) => d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 const shiftDays = (base, n) => { const d = new Date(base); d.setDate(d.getDate() + n); return d; };
+// Local calendar date as YYYY-MM-DD — avoids toISOString()'s UTC conversion, which can
+// shift the date by a day depending on the browser's timezone offset.
+const toLocalISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 // Props:
-//   simDate          — YYYY-MM-DD string or null (controlled by parent)
-//   onSimDateChange  — (dateStr | null) => void
+//   simDate            — YYYY-MM-DD string or null (controlled by parent)
+//   onSimDateChange    — (dateStr | null) => void
+//   onDayClick         — (dateStr, dayNum) => void — only fires for past/today cells; omit to keep cells non-interactive
+//   attendanceRecords  — rows from GET /bookings/:id/attendance (staff_daily_attendance)
+//   dailyInvoiceRecords — rows from GET /bookings/:id/daily-invoices (booking_daily_invoices)
+//   manualSalaryDay    — true if this booking's staff salary requires a manual per-day decision (i.e. not LIVE_IN)
+//   manualInvoiceDay   — true if this booking's client invoicing requires a manual per-day decision
 const CareTimeline = ({
   startDate,
   plannedDays,
@@ -30,6 +48,11 @@ const CareTimeline = ({
   staffAssignments = [],
   simDate = null,
   onSimDateChange,
+  onDayClick,
+  attendanceRecords = [],
+  dailyInvoiceRecords = [],
+  manualSalaryDay = false,
+  manualInvoiceDay = false,
 }) => {
   const [weekOffset,    setWeekOffset]    = useState(null);
   const [hoveredDay,    setHoveredDay]    = useState(null);
@@ -83,6 +106,55 @@ const CareTimeline = ({
     });
     return map;
   }, [staffAssignments]);
+
+  // ── Salary / invoice status per day ──────────────────────────────────────
+
+  const attendanceByDate = useMemo(() => {
+    const map = new Map();
+    attendanceRecords.forEach((r) => {
+      const key = r.service_date?.slice(0, 10);
+      if (!key) return;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(r);
+    });
+    return map;
+  }, [attendanceRecords]);
+
+  const invoiceByDate = useMemo(() => {
+    const map = new Map();
+    dailyInvoiceRecords.forEach((r) => {
+      const key = r.service_date?.slice(0, 10);
+      if (key) map.set(key, r);
+    });
+    return map;
+  }, [dailyInvoiceRecords]);
+
+  const getDayMeta = (dateISO, delivered) => {
+    if (!delivered) return { salary: null, invoice: null };
+
+    const salaryRecs = attendanceByDate.get(dateISO) || [];
+    let salary = null;
+    if (salaryRecs.length > 0) {
+      const anyPending = salaryRecs.some((r) => r.salary_status === 'PENDING');
+      const anyPaid    = salaryRecs.some((r) => r.salary_status === 'PAID');
+      const status = anyPending ? 'PENDING' : anyPaid ? 'PAID' : 'SKIPPED';
+      const decidedBy = [...new Set(salaryRecs.filter((r) => r.decided_by_name).map((r) => r.decided_by_name))].join(', ') || null;
+      const amount = salaryRecs.reduce((sum, r) => sum + (r.salary_status === 'PAID' ? Number(r.salary_amount || 0) : 0), 0);
+      salary = { status, decidedBy, amount };
+    } else if (manualSalaryDay) {
+      salary = { status: 'PENDING', decidedBy: null, amount: 0 };
+    }
+
+    const invRec = invoiceByDate.get(dateISO);
+    let invoice = null;
+    if (invRec) {
+      invoice = { status: invRec.status, decidedBy: invRec.decided_by_name || null, amount: Number(invRec.amount || 0) };
+    } else if (manualInvoiceDay) {
+      invoice = { status: 'PENDING', decidedBy: null, amount: 0 };
+    }
+
+    return { salary, invoice };
+  };
 
   const getNurseForDay = (dayNum) => {
     if (!start) return null;
@@ -152,10 +224,13 @@ const CareTimeline = ({
           const delivered = dayNum <= servedDays;
           const isOverrun = dayNum > (plannedDays || 0); // beyond original booking end
           const status   = dayNum <= paidDays ? 'paid' : dayNum <= servedDays ? 'overdue' : 'upcoming';
+          const dateISO  = toLocalISO(dayDate);
+          const { salary: salaryMeta, invoice: invoiceMeta } = getDayMeta(dateISO, delivered);
           days.push({
             filled: true, dayNum, nurse, isToday, delivered, isOverrun, status,
             dateLabel: isToday ? 'Today' : fmtShort(dayDate),
             tipDate:   `${fmtFull(dayDate)} · Day ${dayNum}${isOverrun ? ' · overrun' : ''}`,
+            dateISO, salaryMeta, invoiceMeta,
           });
         }
       }
@@ -168,7 +243,7 @@ const CareTimeline = ({
     }
     return result;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [curOffset, displayDays, plannedDays, paidDays, servedDays, start, nurseColorMap]);
+  }, [curOffset, displayDays, plannedDays, paidDays, servedDays, start, nurseColorMap, attendanceByDate, invoiceByDate, manualSalaryDay, manualInvoiceDay]);
 
   const legendNurses = useMemo(() => {
     const seen = new Set();
@@ -350,6 +425,7 @@ const CareTimeline = ({
                 const isHovered = hoveredDay === cell.dayNum;
                 const nurse = cell.nurse;
                 const pill  = PILL[cell.status];
+                const isClickable = Boolean(onDayClick) && cell.delivered;
 
                 // Overrun cells get a dashed red border to distinguish them from planned days
                 const cellBorder = cell.isToday
@@ -363,7 +439,7 @@ const CareTimeline = ({
                 return (
                   <div
                     key={cell.dayNum}
-                    className="relative flex flex-col justify-between rounded-xl p-1.5 sm:p-2 cursor-default select-none"
+                    className={`relative flex flex-col justify-between rounded-xl p-1.5 sm:p-2 select-none ${isClickable ? 'cursor-pointer' : 'cursor-default'}`}
                     style={{
                       aspectRatio: '1/1',
                       background: cell.delivered && nurse ? nurse.color.tint : '#FCFBF8',
@@ -379,8 +455,9 @@ const CareTimeline = ({
                     }}
                     onMouseEnter={() => setHoveredDay(cell.dayNum)}
                     onMouseLeave={() => setHoveredDay(null)}
+                    onClick={isClickable ? () => onDayClick(cell.dateISO, cell.dayNum) : undefined}
                   >
-                    {/* Day number + nurse dot */}
+                    {/* Day number + status icons + nurse dot */}
                     <div className="flex items-center justify-between">
                       <span
                         className="text-[11px] font-bold leading-none"
@@ -391,12 +468,20 @@ const CareTimeline = ({
                       >
                         {cell.dayNum}
                       </span>
-                      {nurse && (
-                        <span
-                          className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full flex-shrink-0"
-                          style={{ background: nurse.color.solid, opacity: cell.delivered ? 1 : 0.4 }}
-                        />
-                      )}
+                      <div className="flex items-center gap-0.5 flex-shrink-0">
+                        {cell.salaryMeta && (
+                          <Wallet style={{ width: 8, height: 8, color: META_COLOR[cell.salaryMeta.status] }} />
+                        )}
+                        {cell.invoiceMeta && (
+                          <Receipt style={{ width: 8, height: 8, color: META_COLOR[cell.invoiceMeta.status] }} />
+                        )}
+                        {nurse && (
+                          <span
+                            className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full flex-shrink-0"
+                            style={{ background: nurse.color.solid, opacity: cell.delivered ? 1 : 0.4 }}
+                          />
+                        )}
+                      </div>
                     </div>
 
                     {/* Date label + payment bar */}
@@ -472,6 +557,44 @@ const CareTimeline = ({
                             {pill.label}
                           </span>
                         </div>
+                        {(cell.salaryMeta || cell.invoiceMeta) && (
+                          <>
+                            <div className="h-px my-2" style={{ background: 'rgba(255,255,255,.12)' }} />
+                            {cell.salaryMeta && (
+                              <div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] text-[#A8A299] flex items-center gap-1">
+                                    <Wallet style={{ width: 10, height: 10 }} /> Salary
+                                  </span>
+                                  <span className="text-[11px] font-bold" style={{ color: META_COLOR[cell.salaryMeta.status] }}>
+                                    {metaLabel(cell.salaryMeta, 'Paid')}
+                                  </span>
+                                </div>
+                                {cell.salaryMeta.decidedBy && (
+                                  <div className="text-[10px] text-[#7E786D] ml-4">by {cell.salaryMeta.decidedBy}</div>
+                                )}
+                              </div>
+                            )}
+                            {cell.invoiceMeta && (
+                              <div className="mt-1.5">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] text-[#A8A299] flex items-center gap-1">
+                                    <Receipt style={{ width: 10, height: 10 }} /> Invoice
+                                  </span>
+                                  <span className="text-[11px] font-bold" style={{ color: META_COLOR[cell.invoiceMeta.status] }}>
+                                    {metaLabel(cell.invoiceMeta, 'Charged')}
+                                  </span>
+                                </div>
+                                {cell.invoiceMeta.decidedBy && (
+                                  <div className="text-[10px] text-[#7E786D] ml-4">by {cell.invoiceMeta.decidedBy}</div>
+                                )}
+                              </div>
+                            )}
+                          </>
+                        )}
+                        {isClickable && (
+                          <div className="text-[10px] text-[#A8A299] mt-2">Click to log attendance / invoicing</div>
+                        )}
                         {/* Caret */}
                         <div
                           className="absolute"
@@ -516,6 +639,18 @@ const CareTimeline = ({
         <div className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">
           <span className="w-4 h-1.5 rounded-full inline-block" style={{ background: '#D5CFC4' }} />Upcoming
         </div>
+        {(manualSalaryDay || manualInvoiceDay) && (
+          <>
+            <div className="w-px h-4 inline-block flex-shrink-0" style={{ background: '#E7E1D6' }} />
+            <div className="flex items-center gap-3 text-xs text-[#8A8478]">
+              <span className="flex items-center gap-1"><Wallet style={{ width: 11, height: 11 }} /> Salary</span>
+              <span className="flex items-center gap-1"><Receipt style={{ width: 11, height: 11 }} /> Invoice</span>
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full inline-block" style={{ background: META_COLOR.PENDING }} /> Action needed
+              </span>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

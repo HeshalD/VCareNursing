@@ -71,8 +71,10 @@ import QuotationDetailsPage from './modules/admin/service_quotes/quotation_detai
 import ServiceRequestSummaryPage from './modules/admin/service_requests/service_request_summary';
 import BookingStaffRosterPage from './modules/admin/service_requests/booking_staff_roster';
 import BookingStaffAssignmentPage from './modules/admin/service_requests/booking_staff_assignment';
-import BookingDetailPage from './modules/admin/bookings/BookingDetailPage';
-import StaffDetailPage from './modules/admin/user_managemnet/staff_detail_page';
+import BookingDetailPage from './modules/admin/bookings/BookingDetailPageV2';
+import BookingDetailPageV2 from './modules/admin/bookings/BookingDetailPageV2';
+import StaffDetailPage from './modules/admin/user_managemnet/StaffDetailPageV2';
+import StaffDetailPageV2 from './modules/admin/user_managemnet/StaffDetailPageV2';
 import TotalEarningsBreakdownPage from './modules/admin/user_managemnet/TotalEarningsBreakdownPage';
 import CurrentEarningsBreakdownPage from './modules/admin/user_managemnet/CurrentEarningsBreakdownPage';
 import PatientsPage from './modules/admin/patients/patients';
@@ -187,6 +189,11 @@ function App() {
                 <StaffDetailPage />
               </AdminAuthProvider>
             } />
+            <Route path="/admin/staff/:staffProfileId/v2" element={
+              <AdminAuthProvider>
+                <StaffDetailPageV2 />
+              </AdminAuthProvider>
+            } />
             <Route path="/admin/staff/:staffProfileId/total-earnings" element={
               <AdminAuthProvider>
                 <TotalEarningsBreakdownPage />
@@ -240,6 +247,11 @@ function App() {
             <Route path="/admin/bookings/:bookingId/detail" element={
               <AdminAuthProvider>
                 <BookingDetailPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/bookings/:bookingId/v2" element={
+              <AdminAuthProvider>
+                <BookingDetailPageV2 />
               </AdminAuthProvider>
             } />
             <Route path="/admin/reports" element={

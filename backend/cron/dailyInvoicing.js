@@ -1,98 +1,11 @@
 // cron/dailyInvoicing.js
 const cron = require('node-cron');
 const db = require('../config/db');
-
-// ─── Billing Engine ────────────────────────────────────────────────────────────
-
-const calculateLiveInCharge = (booking) => {
-  if (!booking.actual_end_time) {
-    return {
-      amount: parseFloat(booking.daily_rate),
-      notes: 'Live-in daily charge'
-    };
-  }
-
-  const scheduled = new Date(booking.scheduled_end_time);
-  const actual = new Date(booking.actual_end_time);
-  const overrunHours = (actual - scheduled) / (1000 * 60 * 60);
-
-  if (overrunHours < 2) {
-    return {
-      amount: parseFloat(booking.daily_rate),
-      notes: `Live-in daily charge (overrun ${overrunHours.toFixed(1)}h — waived)`
-    };
-  }
-
-  return {
-    amount: parseFloat(booking.daily_rate) * 2,
-    notes: `Live-in daily charge + extra day (overrun ${overrunHours.toFixed(1)}h)`
-  };
-};
-
-const calculateShiftCharge = (booking) => {
-  if (!booking.actual_end_time || !booking.scheduled_end_time) {
-    return {
-      amount: parseFloat(booking.daily_rate),
-      notes: 'Shift-based daily charge'
-    };
-  }
-
-  const scheduled = new Date(booking.scheduled_end_time);
-  const actual = new Date(booking.actual_end_time);
-  const overtimeHours = (actual - scheduled) / (1000 * 60 * 60);
-
-  if (overtimeHours <= 0) {
-    return {
-      amount: parseFloat(booking.daily_rate),
-      notes: 'Shift-based daily charge (no overtime)'
-    };
-  }
-
-  const otCharge = overtimeHours * parseFloat(booking.ot_rate);
-  const total = parseFloat(booking.daily_rate) + otCharge;
-
-  return {
-    amount: total,
-    notes: `Shift charge + OT ${overtimeHours.toFixed(1)}h × Rs.${booking.ot_rate} = Rs.${otCharge.toFixed(2)}`
-  };
-};
-
-const calculateVisitingCharge = (booking) => {
-  return {
-    amount: parseFloat(booking.daily_rate),
-    notes: 'Visiting service daily charge'
-  };
-};
-
-const getBillingCharge = (booking) => {
-  switch (booking.service_model) {
-    case 'LIVE_IN':     return calculateLiveInCharge(booking);
-    case 'SHIFT_BASED': return calculateShiftCharge(booking);
-    case 'VISITING':    return calculateVisitingCharge(booking);
-    default:
-      return {
-        amount: parseFloat(booking.daily_rate),
-        notes: 'Daily charge'
-      };
-  }
-};
-
-// ─── Invoice Number Generator ──────────────────────────────────────────────────
-
-const generateInvoiceNumber = async (client) => {
-  const today = new Date();
-  const datePart = today.toISOString().slice(0, 10).replace(/-/g, '');
-
-  const result = await client.query(
-    `SELECT COUNT(*) as count 
-     FROM transactions 
-      WHERE category IN ('SERVICE_INVOICE', 'REGISTRATION_FEE') 
-     AND DATE(created_at) = CURRENT_DATE`
-  );
-
-  const sequence = (parseInt(result.rows[0].count) + 1).toString().padStart(4, '0');
-  return `INV-${datePart}-${sequence}`;
-};
+const {
+  getBillingCharge,
+  creditStaffSalary,
+  createServiceInvoice
+} = require('../services/billingService');
 
 const getActiveBookingBalances = async (client) => {
   return client.query(
@@ -159,7 +72,7 @@ const startDailyInvoicing = () => {
       await client.query('BEGIN');
 
       const businessDateResult = await client.query(
-        `SELECT DATE(NOW() AT TIME ZONE 'Asia/Colombo') AS business_date`
+        `SELECT (DATE(NOW() AT TIME ZONE 'Asia/Colombo'))::text AS business_date`
       );
       const today = businessDateResult.rows[0].business_date;
 
@@ -171,7 +84,7 @@ const startDailyInvoicing = () => {
 
       // Step 2 — Fetch active and overdue bookings, then their active staff assignments
       const activeBookingsRes = await client.query(
-        `SELECT booking_id, client_id, service_model, ot_rate, scheduled_end_time, actual_end_time
+        `SELECT booking_id, client_id, service_model, ot_rate, scheduled_end_time, actual_end_time, invoicing_mode
          FROM bookings
         WHERE status IN ('ACTIVE', 'OVERDUE')
          ORDER BY created_at DESC`
@@ -198,6 +111,7 @@ const startDailyInvoicing = () => {
           b.ot_rate,
           b.scheduled_end_time,
           b.actual_end_time,
+          b.invoicing_mode,
           q.daily_rate as quote_daily_rate,
           sp.full_name as staff_name,
           c.full_name as client_name
@@ -221,6 +135,12 @@ const startDailyInvoicing = () => {
       }
 
       // Step 3 — Process staff earnings and client invoices
+      // Only LIVE_IN bookings are auto-processed by the cron. A live-in nurse is
+      // on-site continuously, so the daily salary is never in question. SHIFT_BASED
+      // and VISITING staff may work far less than a full day (e.g. a 4-hour overnight
+      // shift), so their salary requires an admin to log actual in/out time and
+      // confirm payment manually via the attendance endpoints — see
+      // controllers/dailyAttendanceController.js.
       let staffEarningsCount = 0;
       let clientInvoiceCount = 0;
 
@@ -233,6 +153,7 @@ const startDailyInvoicing = () => {
             client_id: assignment.client_id,
             client_name: assignment.client_name,
             service_model: assignment.service_model,
+            invoicing_mode: assignment.invoicing_mode,
             daily_rate: parseFloat(assignment.quote_daily_rate || assignment.daily_rate),
             ot_rate: assignment.ot_rate,
             scheduled_end_time: assignment.scheduled_end_time,
@@ -244,64 +165,28 @@ const startDailyInvoicing = () => {
         bookingMap.get(assignment.booking_id).total_daily_rate += parseFloat(assignment.daily_rate);
       }
 
-      // ===== PROCESS STAFF EARNINGS =====
-      // For each active assignment, add daily_rate to staff's current_earnings
+      // ===== PROCESS STAFF EARNINGS (LIVE_IN only) =====
       for (const assignment of activeAssignments) {
+        if (assignment.service_model !== 'LIVE_IN') continue; // SHIFT_BASED/VISITING require manual confirmation
+
         try {
           const salaryAmount = parseFloat(assignment.daily_rate);
+          const salaryTransactionId = await creditStaffSalary(client, {
+            staff_profile_id: assignment.staff_profile_id,
+            booking_id: assignment.booking_id,
+            amount: salaryAmount,
+            notes: `Daily earnings from booking ${assignment.booking_id} for ${assignment.staff_name} (${today})`
+          });
 
-          // 1. Update staff_profiles.current_earnings
+          // Audit trail row, consistent with the manual-confirmation flow's table
           await client.query(
-            `UPDATE staff_profiles
-             SET current_earnings = current_earnings + $1
-             WHERE staff_profile_id = $2`,
-            [salaryAmount, assignment.staff_profile_id]
-          );
-
-          // 2. Create STAFF_SALARY transaction (CREDIT) for staff wallet tracking
-          const salaryTransactionResult = await client.query(
-            `INSERT INTO transactions (
-              staff_profile_id,
-              booking_id,
-              category,
-              transaction_type,
-              amount,
-              status,
-              notes,
-              created_at
-            ) VALUES ($1, $2, 'STAFF_SALARY', 'CREDIT', $3, 'COMPLETED', $4, NOW())
-            RETURNING transaction_id`,
-            [
-              assignment.staff_profile_id,
-              assignment.booking_id,
-              salaryAmount,
-              `Daily earnings from booking ${assignment.booking_id} for ${assignment.staff_name} (${today})`
-            ]
-          );
-
-          const salaryTransactionId = salaryTransactionResult.rows[0].transaction_id;
-
-          // 3. Credit the staff wallet so advance eligibility uses the updated balance
-          await client.query(
-            `INSERT INTO staff_wallet (staff_profile_id, balance, updated_at)
-             VALUES ($1, $2, NOW())
-             ON CONFLICT (staff_profile_id)
-             DO UPDATE SET balance = staff_wallet.balance + EXCLUDED.balance,
-                           updated_at = NOW()`,
-            [assignment.staff_profile_id, salaryAmount]
-          );
-
-          // 4. Record the wallet movement for audit/history
-          await client.query(
-            `INSERT INTO staff_wallet_transactions (
-              staff_profile_id,
-              type,
-              amount,
-              reason,
-              reference_id,
-              created_at
-            ) VALUES ($1, 'CREDIT', $2, 'DAILY_SALARY', $3, NOW())`,
-            [assignment.staff_profile_id, salaryAmount, salaryTransactionId]
+            `INSERT INTO staff_daily_attendance (
+              booking_id, assignment_id, staff_profile_id, service_date,
+              hours_served, entry_mode, salary_status, salary_amount,
+              salary_transaction_id, decided_by_name, decided_at
+            ) VALUES ($1, $2, $3, $4, 24, 'AUTO', 'PAID', $5, $6, 'SYSTEM (auto — LIVE_IN)', NOW())
+            ON CONFLICT (assignment_id, service_date) DO NOTHING`,
+            [assignment.booking_id, assignment.assignment_id, assignment.staff_profile_id, today, salaryAmount, salaryTransactionId]
           );
 
           staffEarningsCount++;
@@ -311,26 +196,28 @@ const startDailyInvoicing = () => {
         }
       }
 
-      // ===== PROCESS CLIENT INVOICES =====
-      // For each unique booking, create a single SERVICE_INVOICE with sum of all staff rates
+      // ===== PROCESS CLIENT INVOICES (LIVE_IN + invoicing_mode = AUTO only) =====
+      // SHIFT_BASED/VISITING bookings are always manual. LIVE_IN bookings can opt
+      // into manual invoicing via bookings.invoicing_mode = 'MANUAL'.
       for (const [bookingId, bookingData] of bookingMap.entries()) {
+        if (bookingData.service_model !== 'LIVE_IN' || bookingData.invoicing_mode === 'MANUAL') continue;
+
         try {
           const { amount, notes } = getBillingCharge(bookingData);
-          const invoiceNumber = await generateInvoiceNumber(client);
-          const fullNotes = `${invoiceNumber} — ${notes} (${activeAssignments.filter(a => a.booking_id === bookingId).length} staff member(s))`;
+          const staffCount = activeAssignments.filter(a => a.booking_id === bookingId).length;
+          const transactionId = await createServiceInvoice(client, {
+            booking_id: bookingId,
+            client_id: bookingData.client_id,
+            amount,
+            notes: `${notes} (${staffCount} staff member(s))`
+          });
 
           await client.query(
-            `INSERT INTO transactions (
-              client_id,
-              booking_id,
-              category,
-              transaction_type,
-              amount,
-              status,
-              notes,
-              created_at
-            ) VALUES ($1, $2, 'SERVICE_INVOICE', 'DEBIT', $3, 'COMPLETED', $4, NOW())`,
-            [bookingData.client_id, bookingId, amount, fullNotes]
+            `INSERT INTO booking_daily_invoices (
+              booking_id, service_date, entry_mode, status, amount, transaction_id, decided_by_name, decided_at
+            ) VALUES ($1, $2, 'AUTO', 'INVOICED', $3, $4, 'SYSTEM (auto — LIVE_IN)', NOW())
+            ON CONFLICT (booking_id, service_date) DO NOTHING`,
+            [bookingId, today, amount, transactionId]
           );
 
           clientInvoiceCount++;

@@ -1310,6 +1310,89 @@ async function runMigration() {
   `);
 
   // =========================================================
+  // DAILY ATTENDANCE & MANUAL DAILY INVOICING
+  // =========================================================
+
+  await db.query(`
+    ALTER TABLE bookings
+    ADD COLUMN IF NOT EXISTS invoicing_mode VARCHAR(10) NOT NULL DEFAULT 'AUTO'
+  `);
+
+  // Non-LIVE_IN bookings are always treated as manual by the app regardless of
+  // this value, but backfill it explicitly so the column reflects real behavior.
+  await db.query(`
+    UPDATE bookings SET invoicing_mode = 'MANUAL' WHERE service_model != 'LIVE_IN'
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS staff_daily_attendance (
+      attendance_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      booking_id UUID NOT NULL REFERENCES bookings(booking_id),
+      assignment_id UUID NOT NULL REFERENCES booking_staff_assignments(assignment_id),
+      staff_profile_id UUID NOT NULL REFERENCES staff_profiles(staff_profile_id),
+      service_date DATE NOT NULL,
+      in_time TIMESTAMP WITH TIME ZONE,
+      out_time TIMESTAMP WITH TIME ZONE,
+      hours_served NUMERIC(5,2),
+      entry_mode VARCHAR(10) NOT NULL DEFAULT 'MANUAL',
+      salary_status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+      salary_amount NUMERIC(12,2),
+      salary_transaction_id UUID REFERENCES transactions(transaction_id),
+      decided_by_user_id UUID REFERENCES users(user_id),
+      decided_by_name VARCHAR(255),
+      decided_at TIMESTAMP WITH TIME ZONE,
+      notes TEXT,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (assignment_id, service_date)
+    );
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS booking_daily_invoices (
+      daily_invoice_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      booking_id UUID NOT NULL REFERENCES bookings(booking_id),
+      service_date DATE NOT NULL,
+      entry_mode VARCHAR(10) NOT NULL DEFAULT 'MANUAL',
+      status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+      amount NUMERIC(12,2),
+      transaction_id UUID REFERENCES transactions(transaction_id),
+      decided_by_user_id UUID REFERENCES users(user_id),
+      decided_by_name VARCHAR(255),
+      decided_at TIMESTAMP WITH TIME ZONE,
+      notes TEXT,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (booking_id, service_date)
+    );
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_staff_daily_attendance_booking_id
+    ON staff_daily_attendance(booking_id);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_staff_daily_attendance_service_date
+    ON staff_daily_attendance(service_date);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_staff_daily_attendance_salary_status
+    ON staff_daily_attendance(salary_status);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_booking_daily_invoices_booking_id
+    ON booking_daily_invoices(booking_id);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_booking_daily_invoices_status
+    ON booking_daily_invoices(status);
+  `);
+
+  // =========================================================
   // SEED DEFAULT PRESET ITEMS
   // =========================================================
 

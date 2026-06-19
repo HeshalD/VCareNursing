@@ -3,6 +3,7 @@ const router = express.Router();
 const bookingController = require('../controllers/bookingController');
 const paymentTrackingController = require('../controllers/paymentTrackingController');
 const bookingNotesController = require('../controllers/bookingNotesController');
+const dailyAttendanceController = require('../controllers/dailyAttendanceController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { upload } = require('../config/cloudinaryConfig');
 
@@ -135,6 +136,16 @@ router.patch('/:booking_id/extend', protect, restrictTo('SUPER_ADMIN', 'ACCOUNTS
 
 router.post('/:booking_id/swap-staff', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), bookingController.swapStaff);
 router.get('/:booking_id/swap-history', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.getSwapHistory);
+
+// Daily attendance (staff in/out time + manual salary confirmation)
+router.get('/:booking_id/attendance', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), dailyAttendanceController.getBookingAttendance);
+router.post('/:booking_id/attendance', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), dailyAttendanceController.upsertAttendance);
+router.post('/attendance/:attendance_id/confirm-salary', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), dailyAttendanceController.confirmSalary);
+
+// Manual daily client invoicing (SHIFT_BASED/VISITING always, LIVE_IN when invoicing_mode = MANUAL)
+router.get('/:booking_id/daily-invoices', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.getBookingDailyInvoices);
+router.post('/:booking_id/daily-invoices', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.confirmDailyInvoice);
+router.patch('/:booking_id/invoicing-mode', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.updateInvoicingMode);
 
 // Notes CRUD
 router.post('/:booking_id/notes', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingNotesController.addNote);
