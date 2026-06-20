@@ -10,6 +10,29 @@ import Navbar from '../../components/layout/Navbar';
 import Footer from '../../components/layout/Footer';
 import apiClient from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
+import homeNursingBg from '../../assets/images/HomeNursing.webp';
+
+// Selectable options for the Service Details step
+const SERVICE_MODELS = [
+  {
+    value: 'LIVE_IN',
+    label: 'Live In',
+    icon: Home,
+    description: 'A nurse stays in the home full-time for round-the-clock medical support.'
+  },
+  {
+    value: 'SHIFT_BASED',
+    label: 'Shift Based',
+    icon: Clock,
+    description: 'Set daily shifts covering day or night care, ideal for scheduled needs.'
+  },
+  {
+    value: 'VISITING',
+    label: 'Visiting',
+    icon: Stethoscope,
+    description: 'Short scheduled visits for medication, dressing changes, or vitals checks.'
+  }
+];
 
 const HomeNursingBookingPage = () => {
   const navigate = useNavigate();
@@ -360,10 +383,21 @@ const HomeNursingBookingPage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#0b1120] text-white">
+    <div className="relative min-h-screen text-white">
+      {/* Full-page background image, pinned to the viewport so it stays proportional */}
+      <div
+        className="fixed inset-0 z-0"
+        style={{
+          backgroundImage: `url(${homeNursingBg})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center'
+        }}
+      />
+      <div className="fixed inset-0 z-0 bg-[#0b1120]/80" />
+
       <Navbar />
 
-      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <div className="relative z-10 max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 pt-32 pb-12">
         {/* Header */}
         <div className="text-center mb-12">
           <div className="inline-flex items-center gap-2 px-3 py-1 bg-emerald-500/10 text-emerald-400 rounded-full text-xs font-bold uppercase tracking-wider mb-6">
@@ -405,7 +439,7 @@ const HomeNursingBookingPage = () => {
         </div>
 
         {/* Form Content */}
-        <div className="bg-[#0f172a] rounded-[32px] border border-white/5 overflow-hidden">
+        <div className="bg-[#0f172a]/90 backdrop-blur-md rounded-[32px] border border-white/10 overflow-hidden">
           <div className="p-8 md:p-12">
             <form onSubmit={(e) => e.preventDefault()}>
               <AnimatePresence mode="wait">
@@ -646,20 +680,6 @@ const HomeNursingBookingPage = () => {
                         />
                       </div>
                       <div>
-                        <label className="text-sm font-semibold text-slate-400 block mb-1">Service Model</label>
-                        <select
-                          className="w-full px-4 py-3 bg-[#0b1120] border border-white/10 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-white"
-                          value={formData.service_model}
-                          onChange={e => setFormData({ ...formData, service_model: e.target.value })}
-                          onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
-                          required
-                        >
-                          <option value="LIVE_IN">Live In</option>
-                          <option value="SHIFT_BASED">Shift Based</option>
-                          <option value="VISITING">Visiting</option>
-                        </select>
-                      </div>
-                      <div>
                         <label className="text-sm font-semibold text-slate-400 block mb-1">Preferred Caregiver Gender</label>
                         <select
                           className="w-full px-4 py-3 bg-[#0b1120] border border-white/10 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-white"
@@ -677,6 +697,36 @@ const HomeNursingBookingPage = () => {
                           <option value="MALE">Male</option>
                           <option value="FEMALE">Female</option>
                         </select>
+                      </div>
+
+                      {/* Service Model — card selection */}
+                      <div className="md:col-span-2">
+                        <label className="text-sm font-semibold text-slate-400 block mb-3">Service Model</label>
+                        <div className="grid sm:grid-cols-3 gap-4">
+                          {SERVICE_MODELS.map((opt) => {
+                            const isSelected = formData.service_model === opt.value;
+                            return (
+                              <button
+                                type="button"
+                                key={opt.value}
+                                onClick={() => setFormData({ ...formData, service_model: opt.value })}
+                                className={`text-left p-4 rounded-xl border-2 transition-all ${isSelected
+                                    ? 'border-emerald-500 bg-emerald-950'
+                                    : 'border-white/10 bg-[#0b1120] hover:border-emerald-500/50'
+                                  }`}
+                              >
+                                <div className="flex items-center justify-between mb-2">
+                                  <div className={`p-2 rounded-lg ${isSelected ? 'bg-emerald-500 text-white' : 'bg-white/10 text-slate-400'}`}>
+                                    <opt.icon className="w-5 h-5" />
+                                  </div>
+                                  {isSelected && <CheckCircle className="w-5 h-5 text-emerald-500 flex-shrink-0" />}
+                                </div>
+                                <h4 className="font-semibold text-white">{opt.label}</h4>
+                                <p className="text-xs text-slate-400 mt-1">{opt.description}</p>
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
                       <div className="md:col-span-2">
                         <label className="text-sm font-semibold text-slate-400 block mb-1">Additional Remarks (Optional)</label>
@@ -895,7 +945,9 @@ const HomeNursingBookingPage = () => {
         </div>
       </div>
 
-      <Footer />
+      <div className="relative z-10">
+        <Footer />
+      </div>
     </div>
   );
 };

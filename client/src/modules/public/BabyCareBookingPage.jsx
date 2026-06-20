@@ -10,6 +10,35 @@ import Navbar from '../../components/layout/Navbar';
 import Footer from '../../components/layout/Footer';
 import apiClient from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
+import babyCareBg from '../../assets/images/BabyCare.webp';
+
+// Selectable options for the Service Details step
+const SERVICE_MODELS = [
+  {
+    value: 'VISITING',
+    label: 'Visiting',
+    icon: Calendar,
+    description: 'Short scheduled visits for feeding, play, or nap-time check-ins.'
+  },
+  {
+    value: 'LIVE_IN',
+    label: 'Live In',
+    icon: Home,
+    description: 'A nanny stays in the home full-time for round-the-clock care.'
+  },
+  {
+    value: 'PART_TIME',
+    label: 'Part Time',
+    icon: Clock,
+    description: 'A few hours a day — perfect for working parents needing extra hands.'
+  },
+  {
+    value: 'FULL_TIME',
+    label: 'Full Time',
+    icon: Heart,
+    description: 'Full working-day care covering meals, play, and daily routines.'
+  }
+];
 
 const BabyCareBookingPage = () => {
   const navigate = useNavigate();
@@ -355,16 +384,27 @@ const BabyCareBookingPage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="relative min-h-screen">
+      {/* Full-page background image, pinned to the viewport so it stays proportional */}
+      <div
+        className="fixed inset-0 z-0"
+        style={{
+          backgroundImage: `url(${babyCareBg})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center'
+        }}
+      />
+      <div className="fixed inset-0 z-0 bg-slate-900/50" />
+
       <Navbar />
 
-      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <div className="relative z-10 max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 pt-32 pb-12">
         {/* Header */}
         <div className="text-center mb-12">
-          <h1 className="text-4xl md:text-5xl font-bold text-slate-900 mb-4">
+          <h1 className="text-4xl md:text-5xl font-bold text-white mb-4">
             Book Baby Care Service
           </h1>
-          <p className="text-lg text-slate-600 max-w-3xl mx-auto">
+          <p className="text-lg text-slate-100 max-w-3xl mx-auto">
             Find the perfect nanny for your little one in just a few simple steps
           </p>
         </div>
@@ -383,12 +423,12 @@ const BabyCareBookingPage = () => {
                   <div className={`p-3 rounded-full ${currentStep >= step.id ? 'bg-rose-500 text-white border-rose-500' : 'bg-white text-slate-400 border-slate-300'}`}>
                     <step.icon className="w-6 h-6" />
                   </div>
-                  <span className={`text-sm font-medium mt-2 ${currentStep >= step.id ? 'text-slate-900' : 'text-slate-400'}`}>
+                  <span className={`text-sm font-medium mt-2 ${currentStep >= step.id ? 'text-white' : 'text-slate-300'}`}>
                     {step.title}
                   </span>
                 </div>
                 {index < 3 && (
-                  <div className={`h-0.5 w-16 transition-all ${currentStep > step.id ? 'bg-rose-500' : 'bg-slate-300'}`} />
+                  <div className={`h-0.5 w-16 transition-all ${currentStep > step.id ? 'bg-rose-500' : 'bg-white/30'}`} />
                 )}
               </React.Fragment>
             ))}
@@ -396,7 +436,7 @@ const BabyCareBookingPage = () => {
         </div>
 
         {/* Form Content */}
-        <div className="bg-white rounded-[32px] shadow-xl border border-slate-100 overflow-hidden">
+        <div className="bg-white/90 backdrop-blur-md rounded-[32px] shadow-xl border border-white/40 overflow-hidden">
           <div className="p-8 md:p-12">
             <form onSubmit={(e) => e.preventDefault()}>
               <AnimatePresence mode="wait">
@@ -636,21 +676,6 @@ const BabyCareBookingPage = () => {
                         />
                       </div>
                       <div>
-                        <label className="text-sm font-semibold text-slate-600 block mb-1">Service Model</label>
-                        <select
-                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-slate-900"
-                          value={formData.service_model}
-                          onChange={e => setFormData({ ...formData, service_model: e.target.value })}
-                          onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
-                          required
-                        >
-                          <option value="VISITING">Visiting</option>
-                          <option value="LIVE_IN">Live In</option>
-                          <option value="PART_TIME">Part Time</option>
-                          <option value="FULL_TIME">Full Time</option>
-                        </select>
-                      </div>
-                      <div>
                         <label className="text-sm font-semibold text-slate-600 block mb-1">Preferred Nanny Gender</label>
                         <select
                           className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-slate-900"
@@ -668,6 +693,36 @@ const BabyCareBookingPage = () => {
                           <option value="MALE">Male</option>
                           <option value="FEMALE">Female</option>
                         </select>
+                      </div>
+
+                      {/* Service Model — card selection */}
+                      <div className="md:col-span-2">
+                        <label className="text-sm font-semibold text-slate-600 block mb-3">Service Model</label>
+                        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                          {SERVICE_MODELS.map((opt) => {
+                            const isSelected = formData.service_model === opt.value;
+                            return (
+                              <button
+                                type="button"
+                                key={opt.value}
+                                onClick={() => setFormData({ ...formData, service_model: opt.value })}
+                                className={`text-left p-4 rounded-xl border-2 transition-all ${isSelected
+                                    ? 'border-rose-500 bg-rose-50'
+                                    : 'border-slate-200 bg-white hover:border-rose-300'
+                                  }`}
+                              >
+                                <div className="flex items-center justify-between mb-2">
+                                  <div className={`p-2 rounded-lg ${isSelected ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                                    <opt.icon className="w-5 h-5" />
+                                  </div>
+                                  {isSelected && <CheckCircle className="w-5 h-5 text-rose-500 flex-shrink-0" />}
+                                </div>
+                                <h4 className="font-semibold text-slate-800">{opt.label}</h4>
+                                <p className="text-xs text-slate-500 mt-1">{opt.description}</p>
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
                       <div className="md:col-span-2">
                         <label className="text-sm font-semibold text-slate-600 block mb-1">Additional Remarks (Optional)</label>
@@ -880,7 +935,9 @@ const BabyCareBookingPage = () => {
         </div>
       </div>
 
-      <Footer />
+      <div className="relative z-10">
+        <Footer />
+      </div>
     </div>
   );
 };

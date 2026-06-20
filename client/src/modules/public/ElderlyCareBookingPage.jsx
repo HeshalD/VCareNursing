@@ -10,6 +10,44 @@ import Navbar from '../../components/layout/Navbar';
 import Footer from '../../components/layout/Footer';
 import apiClient from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
+import elderlyCareBg from '../../assets/images/ElderlyCare.webp';
+
+// Selectable options for the Service Details step
+const SERVICE_TYPES = [
+  {
+    value: 'CARETAKER',
+    label: 'Caretaker',
+    icon: HandHeart,
+    description: 'Day-to-day living support — bathing, mobility, meals, and warm companionship.'
+  },
+  {
+    value: 'NURSE',
+    label: 'Nurse',
+    icon: ShieldCheck,
+    description: 'Qualified clinical care — medication, wound dressing, vitals, and health monitoring.'
+  }
+];
+
+const SERVICE_MODELS = [
+  {
+    value: 'SHIFT_BASED',
+    label: 'Shift Based',
+    icon: Clock,
+    description: 'A caregiver covers set daily shifts — ideal for daytime or night-time support.'
+  },
+  {
+    value: 'LIVE_IN',
+    label: 'Live In',
+    icon: Home,
+    description: 'A caregiver stays in the home full-time for round-the-clock, hands-on care.'
+  },
+  {
+    value: 'VISITING',
+    label: 'Visiting',
+    icon: Calendar,
+    description: 'Short scheduled visits for specific tasks, check-ins, or medication rounds.'
+  }
+];
 
 const ElderlyCareBookingPage = () => {
   const navigate = useNavigate();
@@ -358,16 +396,27 @@ const ElderlyCareBookingPage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="relative min-h-screen">
+      {/* Full-page background image, pinned to the viewport so it stays proportional */}
+      <div
+        className="fixed inset-0 z-0"
+        style={{
+          backgroundImage: `url(${elderlyCareBg})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center'
+        }}
+      />
+      <div className="fixed inset-0 z-0 bg-slate-900/40" />
+
       <Navbar />
 
-      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <div className="relative z-10 max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 pt-32 pb-12">
         {/* Header */}
         <div className="text-center mb-12">
-          <h1 className="text-4xl md:text-5xl font-bold text-slate-900 mb-4">
+          <h1 className="text-4xl md:text-5xl font-bold text-white mb-4">
             Book Elderly Care Service
           </h1>
-          <p className="text-lg text-slate-600 max-w-3xl mx-auto">
+          <p className="text-lg text-slate-100 max-w-3xl mx-auto">
             Find the perfect caregiver for your loved one in just a few simple steps
           </p>
         </div>
@@ -386,12 +435,12 @@ const ElderlyCareBookingPage = () => {
                   <div className={`p-3 rounded-full ${currentStep >= step.id ? 'bg-amber-600 text-white border-amber-600' : 'bg-white text-slate-400 border-slate-300'}`}>
                     <step.icon className="w-6 h-6" />
                   </div>
-                  <span className={`text-sm font-medium mt-2 ${currentStep >= step.id ? 'text-slate-900' : 'text-slate-400'}`}>
+                  <span className={`text-sm font-medium mt-2 ${currentStep >= step.id ? 'text-white' : 'text-slate-300'}`}>
                     {step.title}
                   </span>
                 </div>
                 {index < 3 && (
-                  <div className={`h-0.5 w-16 transition-all ${currentStep > step.id ? 'bg-amber-600' : 'bg-slate-300'}`} />
+                  <div className={`h-0.5 w-16 transition-all ${currentStep > step.id ? 'bg-amber-600' : 'bg-white/30'}`} />
                 )}
               </React.Fragment>
             ))}
@@ -399,7 +448,7 @@ const ElderlyCareBookingPage = () => {
         </div>
 
         {/* Form Content */}
-        <div className="bg-white rounded-[32px] shadow-xl border border-slate-100 overflow-hidden">
+        <div className="bg-white/90 backdrop-blur-md rounded-[32px] shadow-xl border border-white/40 overflow-hidden">
           <div className="p-8 md:p-12">
             <form onSubmit={(e) => e.preventDefault()}>
               <AnimatePresence mode="wait">
@@ -640,33 +689,6 @@ const ElderlyCareBookingPage = () => {
                         />
                       </div>
                       <div>
-                        <label className="text-sm font-semibold text-slate-600 block mb-1">Service Type</label>
-                        <select
-                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none text-slate-900"
-                          value={formData.service_type}
-                          onChange={e => setFormData({ ...formData, service_type: e.target.value })}
-                          onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
-                          required
-                        >
-                          <option value="CARETAKER">Caretaker</option>
-                          <option value="NURSE">Nurse</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="text-sm font-semibold text-slate-600 block mb-1">Service Model</label>
-                        <select
-                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none text-slate-900"
-                          value={formData.service_model}
-                          onChange={e => setFormData({ ...formData, service_model: e.target.value })}
-                          onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
-                          required
-                        >
-                          <option value="SHIFT_BASED">Shift Based</option>
-                          <option value="LIVE_IN">Live In</option>
-                          <option value="VISITING">Visiting</option>
-                        </select>
-                      </div>
-                      <div>
                         <label className="text-sm font-semibold text-slate-600 block mb-1">Preferred Caregiver Gender</label>
                         <select
                           className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none text-slate-900"
@@ -684,6 +706,70 @@ const ElderlyCareBookingPage = () => {
                           <option value="MALE">Male</option>
                           <option value="FEMALE">Female</option>
                         </select>
+                      </div>
+
+                      {/* Service Type — card selection */}
+                      <div className="md:col-span-2">
+                        <label className="text-sm font-semibold text-slate-600 block mb-3">Service Type</label>
+                        <div className="grid sm:grid-cols-2 gap-4">
+                          {SERVICE_TYPES.map((opt) => {
+                            const isSelected = formData.service_type === opt.value;
+                            return (
+                              <button
+                                type="button"
+                                key={opt.value}
+                                onClick={() => setFormData({ ...formData, service_type: opt.value })}
+                                className={`text-left p-4 rounded-xl border-2 transition-all ${isSelected
+                                    ? 'border-amber-500 bg-amber-50'
+                                    : 'border-slate-200 bg-white hover:border-amber-300'
+                                  }`}
+                              >
+                                <div className="flex items-start gap-3">
+                                  <div className={`p-2 rounded-lg ${isSelected ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                                    <opt.icon className="w-5 h-5" />
+                                  </div>
+                                  <div className="flex-1">
+                                    <div className="flex items-center justify-between">
+                                      <h4 className="font-semibold text-slate-800">{opt.label}</h4>
+                                      {isSelected && <CheckCircle className="w-5 h-5 text-amber-600 flex-shrink-0" />}
+                                    </div>
+                                    <p className="text-xs text-slate-500 mt-1">{opt.description}</p>
+                                  </div>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Service Model — card selection */}
+                      <div className="md:col-span-2">
+                        <label className="text-sm font-semibold text-slate-600 block mb-3">Service Model</label>
+                        <div className="grid sm:grid-cols-3 gap-4">
+                          {SERVICE_MODELS.map((opt) => {
+                            const isSelected = formData.service_model === opt.value;
+                            return (
+                              <button
+                                type="button"
+                                key={opt.value}
+                                onClick={() => setFormData({ ...formData, service_model: opt.value })}
+                                className={`text-left p-4 rounded-xl border-2 transition-all ${isSelected
+                                    ? 'border-amber-500 bg-amber-50'
+                                    : 'border-slate-200 bg-white hover:border-amber-300'
+                                  }`}
+                              >
+                                <div className="flex items-center justify-between mb-2">
+                                  <div className={`p-2 rounded-lg ${isSelected ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                                    <opt.icon className="w-5 h-5" />
+                                  </div>
+                                  {isSelected && <CheckCircle className="w-5 h-5 text-amber-600 flex-shrink-0" />}
+                                </div>
+                                <h4 className="font-semibold text-slate-800">{opt.label}</h4>
+                                <p className="text-xs text-slate-500 mt-1">{opt.description}</p>
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
                       <div className="md:col-span-2">
                         <label className="text-sm font-semibold text-slate-600 block mb-1">Additional Remarks (Optional)</label>
@@ -902,7 +988,9 @@ const ElderlyCareBookingPage = () => {
         </div>
       </div>
 
-      <Footer />
+      <div className="relative z-10">
+        <Footer />
+      </div>
     </div>
   );
 };
