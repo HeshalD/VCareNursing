@@ -19,7 +19,7 @@ const recordClientPayment = async (req, res) => {
 
   try {
     const { client_id } = req.params;
-    const uploadedSlipUrl = req.file?.path || null;
+    const uploadedSlipUrl = req.file?.location || null;
 
     const {
       total_amount,

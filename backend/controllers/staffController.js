@@ -303,7 +303,7 @@ async function _sendNotificationForPayoutId(staffPaymentId) {
     );
 }
 
-const getUploadedFileUrl = (files, fieldName) => (files && files[fieldName] && files[fieldName][0]) ? files[fieldName][0].path : null;
+const getUploadedFileUrl = (files, fieldName) => (files && files[fieldName] && files[fieldName][0]) ? files[fieldName][0].location : null;
 
 // Get staff member by ID
 exports.getStaffByID = async (req, res) => {
@@ -2248,9 +2248,9 @@ exports.updateStaffProfile = async (req, res) => {
         nic_number
     } = req.body;
 
-    // Extract file URLs from multer/Cloudinary
-    const uploadedDocuments = req.files && req.files.documents ? req.files.documents.map(file => file.path) : [];
-    const uploadedProfilePicture = req.files && req.files.profile_picture ? req.files.profile_picture[0].path : null;
+    // Extract file URLs from multer/S3
+    const uploadedDocuments = req.files && req.files.documents ? req.files.documents.map(file => file.location) : [];
+    const uploadedProfilePicture = req.files && req.files.profile_picture ? req.files.profile_picture[0].location : null;
     const uploadedNicFront = getUploadedFileUrl(req.files, 'nic_front');
     const uploadedNicBack = getUploadedFileUrl(req.files, 'nic_back');
 
@@ -2451,11 +2451,11 @@ exports.createStaffProfile = async (req, res) => {
         nic_number
     } = req.body;
 
-    // Extract file URLs from multer/Cloudinary
-    const uploadedDocuments = req.files && req.files.documents ? req.files.documents.map(file => file.path) : [];
-    const uploadedProfilePicture = req.files && req.files.profile_picture ? req.files.profile_picture[0].path : null;
-    const uploadedNicFront = req.files && req.files.nic_front ? req.files.nic_front[0].path : null;
-    const uploadedNicBack = req.files && req.files.nic_back ? req.files.nic_back[0].path : null;
+    // Extract file URLs from multer/S3
+    const uploadedDocuments = req.files && req.files.documents ? req.files.documents.map(file => file.location) : [];
+    const uploadedProfilePicture = req.files && req.files.profile_picture ? req.files.profile_picture[0].location : null;
+    const uploadedNicFront = req.files && req.files.nic_front ? req.files.nic_front[0].location : null;
+    const uploadedNicBack = req.files && req.files.nic_back ? req.files.nic_back[0].location : null;
 
     try {
         // Validate required fields

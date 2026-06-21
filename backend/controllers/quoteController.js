@@ -2,7 +2,7 @@ const db = require('../config/db');
 const html_to_pdf = require('html-pdf-node');
 const estimateTemplate = require('../templates/estimateTemplate');
 const { sendClientQuotation } = require('../utils/metaWhatsapp');
-const cloudinary = require('cloudinary').v2;
+const { uploadBufferToS3 } = require('../config/s3Config');
 const { logActivity } = require('../utils/activityLogger');
 
 function extractActorRole(role) {
@@ -22,13 +22,6 @@ async function safeLog(params) {
     console.error('Activity log error:', err);
   }
 }
-
-// Configure Cloudinary
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
 
 exports.createQuotation = async (req, res) => {
     const { request_id, daily_rate, qty_days, transport_fee, registration_fee } = req.body;
@@ -204,41 +197,13 @@ exports.generateAndSendPDF = async (req, res) => {
         const file = { content: html };
         const pdfBuffer = await html_to_pdf.generatePdf(file, { format: 'A4' });
 
-        // 3. Upload Buffer to Cloudinary
-        // We use a Promise to handle the stream upload
-        const uploadToCloudinary = (buffer, fileName) => {
-            return new Promise((resolve, reject) => {
-                // Keep .pdf in public_id so the Cloudinary URL includes the extension
-                // (required for WhatsApp/Twilio to detect the MIME type correctly)
-                const publicId = fileName;
-                
-                cloudinary.uploader.upload(
-                    `data:application/pdf;base64,${buffer.toString('base64')}`,
-                    {
-                        resource_type: "raw",
-                        public_id: publicId,
-                        folder: "estimates"
-                    },
-                    (error, result) => {
-                        if (error) return reject(error);
-                        resolve(result);
-                    }
-                );
-            });
-        };
+        // 3. Upload Buffer to S3
+        // Keep .pdf in the key so the URL includes the extension
+        // (required for WhatsApp/Twilio to detect the MIME type correctly)
+        const pdfKey = `estimates/Estimate_${data.estimate_number}_${Date.now()}.pdf`;
+        const pdfUrl = await uploadBufferToS3(pdfBuffer, pdfKey, 'application/pdf');
 
-        const cloudinaryResponse = await uploadToCloudinary(
-            pdfBuffer,
-            `Estimate_${data.estimate_number}.pdf`
-        );
-        const pdfUrl = cloudinaryResponse.secure_url;
-        
-        console.log('Cloudinary Debug - Upload response:', {
-            url: pdfUrl,
-            resource_type: cloudinaryResponse.resource_type,
-            format: cloudinaryResponse.format,
-            public_id: cloudinaryResponse.public_id
-        });
+        console.log('S3 Debug - Upload response:', { url: pdfUrl, key: pdfKey });
 
         // 4. Send quotation template with PDF document header via Meta WhatsApp
         await sendClientQuotation(data.payer_mobile, data.payer_name, data.estimate_number, pdfUrl);

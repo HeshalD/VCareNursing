@@ -127,7 +127,7 @@ const recordPayment = async (req, res) => {
 
   try {
     const { quote_id } = req.params;
-    const uploadedSlipUrl = req.file?.path || null;
+    const uploadedSlipUrl = req.file?.location || null;
     const {
       amount_received,
       payment_method,
@@ -624,7 +624,7 @@ const recordBookingPayment = async (req, res) => {
 
   try {
     const { booking_id } = req.params;
-    const uploadedSlipUrl = req.file?.path || null;
+    const uploadedSlipUrl = req.file?.location || null;
     const {
       amount_received,
       payment_method,

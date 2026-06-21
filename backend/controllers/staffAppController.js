@@ -7,7 +7,7 @@ const { sendSmsOtp, sendSms } = require('../utils/sms');
 const { sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected, sendStaffAgreement } = require('../utils/metaWhatsapp');
 const { logActivity } = require('../utils/activityLogger');
 
-const getUploadedFileUrl = (files, fieldName) => (files && files[fieldName] && files[fieldName][0]) ? files[fieldName][0].path : null;
+const getUploadedFileUrl = (files, fieldName) => (files && files[fieldName] && files[fieldName][0]) ? files[fieldName][0].location : null;
 
 function extractActorRole(role) {
   const raw = Array.isArray(role) ? role[0] : role;
@@ -67,8 +67,8 @@ exports.submitApplication = async (req, res) => {
     console.log('Processed rolesArray:', rolesArray);
 
     console.log('Files received:', req.files);
-    const document_urls = req.files && req.files.documents ? req.files.documents.map(file => file.path) : [];
-    const profile_picture_url = req.files && req.files.profile_picture ? req.files.profile_picture[0].path : null;
+    const document_urls = req.files && req.files.documents ? req.files.documents.map(file => file.location) : [];
+    const profile_picture_url = req.files && req.files.profile_picture ? req.files.profile_picture[0].location : null;
     const nic_front_url = getUploadedFileUrl(req.files, 'nic_front');
     const nic_back_url = getUploadedFileUrl(req.files, 'nic_back');
     console.log('Document URLs:', document_urls);
@@ -731,9 +731,9 @@ exports.updateApplication = async (req, res) => {
       rolesArray = rolesArray.filter(r => r.length > 0);
     }
 
-    // If a new profile picture was uploaded, use its Cloudinary URL; otherwise keep the existing one
+    // If a new profile picture was uploaded, use its S3 URL; otherwise keep the existing one
     const newProfilePicture = req.files?.profile_picture?.[0];
-    const profilePictureUrl = newProfilePicture ? newProfilePicture.path : current.profile_picture_url;
+    const profilePictureUrl = newProfilePicture ? newProfilePicture.location : current.profile_picture_url;
 
     await db.query(
       `UPDATE staff_applications

@@ -1,6 +1,6 @@
 const db = require('../config/db');
 const { generateStatementPDF } = require('../utils/statement');
-const cloudinary = require('cloudinary').v2;
+const { uploadBufferToS3 } = require('../config/s3Config');
 const { sendClientBookingStatement } = require('../utils/metaWhatsapp');
 const { logActivity } = require('../utils/activityLogger');
 
@@ -442,14 +442,8 @@ exports.resendStatementFromHistory = async (req, res) => {
         if (!pdfUrl) {
             const payload = await buildStatementPayload(stmt.client_id, stmt.period_start, stmt.period_end);
             const pdfBuffer = await generateStatementPDF(payload.pdfData);
-            const pdfUpload = await new Promise((resolve, reject) => {
-                cloudinary.uploader.upload(
-                    `data:application/pdf;base64,${pdfBuffer.toString('base64')}`,
-                    { resource_type: 'raw', folder: 'statements', public_id: `Statement_${stmt.client_id}_${Date.now()}` },
-                    (error, result) => { if (error) return reject(error); resolve(result); }
-                );
-            });
-            pdfUrl = pdfUpload.secure_url;
+            const pdfKey = `statements/Statement_${stmt.client_id}_${Date.now()}.pdf`;
+            pdfUrl = await uploadBufferToS3(pdfBuffer, pdfKey, 'application/pdf');
             await db.query('UPDATE saved_statements SET pdf_url = $1 WHERE statement_id = $2', [pdfUrl, statement_id]);
         }
 
@@ -515,20 +509,8 @@ exports.sendClientStatementToWhatsApp = async (req, res) => {
         }
 
         const pdfBuffer = await generateStatementPDF(pdfData);
-        const pdfUpload = await new Promise((resolve, reject) => {
-            cloudinary.uploader.upload(
-                `data:application/pdf;base64,${pdfBuffer.toString('base64')}`,
-                {
-                    resource_type: 'raw',
-                    folder: 'statements',
-                    public_id: `Statement_${client_id}_${Date.now()}`
-                },
-                (error, result) => {
-                    if (error) return reject(error);
-                    resolve(result);
-                }
-            );
-        });
+        const pdfKey = `statements/Statement_${client_id}_${Date.now()}.pdf`;
+        const pdfUrl = await uploadBufferToS3(pdfBuffer, pdfKey, 'application/pdf');
 
         const fmtAmt = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         const filename = `Statement_${bookingCode}_${clientName.replace(/\s+/g, '_')}.pdf`;
@@ -543,7 +525,7 @@ exports.sendClientStatementToWhatsApp = async (req, res) => {
             fmtAmt(totalInvoiced),
             fmtAmt(totalPaid),
             fmtAmt(currentBalance),
-            pdfUpload.secure_url,
+            pdfUrl,
             filename
         );
 
@@ -555,7 +537,7 @@ exports.sendClientStatementToWhatsApp = async (req, res) => {
             total_invoiced: totalInvoiced,
             total_paid: totalPaid,
             balance_due: currentBalance,
-            pdf_url: pdfUpload.secure_url,
+            pdf_url: pdfUrl,
             delivery_method: 'WHATSAPP',
             generated_by: req.user?.user_id || null,
             statement_source: req.body?.statement_source || 'BOOKING',
@@ -574,7 +556,7 @@ exports.sendClientStatementToWhatsApp = async (req, res) => {
         return res.status(200).json({
             status: 'success',
             message: 'Statement generated and sent via WhatsApp',
-            data: { pdf_link: pdfUpload.secure_url }
+            data: { pdf_link: pdfUrl }
         });
     } catch (error) {
         console.error('Error sending statement via WhatsApp:', error);

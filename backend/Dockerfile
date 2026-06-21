@@ -13,6 +13,11 @@ RUN apt-get update \
 # Set working directory
 WORKDIR /app
 
+# Set Puppeteer to use the system Chrome installed above. Defined BEFORE
+# `npm install` so Puppeteer skips downloading its own bundled Chromium.
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+
 # Copy package files
 COPY package*.json ./
 
@@ -24,10 +29,6 @@ COPY . .
 
 # Create necessary directories
 RUN mkdir -p uploads temp
-
-# Set Puppeteer to use installed Chromium
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
 
 # Expose port
 EXPOSE 5000
