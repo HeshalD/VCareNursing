@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldCheck, Facebook, Instagram, Twitter, Linkedin, Mail, Phone, MapPin } from 'lucide-react';
+import { ShieldCheck, Facebook, Instagram, Mail, Phone, MapPin } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import logoUrl from '../../assets/Logo/VCareLogo.png';
 
@@ -18,17 +18,11 @@ const Footer = () => {
               Sri Lanka's first healthcare staffing network.
             </p>
             <div className="flex items-center gap-4">
-              <a href="#" className="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-500 hover:bg-blue-600 hover:text-white transition-all">
+              <a href="https://www.facebook.com/vcarenursing" target="_blank" rel="noopener noreferrer" className="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-500 hover:bg-blue-600 hover:text-white transition-all">
                 <Facebook className="w-5 h-5" />
               </a>
-              <a href="#" className="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-500 hover:bg-pink-600 hover:text-white transition-all">
+              <a href="https://www.instagram.com/vcarehomenursing/" target="_blank" rel="noopener noreferrer" className="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-500 hover:bg-pink-600 hover:text-white transition-all">
                 <Instagram className="w-5 h-5" />
-              </a>
-              <a href="#" className="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-500 hover:bg-sky-500 hover:text-white transition-all">
-                <Twitter className="w-5 h-5" />
-              </a>
-              <a href="#" className="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-500 hover:bg-blue-700 hover:text-white transition-all">
-                <Linkedin className="w-5 h-5" />
               </a>
             </div>
           </div>
@@ -64,21 +58,26 @@ const Footer = () => {
                   <MapPin className="w-4 h-4 text-blue-600" />
                 </div>
                 <span>
-                  No. 3, Wasala road,<br />
-                  Dehiwala, Sri Lanka.
+                  293/17B Thalapathpitiya Road,<br />
+                  Nugegoda, Sri Lanka.
                 </span>
               </li>
-              <li className="flex items-center gap-4">
+              <li className="flex items-start gap-4">
                 <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center flex-shrink-0">
                   <Phone className="w-4 h-4 text-blue-600" />
                 </div>
-                <span>+94 33333333333</span>
+                <div className="flex flex-col gap-1">
+                  <a href="tel:+94773939112" className="hover:text-blue-600">+94 (77) 393 9112</a>
+                  <a href="tel:+94767997796" className="hover:text-blue-600">+94 76 799 7796</a>
+                  <a href="tel:+94777004068" className="hover:text-blue-600">+94 777 00 4068</a>
+                  <a href="tel:0113176545" className="hover:text-blue-600">(011) 317 6545</a>
+                </div>
               </li>
               <li className="flex items-center gap-4">
                 <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center flex-shrink-0">
                   <Mail className="w-4 h-4 text-blue-600" />
                 </div>
-                <a href="mailto:hello@vcare.lk" className="hover:text-blue-600">hello@vcare.lk</a>
+                <a href="mailto:info@vcarenursing.com" className="hover:text-blue-600">info@vcarenursing.com</a>
               </li>
             </ul>
           </div>
