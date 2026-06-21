@@ -1,5 +1,6 @@
 # Build stage
-FROM node:18-alpine as build
+# Node 20 — Vite 7 requires Node 20.19+ (node:18 fails the build)
+FROM node:20-alpine as build
 
 WORKDIR /app
 
@@ -11,6 +12,10 @@ RUN npm ci
 
 # Copy source code
 COPY . .
+
+# Give Vite enough heap so `vite build` doesn't OOM on small build hosts
+# (the default cap on a 1–2 GB instance is too low for this app).
+ENV NODE_OPTIONS=--max-old-space-size=2048
 
 # Build the application
 RUN npm run build
