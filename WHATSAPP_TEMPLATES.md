@@ -9,6 +9,7 @@
 | 3 | `vcare_staff_otp_application` | Authentication | OTP code |
 | 4a | `vcare_staff_welcome_new` | Utility | Name, temp password |
 | 4b | `vcare_staff_welcome_existing` | Utility | Name |
+| 4c | `vcare_client_welcome_new` | Utility | Name (credentials sent separately via SMS) |
 | 5 | `vcare_staff_application_rejected` | Utility | Name |
 | 6 | `vcare_service_request_confirmed` | Utility | Client name, service type, date |
 | 7 | `vcare_client_quotation` | Utility | Client name, service type, amount, expiry date |
@@ -172,6 +173,38 @@ We look forward to working with you again.
 **Buttons:** Visit Website — `https://vcarenursing.com/login`
 
 **Sample values:** `{{1}}` = `James`
+
+---
+
+### 4c. `vcare_client_welcome_new`
+
+| Field | Value |
+|---|---|
+| Category | **Utility** |
+| Template Name | `vcare_client_welcome_new` |
+| Language | English |
+
+**Header:** (Text) `Welcome to VCare Nursing`
+
+**Body:**
+```
+Hi {{1}}, welcome to VCare Nursing! 🎉
+
+An account has been created for you so you can track your booking, payments and care updates.
+
+Your login credentials (mobile number and a temporary password) have been sent to you separately via SMS. Please log in and set a new password at your earliest convenience.
+```
+
+**Footer:** `VCare Nursing`
+
+**Buttons:** Visit Website — `https://vcarenursing.com/login` (static URL)
+
+**Sample values:** `{{1}}` = `Nimal`
+
+> Note: WhatsApp Business policy does not allow sending one-time passwords/credentials in
+> freeform utility templates, so this message only confirms account creation. The actual
+> mobile number + temporary password are delivered via the existing SMS welcome message
+> (see `sendSms` calls in `bookingController.js` / `paymentTrackingController.js`).
 
 ---
 

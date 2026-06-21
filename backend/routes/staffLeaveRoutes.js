@@ -20,7 +20,8 @@ router.post('/request', protect, restrictTo('STAFF', 'NURSE', 'CARETAKER', 'NANN
 // Admin routes
 router.get('/all', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), getAllLeaves);
 router.get('/pending', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), getPendingLeaves);
-router.get('/summary/:staffProfileId', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), getStaffLeaveSummary);
+// Admins can view any staff member's leave summary; staff can only view their own (enforced in controller).
+router.get('/summary/:staffProfileId', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'STAFF', 'NURSE', 'CARETAKER', 'NANNY'), getStaffLeaveSummary);
 router.get('/:leaveId/conflicts', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), getLeaveConflicts);
 router.get('/:leaveId/candidates', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), getReplacementCandidates);
 router.post('/approve/:leaveId', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), approveLeave);

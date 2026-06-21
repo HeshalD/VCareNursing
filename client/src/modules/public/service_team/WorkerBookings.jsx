@@ -8,6 +8,7 @@ import {
 import apiClient from '../../../api/api';
 import { useAuth } from '../../../context/AuthContext';
 import StaffSidebar from './StaffSidebar';
+import StaffCareTimeline from '../../admin/user_managemnet/StaffCareTimeline';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -66,6 +67,9 @@ const WorkerBookings = () => {
   const [error, setError] = useState('');
   const [expandedBooking, setExpandedBooking] = useState(null);
   const [staffProfileId, setStaffProfileId] = useState(null);
+  const [timelineAssignments, setTimelineAssignments] = useState([]);
+  const [timelineAttendance, setTimelineAttendance] = useState([]);
+  const [timelineLeaveDays, setTimelineLeaveDays] = useState([]);
 
   useEffect(() => {
     if (user) {
@@ -76,6 +80,7 @@ const WorkerBookings = () => {
   useEffect(() => {
     if (staffProfileId) {
       fetchBookings();
+      fetchTimeline();
     }
   }, [staffProfileId]);
 
@@ -121,6 +126,20 @@ const WorkerBookings = () => {
       setError(err.message || 'Unknown error');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchTimeline = async () => {
+    try {
+      const [calendarRes, leaveRes] = await Promise.all([
+        apiClient.getStaffAttendanceCalendar(staffProfileId),
+        apiClient.getStaffLeaveSummary(staffProfileId),
+      ]);
+      setTimelineAssignments(calendarRes?.data?.assignments || []);
+      setTimelineAttendance(calendarRes?.data?.attendance || []);
+      setTimelineLeaveDays(leaveRes?.data?.approved_leaves || []);
+    } catch (err) {
+      console.error('Error fetching work & pay calendar:', err);
     }
   };
 
@@ -228,6 +247,18 @@ const WorkerBookings = () => {
               </div>
             </div>
           </div>
+
+          {/* Work & Pay Calendar */}
+          {(timelineAssignments.length > 0 || timelineLeaveDays.length > 0) && (
+            <div style={{ marginBottom: '1.5rem' }}>
+              <StaffCareTimeline
+                assignments={timelineAssignments}
+                attendanceRecords={timelineAttendance}
+                leaveDays={timelineLeaveDays}
+                interactive={false}
+              />
+            </div>
+          )}
 
           {/* Bookings List */}
           {bookings.length === 0 ? (

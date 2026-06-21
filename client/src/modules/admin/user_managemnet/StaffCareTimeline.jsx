@@ -29,7 +29,7 @@ const moneyFmt = (n) => `Rs ${Math.round(Number(n || 0)).toLocaleString('en-US')
 // Props:
 //   assignments       — rows from GET /staff/:id/attendance-calendar (booking_staff_assignments + booking/client/patient joins)
 //   attendanceRecords — rows from the same endpoint (staff_daily_attendance)
-const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], leaveDays = [] }) => {
+const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], leaveDays = [], interactive = true }) => {
   const [monthOffset, setMonthOffset] = useState(0);
   const [hoveredKey, setHoveredKey] = useState(null);
   const navigate = useNavigate();
@@ -271,7 +271,7 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], leaveDays
 
                 const isHovered = hoveredKey === cell.dateISO;
                 const meta = STATUS_META[cell.status];
-                const isClickable = cell.isWork && Boolean(cell.assignment?.booking_id);
+                const isClickable = interactive && cell.isWork && Boolean(cell.assignment?.booking_id);
 
                 return (
                   <div

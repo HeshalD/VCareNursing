@@ -191,11 +191,12 @@ router.get(
   staffController.getBookingHistory
 );
 
-// Full attendance calendar (assignment spans + per-day attendance) for staff (admin view)
+// Full attendance calendar (assignment spans + per-day attendance) for staff
+// Admins can view any staff member's calendar; staff can only view their own (enforced in controller).
 router.get(
   '/:staff_profile_id/attendance-calendar',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'STAFF', 'NURSE', 'CARETAKER', 'NANNY'),
   staffController.getAttendanceCalendar
 );
 

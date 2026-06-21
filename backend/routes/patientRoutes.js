@@ -11,11 +11,11 @@ router.get(
     patientController.getAllPatients
 );
 
-// Route to manually add a patient (Admin / Internal Staff)
+// Route to add a patient (Admin / Internal Staff, or a Client adding their own care profile)
 router.post(
     '/create',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'CLIENT'),
     patientController.createPatientProfile
 );
 

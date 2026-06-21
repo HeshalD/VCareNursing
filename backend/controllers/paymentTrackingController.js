@@ -2,6 +2,8 @@ const db = require('../config/db');
 const bcrypt = require('bcrypt');
 const { logActivity } = require('../utils/activityLogger');
 const { createPaymentReceipt } = require('../services/receiptService');
+const { sendSms } = require('../utils/sms');
+const { sendClientWelcomeNew } = require('../utils/metaWhatsapp');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -40,7 +42,10 @@ const getOrCreateClientProfileForQuotation = async (client, quotation) => {
   if (serviceRequest.client_id) {
     return {
       client_id: serviceRequest.client_id,
-      client_profile_created: false
+      client_profile_created: false,
+      temp_password: null,
+      payer_mobile: serviceRequest.payer_mobile,
+      payer_name: serviceRequest.payer_name
     };
   }
 
@@ -52,15 +57,19 @@ const getOrCreateClientProfileForQuotation = async (client, quotation) => {
   const payerAddress = serviceRequest.location_address || null;
 
   let userId = null;
+  // Only set when THIS call creates a brand-new login account — used to send the
+  // welcome message with credentials after the transaction commits.
+  let tempPassword = null;
   const userCheck = await client.query(
     `SELECT user_id FROM users WHERE mobile_number = $1`,
     [serviceRequest.payer_mobile]
   );
 
   if (userCheck.rows.length > 0) {
+    // Existing user (matched by mobile) — reuse it, never create a duplicate account.
     userId = userCheck.rows[0].user_id;
   } else {
-    const tempPassword = Math.random().toString(36).slice(-8);
+    tempPassword = Math.random().toString(36).slice(-8);
     const hashedPassword = await bcrypt.hash(tempPassword, 12);
 
     const newUser = await client.query(
@@ -102,7 +111,10 @@ const getOrCreateClientProfileForQuotation = async (client, quotation) => {
 
   return {
     client_id: clientProfileId,
-    client_profile_created: clientProfileCreated
+    client_profile_created: clientProfileCreated,
+    temp_password: tempPassword,
+    payer_mobile: serviceRequest.payer_mobile,
+    payer_name: payerName
   };
 };
 
@@ -474,6 +486,23 @@ const recordPayment = async (req, res) => {
     const remaining_balance = quotation.total_amount - new_total;
 
     await client.query('COMMIT');
+
+    // Welcome a brand-new client: when recording this payment created their login
+    // account, send their login id (mobile number) and temporary password so they can
+    // sign in and set their own password. Mirrors the booking-conversion onboarding.
+    // Only fires when a fresh user account was created here (temp_password is set), so
+    // existing customers are never re-notified and no duplicate account is implied.
+    if (clientBootstrap.temp_password) {
+      const welcomeSms = `Welcome to VCare Nursing, ${clientBootstrap.payer_name}! An account has been created for you. Log in at https://vcarenursing.com/login\n\nUsername (mobile): ${clientBootstrap.payer_mobile}\nTemporary password: ${clientBootstrap.temp_password}\n\nYou'll be asked to set your own password on first login. - VCare Nursing`;
+
+      Promise.allSettled([
+        sendSms(clientBootstrap.payer_mobile, welcomeSms),
+        sendClientWelcomeNew(clientBootstrap.payer_mobile, clientBootstrap.payer_name)
+      ]).then(([smsResult, waResult]) => {
+        if (smsResult.status === 'rejected') console.error('Client welcome SMS failed:', smsResult.reason?.message);
+        if (waResult.status === 'rejected') console.error('Client welcome WhatsApp failed:', waResult.reason?.message);
+      });
+    }
 
     // Generate a payment receipt (PDF stored on Cloudinary + tracked in DB).
     // Delivery to the client over WhatsApp is a separate, admin-triggered action.

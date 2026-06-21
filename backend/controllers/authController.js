@@ -318,7 +318,9 @@ exports.login = async (req, res) => {
     res.status(200).json({
       status: 'success',
       token,
-      requires_password_change: isTempPassword && !!staffProfile,
+      // Prompt a forced password change for both staff and freshly-onboarded clients
+      // who are still using their system-generated temporary password.
+      requires_password_change: isTempPassword && (!!staffProfile || !!clientProfile),
       data: {
         user_id: user.user_id,
         mobile_number: mobile_number,

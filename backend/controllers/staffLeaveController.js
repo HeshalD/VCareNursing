@@ -385,6 +385,17 @@ const rejectLeave = async (req, res) => {
 const getStaffLeaveSummary = async (req, res) => {
   const { staffProfileId } = req.params;
   try {
+    const actorRole = extractActorRole(req.user.role);
+    if (!['SUPER_ADMIN', 'COORDINATOR'].includes(actorRole)) {
+      const ownProfile = await pool.query(
+        'SELECT staff_profile_id FROM staff_profiles WHERE user_id = $1',
+        [req.user.user_id]
+      );
+      if (!ownProfile.rows.length || String(ownProfile.rows[0].staff_profile_id) !== String(staffProfileId)) {
+        return res.status(403).json({ status: 'error', message: 'Not authorized to view this leave summary' });
+      }
+    }
+
     const approvedRes = await pool.query(
       `SELECT leave_id, start_date::text AS start_date, end_date::text AS end_date, reason
        FROM staff_leave_requests

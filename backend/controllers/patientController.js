@@ -12,7 +12,7 @@ async function getActorName(userId) {
 }
 
 exports.createPatientProfile = async (req, res) => {
-    const { 
+    let {
         client_id,             // The "Payer" (Mr. Perera)
         full_name,             // "Mr. Sunil"
         age,
@@ -25,6 +25,18 @@ exports.createPatientProfile = async (req, res) => {
     } = req.body;
 
     try {
+        // A client can only create care profiles under their own client_id
+        if (extractActorRole(req.user.role) === 'CLIENT') {
+            const ownProfile = await db.query(
+                'SELECT client_profile_id FROM client_profiles WHERE user_id = $1',
+                [req.user.user_id]
+            );
+            if (ownProfile.rows.length === 0) {
+                return res.status(403).json({ message: 'Client profile not found for this user' });
+            }
+            client_id = ownProfile.rows[0].client_profile_id;
+        }
+
         // 1. Insert the new patient
         const query = `
             INSERT INTO patient_profiles (

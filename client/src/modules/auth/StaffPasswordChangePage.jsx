@@ -66,10 +66,16 @@ const StaffPasswordChangePage = () => {
         localStorage.removeItem('tempUserData');
         
         setSuccess(true);
-        
-        // Redirect to dashboard after 2 seconds
+
+        // Redirect after 2 seconds: staff land on their dashboard, clients on the home page.
+        const isStaff = !!(userData?.is_staff || userData?.staff_info);
         setTimeout(() => {
-          navigate('/services/provider-dashboard');
+          if (isStaff) {
+            navigate('/services/provider-dashboard');
+          } else {
+            const userName = userData?.full_name || '';
+            navigate('/', { state: { showWelcome: true, userName } });
+          }
         }, 2000);
       }
     } catch (err) {

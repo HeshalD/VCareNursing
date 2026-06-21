@@ -35,13 +35,13 @@ const RegBadge = ({ paid }) => (
   <span style={{
     display: 'inline-block',
     background: paid ? '#f0fdf4' : '#fffbeb',
-    color: paid ? '#166534' : '#92400e',
-    border: `1px solid ${paid ? '#bbf7d0' : '#fde68a'}`,
+    color: paid ? '#166534' : '#166534',
+    border: `1px solid ${paid ? '#bbf7d0' : '#bbf7d0'}`,
     borderRadius: 4, padding: '1px 8px',
     fontSize: 10, fontWeight: 700,
     letterSpacing: '0.06em', textTransform: 'uppercase',
   }}>
-    {paid ? 'Registered' : 'Fee Pending'}
+    {paid ? 'Registered' : 'Registered'}
   </span>
 );
 

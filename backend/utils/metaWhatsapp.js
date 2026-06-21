@@ -88,6 +88,13 @@ const sendStaffWelcomeNew = (mobileNumber, fullName) =>
 const sendStaffWelcomeExisting = (mobileNumber, fullName) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_staff_welcome_existing', 'en', [fullName]);
 
+// Sent to a brand-new client when their service request is converted into a booking and
+// a fresh login account is created for them — {{1}} = name. WhatsApp policy disallows
+// sending the temporary password in this message, so the credentials (mobile + temp
+// password) are delivered separately via SMS; this just tells them to expect that SMS.
+const sendClientWelcomeNew = (mobileNumber, fullName) =>
+  sendTemplate(formatNumber(mobileNumber), 'vcare_client_welcome_new', 'en', [fullName]);
+
 // Sent on rejection — {{1}} = name, {{2}} = reason
 const sendStaffApplicationRejected = (mobileNumber, fullName, reason) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_staff_application_rejected', 'en', [fullName, reason]);
@@ -339,4 +346,4 @@ const sendStaffLeaveApproved = (mobileNumber, staffName, startDate, endDate, day
 const sendStaffLeaveRejected = (mobileNumber, staffName, startDate, endDate, reason) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_leave_rejected', 'en', [staffName, startDate, endDate, reason]);
 
-module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendPaymentRecorded, sendPaymentReceipt, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected, sendClientBookingStatement, sendStaffAgreement, sendCandidateProfile, sendStaffLeaveApproved, sendStaffLeaveRejected };
+module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendClientWelcomeNew, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendPaymentRecorded, sendPaymentReceipt, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected, sendClientBookingStatement, sendStaffAgreement, sendCandidateProfile, sendStaffLeaveApproved, sendStaffLeaveRejected };

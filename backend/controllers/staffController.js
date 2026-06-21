@@ -8,6 +8,11 @@ const { generateAndUploadSalarySheet } = require('../utils/salaryPdf');
 const _MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const _METHOD_LABELS = { BANK_TRANSFER: 'Bank Transfer', CASH: 'Cash', CHEQUE: 'Cheque' };
 
+function _extractActorRole(role) {
+    const raw = Array.isArray(role) ? role[0] : role;
+    return typeof raw === 'string' ? raw.replace(/\{|\}/g, '').split(',')[0].trim() : String(raw);
+}
+
 async function _sendSalaryPayoutNotifications(staffProfileId, payoutAmount, paymentMethod, referenceNumber, notes, staffPaymentId, monthYear, autoSend) {
     const staffRes = await db.query(`
         SELECT sp.full_name, sp.designation, u.mobile_number
@@ -753,6 +758,17 @@ exports.getAttendanceCalendar = async (req, res) => {
     const { staff_profile_id } = req.params;
 
     try {
+        const actorRole = _extractActorRole(req.user.role);
+        if (!['SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'].includes(actorRole)) {
+            const ownProfile = await db.query(
+                'SELECT staff_profile_id FROM staff_profiles WHERE user_id = $1',
+                [req.user.user_id]
+            );
+            if (!ownProfile.rows.length || String(ownProfile.rows[0].staff_profile_id) !== String(staff_profile_id)) {
+                return res.status(403).json({ status: 'error', message: 'Not authorized to view this attendance calendar' });
+            }
+        }
+
         const [assignmentsRes, attendanceRes] = await Promise.all([
             db.query(`
                 SELECT

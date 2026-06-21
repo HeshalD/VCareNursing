@@ -4,7 +4,7 @@ const { sendWhatsAppMessage } = require('../utils/whatsapp');
 const sendEmail = require('../utils/email');
 const { upload } = require('../config/cloudinaryConfig');
 const { logActivity } = require('../utils/activityLogger');
-const { sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendStaffNewAssignment, sendClientStaffSwapped } = require('../utils/metaWhatsapp');
+const { sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendStaffNewAssignment, sendClientStaffSwapped, sendClientWelcomeNew } = require('../utils/metaWhatsapp');
 const { sendSms } = require('../utils/sms');
 const { createServiceInvoice } = require('../services/billingService');
 const {
@@ -406,7 +406,7 @@ const convertToBookingInternal = async (req, res) => {
                 [reqData.payer_mobile, hashedPassword, null, ['CLIENT'], true]
             );
             userId = newUser.rows[0].user_id;
-            reqData.tempPassword = tempPassword; // Store for SMS
+            reqData.tempPassword = tempPassword; // Store for the welcome SMS/WhatsApp after commit
         } else {
             userId = userCheck.rows[0].user_id;
         }
@@ -713,6 +713,21 @@ const convertToBookingInternal = async (req, res) => {
             });
         } catch (logErr) {
             console.error('Activity log error:', logErr);
+        }
+
+        // Welcome a brand-new client: send their login id (mobile number) and temporary
+        // password so they can sign in and set their own password — mirrors the staff
+        // onboarding flow. Only fires when this conversion created the user account.
+        if (reqData.tempPassword) {
+            const welcomeSms = `Welcome to VCare Nursing, ${reqData.payer_name}! An account has been created for you. Log in at https://vcarenursing.com/login\n\nUsername (mobile): ${reqData.payer_mobile}\nTemporary password: ${reqData.tempPassword}\n\nYou'll be asked to set your own password on first login. - VCare Nursing`;
+
+            Promise.allSettled([
+                sendSms(reqData.payer_mobile, welcomeSms),
+                sendClientWelcomeNew(reqData.payer_mobile, reqData.payer_name)
+            ]).then(([smsResult, waResult]) => {
+                if (smsResult.status === 'rejected') console.error('Client welcome SMS failed:', smsResult.reason?.message);
+                if (waResult.status === 'rejected') console.error('Client welcome WhatsApp failed:', waResult.reason?.message);
+            });
         }
 
         // Return success with booking details for next step
