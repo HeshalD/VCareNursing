@@ -3,10 +3,25 @@ const { sendSms } = require('../utils/sms');
 const { sendBookingConfirmed, sendStaffNewAssignment } = require('../utils/metaWhatsapp');
 const { logActivity } = require('../utils/activityLogger');
 const { getBusinessDate, toDateStr, isFutureDate, enqueueScheduledAction, hasOpenAction } = require('../services/scheduledActions');
+const { creditSalespersonForBooking } = require('../services/salespersonService');
 
 function extractActorRole(role) {
   const raw = Array.isArray(role) ? role[0] : role;
   return typeof raw === 'string' ? raw.replace(/\{|\}/g, '').split(',')[0].trim() : String(raw);
+}
+
+// Turn a stored/input time ("09:00", "09:00:00") into a friendly "9:00 AM" label.
+// Returns '' for empty/invalid input so callers can fall back gracefully.
+function formatTimeLabel(time) {
+  if (!time) return '';
+  const match = String(time).match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return '';
+  let hours = parseInt(match[1], 10);
+  const minutes = match[2];
+  if (isNaN(hours)) return '';
+  const period = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12 || 12;
+  return `${hours}:${minutes} ${period}`;
 }
 
 /**
@@ -203,7 +218,7 @@ exports.getAssignmentFormData = async (req, res) => {
 exports.assignStaffToBooking = async (req, res) => {
   try {
     const { booking_id } = req.params;
-    const { staff_profile_id, service_start_date, daily_rate, ot_rate, notes } = req.body;
+    const { staff_profile_id, service_start_date, service_start_time, daily_rate, ot_rate, notes, salesperson_id } = req.body;
     const assigned_by = req.user.user_id;
 
     // UUID validation
@@ -336,12 +351,12 @@ exports.assignStaffToBooking = async (req, res) => {
     const insertQuery = `
       INSERT INTO booking_staff_assignments
         (booking_id, staff_profile_id, assigned_on, assigned_by, daily_rate,
-         service_start_date, service_end_date, amount_allocated, status, notes)
+         service_start_date, service_start_time, service_end_date, amount_allocated, status, notes)
       VALUES
-        ($1, $2, NOW(), $3, $4, $5, NULL, $6, $7, $8)
+        ($1, $2, NOW(), $3, $4, $5, $6, NULL, $7, $8, $9)
       RETURNING
         assignment_id, booking_id, staff_profile_id, assigned_on, daily_rate,
-        service_start_date, service_end_date, amount_allocated, status
+        service_start_date, service_start_time, service_end_date, amount_allocated, status
     `;
 
     const values = [
@@ -350,6 +365,7 @@ exports.assignStaffToBooking = async (req, res) => {
       assigned_by,
       staffDailyRate,
       service_start_date,
+      service_start_time || null,
       amount_allocated,
       isFuture ? 'SCHEDULED' : 'ACTIVE',
       notes || null
@@ -367,6 +383,15 @@ exports.assignStaffToBooking = async (req, res) => {
     );
 
     if (isFuture) {
+      // Keep the booking's start_date in sync with the assignment, even though
+      // activation is deferred to the cron on the effective date.
+      await db.query(
+        `UPDATE bookings
+         SET start_date = $2
+         WHERE booking_id = $1`,
+        [booking_id, service_start_date]
+      );
+
       await enqueueScheduledAction(db, {
         booking_id,
         action_type: 'ASSIGNMENT_START',
@@ -377,10 +402,36 @@ exports.assignStaffToBooking = async (req, res) => {
     } else {
       await db.query(
         `UPDATE bookings
-         SET status = 'ACTIVE', ot_rate = $2, assigned_staff_id = $3
+         SET status = 'ACTIVE', ot_rate = $2, assigned_staff_id = $3, start_date = $4
          WHERE booking_id = $1`,
-        [booking_id, bookingOtRate, staff_profile_id]
+        [booking_id, bookingOtRate, staff_profile_id, service_start_date]
       );
+    }
+
+    // Optional: credit the salesperson who brought this booking in. Idempotent and
+    // best-effort — a credit failure must not undo a successful staff assignment.
+    let salespersonCredit = null;
+    if (salesperson_id) {
+      try {
+        salespersonCredit = await creditSalespersonForBooking(db, {
+          booking_id,
+          salesperson_id,
+          assigned_by,
+        });
+        if (salespersonCredit.credited) {
+          logActivity({
+            actorUserId: assigned_by,
+            actorRole: extractActorRole(req.user?.role),
+            actionType: 'SALESPERSON_CREDITED',
+            entityType: 'booking',
+            entityId: String(booking_id),
+            details: { booking_id, salesperson_id, credited_amount: salespersonCredit.credited_amount },
+          }).catch((e) => console.error('[Salesperson] activity log error:', e.message));
+        }
+      } catch (e) {
+        console.error('[Salesperson] credit during assignment failed:', e.message);
+        salespersonCredit = { credited: false, error: e.message };
+      }
     }
 
     (async () => {
@@ -420,17 +471,21 @@ exports.assignStaffToBooking = async (req, res) => {
         const formattedDate = new Date(service_start_date).toLocaleDateString('en-GB', {
           day: 'numeric', month: 'long', year: 'numeric'
         });
+        const formattedTime = formatTimeLabel(service_start_time);
+        // Staff template {{5}} reuses the start-date slot; append the time when set.
+        const staffStartLabel = formattedTime ? `${formattedDate}, ${formattedTime}` : formattedDate;
         const staffProfileUrl = `https://vcarenursing.com/services/staff-profile/${staff_profile_id}`;
         const conditions = medical_condition || 'Not specified';
+        const timeLine = formattedTime ? `\nStart Time: ${formattedTime}` : '';
 
-        const clientSms = `Hi ${clientName}, your booking has been confirmed!\n\nStaff Member: ${staff.full_name}\nDate: ${formattedDate}\n\nView staff profile: ${staffProfileUrl}\n\nIf you need any changes, please contact us. - VCare Nursing`;
-        const staffSms = `Hi ${staff.full_name}, you have been assigned to a new booking.\n\nPatient: ${patient_name || 'N/A'}\nLocation: ${location_address || 'N/A'}\nConditions: ${conditions}\nStart Date: ${formattedDate}\n\nLog in to the staff portal for full details. - VCare Nursing`;
+        const clientSms = `Hi ${clientName}, your booking has been confirmed!\n\nStaff Member: ${staff.full_name}\nDate: ${formattedDate}${timeLine}\n\nView staff profile: ${staffProfileUrl}\n\nIf you need any changes, please contact us. - VCare Nursing`;
+        const staffSms = `Hi ${staff.full_name}, you have been assigned to a new booking.\n\nPatient: ${patient_name || 'N/A'}\nLocation: ${location_address || 'N/A'}\nConditions: ${conditions}\nStart Date: ${formattedDate}${timeLine}\n\nLog in to the staff portal for full details. - VCare Nursing`;
 
         const results = await Promise.allSettled([
-          sendBookingConfirmed(clientMobile, clientName, staff.full_name, formattedDate, '9:00 AM', staffProfileUrl),
+          sendBookingConfirmed(clientMobile, clientName, staff.full_name, formattedDate, formattedTime || '9:00 AM', staffProfileUrl),
           sendSms(clientMobile, clientSms),
           ...(staffMobile ? [
-            sendStaffNewAssignment(staffMobile, staff.full_name, patient_name || 'N/A', location_address || 'N/A', conditions, formattedDate),
+            sendStaffNewAssignment(staffMobile, staff.full_name, patient_name || 'N/A', location_address || 'N/A', conditions, staffStartLabel),
             sendSms(staffMobile, staffSms),
           ] : []),
         ]);
@@ -487,6 +542,7 @@ exports.assignStaffToBooking = async (req, res) => {
         staff_profile_id: assignment.staff_profile_id,
         daily_rate: parseFloat(assignment.daily_rate),
         service_start_date: assignment.service_start_date,
+        service_start_time: assignment.service_start_time,
         service_end_date: assignment.service_end_date,
         amount_allocated: parseFloat(assignment.amount_allocated),
         ot_rate: bookingOtRate,
@@ -495,7 +551,8 @@ exports.assignStaffToBooking = async (req, res) => {
       assignment_summary: {
         amount_paid: amount_paid,
         amount_allocated: amount_allocated
-      }
+      },
+      salesperson_credit: salespersonCredit
     });
   } catch (error) {
     console.error('Error in assignStaffToBooking:', error);
@@ -544,6 +601,7 @@ exports.getStaffAssignmentBookings = async (req, res) => {
         bsa.staff_profile_id,
         bsa.daily_rate,
         bsa.service_start_date,
+        bsa.service_start_time,
         bsa.service_end_date,
         bsa.amount_allocated,
         bsa.notes as assignment_notes,
@@ -720,7 +778,7 @@ exports.getBookingAssignments = async (req, res) => {
 exports.updateAssignment = async (req, res) => {
   try {
     const { assignment_id } = req.params;
-    const { service_start_date, service_end_date, daily_rate, notes } = req.body;
+    const { service_start_date, service_start_time, service_end_date, daily_rate, notes } = req.body;
 
     // UUID validation
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -732,7 +790,7 @@ exports.updateAssignment = async (req, res) => {
     }
 
     // Require at least one field to update
-    if (!service_start_date && !service_end_date && !daily_rate && !notes) {
+    if (!service_start_date && service_start_time === undefined && !service_end_date && !daily_rate && !notes) {
       return res.status(400).json({
         status: 'error',
         message: 'At least one field is required for update'
@@ -770,6 +828,12 @@ exports.updateAssignment = async (req, res) => {
       }
       updateFields.push(`service_start_date = $${paramCount}`);
       updateValues.push(service_start_date);
+      paramCount++;
+    }
+
+    if (service_start_time !== undefined) {
+      updateFields.push(`service_start_time = $${paramCount}`);
+      updateValues.push(service_start_time || null);
       paramCount++;
     }
 
@@ -850,6 +914,7 @@ exports.updateAssignment = async (req, res) => {
       data: {
         assignment_id: updatedAssignment.assignment_id,
         service_start_date: updatedAssignment.service_start_date,
+        service_start_time: updatedAssignment.service_start_time,
         service_end_date: updatedAssignment.service_end_date,
         daily_rate: parseFloat(updatedAssignment.daily_rate),
         amount_allocated: parseFloat(updatedAssignment.amount_allocated),

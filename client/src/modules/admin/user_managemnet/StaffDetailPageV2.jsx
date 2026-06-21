@@ -5,10 +5,17 @@ import {
   ArrowLeft,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronUp,
   Landmark,
   Loader2,
+  Pencil,
+  Plus,
   Save,
+  StickyNote,
+  Trash2,
+  X,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -120,6 +127,171 @@ const TableRow = ({ cols, children }) => (
   </div>
 );
 
+// ── admin notes carousel ────────────────────────────────────────────────────
+const AdminNotesCarousel = ({ notes, loading, busy, onAdd, onEdit, onDelete }) => {
+  const [index, setIndex] = useState(0);
+  const [editor, setEditor] = useState({ open: false, mode: 'add', noteId: null, text: '' });
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+
+  const count = notes.length;
+
+  // Keep the active slide within bounds when notes are added/removed.
+  useEffect(() => {
+    setIndex((i) => (count === 0 ? 0 : Math.min(i, count - 1)));
+  }, [count]);
+
+  const go = (dir) => {
+    setConfirmDeleteId(null);
+    setIndex((i) => Math.max(0, Math.min(count - 1, i + dir)));
+  };
+
+  const openAdd = () => setEditor({ open: true, mode: 'add', noteId: null, text: '' });
+  const openEdit = (note) => setEditor({ open: true, mode: 'edit', noteId: note.note_id, text: note.note });
+  const closeEditor = () => setEditor({ open: false, mode: 'add', noteId: null, text: '' });
+
+  const saveEditor = async () => {
+    const text = editor.text.trim();
+    if (!text) return;
+    if (editor.mode === 'add') {
+      await onAdd(text);
+      setIndex(0); // newest note shows first
+    } else {
+      await onEdit(editor.noteId, text);
+    }
+    closeEditor();
+  };
+
+  const fmt = (v) => {
+    if (!v) return '';
+    const d = new Date(v);
+    return isNaN(d) ? '' : d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  };
+
+  const headerBtn = {
+    display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px solid #E2DCD0',
+    background: '#FCFBF8', borderRadius: 9, padding: '6px 10px', fontFamily: 'inherit',
+    fontSize: 12.5, fontWeight: 600, color: '#5A554B', cursor: 'pointer',
+  };
+  const arrowBtn = (disabled) => ({
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    width: 30, height: 30, borderRadius: 8, border: '1px solid #E7E1D6',
+    background: '#fff', color: disabled ? '#CFC8BC' : '#5A554B',
+    cursor: disabled ? 'default' : 'pointer', flexShrink: 0,
+  });
+
+  return (
+    <div style={{ background: '#fff', border: '1px solid #ECE7DF', borderRadius: 16, padding: 18, display: 'flex', flexDirection: 'column' }}>
+      {/* header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <StickyNote style={{ width: 16, height: 16, color: '#B07A1E' }} />
+          <span style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>Admin Notes</span>
+          {count > 0 && !editor.open && (
+            <span style={{ fontSize: 11.5, fontWeight: 600, color: '#9A9488' }}>{index + 1} / {count}</span>
+          )}
+        </div>
+        {!editor.open && (
+          <button type="button" style={headerBtn} onClick={openAdd} disabled={busy}>
+            <Plus style={{ width: 13, height: 13 }} /> Add
+          </button>
+        )}
+      </div>
+
+      {/* body */}
+      {editor.open ? (
+        <div>
+          <textarea
+            value={editor.text}
+            onChange={(e) => setEditor((p) => ({ ...p, text: e.target.value }))}
+            placeholder="Write an internal note about this staff member..."
+            autoFocus
+            rows={4}
+            style={{ ...inp, resize: 'vertical', minHeight: 92 }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+            <button type="button" style={headerBtn} onClick={closeEditor} disabled={busy}>
+              <X style={{ width: 13, height: 13 }} /> Cancel
+            </button>
+            <button
+              type="button"
+              onClick={saveEditor}
+              disabled={busy || !editor.text.trim()}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: 'none', background: '#137A6B', color: '#fff', borderRadius: 9, padding: '7px 13px', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', opacity: busy || !editor.text.trim() ? 0.6 : 1 }}
+            >
+              {busy ? <Loader2 style={{ width: 13, height: 13, animation: 'spin 1s linear infinite' }} /> : <Save style={{ width: 13, height: 13 }} />}
+              {editor.mode === 'add' ? 'Add note' : 'Save'}
+            </button>
+          </div>
+        </div>
+      ) : loading ? (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 96, color: '#9A9488' }}>
+          <Loader2 style={{ width: 18, height: 18, animation: 'spin 1s linear infinite' }} />
+        </div>
+      ) : count === 0 ? (
+        <div style={{ border: '1.5px dashed #E0D9CF', borderRadius: 12, padding: '24px 18px', textAlign: 'center' }}>
+          <p style={{ margin: 0, fontWeight: 600, color: '#7A756A', fontSize: 13 }}>No admin notes yet</p>
+          <p style={{ margin: '3px 0 0', fontSize: 12.5, color: '#9A9488' }}>Add an internal note to keep track of this staff member.</p>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'stretch', gap: 10 }}>
+          <button type="button" style={arrowBtn(index === 0)} onClick={() => go(-1)} disabled={index === 0} title="Previous">
+            <ChevronLeft style={{ width: 17, height: 17 }} />
+          </button>
+
+          {/* sliding window */}
+          <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
+            <div style={{ display: 'flex', transform: `translateX(-${index * 100}%)`, transition: 'transform .32s cubic-bezier(.4,0,.2,1)' }}>
+              {notes.map((n) => (
+                <div key={n.note_id} style={{ minWidth: '100%', boxSizing: 'border-box', padding: '2px 2px' }}>
+                  <div style={{ background: '#FBF8F1', border: '1px solid #EFE7D6', borderRadius: 12, padding: '13px 14px', minHeight: 96, display: 'flex', flexDirection: 'column' }}>
+                    <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: '#3A362F', whiteSpace: 'pre-wrap', wordBreak: 'break-word', flex: 1 }}>
+                      {n.note}
+                    </p>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 11, paddingTop: 9, borderTop: '1px solid #EFE7D6' }}>
+                      <span style={{ fontSize: 11.5, color: '#9A9488' }}>
+                        {n.author_name ? `${n.author_name} · ` : ''}{fmt(n.created_at)}
+                        {n.updated_at && n.updated_at !== n.created_at ? ' (edited)' : ''}
+                      </span>
+                      {confirmDeleteId === n.note_id ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ fontSize: 11.5, color: '#BC4338', fontWeight: 600 }}>Delete?</span>
+                          <button type="button" onClick={() => { onDelete(n.note_id); setConfirmDeleteId(null); }} disabled={busy}
+                            style={{ border: 'none', background: '#BC4338', color: '#fff', borderRadius: 7, padding: '4px 9px', fontFamily: 'inherit', fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}>
+                            Yes
+                          </button>
+                          <button type="button" onClick={() => setConfirmDeleteId(null)} disabled={busy}
+                            style={{ border: '1px solid #E2DCD0', background: '#fff', color: '#5A554B', borderRadius: 7, padding: '4px 9px', fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>
+                            No
+                          </button>
+                        </span>
+                      ) : (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <button type="button" onClick={() => openEdit(n)} disabled={busy} title="Edit"
+                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 7, border: '1px solid #E7E1D6', background: '#fff', color: '#5A554B', cursor: 'pointer' }}>
+                            <Pencil style={{ width: 13, height: 13 }} />
+                          </button>
+                          <button type="button" onClick={() => setConfirmDeleteId(n.note_id)} disabled={busy} title="Delete"
+                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 7, border: '1px solid #F0DAD6', background: '#fff', color: '#BC4338', cursor: 'pointer' }}>
+                            <Trash2 style={{ width: 13, height: 13 }} />
+                          </button>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <button type="button" style={arrowBtn(index >= count - 1)} onClick={() => go(1)} disabled={index >= count - 1} title="Next">
+            <ChevronRight style={{ width: 17, height: 17 }} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ── main component ────────────────────────────────────────────────────────────
 const StaffDetailPageV2 = () => {
   const { adminToken, isLoading: authLoading } = useAdminAuth();
@@ -166,6 +338,9 @@ const StaffDetailPageV2 = () => {
   const [reviewToggles, setReviewToggles] = useState({});
   const [togglingReviewId, setTogglingReviewId] = useState(null);
   const [attendanceCalendar, setAttendanceCalendar] = useState({ assignments: [], attendance: [] });
+  const [adminNotes, setAdminNotes] = useState([]);
+  const [adminNotesLoading, setAdminNotesLoading] = useState(true);
+  const [adminNotesBusy, setAdminNotesBusy] = useState(false);
 
   const profile = detail?.profile || {};
   const overviewEarnings = detail?.earnings || {};
@@ -226,13 +401,14 @@ const StaffDetailPageV2 = () => {
       runAdminRequest(() => apiClient.getAllChangeRequests({ staff_profile_id: staffProfileId })),
       runAdminRequest(() => apiClient.getStaffDeductions(staffProfileId, { page: 1, limit: 50 })),
       runAdminRequest(() => apiClient.getStaffAttendanceCalendar(staffProfileId)),
+      runAdminRequest(() => apiClient.getStaffAdminNotes(staffProfileId)),
     ]);
 
     const nextErrors = {};
     const [
       detailRes, earningsRes, earningsTxRes, currentBookingRes, historyRes,
       payoutsSummaryRes, payoutsRes, bankAccountsRes, companyBankAccountsRes,
-      changeRequestsRes, deductionsRes, attendanceCalendarRes,
+      changeRequestsRes, deductionsRes, attendanceCalendarRes, adminNotesRes,
     ] = results;
 
     if (detailRes.status === 'fulfilled') {
@@ -282,6 +458,10 @@ const StaffDetailPageV2 = () => {
       const cal = attendanceCalendarRes.value?.data || {};
       setAttendanceCalendar({ assignments: safeArray(cal.assignments), attendance: safeArray(cal.attendance) });
     } else nextErrors.attendanceCalendar = attendanceCalendarRes.reason?.message;
+
+    if (adminNotesRes.status === 'fulfilled') setAdminNotes(safeArray(adminNotesRes.value?.data));
+    else nextErrors.adminNotes = adminNotesRes.reason?.message;
+    setAdminNotesLoading(false);
 
     setSectionErrors(nextErrors);
     setLoading(false);
@@ -383,6 +563,49 @@ const StaffDetailPageV2 = () => {
       setDeductionError(err?.message || 'Failed to apply deduction');
     } finally {
       setDeductionSubmitting(false);
+    }
+  };
+
+  const reloadAdminNotes = async () => {
+    try {
+      const res = await runAdminRequest(() => apiClient.getStaffAdminNotes(staffProfileId));
+      setAdminNotes(safeArray(res?.data));
+    } catch { /* keep existing notes on failure */ }
+  };
+
+  const handleAddNote = async (text) => {
+    setAdminNotesBusy(true);
+    try {
+      await runAdminRequest(() => apiClient.createStaffAdminNote(staffProfileId, text));
+      await reloadAdminNotes();
+    } catch (e) {
+      setError(e?.message || 'Failed to add note');
+    } finally {
+      setAdminNotesBusy(false);
+    }
+  };
+
+  const handleEditNote = async (noteId, text) => {
+    setAdminNotesBusy(true);
+    try {
+      await runAdminRequest(() => apiClient.updateStaffAdminNote(staffProfileId, noteId, text));
+      await reloadAdminNotes();
+    } catch (e) {
+      setError(e?.message || 'Failed to update note');
+    } finally {
+      setAdminNotesBusy(false);
+    }
+  };
+
+  const handleDeleteNote = async (noteId) => {
+    setAdminNotesBusy(true);
+    try {
+      await runAdminRequest(() => apiClient.deleteStaffAdminNote(staffProfileId, noteId));
+      await reloadAdminNotes();
+    } catch (e) {
+      setError(e?.message || 'Failed to delete note');
+    } finally {
+      setAdminNotesBusy(false);
     }
   };
 
@@ -1335,6 +1558,18 @@ const StaffDetailPageV2 = () => {
                 {profile.created_at ? ` · Joined ${formatDate(profile.created_at)}` : ''}
                 {currentAssignment?.client_name ? ` · Currently on ${currentAssignment.client_name} booking` : ''}
               </p>
+            </div>
+
+            {/* ADMIN NOTES */}
+            <div style={{ flex: '1 1 320px', minWidth: 280, maxWidth: 440 }}>
+              <AdminNotesCarousel
+                notes={adminNotes}
+                loading={adminNotesLoading}
+                busy={adminNotesBusy}
+                onAdd={handleAddNote}
+                onEdit={handleEditNote}
+                onDelete={handleDeleteNote}
+              />
             </div>
           </div>
 

@@ -1654,6 +1654,135 @@ exports.getStaffDeductions = async (req, res) => {
     }
 };
 
+// ── Admin Notes (multiple notes per staff profile) ──────────────────────────
+const _actorRole = (role) => {
+    const raw = Array.isArray(role) ? role[0] : role;
+    return typeof raw === 'string' ? raw.replace(/\{|\}/g, '').split(',')[0].trim() : String(raw);
+};
+const _logNoteActivity = async (req, actionType, staffProfileId, details) => {
+    try {
+        const r = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+        await logActivity({
+            actorUserId: req.user.user_id,
+            actorName: r.rows[0]?.full_name || 'Admin',
+            actorRole: _actorRole(req.user?.role),
+            actionType,
+            entityType: 'STAFF',
+            entityId: String(staffProfileId),
+            details,
+        });
+    } catch (e) {
+        console.error('Admin note activity log failed:', e.message);
+    }
+};
+
+exports.getStaffAdminNotes = async (req, res) => {
+    const { staff_profile_id } = req.params;
+    try {
+        const result = await db.query(
+            `SELECT n.note_id, n.note, n.created_at, n.updated_at,
+                    sp.full_name AS author_name
+             FROM staff_admin_notes n
+             LEFT JOIN staff_profiles sp ON sp.user_id = n.created_by
+             WHERE n.staff_profile_id = $1
+             ORDER BY n.created_at DESC`,
+            [staff_profile_id]
+        );
+        return res.json({ status: 'success', data: result.rows });
+    } catch (error) {
+        console.error('getStaffAdminNotes Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error' });
+    }
+};
+
+exports.createStaffAdminNote = async (req, res) => {
+    const { staff_profile_id } = req.params;
+    const { note } = req.body;
+
+    if (!note || !String(note).trim()) {
+        return res.status(400).json({ status: 'error', message: 'Note text is required' });
+    }
+
+    try {
+        const staffRes = await db.query(
+            'SELECT full_name FROM staff_profiles WHERE staff_profile_id = $1',
+            [staff_profile_id]
+        );
+        if (!staffRes.rows.length) {
+            return res.status(404).json({ status: 'error', message: 'Staff profile not found' });
+        }
+
+        const inserted = await db.query(
+            `INSERT INTO staff_admin_notes (staff_profile_id, note, created_by)
+             VALUES ($1, $2, $3)
+             RETURNING note_id, note, created_at, updated_at`,
+            [staff_profile_id, String(note).trim(), req.user.user_id]
+        );
+
+        await _logNoteActivity(req, 'STAFF_NOTE_ADDED', staff_profile_id, {
+            staff_name: staffRes.rows[0].full_name, note: String(note).trim(),
+        });
+
+        return res.status(201).json({ status: 'success', data: inserted.rows[0] });
+    } catch (error) {
+        console.error('createStaffAdminNote Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error' });
+    }
+};
+
+exports.updateStaffAdminNote = async (req, res) => {
+    const { staff_profile_id, note_id } = req.params;
+    const { note } = req.body;
+
+    if (!note || !String(note).trim()) {
+        return res.status(400).json({ status: 'error', message: 'Note text is required' });
+    }
+
+    try {
+        const updated = await db.query(
+            `UPDATE staff_admin_notes
+             SET note = $1, updated_at = CURRENT_TIMESTAMP
+             WHERE note_id = $2 AND staff_profile_id = $3
+             RETURNING note_id, note, created_at, updated_at`,
+            [String(note).trim(), note_id, staff_profile_id]
+        );
+
+        if (!updated.rows.length) {
+            return res.status(404).json({ status: 'error', message: 'Note not found' });
+        }
+
+        await _logNoteActivity(req, 'STAFF_NOTE_UPDATED', staff_profile_id, { note: String(note).trim() });
+
+        return res.json({ status: 'success', data: updated.rows[0] });
+    } catch (error) {
+        console.error('updateStaffAdminNote Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error' });
+    }
+};
+
+exports.deleteStaffAdminNote = async (req, res) => {
+    const { staff_profile_id, note_id } = req.params;
+    try {
+        const deleted = await db.query(
+            `DELETE FROM staff_admin_notes
+             WHERE note_id = $1 AND staff_profile_id = $2
+             RETURNING note_id`,
+            [note_id, staff_profile_id]
+        );
+
+        if (!deleted.rows.length) {
+            return res.status(404).json({ status: 'error', message: 'Note not found' });
+        }
+
+        await _logNoteActivity(req, 'STAFF_NOTE_DELETED', staff_profile_id, { note_id });
+
+        return res.json({ status: 'success', message: 'Note deleted' });
+    } catch (error) {
+        console.error('deleteStaffAdminNote Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error' });
+    }
+};
+
 // Get staff members by their role
 exports.getStaffByRole = async (req, res) => {
     try {

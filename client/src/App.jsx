@@ -81,10 +81,13 @@ import CurrentEarningsBreakdownPage from './modules/admin/user_managemnet/Curren
 import PatientsPage from './modules/admin/patients/patients';
 import PatientDetailPage from './modules/admin/patients/patient_details';
 import TransactionsPage from './modules/admin/transactions/TransactionsPage';
+import ClientPaymentsLedgerPage from './modules/admin/payments/ClientPaymentsLedgerPage';
 import StaffSalariesPage from './modules/admin/salaries/StaffSalariesPage';
 import SalarySheetLedgerPage from './modules/admin/salaries/SalarySheetLedgerPage';
 import StaffPermissionsPage from './modules/admin/permissions/StaffPermissionsPage';
 import InternalStaffPage from './modules/admin/internal_staff/InternalStaffPage';
+import SalespersonsPage from './modules/admin/salespersons/SalespersonsPage';
+import SalespersonDetailPage from './modules/admin/salespersons/SalespersonDetailPage';
 
 function App() {
   return (
@@ -323,6 +326,11 @@ function App() {
                 <TransactionsPage />
               </AdminAuthProvider>
             } />
+            <Route path="/admin/client-payments" element={
+              <AdminAuthProvider>
+                <ClientPaymentsLedgerPage />
+              </AdminAuthProvider>
+            } />
             <Route path="/admin/salaries" element={
               <AdminAuthProvider>
                 <StaffSalariesPage />
@@ -341,6 +349,16 @@ function App() {
             <Route path="/admin/internal-staff" element={
               <AdminAuthProvider>
                 <InternalStaffPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/salespersons" element={
+              <AdminAuthProvider>
+                <SalespersonsPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/salespersons/:id" element={
+              <AdminAuthProvider>
+                <SalespersonDetailPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/settings" element={

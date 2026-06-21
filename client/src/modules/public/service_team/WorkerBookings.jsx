@@ -19,6 +19,16 @@ const formatDateLong = d => d
   ? new Date(d).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
   : '—';
 
+const formatTime = t => {
+  if (!t) return null;
+  const m = String(t).match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const period = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${m[2]} ${period}`;
+};
+
 const STATUS_META = {
   active: { bg: '#f0fdf4', color: '#166534', border: '#bbf7d0', label: 'Active' },
   pending_termination: { bg: '#fffbeb', color: '#92400e', border: '#fde68a', label: 'Pending Termination' },
@@ -293,6 +303,7 @@ const WorkerBookings = () => {
                       <div style={{ textAlign: 'right' }}>
                         <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.25rem' }}>
                           Started {formatDate(booking.start_date)}
+                          {formatTime(booking.service_start_time) && ` at ${formatTime(booking.service_start_time)}`}
                         </div>
                         {booking.scheduled_end_time && (
                           <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>
@@ -403,6 +414,10 @@ const WorkerBookings = () => {
                             gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
                             gap: '0.75rem'
                           }}>
+                            <div>
+                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Start Time</div>
+                              <div style={{ fontWeight: 500, color: '#1f2937' }}>{formatTime(booking.service_start_time) || '—'}</div>
+                            </div>
                             <div>
                               <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Daily Rate</div>
                               <div style={{ fontWeight: 500, color: '#1f2937' }}>LKR{booking.daily_rate || '—'}</div>

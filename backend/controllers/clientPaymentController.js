@@ -1,24 +1,9 @@
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
-const { sendSms } = require('../utils/sms');
-const { sendPaymentRecorded } = require('../utils/metaWhatsapp');
+const { createPaymentReceipt } = require('../services/receiptService');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const formatPaymentDate = (date) =>
-  new Date(date).toLocaleDateString('en-LK', { day: 'numeric', month: 'long', year: 'numeric' });
-
-const sendPaymentNotifications = async (mobile, name, amount, date) => {
-  const formattedAmount = parseFloat(amount).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const formattedDate = formatPaymentDate(date);
-  const smsBody = `Hi ${name}, we have received your payment of Rs. ${formattedAmount} on ${formattedDate}. Thank you for your prompt payment. - VCare Nursing`;
-  const [smsRes, waRes] = await Promise.allSettled([
-    sendSms(mobile, smsBody),
-    sendPaymentRecorded(mobile, name, formattedAmount, formattedDate),
-  ]);
-  if (smsRes.status === 'rejected') console.error('[Payment] SMS failed:', smsRes.reason?.message);
-  if (waRes.status === 'rejected') console.error('[Payment] WhatsApp failed:', waRes.reason?.message);
-};
 const VALID_PAYMENT_METHODS = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
 
 function extractActorRole(role) {
@@ -283,6 +268,8 @@ const recordClientPayment = async (req, res) => {
           ]
         );
         const new_booking_id = bookingResult.rows[0].booking_id;
+        // Remember the created booking id so the receipt line item can resolve its code/patient.
+        alloc._booking_id = new_booking_id;
 
         const bptResult = await pgClient.query(
           `INSERT INTO booking_payment_tracking
@@ -380,22 +367,56 @@ const recordClientPayment = async (req, res) => {
       },
     }).catch(e => console.error('[ClientPayment] Activity log error:', e.message));
 
-    // Notify client of payment receipt (fire-and-forget)
+    // Generate a payment receipt (PDF stored on Cloudinary + tracked in DB).
+    // Delivery to the client over WhatsApp is a separate, admin-triggered action.
     ;(async () => {
       try {
-        const clientResult = await db.query(
-          `SELECT cp.full_name, u.mobile_number
-           FROM client_profiles cp
-           JOIN users u ON cp.user_id = u.user_id
-           WHERE cp.client_profile_id = $1`,
-          [client_id]
-        );
-        if (clientResult.rows.length > 0) {
-          const { full_name, mobile_number } = clientResult.rows[0];
-          await sendPaymentNotifications(mobile_number, full_name, parsedTotal, new Date());
+        const lineItems = [];
+        for (const alloc of allocations) {
+          const amt = parseFloat(alloc.amount);
+          if (alloc.type === 'WALLET') {
+            lineItems.push({
+              label: 'Wallet Top-up',
+              description: 'Credited to client wallet balance',
+              amount: amt,
+            });
+            continue;
+          }
+          const bId = alloc.type === 'NEW_BOOKING' ? alloc._booking_id : alloc.booking_id;
+          const info = await db.query(
+            `SELECT b.booking_code, b.service_type, pp.full_name AS patient_name
+             FROM bookings b
+             LEFT JOIN patient_profiles pp ON pp.patient_id = b.patient_id
+             WHERE b.booking_id = $1`,
+            [bId]
+          );
+          const row = info.rows[0] || {};
+          const prefix = alloc.type === 'NEW_BOOKING' ? 'New Booking' : 'Booking';
+          const descParts = [];
+          if (row.patient_name) descParts.push(`Patient: ${row.patient_name}`);
+          if (row.service_type) descParts.push(String(row.service_type).replace(/_/g, ' '));
+          lineItems.push({
+            label: `${prefix} ${row.booking_code || ''}`.trim(),
+            description: descParts.join(' · '),
+            amount: amt,
+          });
         }
+
+        await createPaymentReceipt({
+          client_id,
+          source_type: 'CLIENT_PAYMENT',
+          source_id: record_id,
+          total_amount: parsedTotal,
+          payment_method,
+          reference_number: reference_number || null,
+          cheque_number: cheque_number || null,
+          bank_account_id: bank_account_id || null,
+          payment_date: new Date(),
+          line_items: lineItems,
+          generated_by: actorUserId,
+        });
       } catch (e) {
-        console.error('[Payment] Notification error (recordClientPayment):', e.message);
+        console.error('[Receipt] Generation error (recordClientPayment):', e.message);
       }
     })();
 

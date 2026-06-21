@@ -6,6 +6,9 @@
 //   2. PENDING_APPROVAL  — client-submitted termination requests awaiting an admin decision.
 //   3. PREDICTION        — balance-driven forecasts (expiring soon / already negative),
 //      not yet a hard action, surfaced so admins can act before money runs out.
+//   4. ATTENDANCE        — SHIFT_BASED/VISITING bookings that are running today but whose
+//      staff in/out time has not been logged yet, so daily salary/invoice can't be
+//      confirmed. (LIVE_IN is auto-handled by the cron and never needs manual times.)
 
 const db = require('../config/db');
 const { dispatchScheduledAction } = require('../services/scheduledActions');
@@ -35,7 +38,7 @@ exports.getUpcomingEvents = async (req, res) => {
         const todayRes = await db.query(`SELECT (DATE(NOW() AT TIME ZONE 'Asia/Colombo'))::text AS d`);
         const today = todayRes.rows[0].d;
 
-        const [scheduledRes, pendingRes, predictionRes] = await Promise.all([
+        const [scheduledRes, pendingRes, predictionRes, attendanceRes] = await Promise.all([
             db.query(`
                 SELECT
                     sa.action_id, sa.action_type, sa.effective_date::text AS effective_date,
@@ -55,6 +58,7 @@ exports.getUpcomingEvents = async (req, res) => {
                     (sa.payload->>'staff_profile_id')::uuid
                 )
                 WHERE sa.status = 'SCHEDULED'
+                  AND b.status NOT IN ('TERMINATED', 'COMPLETED', 'CANCELLED')
                 ORDER BY sa.effective_date ASC
             `),
             db.query(`
@@ -69,6 +73,7 @@ exports.getUpcomingEvents = async (req, res) => {
                 LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
                 LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
                 WHERE st.status = 'PENDING'
+                  AND b.status NOT IN ('TERMINATED', 'COMPLETED', 'CANCELLED')
                 ORDER BY st.requested_end_date ASC
             `),
             db.query(`
@@ -93,6 +98,31 @@ exports.getUpcomingEvents = async (req, res) => {
                   AND ((COALESCE(bill.total_paid, 0) - COALESCE(bill.total_invoiced, 0)) / b.daily_rate) <= 1
                 ORDER BY balance_days_remaining ASC
             `),
+            // 4. ATTENDANCE — running SHIFT_BASED/VISITING bookings whose staff in/out time
+            //    for today hasn't been logged yet (so salary/invoice can't be confirmed).
+            //    LIVE_IN is excluded: the cron auto-records it with no in/out times.
+            db.query(`
+                SELECT
+                    bsa.assignment_id, bsa.booking_id,
+                    b.booking_code,
+                    c.full_name AS client_name,
+                    p.full_name AS patient_name,
+                    sp.full_name AS current_staff_name
+                FROM booking_staff_assignments bsa
+                JOIN bookings b ON bsa.booking_id = b.booking_id
+                JOIN staff_profiles sp ON bsa.staff_profile_id = sp.staff_profile_id
+                LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
+                LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+                LEFT JOIN staff_daily_attendance a
+                    ON a.assignment_id = bsa.assignment_id AND a.service_date = $1::date
+                WHERE b.status IN ('ACTIVE', 'OVERDUE')
+                  AND b.service_model IN ('SHIFT_BASED', 'VISITING')
+                  AND bsa.status = 'ACTIVE'
+                  AND bsa.service_start_date <= $1::date
+                  AND (bsa.service_end_date IS NULL OR bsa.service_end_date >= $1::date)
+                  AND (a.attendance_id IS NULL OR a.in_time IS NULL OR a.out_time IS NULL)
+                ORDER BY b.booking_code ASC
+            `, [today]),
         ]);
 
         const events = [];
@@ -151,6 +181,22 @@ exports.getUpcomingEvents = async (req, res) => {
                 effective_date: null,
                 status: isNegative ? 'NEGATIVE_BALANCE' : 'EXPIRING_SOON',
                 due_bucket: isNegative ? 'NEEDS_ACTION' : 'UPCOMING',
+            });
+        }
+
+        for (const row of attendanceRes.rows) {
+            events.push({
+                id: row.assignment_id,
+                source: 'ATTENDANCE',
+                action_type: 'ATTENDANCE_NEEDED',
+                booking_id: row.booking_id,
+                booking_code: row.booking_code,
+                client_name: row.client_name,
+                patient_name: row.patient_name,
+                current_staff_name: row.current_staff_name,
+                effective_date: today,
+                status: 'PENDING',
+                due_bucket: 'TODAY',
             });
         }
 

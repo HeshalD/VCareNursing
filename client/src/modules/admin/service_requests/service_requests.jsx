@@ -291,7 +291,7 @@ const ServiceRequests = () => {
                     <td className="px-4 py-3 align-top">
                       <div className="flex items-center gap-2 text-sm text-slate-600">
                         <Calendar className="w-3 h-3" />
-                        <span>{request.start_date ? new Date(request.start_date).toLocaleDateString() : 'Not set'}</span>
+                        <span>{request.start_date ? new Date(request.start_date).toLocaleDateString('en-GB') : 'Not set'}</span>
                       </div>
                     </td>
                     <td className="px-4 py-3 align-top">
@@ -317,7 +317,7 @@ const ServiceRequests = () => {
                         >
                           <Eye className="w-4 h-4" />
                         </button>
-                        {request.status === 'NEW_LEAD' && (
+                        {['NEW_LEAD', 'PENDING'].includes(request.status || 'PENDING') && (
                           <button
                             onClick={() => navigate(`/admin/quote-builder/${request.request_id}`)}
                             className="p-2 rounded-md bg-slate-50 hover:bg-slate-100 text-green-600 transition"
@@ -411,7 +411,7 @@ const ServiceRequests = () => {
                   <div>
                     <label className="text-sm text-slate-500">Start Date</label>
                     <p className="font-medium">
-                      {selectedRequest.start_date ? new Date(selectedRequest.start_date).toLocaleDateString() : 'Not set'}
+                      {selectedRequest.start_date ? new Date(selectedRequest.start_date).toLocaleDateString('en-GB') : 'Not set'}
                     </p>
                   </div>
                 </div>

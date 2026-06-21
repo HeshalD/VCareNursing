@@ -3,7 +3,8 @@ import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, Search, UserCheck, UserX, Home, User, Clock,
   MapPin, Phone, Mail, AlertCircle, Stethoscope, Calendar,
-  FileText, Star, ChevronDown, ChevronUp, BadgeCheck
+  FileText, Star, ChevronDown, ChevronUp, BadgeCheck,
+  Send, Check, Loader2, X, CheckCircle
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -47,6 +48,44 @@ const BookingStaffRosterPage = () => {
     booking?.preferred_staff_id ||
     booking?.preferred_staff?.staff_profile_id ||
     null;
+
+  // Service request this roster belongs to — needed to send candidate profiles to the client.
+  const requestId = request?.request_id || booking?.request_id || null;
+
+  // Candidate profiles already sent to the client for this service request (one-time per staff)
+  const [sentCandidateIds, setSentCandidateIds] = useState(new Set());
+  const [sendingCandidateId, setSendingCandidateId] = useState(null);
+  const [candidateNotice, setCandidateNotice] = useState(null); // { type: 'success' | 'error', text }
+
+  useEffect(() => {
+    if (!requestId) return;
+    (async () => {
+      try {
+        const res = await apiClient.getSentCandidates(requestId);
+        setSentCandidateIds(new Set((res.data || []).map((r) => r.staff_profile_id)));
+      } catch (err) {
+        console.error('Failed to load sent candidates:', err);
+      }
+    })();
+  }, [requestId]);
+
+  const handleSendCandidate = async (member) => {
+    if (!requestId) return;
+    setSendingCandidateId(member.staff_profile_id);
+    setCandidateNotice(null);
+    try {
+      await apiClient.sendCandidateProfile(requestId, member.staff_profile_id);
+      setSentCandidateIds((prev) => new Set(prev).add(member.staff_profile_id));
+      setCandidateNotice({ type: 'success', text: `${member.full_name}'s profile sent to ${request?.payer_name || booking?.client_name || 'the client'}.` });
+    } catch (err) {
+      if (/already been sent/i.test(err?.message || '')) {
+        setSentCandidateIds((prev) => new Set(prev).add(member.staff_profile_id));
+      }
+      setCandidateNotice({ type: 'error', text: err?.message || 'Failed to send candidate profile.' });
+    } finally {
+      setSendingCandidateId(null);
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -119,6 +158,20 @@ const BookingStaffRosterPage = () => {
     >
       {error && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>
+      )}
+
+      {candidateNotice && (
+        <div className={`mb-4 flex items-center gap-2 rounded-lg border px-4 py-3 text-sm ${
+          candidateNotice.type === 'success'
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+            : 'border-red-200 bg-red-50 text-red-800'
+        }`}>
+          {candidateNotice.type === 'success' ? <CheckCircle className="h-4 w-4 flex-shrink-0" /> : <AlertCircle className="h-4 w-4 flex-shrink-0" />}
+          <span className="flex-1">{candidateNotice.text}</span>
+          <button onClick={() => setCandidateNotice(null)} className="opacity-60 hover:opacity-100">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
       )}
 
       {/* ── Service Request Details ── */}
@@ -280,7 +333,7 @@ const BookingStaffRosterPage = () => {
       ) : (
         <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
           {/* Table header */}
-          <div className="hidden grid-cols-[2.5rem_1fr_10rem_8rem_8rem_7rem_8rem] items-center gap-4 border-b border-slate-100 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 lg:grid">
+          <div className="hidden grid-cols-[2.5rem_1fr_10rem_8rem_8rem_7rem_10rem] items-center gap-4 border-b border-slate-100 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 lg:grid">
             <span />
             <span>Staff Member</span>
             <span>Role</span>
@@ -303,7 +356,7 @@ const BookingStaffRosterPage = () => {
               return (
                 <li
                   key={member.staff_profile_id}
-                  className={`flex flex-col gap-4 px-5 py-4 transition-colors hover:bg-slate-50 lg:grid lg:grid-cols-[2.5rem_1fr_10rem_8rem_8rem_7rem_8rem] lg:items-center lg:gap-4 ${isPreferred ? 'bg-amber-50 hover:bg-amber-50' : ''}`}
+                  className={`flex flex-col gap-4 px-5 py-4 transition-colors hover:bg-slate-50 lg:grid lg:grid-cols-[2.5rem_1fr_10rem_8rem_8rem_7rem_10rem] lg:items-center lg:gap-4 ${isPreferred ? 'bg-amber-50 hover:bg-amber-50' : ''}`}
                 >
                   {/* Avatar */}
                   <div className="hidden lg:flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-bold text-slate-600 overflow-hidden">
@@ -384,7 +437,7 @@ const BookingStaffRosterPage = () => {
                   </div>
 
                   {/* Action */}
-                  <div className="flex justify-end">
+                  <div className="flex flex-col items-stretch gap-2 lg:items-end">
                     <button
                       onClick={() => selectStaff(member)}
                       className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
@@ -395,6 +448,28 @@ const BookingStaffRosterPage = () => {
                     >
                       Select
                     </button>
+                    {requestId && (
+                      sentCandidateIds.has(member.staff_profile_id) ? (
+                        <span
+                          className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700"
+                          title="This profile has already been sent to the client"
+                        >
+                          <Check className="h-3.5 w-3.5" /> Sent to client
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => handleSendCandidate(member)}
+                          disabled={sendingCandidateId === member.staff_profile_id}
+                          className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60 disabled:cursor-not-allowed"
+                          title="Send this candidate's profile to the client via WhatsApp"
+                        >
+                          {sendingCandidateId === member.staff_profile_id
+                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            : <Send className="h-3.5 w-3.5" />}
+                          Send to client
+                        </button>
+                      )
+                    )}
                   </div>
                 </li>
               );

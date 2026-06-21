@@ -389,6 +389,17 @@ class ApiClient {
 
   }
 
+  async getSentCandidates(requestId) {
+    return this.request(`/service-requests/${requestId}/sent-candidates`);
+  }
+
+  async sendCandidateProfile(requestId, staffProfileId) {
+    return this.request(`/service-requests/${requestId}/send-candidate`, {
+      method: 'POST',
+      body: JSON.stringify({ staff_profile_id: staffProfileId }),
+    });
+  }
+
   async updateServiceRequestStatus(requestId, status) {
     return this.request(`/service-requests/${requestId}/status`, {
       method: 'PUT',
@@ -438,6 +449,33 @@ class ApiClient {
 
   async getBookingAssignments(bookingId) {
     return this.request(`/assignments/${bookingId}/assignments`);
+  }
+
+  // ── Salesperson crediting ──
+  async getSalespersons() {
+    return this.request('/salespersons');
+  }
+
+  async getBookingSalesperson(bookingId) {
+    return this.request(`/salespersons/booking/${bookingId}`);
+  }
+
+  async getSalespersonBookings(salespersonId) {
+    return this.request(`/salespersons/${salespersonId}/bookings`);
+  }
+
+  async creditBookingSalesperson(bookingId, salespersonId) {
+    return this.request(`/salespersons/booking/${bookingId}/credit`, {
+      method: 'POST',
+      body: JSON.stringify({ salesperson_id: salespersonId }),
+    });
+  }
+
+  async switchBookingSalesperson(bookingId, salespersonId, switchReason = null) {
+    return this.request(`/salespersons/booking/${bookingId}/switch`, {
+      method: 'PUT',
+      body: JSON.stringify({ salesperson_id: salespersonId, switch_reason: switchReason }),
+    });
   }
 
   async recordQuotePayment(quoteId, paymentData, paymentSlipFile = null) {
@@ -667,10 +705,36 @@ class ApiClient {
     return this.request(`/staff/applications/${applicationId}`);
   }
 
-  async updateApplicationDetails(applicationId, data) {
+  async updateApplicationDetails(applicationId, data, profilePictureFile = null) {
+    const formData = new FormData();
+    Object.keys(data).forEach(key => {
+      if (key === 'applied_roles' && Array.isArray(data[key])) {
+        formData.append(key, JSON.stringify(data[key]));
+      } else {
+        formData.append(key, data[key] ?? '');
+      }
+    });
+    if (profilePictureFile) {
+      formData.append('profile_picture', profilePictureFile);
+    }
+
     return this.request(`/staff/applications/${applicationId}`, {
       method: 'PUT',
-      body: JSON.stringify(data),
+      headers: {
+        // Let the browser set Content-Type with the multipart boundary
+        ...(this.token && { Authorization: `Bearer ${this.token}` }),
+      },
+      body: formData,
+    });
+  }
+
+  async getNextStaffCode() {
+    return this.request('/staff/next-staff-code');
+  }
+
+  async sendApplicationAgreement(applicationId) {
+    return this.request(`/staff/applications/${applicationId}/send-agreement`, {
+      method: 'POST',
     });
   }
 
@@ -938,6 +1002,30 @@ class ApiClient {
     });
   }
 
+  async getStaffAdminNotes(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/admin-notes`);
+  }
+
+  async createStaffAdminNote(staffProfileId, note) {
+    return this.request(`/staff/${staffProfileId}/admin-notes`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    });
+  }
+
+  async updateStaffAdminNote(staffProfileId, noteId, note) {
+    return this.request(`/staff/${staffProfileId}/admin-notes/${noteId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ note }),
+    });
+  }
+
+  async deleteStaffAdminNote(staffProfileId, noteId) {
+    return this.request(`/staff/${staffProfileId}/admin-notes/${noteId}`, {
+      method: 'DELETE',
+    });
+  }
+
   async deactivateStaffAccount(staffProfileId) {
     return this.request(`/staff/${staffProfileId}/deactivate`, {
       method: 'PATCH',
@@ -1035,6 +1123,24 @@ class ApiClient {
 
   async getBookingDailyInvoices(bookingId) {
     return this.request(`/bookings/${bookingId}/daily-invoices`);
+  }
+
+  // ── Payment receipts ──────────────────────────────────────────────
+  async getAllReceipts(filters = {}) {
+    const queryParams = new URLSearchParams(filters).toString();
+    return this.request(queryParams ? `/payment-receipts?${queryParams}` : '/payment-receipts');
+  }
+
+  async getBookingReceipts(bookingId) {
+    return this.request(`/payment-receipts/booking/${bookingId}`);
+  }
+
+  async getClientReceipts(clientId) {
+    return this.request(`/payment-receipts/client/${clientId}`);
+  }
+
+  async sendPaymentReceipt(receiptId) {
+    return this.request(`/payment-receipts/${receiptId}/send`, { method: 'POST' });
   }
 
   async confirmBookingDailyInvoice(bookingId, payload) {

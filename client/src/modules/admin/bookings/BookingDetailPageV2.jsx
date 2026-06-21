@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, ArrowLeft, CheckCircle, Download, DollarSign,
   Loader2, Phone, RefreshCw, Repeat2, Search, ShieldCheck,
-  Upload, User, Users, Wallet, XCircle,
+  Upload, User, Users, Wallet, XCircle, Briefcase, History,
 } from 'lucide-react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
@@ -21,6 +21,7 @@ const moneyFmt = new Intl.NumberFormat('en-LK', { style: 'currency', currency: '
 const formatMoney  = (v) => moneyFmt.format(Number(v || 0));
 const formatDate   = (v) => { if (!v) return '-'; const d = new Date(v); return isNaN(d) ? '-' : d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }); };
 const formatDT     = (v) => { if (!v) return '-'; const d = new Date(v); return isNaN(d) ? '-' : d.toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
+const formatTime   = (t) => { if (!t) return '-'; const m = String(t).match(/^(\d{1,2}):(\d{2})/); if (!m) return '-'; let h = parseInt(m[1], 10); const p = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return `${h}:${m[2]} ${p}`; };
 const toDTLocal    = (value = new Date()) => { const d = value instanceof Date ? value : new Date(value); if (isNaN(d)) return ''; return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
 const toDateInput  = (value = new Date()) => { const d = value instanceof Date ? value : new Date(value); return isNaN(d) ? '' : d.toISOString().slice(0, 10); };
 const addDays      = (date, n) => { const d = new Date(date); d.setDate(d.getDate() + n); return d; };
@@ -97,6 +98,10 @@ const BookingDetailPageV2 = () => {
   const [paymentSlipFile, setPaymentSlipFile] = useState(null);
   const [paymentSubmitting, setPaymentSubmitting] = useState(false);
 
+  // payment receipts (keyed by booking_payment_id)
+  const [receipts, setReceipts]               = useState([]);
+  const [receiptBusy, setReceiptBusy]         = useState('');
+
   // wallet payoff
   const [walletPayoffAmount, setWalletPayoffAmount]       = useState('');
   const [walletPayoffNotes, setWalletPayoffNotes]         = useState('');
@@ -114,6 +119,14 @@ const BookingDetailPageV2 = () => {
   const [swapModalError, setSwapModalError]           = useState('');
   const [swapModalPage, setSwapModalPage]             = useState(1);
   const [swapModalDesignation, setSwapModalDesignation] = useState('');
+
+  // salesperson
+  const [salesData, setSalesData]                 = useState(null); // { current, origin, history }
+  const [salespersonsList, setSalespersonsList]   = useState([]);
+  const [salesActionId, setSalesActionId]         = useState('');
+  const [salesActionReason, setSalesActionReason] = useState('');
+  const [salesActionBusy, setSalesActionBusy]     = useState(false);
+  const [salesActionError, setSalesActionError]   = useState('');
 
   // settlement / actions
   const [actualEndTime, setActualEndTime]   = useState(toDTLocal(new Date()));
@@ -169,6 +182,13 @@ const BookingDetailPageV2 = () => {
     reference: p.reference_number || p.reference || p.receipt_no || '-',
     notes: p.notes || '-', slipUrl: p.slip_url || null,
   }));
+
+  // Map each payment row (booking_payment_id) to its generated receipt, if any.
+  const receiptByPayment = useMemo(() => {
+    const m = {};
+    receipts.forEach(r => { if (r.booking_payment_id) m[r.booking_payment_id] = r; });
+    return m;
+  }, [receipts]);
 
   const normStaffHistory = staffHistory.map(r => ({
     id: r.assignment_id || r.id, name: r.full_name || r.staff_name || '-',
@@ -251,7 +271,7 @@ const BookingDetailPageV2 = () => {
 
   // ── effects ──────────────────────────────────────────────────────────────
 
-  useEffect(() => { if (adminToken && bookingId) { fetchDetail(); fetchDailyRecords(); } }, [adminToken, bookingId]);
+  useEffect(() => { if (adminToken && bookingId) { fetchDetail(); fetchDailyRecords(); fetchSalesperson(); fetchReceipts(); } }, [adminToken, bookingId]);
   useEffect(() => { if (detail) setSettlementAction(remainingBalance > 0 ? 'WALLET_DEPOSIT' : 'NO_REFUND'); }, [detail, remainingBalance]);
   useEffect(() => {
     if (!adminToken) return;
@@ -262,6 +282,11 @@ const BookingDetailPageV2 = () => {
     if (!adminToken || activeSection !== 'staff') return;
     apiClient.setToken(adminToken);
     apiClient.getAllStaff({ status: 'AVAILABLE', limit: 1000, page: 1 }).then(r => setAvailableStaff(r?.data || [])).catch(() => {});
+  }, [adminToken, activeSection]);
+  useEffect(() => {
+    if (!adminToken || activeSection !== 'salesperson') return;
+    apiClient.setToken(adminToken);
+    apiClient.getSalespersons().then(r => setSalespersonsList(r?.data || [])).catch(() => {});
   }, [adminToken, activeSection]);
 
   // ── actions ──────────────────────────────────────────────────────────────
@@ -280,6 +305,27 @@ const BookingDetailPageV2 = () => {
     finally { setLoading(false); }
   };
 
+  const fetchReceipts = async () => {
+    try {
+      if (!adminToken) return;
+      apiClient.setToken(adminToken);
+      const res = await apiClient.getBookingReceipts(bookingId);
+      setReceipts(Array.isArray(res?.receipts) ? res.receipts : []);
+    } catch {
+      // non-fatal — payments still render without receipt links
+    }
+  };
+
+  const handleSendReceipt = async (receiptId) => {
+    try {
+      setReceiptBusy(receiptId); setError('');
+      apiClient.setToken(adminToken);
+      await apiClient.sendPaymentReceipt(receiptId);
+      await fetchReceipts();
+    } catch (err) { setError(err?.message || 'Failed to send receipt'); }
+    finally { setReceiptBusy(''); }
+  };
+
   const fetchDailyRecords = async () => {
     try {
       apiClient.setToken(adminToken);
@@ -291,6 +337,36 @@ const BookingDetailPageV2 = () => {
       setDailyInvoiceRecords(Array.isArray(invRes?.data) ? invRes.data : []);
     } catch {
       // non-fatal — the timeline still renders without these
+    }
+  };
+
+  const fetchSalesperson = async () => {
+    try {
+      apiClient.setToken(adminToken);
+      const res = await apiClient.getBookingSalesperson(bookingId);
+      setSalesData(res?.data || null);
+    } catch {
+      setSalesData(null);
+    }
+  };
+
+  // Credit a salesperson (if none yet) or switch the current one (pointer-only).
+  const handleSalespersonAssign = async () => {
+    if (!salesActionId) return;
+    setSalesActionBusy(true); setSalesActionError('');
+    try {
+      apiClient.setToken(adminToken);
+      if (salesData?.current) {
+        await apiClient.switchBookingSalesperson(bookingId, salesActionId, salesActionReason.trim() || null);
+      } else {
+        await apiClient.creditBookingSalesperson(bookingId, salesActionId);
+      }
+      setSalesActionId(''); setSalesActionReason('');
+      await fetchSalesperson();
+    } catch (err) {
+      setSalesActionError(err?.message || 'Failed to update salesperson');
+    } finally {
+      setSalesActionBusy(false);
     }
   };
 
@@ -392,7 +468,11 @@ const BookingDetailPageV2 = () => {
         bank_account_id: paymentForm.bank_account_id || null, cheque_number: paymentForm.cheque_number || null,
         cheque_date: paymentForm.cheque_date || null, reference_number: paymentForm.reference_number || null, notes: paymentForm.notes || null,
       }, paymentSlipFile);
-      setPaymentForm(initialPaymentForm); setPaymentSlipFile(null); await fetchDetail();
+      setPaymentForm(initialPaymentForm); setPaymentSlipFile(null);
+      await fetchDetail();
+      // Receipt is generated asynchronously server-side; refetch shortly after.
+      await fetchReceipts();
+      setTimeout(fetchReceipts, 2500);
     } catch (err) { setError(err?.message || 'Failed to record payment'); }
     finally { setPaymentSubmitting(false); }
   };
@@ -462,6 +542,7 @@ const BookingDetailPageV2 = () => {
     { id: 'overview',    label: 'Overview' },
     { id: 'payments',    label: 'Payments' },
     { id: 'staff',       label: 'Staff & Swaps' },
+    { id: 'salesperson', label: 'Salesperson' },
     { id: 'client',      label: 'Client & Care' },
     { id: 'settlement',  label: 'Settlement' },
     { id: 'termination', label: 'Termination' },
@@ -575,6 +656,10 @@ const BookingDetailPageV2 = () => {
                 </span>
               </div>
               <div style={{ fontSize: 15, fontWeight: 600, color: '#3A362F', marginBottom: 6 }}>{bookingSummary.service_model || '—'}</div>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#EEF2FF', color: '#4338CA', border: '1px solid #E0E7FF', borderRadius: 999, padding: '5px 11px', fontSize: 12.5, fontWeight: 700, marginBottom: 8 }}>
+                <Briefcase style={{ width: 13, height: 13 }} />
+                Salesperson: {salesData?.current?.salesperson_name || 'Unassigned'}
+              </div>
               <p style={{ margin: 0, fontSize: 14, color: '#6F6A60' }}>
                 {[
                   bookingSummary.booking_code,
@@ -724,6 +809,7 @@ const BookingDetailPageV2 = () => {
                     <Field label="Service type"  value={bookingSummary.service_type  || '-'} />
                     <Field label="Service model" value={bookingSummary.service_model || '-'} />
                     <Field label="Start date"    value={formatDate(bookingSummary.start_date)} />
+                    <Field label="Start time"    value={formatTime(bookingSummary.service_start_time)} />
                     <Field label="Planned end"   value={formatDate(bookingSummary.scheduled_end_time)} />
                     {bookingSummary.actual_end_time && <Field label="Actual end" value={formatDT(bookingSummary.actual_end_time)} />}
                     <Field label="Created"       value={formatDT(bookingSummary.created_at)} />
@@ -828,11 +914,14 @@ const BookingDetailPageV2 = () => {
                     <Empty icon={DollarSign} text="No payment records for this booking." />
                   ) : (
                     <>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.1fr 1fr 0.9fr', gap: 10, paddingBottom: 9, fontSize: 11, fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase', color: '#A39D91', borderBottom: '1px solid #EFEAE0' }}>
-                        <span>Date</span><span>Amount</span><span>Method</span><span>Reference</span>
+                      <div style={{ display: 'grid', gridTemplateColumns: '0.95fr 0.9fr 0.8fr 0.75fr 1.25fr', gap: 10, paddingBottom: 9, fontSize: 11, fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase', color: '#A39D91', borderBottom: '1px solid #EFEAE0' }}>
+                        <span>Date</span><span>Amount</span><span>Method</span><span>Reference</span><span>Receipt</span>
                       </div>
-                      {normPayments.map((p, i) => (
-                        <div key={p.id || i} style={{ display: 'grid', gridTemplateColumns: '1fr 1.1fr 1fr 0.9fr', gap: 10, padding: '13px 0', borderBottom: '1px solid #F2EEE6', alignItems: 'center' }}>
+                      {normPayments.map((p, i) => {
+                        const rcpt = receiptByPayment[p.id];
+                        const rcptBusy = rcpt && receiptBusy === rcpt.receipt_id;
+                        return (
+                        <div key={p.id || i} style={{ display: 'grid', gridTemplateColumns: '0.95fr 0.9fr 0.8fr 0.75fr 1.25fr', gap: 10, padding: '13px 0', borderBottom: '1px solid #F2EEE6', alignItems: 'center' }}>
                           <div>
                             <div style={{ fontSize: 13.5, fontWeight: 600, color: '#2A2722' }}>{formatDate(p.date)}</div>
                             {p.notes !== '-' && <div style={{ fontSize: 11.5, color: '#A39D91', marginTop: 2 }}>{p.notes}</div>}
@@ -843,8 +932,35 @@ const BookingDetailPageV2 = () => {
                             {p.reference}
                             {p.slipUrl && <a href={p.slipUrl} target="_blank" rel="noreferrer" style={{ marginLeft: 6, color: '#3F77B5', fontSize: 11 }}>slip</a>}
                           </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                            {!rcpt ? (
+                              <span style={{ fontSize: 11.5, color: '#B8B2A6' }}>—</span>
+                            ) : (
+                              <>
+                                {rcpt.pdf_url ? (
+                                  <a href={rcpt.pdf_url} target="_blank" rel="noreferrer"
+                                     title={rcpt.receipt_code}
+                                     style={{ fontSize: 11.5, fontWeight: 600, color: '#137A6B', textDecoration: 'none', border: '1px solid #CDE5DF', borderRadius: 7, padding: '3px 8px', background: '#F2FAF8' }}>
+                                    Download
+                                  </a>
+                                ) : (
+                                  <span style={{ fontSize: 11, color: '#B8862F' }}>Generating…</span>
+                                )}
+                                <button type="button" disabled={rcptBusy}
+                                  onClick={() => handleSendReceipt(rcpt.receipt_id)}
+                                  style={{ fontSize: 11.5, fontWeight: 700, fontFamily: 'inherit', color: '#fff', background: rcptBusy ? '#9CC6BC' : '#137A6B', border: 'none', borderRadius: 7, padding: '4px 9px', cursor: rcptBusy ? 'not-allowed' : 'pointer' }}>
+                                  {rcptBusy ? 'Sending…' : rcpt.whatsapp_sent ? 'Resend' : 'Send'}
+                                </button>
+                                {rcpt.whatsapp_sent && (
+                                  <span title={rcpt.whatsapp_sent_at ? `Sent ${formatDate(rcpt.whatsapp_sent_at)}` : 'Sent'}
+                                        style={{ fontSize: 10.5, fontWeight: 700, color: '#2F8A5B' }}>✓ Sent</span>
+                                )}
+                              </>
+                            )}
+                          </div>
                         </div>
-                      ))}
+                        );
+                      })}
                       <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 12, marginTop: 2, borderTop: '1px solid #EFEAE0' }}>
                         <span style={{ fontSize: 13, color: '#6F6A60' }}>{normPayments.length} payment{normPayments.length !== 1 ? 's' : ''}</span>
                         <span style={{ fontSize: 13, fontWeight: 800, color: '#2A2722' }}>{formatMoney(totalPaid)}</span>
@@ -1042,6 +1158,119 @@ const BookingDetailPageV2 = () => {
                         <div style={{ fontSize: 12, color: '#A39D91', marginBottom: 5 }}>{formatDT(swap.swappedAt)}</div>
                         <div style={{ fontSize: 13, color: '#5A554B' }}>{swap.reason || 'No reason provided.'}</div>
                         {swap.swappedByMobile && <div style={{ fontSize: 12, color: '#A39D91', marginTop: 5 }}>Swapped by {swap.swappedByMobile}</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Card>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════
+              TAB: SALESPERSON
+          ══════════════════════════════════════════════════════ */}
+          {activeSection === 'salesperson' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {/* Current salesperson + assign/switch control */}
+              <Card>
+                <CardTitle>Currently credited salesperson</CardTitle>
+                {salesData?.current ? (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 13, marginBottom: 16 }}>
+                      <div style={{ width: 44, height: 44, borderRadius: 12, background: '#EEF2FF', color: '#4338CA', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 800, flexShrink: 0 }}>
+                        {initials(salesData.current.salesperson_name)}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 15, fontWeight: 700, color: '#2A2722' }}>{salesData.current.salesperson_name}</span>
+                          {salesData.current.is_origin
+                            ? <Pill tone="violet">Brought in</Pill>
+                            : <Pill tone="slate">Switched in</Pill>}
+                        </div>
+                        <div style={{ fontSize: 12.5, color: '#6F6A60', marginTop: 2 }}>{salesData.current.salesperson_role || 'Salesperson'}</div>
+                      </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 13 }}>
+                      <Field label="Brought in by" value={salesData.origin?.salesperson_name || '—'} />
+                      <Field label="Amount credited" value={formatMoney(salesData.origin?.credited_amount || 0)} />
+                      <Field label="Assigned on" value={formatDate(salesData.current.assigned_at)} />
+                    </div>
+                  </>
+                ) : (
+                  <Empty icon={Briefcase} text="No salesperson is credited for this booking yet." />
+                )}
+
+                {!isTerminated && (
+                  <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid #EFEAE0' }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#2A2722', marginBottom: 4 }}>
+                      {salesData?.current ? 'Switch current salesperson' : 'Credit a salesperson'}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#9A9488', marginBottom: 10 }}>
+                      {salesData?.current
+                        ? 'Switching only changes who is currently assigned. The sales amount and booking count stay permanently with the salesperson who brought the booking in.'
+                        : 'Credits the booking’s paid amount and a booking count to the selected salesperson.'}
+                    </div>
+                    {salesActionError && (
+                      <div style={{ background: '#FBEAE7', border: '1px solid #F0CFC9', color: '#9A372C', borderRadius: 10, padding: '9px 12px', fontSize: 13, marginBottom: 10 }}>
+                        {salesActionError}
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <select
+                        value={salesActionId}
+                        onChange={(e) => setSalesActionId(e.target.value)}
+                        style={{ flex: 1, minWidth: 200, border: '1px solid #E7E1D6', borderRadius: 10, padding: '9px 12px', fontFamily: 'inherit', fontSize: 13.5, color: '#2A2722', background: '#fff' }}
+                      >
+                        <option value="">Select salesperson…</option>
+                        {salespersonsList
+                          .filter((sp) => sp.id !== salesData?.current?.salesperson_id)
+                          .map((sp) => (
+                            <option key={sp.id} value={sp.id}>{sp.full_name}{sp.role ? ` — ${sp.role}` : ''}</option>
+                          ))}
+                      </select>
+                      {salesData?.current && (
+                        <input
+                          type="text"
+                          value={salesActionReason}
+                          onChange={(e) => setSalesActionReason(e.target.value)}
+                          placeholder="Reason (optional)"
+                          style={{ flex: 1, minWidth: 200, border: '1px solid #E7E1D6', borderRadius: 10, padding: '9px 12px', fontFamily: 'inherit', fontSize: 13.5, color: '#2A2722' }}
+                        />
+                      )}
+                      <button
+                        onClick={handleSalespersonAssign}
+                        disabled={!salesActionId || salesActionBusy}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: !salesActionId || salesActionBusy ? '#C7C2B8' : '#4338CA', border: 'none', borderRadius: 10, padding: '10px 16px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', cursor: !salesActionId || salesActionBusy ? 'not-allowed' : 'pointer', flexShrink: 0 }}
+                      >
+                        {salesActionBusy ? <Loader2 style={{ width: 14, height: 14 }} className="animate-spin" /> : <Briefcase style={{ width: 14, height: 14 }} />}
+                        {salesData?.current ? 'Switch' : 'Credit'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </Card>
+
+              {/* Salesperson history */}
+              <Card>
+                <CardTitle>Salesperson history</CardTitle>
+                {!salesData || salesData.history.length === 0 ? (
+                  <Empty icon={History} text="No salesperson history for this booking." />
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+                    {salesData.history.map((h) => (
+                      <div key={h.id} style={{ background: '#FBF9F4', border: '1px solid #EFEAE0', borderRadius: 12, padding: '14px 16px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 6 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>{h.salesperson_name}</span>
+                            <Pill tone={h.action === 'CREDITED' ? 'violet' : 'slate'}>{h.action}</Pill>
+                            {h.is_current && <Pill tone="green">Current</Pill>}
+                          </div>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: '#2A2722' }}>
+                            {h.is_origin ? formatMoney(h.credited_amount) : '—'}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 12, color: '#A39D91' }}>{formatDT(h.assigned_at)}</div>
+                        {h.switch_reason && <div style={{ fontSize: 13, color: '#5A554B', marginTop: 5 }}>{h.switch_reason}</div>}
                       </div>
                     ))}
                   </div>

@@ -20,10 +20,12 @@ const staffAssignmentRoutes = require('./routes/staffAssignmentRoutes');
 const staffChangeRequestRoutes = require('./routes/staffChangeRequestRoutes');
 const activityLogRoutes = require('./routes/activityLogRoutes');
 const clientPaymentRoutes = require('./routes/clientPaymentRoutes');
+const receiptRoutes = require('./routes/receiptRoutes');
 const transactionRoutes = require('./routes/transactionRoutes');
 const permissionsRoutes = require('./routes/permissionsRoutes');
 const internalStaffRoutes = require('./routes/internalStaffRoutes');
 const scheduledActionsRoutes = require('./routes/scheduledActionsRoutes');
+const salespersonRoutes = require('./routes/salespersonRoutes');
 
 const startDailyInvoicing = require('./cron/dailyInvoicing');
 
@@ -105,10 +107,12 @@ app.use('/api/assignments', staffAssignmentRoutes);
 app.use('/api/staff-change-requests', staffChangeRequestRoutes);
 app.use('/api/activity-log', activityLogRoutes);
 app.use('/api/client-payments', clientPaymentRoutes);
+app.use('/api/payment-receipts', receiptRoutes);
 app.use('/api/transactions', transactionRoutes);
 app.use('/api/permissions', permissionsRoutes);
 app.use('/api/internal-staff', internalStaffRoutes);
 app.use('/api/scheduled-actions', scheduledActionsRoutes);
+app.use('/api/salespersons', salespersonRoutes);
 
 // Health check endpoint for Render
 app.get('/health', (req, res) => {

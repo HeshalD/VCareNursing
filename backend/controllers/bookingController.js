@@ -175,22 +175,36 @@ const finalizeBookingState = async (req, res, nextStatus, actorLabel, includeTer
             [nextStatus, endTime, booking_id]
         );
 
-        // Close the active staff assignment with the booking's end date
+        // Free any staff tied to this booking. We key off the assignment record,
+        // not bookings.assigned_staff_id, because a future-dated SCHEDULED assignment
+        // reserves the staff (current_status = 'ASSIGNED') without ever setting
+        // assigned_staff_id — that only happens when the cron activates it.
+        await client.query(
+            `UPDATE staff_profiles sp
+             SET current_status = 'AVAILABLE'
+             FROM booking_staff_assignments bsa
+             WHERE bsa.booking_id = $1
+               AND bsa.status IN ('ACTIVE', 'SCHEDULED')
+               AND sp.staff_profile_id = bsa.staff_profile_id`,
+            [booking_id]
+        );
+
+        // Close those assignments (ACTIVE and not-yet-started SCHEDULED) with the end date.
         await client.query(
             `UPDATE booking_staff_assignments
              SET service_end_date = $1, status = 'COMPLETED'
-             WHERE booking_id = $2 AND status = 'ACTIVE'`,
+             WHERE booking_id = $2 AND status IN ('ACTIVE', 'SCHEDULED')`,
             [endTime.toISOString().split('T')[0], booking_id]
         );
 
-        if (booking.assigned_staff_id) {
-            await client.query(
-                `UPDATE staff_profiles
-                 SET current_status = 'AVAILABLE'
-                 WHERE staff_profile_id = $1`,
-                [booking.assigned_staff_id]
-            );
-        }
+        // Cancel any pending future-assignment activation so the cron can't
+        // re-reserve staff for a booking that has now ended.
+        await client.query(
+            `UPDATE scheduled_actions
+             SET status = 'CANCELLED'
+             WHERE booking_id = $1 AND action_type = 'ASSIGNMENT_START' AND status = 'SCHEDULED'`,
+            [booking_id]
+        );
 
         if (includeTerminationLog) {
             const pendingTermRes = await client.query(
@@ -790,7 +804,13 @@ exports.getByBookingID = async (req, res) => {
                 s.full_name as staff_name,
                 us.mobile_number as staff_mobile,
                 s.profile_picture_url,
-                us.email as staff_email
+                us.email as staff_email,
+                (SELECT bsa.service_start_time
+                   FROM booking_staff_assignments bsa
+                   WHERE bsa.booking_id = b.booking_id
+                     AND bsa.status IN ('ACTIVE', 'SCHEDULED')
+                   ORDER BY bsa.service_start_date DESC
+                   LIMIT 1) as service_start_time
             FROM bookings b
             LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
             LEFT JOIN users uc ON c.user_id = uc.user_id
@@ -875,7 +895,13 @@ exports.getAdminBookingDetail = async (req, res) => {
             q.total_amount,
             q.daily_rate as quote_daily_rate,
             q.qty_days,
-            q.registration_fee
+            q.registration_fee,
+            (SELECT bsa.service_start_time
+               FROM booking_staff_assignments bsa
+               WHERE bsa.booking_id = b.booking_id
+                 AND bsa.status IN ('ACTIVE', 'SCHEDULED')
+               ORDER BY bsa.service_start_date DESC
+               LIMIT 1) as service_start_time
         FROM bookings b
         LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
         LEFT JOIN users uc ON c.user_id = uc.user_id
@@ -917,6 +943,7 @@ exports.getAdminBookingDetail = async (req, res) => {
                     bsa.staff_profile_id,
                     bsa.daily_rate,
                     bsa.service_start_date,
+                    bsa.service_start_time,
                     bsa.service_end_date,
                     bsa.amount_allocated,
                     bsa.status,
@@ -1009,6 +1036,7 @@ exports.getAdminBookingDetail = async (req, res) => {
                     service_mode: booking.service_mode,
                     preferred_gender: booking.preferred_gender,
                     start_date: booking.start_date,
+                    service_start_time: booking.service_start_time,
                     scheduled_end_time: booking.scheduled_end_time,
                     actual_end_time: booking.actual_end_time,
                     created_at: booking.created_at,
@@ -1914,14 +1942,36 @@ exports.forceStopBooking = async (req, res) => {
             [booking_id, officialEndDate]
         );
         // 4. Free up the Staff Member!
-        if (booking.assigned_staff_id) {
-            await client.query(
-                `UPDATE staff_profiles 
-                 SET current_status = 'AVAILABLE' 
-                 WHERE staff_profile_id = $1`,
-                [booking.assigned_staff_id]
-            );
-        }
+        // Key off the assignment record, not bookings.assigned_staff_id: a future-dated
+        // SCHEDULED assignment reserves the staff (current_status = 'ASSIGNED') without
+        // ever setting assigned_staff_id, so terminating before the start date would
+        // otherwise strand the staff member as ASSIGNED forever.
+        await client.query(
+            `UPDATE staff_profiles sp
+             SET current_status = 'AVAILABLE'
+             FROM booking_staff_assignments bsa
+             WHERE bsa.booking_id = $1
+               AND bsa.status IN ('ACTIVE', 'SCHEDULED')
+               AND sp.staff_profile_id = bsa.staff_profile_id`,
+            [booking_id]
+        );
+
+        // Close those assignments (ACTIVE and not-yet-started SCHEDULED) with the end date.
+        await client.query(
+            `UPDATE booking_staff_assignments
+             SET service_end_date = $1, status = 'COMPLETED'
+             WHERE booking_id = $2 AND status IN ('ACTIVE', 'SCHEDULED')`,
+            [officialEndDate.toISOString().split('T')[0], booking_id]
+        );
+
+        // Cancel any pending future-assignment activation so the cron can't
+        // re-reserve staff for a booking that has now ended.
+        await client.query(
+            `UPDATE scheduled_actions
+             SET status = 'CANCELLED'
+             WHERE booking_id = $1 AND action_type = 'ASSIGNMENT_START' AND status = 'SCHEDULED'`,
+            [booking_id]
+        );
 
         // =========================================================
         // 5. FINANCIAL SETTLEMENT ENGINE GOES HERE

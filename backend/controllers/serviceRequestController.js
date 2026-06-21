@@ -1,7 +1,7 @@
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
 const { sendSms } = require('../utils/sms');
-const { sendServiceRequestConfirmed } = require('../utils/metaWhatsapp');
+const { sendServiceRequestConfirmed, sendCandidateProfile } = require('../utils/metaWhatsapp');
 
 const formatServiceType = (type) => {
     if (!type) return 'our services';
@@ -667,5 +667,108 @@ exports.getClientServiceRequestsWithPayments = async (req, res) => {
             status: 'error',
             message: 'Failed to fetch service requests with payments'
         });
+    }
+};
+
+// List staff profiles already sent to the client as candidates for a service request.
+exports.getSentCandidates = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const result = await db.query(
+            `SELECT staff_profile_id, sent_at FROM service_request_sent_candidates WHERE request_id = $1`,
+            [id]
+        );
+        res.status(200).json({ status: 'success', data: result.rows });
+    } catch (error) {
+        console.error('Error fetching sent candidates:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to fetch sent candidates' });
+    }
+};
+
+// Send a staff member's profile to the client as a candidate for a service request, via WhatsApp.
+// A given staff profile can be sent only once per service request (enforced by a UNIQUE constraint).
+exports.sendCandidateProfile = async (req, res) => {
+    const { id } = req.params; // service request id
+    const { staff_profile_id } = req.body;
+
+    if (!staff_profile_id) {
+        return res.status(400).json({ status: 'error', message: 'staff_profile_id is required' });
+    }
+
+    try {
+        const srRes = await db.query(
+            `SELECT request_id, payer_name, payer_mobile, patient_name FROM service_requests WHERE request_id = $1`,
+            [id]
+        );
+        if (!srRes.rows.length) {
+            return res.status(404).json({ status: 'error', message: 'Service request not found' });
+        }
+        const sr = srRes.rows[0];
+
+        if (!sr.payer_mobile) {
+            return res.status(400).json({ status: 'error', message: 'This service request has no client mobile number on file.' });
+        }
+
+        const staffRes = await db.query(
+            `SELECT staff_profile_id, full_name, designation, profile_picture_url FROM staff_profiles WHERE staff_profile_id = $1`,
+            [staff_profile_id]
+        );
+        if (!staffRes.rows.length) {
+            return res.status(404).json({ status: 'error', message: 'Staff profile not found' });
+        }
+        const staff = staffRes.rows[0];
+
+        // Enforce one-time send per (service request, staff) before hitting WhatsApp.
+        const dup = await db.query(
+            `SELECT 1 FROM service_request_sent_candidates WHERE request_id = $1 AND staff_profile_id = $2`,
+            [id, staff_profile_id]
+        );
+        if (dup.rows.length) {
+            return res.status(409).json({ status: 'error', message: `${staff.full_name}'s profile has already been sent to this client for this request.` });
+        }
+
+        // The profile link is delivered via the template's dynamic URL button — we pass only the
+        // staff_profile_id suffix; the base URL is configured on the Meta template.
+        await sendCandidateProfile(
+            sr.payer_mobile,
+            sr.payer_name || 'there',
+            sr.patient_name || 'your patient',
+            staff.full_name,
+            staff.designation,
+            staff.staff_profile_id
+        );
+
+        // Record the send only after WhatsApp succeeds.
+        const inserted = await db.query(
+            `INSERT INTO service_request_sent_candidates (request_id, staff_profile_id, sent_by)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (request_id, staff_profile_id) DO NOTHING
+             RETURNING staff_profile_id, sent_at`,
+            [id, staff_profile_id, req.user.user_id]
+        );
+
+        try {
+            const actorName = await getActorName(req.user.user_id);
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: extractActorRole(req.user.role),
+                actionType: 'CANDIDATE_PROFILE_SENT',
+                entityType: 'SERVICE_REQUEST',
+                entityId: String(id),
+                details: { staff_name: staff.full_name, staff_profile_id, client_name: sr.payer_name },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (send candidate):', logErr.message);
+        }
+
+        res.status(200).json({
+            status: 'success',
+            message: `${staff.full_name}'s profile sent to ${sr.payer_name || 'the client'} on WhatsApp.`,
+            data: inserted.rows[0] || { staff_profile_id, sent_at: new Date().toISOString() },
+        });
+    } catch (error) {
+        console.error('Send Candidate Profile Error:', error.response?.data || error.message);
+        res.status(500).json({ status: 'error', message: 'Failed to send the candidate profile via WhatsApp.' });
     }
 };

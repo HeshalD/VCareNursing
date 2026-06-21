@@ -37,7 +37,7 @@ const sendDocument = async (mobileNumber, documentUrl, filename, caption = '') =
   return response.data;
 };
 
-const sendTemplate = async (to, templateName, languageCode, bodyParams, headerParams = null) => {
+const sendTemplate = async (to, templateName, languageCode, bodyParams, headerParams = null, buttonComponents = null) => {
   try {
     const components = [];
     if (headerParams) {
@@ -47,6 +47,9 @@ const sendTemplate = async (to, templateName, languageCode, bodyParams, headerPa
       type: 'body',
       parameters: bodyParams.map((text) => ({ type: 'text', text }))
     });
+    if (buttonComponents) {
+      for (const btn of buttonComponents) components.push(btn);
+    }
 
     const response = await axios.post(
       API_URL,
@@ -107,11 +110,39 @@ const sendClientQuotation = (mobileNumber, payerName, estimateNumber, pdfUrl) =>
 const sendPaymentRecorded = (mobileNumber, payerName, amount, date) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_payment_recorded', 'en', [payerName, amount, date]);
 
+// Sent when a payment receipt is issued — header: receipt PDF, body vars:
+//   {{1}} = client name, {{2}} = receipt number (e.g. "RCP-0000123"),
+//   {{3}} = amount received (LKR formatted), {{4}} = payment date, {{5}} = payment method
+//
+// META TEMPLATE SPEC — vcare_payment_receipt (UTILITY, en)
+// Header: DOCUMENT
+// Body:
+//   Hi {{1}},
+//
+//   Thank you! We've received your payment and attached your official receipt.
+//
+//   🧾 *Receipt No:* {{2}}
+//   💰 *Amount:* LKR {{3}}
+//   📅 *Date:* {{4}}
+//   💳 *Method:* {{5}}
+//
+//   Please find the detailed receipt attached as a PDF. Keep it for your records.
+//
+//   Thank you for choosing VCare Nursing.
+const sendPaymentReceipt = (mobileNumber, clientName, receiptNumber, amount, date, method, pdfUrl, filename) =>
+  sendTemplate(
+    formatNumber(mobileNumber),
+    'vcare_payment_receipt',
+    'en',
+    [clientName, receiptNumber, amount, date, method],
+    [{ type: 'document', document: { link: pdfUrl, filename: filename || `${receiptNumber}.pdf` } }]
+  );
+
 // Sent when staff is assigned to a booking — {{1}} = client name, {{2}} = staff name, {{3}} = date, {{4}} = time, {{5}} = staff profile URL
 const sendBookingConfirmed = (mobileNumber, clientName, staffName, date, time, staffProfileUrl) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_booking_confirmed', 'en', [clientName, staffName, date, time, staffProfileUrl]);
 
-// Sent to staff when assigned to a booking — {{1}} = staff name, {{2}} = patient name, {{3}} = location, {{4}} = conditions, {{5}} = start date
+// Sent to staff when assigned to a booking — {{1}} = staff name, {{2}} = patient name, {{3}} = location, {{4}} = conditions, {{5}} = start date (with start time appended when set, e.g. "25 June 2026, 9:00 AM")
 const sendStaffNewAssignment = (mobileNumber, staffName, patientName, location, conditions, startDate) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_staff_new_assignment', 'en', [staffName, patientName, location, conditions, startDate]);
 
@@ -221,4 +252,57 @@ const sendStaffSalarySheet = (mobileNumber, fullName, monthLabel, netPayable, am
     [{ type: 'document', document: { link: pdfUrl, filename: `Salary_Sheet_${monthLabel.replace(/\s+/g, '_')}.pdf` } }]
   );
 
-module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendPaymentRecorded, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected, sendClientBookingStatement };
+// The company's Independent Contractor Agreement (terms & conditions) PDF.
+// Hosted on Cloudinary; sent as a real PDF document attachment (not a text link).
+const STAFF_AGREEMENT_PDF_URL = 'https://res.cloudinary.com/dohaktkth/image/upload/v1780652809/INDEPENDENT_CONTRACTOR_AGREEMENT_knloa6.pdf';
+
+// Sent to an approved applicant — header: agreement PDF, {{1}} = staff name
+// META TEMPLATE SPEC — vcare_staff_agreement (UTILITY, en)
+// Header: DOCUMENT
+// Body:
+//   Hi {{1}},
+//
+//   Welcome aboard! As part of joining the VCare Nursing team, please review the attached
+//   Independent Contractor Agreement, which outlines the terms and conditions of your engagement.
+//
+//   Kindly read it carefully. If you have any questions, reach out to the VCare office before signing.
+//
+//   Thank you for choosing to work with VCare Nursing.
+const sendStaffAgreement = (mobileNumber, fullName) =>
+  sendTemplate(
+    formatNumber(mobileNumber),
+    'vcare_staff_agreement',
+    'en',
+    [fullName],
+    [{ type: 'document', document: { link: STAFF_AGREEMENT_PDF_URL, filename: 'VCare_Independent_Contractor_Agreement.pdf' } }]
+  );
+
+// Sent to a client suggesting a candidate staff member — link delivered via a URL button (no photo).
+// Body vars: {{1}} = client/payer name, {{2}} = patient name, {{3}} = candidate name, {{4}} = role/designation
+// Button: dynamic "View Profile" URL — base `https://vcarenursing.com/services/staff-profile/` + {{1}} = staffProfileId
+//
+// META TEMPLATE SPEC — vcare_candidate_profile (UTILITY, en)
+// Header: NONE
+// Body:
+//   Hi {{1}},
+//
+//   We'd like to suggest a candidate for *{{2}}*'s care:
+//
+//   👤 *{{3}}*
+//   🩺 {{4}}
+//
+//   Tap the button below to view their full profile.
+//
+//   Let us know if you'd like to proceed with this candidate or if you'd prefer to see other options.
+// Button (URL): "View Profile" → https://vcarenursing.com/services/staff-profile/{{1}}
+const sendCandidateProfile = (mobileNumber, payerName, patientName, staffName, designation, staffProfileId) =>
+  sendTemplate(
+    formatNumber(mobileNumber),
+    'vcare_candidate_profile',
+    'en',
+    [payerName, patientName, staffName, designation || 'Care Professional'],
+    null,
+    [{ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: String(staffProfileId) }] }]
+  );
+
+module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendPaymentRecorded, sendPaymentReceipt, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected, sendClientBookingStatement, sendStaffAgreement, sendCandidateProfile };

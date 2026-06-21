@@ -2,7 +2,7 @@ const db = require('../config/db');
 const bcrypt = require('bcryptjs');
 
 const LOGIN_ROLES = new Set(['COORDINATOR', 'ACCOUNTS']);
-const SELECTABLE = 'id, user_id, full_name, role, email, phone, base_salary, joined_date, status, address, created_at, updated_at';
+const SELECTABLE = 'id, user_id, full_name, role, email, phone, base_salary, joined_date, status, address, total_sales_amount, bookings_brought_count, created_at, updated_at';
 
 exports.list = async (req, res) => {
   try {

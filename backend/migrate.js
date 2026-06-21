@@ -337,8 +337,15 @@ async function runMigration() {
       nic_back_url TEXT,
       gender gender_enum,
       date_of_birth DATE,
-      willing_to_live_in BOOLEAN DEFAULT false
+      willing_to_live_in BOOLEAN DEFAULT false,
+      agreement_sent_at TIMESTAMP WITH TIME ZONE
     );
+  `);
+
+  // ALTER TABLE: track when the contractor agreement (terms & conditions) was sent to the applicant
+  await db.query(`
+    ALTER TABLE staff_applications
+    ADD COLUMN IF NOT EXISTS agreement_sent_at TIMESTAMP WITH TIME ZONE;
   `);
 
   await db.query(`
@@ -374,6 +381,19 @@ async function runMigration() {
       preferred_staff_id UUID REFERENCES staff_profiles(staff_profile_id),
       active_quote_id UUID,
       gender gender_enum
+    );
+  `);
+
+  // Tracks which staff profiles have been sent to a client as candidates for a service request.
+  // The UNIQUE constraint enforces "send a given staff profile only once per service request".
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS service_request_sent_candidates (
+      id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      request_id UUID NOT NULL REFERENCES service_requests(request_id) ON DELETE CASCADE,
+      staff_profile_id UUID NOT NULL REFERENCES staff_profiles(staff_profile_id) ON DELETE CASCADE,
+      sent_by UUID REFERENCES users(user_id),
+      sent_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (request_id, staff_profile_id)
     );
   `);
 
@@ -783,6 +803,55 @@ async function runMigration() {
   `);
 
   // =========================================================
+  // SALESPERSON CREDITING
+  // Salespersons are internal_staff. The amount paid to a booking (at the time
+  // staff assignment is completed) is credited once to the salesperson who
+  // brought the booking in, along with a +1 to their booking count. These two
+  // aggregates are PERMANENT and never move. The "current" salesperson is a
+  // mutable pointer that can be switched anytime without affecting either metric.
+  // booking_salesperson_assignments keeps the full audit trail.
+  // =========================================================
+
+  await db.query(`
+    ALTER TABLE internal_staff
+    ADD COLUMN IF NOT EXISTS total_sales_amount DECIMAL(14,2) NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS bookings_brought_count INTEGER NOT NULL DEFAULT 0
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS booking_salesperson_assignments (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      booking_id UUID NOT NULL REFERENCES bookings(booking_id) ON DELETE CASCADE,
+      salesperson_id UUID NOT NULL REFERENCES internal_staff(id),
+      credited_amount DECIMAL(14,2) NOT NULL DEFAULT 0,
+      is_current BOOLEAN NOT NULL DEFAULT TRUE,
+      is_origin BOOLEAN NOT NULL DEFAULT FALSE,
+      action VARCHAR(20) NOT NULL DEFAULT 'CREDITED',
+      switch_reason TEXT,
+      assigned_by UUID REFERENCES users(user_id),
+      assigned_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // At most one current salesperson and one origin salesperson per booking.
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_book_sales_one_current
+    ON booking_salesperson_assignments(booking_id) WHERE is_current
+  `);
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_book_sales_one_origin
+    ON booking_salesperson_assignments(booking_id) WHERE is_origin
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_book_sales_salesperson
+    ON booking_salesperson_assignments(salesperson_id)
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_book_sales_booking
+    ON booking_salesperson_assignments(booking_id)
+  `);
+
+  // =========================================================
   // STAFF CHANGE REQUESTS
   // =========================================================
 
@@ -908,6 +977,12 @@ async function runMigration() {
   await db.query(`
     ALTER TABLE bookings
     ADD COLUMN IF NOT EXISTS admin_notes TEXT
+  `);
+
+  // Time of day the assigned staff begins the service (e.g. 09:00). Optional.
+  await db.query(`
+    ALTER TABLE booking_staff_assignments
+    ADD COLUMN IF NOT EXISTS service_start_time TIME
   `);
 
   // Care profile (patient) gender captured on the lead/service request
@@ -1151,6 +1226,28 @@ async function runMigration() {
     DO $$ BEGIN
       ALTER TABLE staff_profiles ADD COLUMN staff_code VARCHAR(50) UNIQUE;
     EXCEPTION WHEN duplicate_column THEN null;
+    END $$;
+  `);
+
+  // Multiple admin notes per staff profile (carousel on the staff detail page).
+  // On first creation, seed from the legacy single `admin_remarks` field so existing notes aren't lost.
+  await db.query(`
+    DO $$ BEGIN
+      IF to_regclass('public.staff_admin_notes') IS NULL THEN
+        CREATE TABLE staff_admin_notes (
+          note_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+          staff_profile_id UUID NOT NULL REFERENCES staff_profiles(staff_profile_id) ON DELETE CASCADE,
+          note TEXT NOT NULL,
+          created_by UUID REFERENCES users(user_id),
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX idx_staff_admin_notes_profile ON staff_admin_notes(staff_profile_id);
+        INSERT INTO staff_admin_notes (staff_profile_id, note)
+        SELECT staff_profile_id, admin_remarks
+        FROM staff_profiles
+        WHERE admin_remarks IS NOT NULL AND TRIM(admin_remarks) <> '';
+      END IF;
     END $$;
   `);
 
@@ -1418,6 +1515,58 @@ async function runMigration() {
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_booking_daily_invoices_status
     ON booking_daily_invoices(status);
+  `);
+
+  // =========================================================
+  // PAYMENT RECEIPTS
+  // One receipt per recorded client payment (unified client payment,
+  // direct booking payment, or quote payment). The PDF is stored on
+  // Cloudinary and delivery over WhatsApp is tracked per receipt.
+  // =========================================================
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS payment_receipts (
+      receipt_id        UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      client_id         UUID NOT NULL REFERENCES client_profiles(client_profile_id),
+      source_type       VARCHAR(20) NOT NULL,          -- CLIENT_PAYMENT | BOOKING_PAYMENT | QUOTE_PAYMENT
+      source_id         UUID,                          -- record_id / booking_payment_id / payment_id of the originating payment
+      total_amount      NUMERIC(12,2) NOT NULL,
+      payment_method    VARCHAR(20),
+      payment_date      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      reference_number  VARCHAR(100),
+      cheque_number     VARCHAR(100),
+      bank_account_id   UUID REFERENCES bank_accounts(account_id),
+      received_from     VARCHAR(255),                  -- client name snapshot
+      line_items        JSONB NOT NULL DEFAULT '[]',   -- [{ label, description, amount }]
+      pdf_url           TEXT,
+      whatsapp_sent     BOOLEAN NOT NULL DEFAULT FALSE,
+      whatsapp_sent_at  TIMESTAMP WITH TIME ZONE,
+      whatsapp_message_id TEXT,
+      send_error        TEXT,
+      generated_by      UUID REFERENCES users(user_id),
+      created_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  await db.query(`CREATE SEQUENCE IF NOT EXISTS receipt_code_seq START 1`);
+  await db.query(`ALTER TABLE payment_receipts ADD COLUMN IF NOT EXISTS receipt_code VARCHAR(15) UNIQUE`);
+  await db.query(`
+    UPDATE payment_receipts
+    SET receipt_code = 'RCP-' || LPAD(nextval('receipt_code_seq')::text, 7, '0')
+    WHERE receipt_code IS NULL
+  `);
+  await db.query(`
+    ALTER TABLE payment_receipts
+    ALTER COLUMN receipt_code SET DEFAULT 'RCP-' || LPAD(nextval('receipt_code_seq')::text, 7, '0')
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_payment_receipts_client_id
+    ON payment_receipts(client_id);
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_payment_receipts_whatsapp_sent
+    ON payment_receipts(whatsapp_sent);
   `);
 
   // =========================================================

@@ -34,8 +34,9 @@
 | 24 | `vcare_booking_completed_client` | Utility | Client name, staff name, completion date |
 | 25 | `vcare_client_wallet_refund` | Utility | Client name, refund amount, reason |
 | 26 | `vcare_staff_salary_sheet` | Utility | Staff name, month, amount paid, date, method + PDF header |
+| 29 | `vcare_payment_receipt` | Utility | Client name, receipt no., amount, date, method + PDF header |
 
-**Total: 29 templates — 3 Authentication, 26 Utility**
+**Total: 30 templates — 3 Authentication, 27 Utility**
 
 > **Template limit:** WhatsApp Business accounts allow up to **250 templates** by default.
 > 28 templates is well within this limit. You can always request a higher limit from Meta if needed.
@@ -470,10 +471,10 @@ Please log in to the staff portal for the full assignment details.
 - `{{2}}` = `patient_name`
 - `{{3}}` = `location`
 - `{{4}}` = `conditions`
-- `{{5}}` = `service_start_date` (formatted, e.g. `18/06/2026`)
+- `{{5}}` = `service_start_date` (formatted, e.g. `18 June 2026`). When a service start time is set on the assignment, it is appended to this same field, e.g. `25 June 2026, 9:00 AM` (no separate variable is used).
 
 
-**Sample values:** `{{1}}` = `Sarah`, `{{2}}` = `John Perera`, `{{3}}` = `3rd Street, Colombo`, `{{4}}` = `High Blood Pressure, Diebetics`, `{{5}}` = `25/06/2026`
+**Sample values:** `{{1}}` = `Sarah`, `{{2}}` = `John Perera`, `{{3}}` = `3rd Street, Colombo`, `{{4}}` = `High Blood Pressure, Diebetics`, `{{5}}` = `25 June 2026, 9:00 AM`
 
 ---
 
@@ -565,8 +566,6 @@ Hi {{1}},
 
 Your change request has been received and is now under review by the admin team.
 
-📋 Request Type: {{2}}
-🔖 Reference: #{{3}}
 
 You will be notified once a decision has been made. Please allow 1–2 business days for review.
 ```
@@ -993,6 +992,122 @@ Thank you for your hard work and dedication.
 **Sample values:** `{{1}}` = `Sarah`, `{{2}}` = `June 2026`, `{{3}}` = `LKR 15,000.00`, `{{4}}` = `15 Jun 2026`, `{{5}}` = `Bank Transfer`
 
 > **Note:** Triggered automatically when admin processes a salary payout (individual or bulk) from the Staff Salaries page. The PDF is generated server-side, uploaded to Cloudinary, and the URL is passed as the document header. An SMS is also sent concurrently (no PDF — just a short text summary). See `backend/utils/salaryPdf.js` and `backend/templates/salarySheetTemplate.js`.
+
+---
+
+### 27. `vcare_staff_agreement`
+
+| Field | Value |
+|---|---|
+| Category | **Utility** |
+| Template Name | `vcare_staff_agreement` |
+| Language | English (US) |
+
+**Header:** Document (PDF) — *Dynamic URL* (the Independent Contractor Agreement PDF)
+
+**Body:**
+```
+Hi {{1}},
+
+Welcome aboard! As part of joining the VCare Nursing team, please review the attached Independent Contractor Agreement, which outlines the terms and conditions of your engagement.
+
+Kindly read it carefully. If you have any questions, reach out to the VCare office before signing.
+
+Thank you for choosing to work with VCare Nursing.
+```
+
+**Footer:** `VCare Nursing`
+
+**At send time, pass:**
+- Header: `{ type: 'document', document: { link: <agreement PDF URL>, filename: 'VCare_Independent_Contractor_Agreement.pdf' } }`
+- `{{1}}` = applicant `full_name`
+
+**Sample values:** `{{1}}` = `Sarah`
+
+> **Note:** Triggered manually by admin/internal staff from the Worker Verification details page **after** an application is approved (status `ACCEPTED`). The PDF URL is a constant defined in `backend/utils/metaWhatsapp.js` (`STAFF_AGREEMENT_PDF_URL`) and is sent as a real PDF document attachment, not a text link. Endpoint: `POST /staff/applications/:applicationId/send-agreement`.
+
+---
+
+### 28. `vcare_candidate_profile`
+
+| Field | Value |
+|---|---|
+| Category | **Utility** |
+| Template Name | `vcare_candidate_profile` |
+| Language | English (US) |
+
+**Header:** None
+
+**Body:**
+```
+Hi {{1}},
+
+We'd like to suggest a candidate for *{{2}}*'s care:
+
+👤 *{{3}}*
+🩺 {{4}}
+
+Tap the button below to view their full profile.
+
+Let us know if you'd like to proceed with this candidate or if you'd prefer to see other options.
+```
+
+**Footer:** `VCare Nursing`
+
+**Buttons:** Visit Website (URL) — set the URL type to **Dynamic** with base `https://vcarenursing.com/services/staff-profile/` and the dynamic part `{{1}}` = the staff profile ID. Button text: `View Profile`.
+
+**At send time, pass:**
+- `{{1}}` = client/payer name (`service_requests.payer_name`)
+- `{{2}}` = patient name (`service_requests.patient_name`)
+- `{{3}}` = candidate `full_name`
+- `{{4}}` = candidate `designation` (role)
+- Button `{{1}}` = `staff_profile_id` (appended to the base URL → `https://vcarenursing.com/services/staff-profile/<staff_profile_id>`)
+
+**Sample values:** body `{{1}}` = `Emily`, `{{2}}` = `John Perera`, `{{3}}` = `Sarah Johnson`, `{{4}}` = `Nurse`; button `{{1}}` = `abc-123`
+
+> **Note:** Triggered manually by admin/internal staff from the Staff Roster page (when assigning staff to a service request). The client receives a link to the candidate's public profile only — no photo is sent. A given staff profile can be sent **only once per service request** — enforced by a UNIQUE constraint on `service_request_sent_candidates (request_id, staff_profile_id)` and a pre-send duplicate check. Endpoint: `POST /service-requests/:id/send-candidate`.
+
+---
+
+### 29. `vcare_payment_receipt`
+
+| Field | Value |
+|---|---|
+| Category | **Utility** |
+| Template Name | `vcare_payment_receipt` |
+| Language | English (US) |
+
+**Header:** Document (PDF) — *Dynamic URL* (the generated payment receipt PDF)
+
+**Body:**
+```
+Hi {{1}},
+
+Thank you! We've received your payment and attached your official receipt.
+
+🧾 *Receipt No:* {{2}}
+💰 *Amount:* LKR {{3}}
+📅 *Date:* {{4}}
+💳 *Method:* {{5}}
+
+Please find the detailed receipt attached as a PDF. Keep it for your records.
+
+Thank you for choosing VCare Nursing.
+```
+
+**Footer:** `VCare Nursing`
+
+**At send time, pass:**
+- Header: `{ type: 'document', document: { link: pdfUrl, filename: 'RCP-0000123.pdf' } }`
+- `{{1}}` = client `full_name` (e.g. `Sarah`)
+- `{{2}}` = receipt code (e.g. `RCP-0000123`)
+- `{{3}}` = formatted amount (e.g. `48,000.00`)
+- `{{4}}` = payment date (e.g. `22 Nov 2023`)
+- `{{5}}` = payment method label (e.g. `Bank Transfer`)
+
+**Sample values:** `{{1}}` = `Sarah`, `{{2}}` = `RCP-0000123`, `{{3}}` = `48,000.00`, `{{4}}` = `22 Nov 2023`, `{{5}}` = `Bank Transfer`
+
+> **Note:** A receipt row + PDF is generated automatically whenever a client payment is recorded (unified client payment, direct booking payment, or quote payment). The PDF is rendered server-side, uploaded to Cloudinary, and tracked in the `payment_receipts` table. **Delivery is admin-triggered** — this template is sent only when an admin sends/resends the receipt via `POST /api/payment-receipts/:receipt_id/send`. The `whatsapp_sent` flag tracks which receipts have been delivered. See `backend/utils/receiptPdf.js`, `backend/templates/paymentReceiptTemplate.js`, and `backend/services/receiptService.js`.
 
 ---
 

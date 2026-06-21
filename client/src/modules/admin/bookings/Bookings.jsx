@@ -37,6 +37,16 @@ const SERVICE_ICONS = {
   'HOME_NURSING': Heart,
 };
 
+const formatTime = (t) => {
+  if (!t) return null;
+  const m = String(t).match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const period = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${m[2]} ${period}`;
+};
+
 const Bookings = () => {
   const { adminToken } = useAdminAuth();
   const navigate = useNavigate();
@@ -317,6 +327,12 @@ const Bookings = () => {
                           <p className="text-sm text-slate-700">
                             {b.start_date ? new Date(b.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
                           </p>
+                          {formatTime(details?.service_start_time) && (
+                            <p className="mt-0.5 flex items-center gap-1 text-xs text-slate-400">
+                              <Clock className="w-3 h-3" />
+                              {formatTime(details.service_start_time)}
+                            </p>
+                          )}
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex flex-col gap-1.5">

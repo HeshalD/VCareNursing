@@ -16,6 +16,7 @@ import {
   PlayCircle,
   Ban,
   ExternalLink,
+  ClipboardList,
 } from 'lucide-react';
 
 const fmt = (d) =>
@@ -40,6 +41,7 @@ const ACTION_TYPE_CONFIG = {
   PENDING_TERMINATION: { label: 'Awaiting Approval', Icon: Clock, color: 'text-amber-600 bg-amber-50' },
   NEGATIVE_BALANCE: { label: 'Negative Balance', Icon: AlertTriangle, color: 'text-red-600 bg-red-50' },
   EXPIRING_SOON: { label: 'Balance Expiring Soon', Icon: Wallet, color: 'text-amber-600 bg-amber-50' },
+  ATTENDANCE_NEEDED: { label: 'Attendance Not Logged', Icon: ClipboardList, color: 'text-amber-600 bg-amber-50' },
 };
 
 const BucketBadge = ({ bucket }) => {
@@ -313,6 +315,15 @@ const UpcomingEvents = () => {
                           className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-amber-700 bg-amber-50 rounded-lg hover:bg-amber-100 transition-colors"
                         >
                           Review Request
+                        </button>
+                      )}
+                      {event.source === 'ATTENDANCE' && (
+                        <button
+                          onClick={() => navigate(`/admin/bookings/${event.booking_id}/v2`)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-amber-700 bg-amber-50 rounded-lg hover:bg-amber-100 transition-colors"
+                        >
+                          <ClipboardList className="w-3.5 h-3.5" />
+                          Log Attendance
                         </button>
                       )}
                     </td>

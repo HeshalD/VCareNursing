@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, RefreshCw, Users, CalendarDays, CircleDollarSign, Clock3, AlertCircle, StickyNote, Plus, Trash2, Pencil, Check, X } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Users, CalendarDays, CircleDollarSign, Clock3, AlertCircle, StickyNote, Plus, Trash2, Pencil, Check, X, Briefcase, Search } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 
@@ -29,10 +29,15 @@ const BookingStaffAssignmentPage = () => {
   const [assignment, setAssignment] = useState({
     staff_profile_id: location.state?.selectedStaff?.staff_profile_id || '',
     service_start_date: '',
+    service_start_time: '',
     daily_rate: '',
     ot_rate: '',
-    notes: ''
+    notes: '',
+    salesperson_id: ''
   });
+
+  // Salesperson (internal staff) options for crediting
+  const [salespersons, setSalespersons] = useState([]);
 
   // Notes state
   const [notes, setNotes] = useState([]);
@@ -70,6 +75,15 @@ const BookingStaffAssignmentPage = () => {
     }
   };
 
+  const fetchSalespersons = async () => {
+    try {
+      const response = await apiClient.getSalespersons();
+      setSalespersons(response.data || []);
+    } catch {
+      // non-fatal — salesperson crediting is optional
+    }
+  };
+
   const fetchNotes = async () => {
     try {
       setNotesLoading(true);
@@ -86,6 +100,7 @@ const BookingStaffAssignmentPage = () => {
     if (bookingId) {
       fetchData();
       fetchNotes();
+      fetchSalespersons();
     }
   }, [bookingId]);
 
@@ -100,9 +115,11 @@ const BookingStaffAssignmentPage = () => {
       await apiClient.assignStaffToBooking(bookingId, {
         staff_profile_id: assignment.staff_profile_id,
         service_start_date: assignment.service_start_date,
+        service_start_time: assignment.service_start_time || null,
         daily_rate: assignment.daily_rate ? parseFloat(assignment.daily_rate) : null,
         ot_rate: assignment.ot_rate ? parseFloat(assignment.ot_rate) : null,
-        notes: assignment.notes || null
+        notes: assignment.notes || null,
+        salesperson_id: assignment.salesperson_id || null
       });
 
       setSuccess('Staff assigned successfully.');
@@ -240,7 +257,17 @@ const BookingStaffAssignmentPage = () => {
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-slate-700">Daily Rate</label>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">Service Start Time</label>
+                    <input
+                      type="time"
+                      value={assignment.service_start_time}
+                      onChange={(e) => setAssignment({ ...assignment, service_start_time: e.target.value })}
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                    />
+                    <p className="mt-1 text-xs text-slate-400">Sent to the staff and client in their booking confirmation.</p>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">Daily Rate assigned to Staff Member</label>
                     <input
                       required
                       type="number"
@@ -270,6 +297,21 @@ const BookingStaffAssignmentPage = () => {
                       className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
                     />
                   </div>
+                </div>
+
+                <div>
+                  <label className="mb-1 flex items-center gap-1.5 text-sm font-medium text-slate-700">
+                    <Briefcase className="h-4 w-4 text-blue-600" />
+                    Credited Salesperson
+                  </label>
+                  <SalespersonPicker
+                    salespersons={salespersons}
+                    value={assignment.salesperson_id}
+                    onChange={(id) => setAssignment({ ...assignment, salesperson_id: id })}
+                  />
+                  <p className="mt-1 text-xs text-slate-400">
+                    The amount paid ({money(formData.booking.amount_paid)}) and a booking count are credited to this salesperson when staff is assigned. The credited salesperson can be switched later from the booking detail page.
+                  </p>
                 </div>
 
                 <button
@@ -456,6 +498,80 @@ const BookingStaffAssignmentPage = () => {
         </div>
       )}
     </AdminLayout>
+  );
+};
+
+const SalespersonPicker = ({ salespersons, value, onChange }) => {
+  const [search, setSearch] = useState('');
+  const selected = salespersons.find((sp) => sp.id === value) || null;
+  const q = search.trim().toLowerCase();
+
+  const matches = useMemo(() => {
+    if (!q) return salespersons;
+    return salespersons.filter((sp) =>
+      `${sp.full_name || ''} ${sp.role || ''} ${sp.email || ''}`.toLowerCase().includes(q)
+    );
+  }, [salespersons, q]);
+
+  // Default view: pin the selected one to the top, then show 3 in total.
+  // While searching: show every match across all salespersons.
+  const ordered = selected ? [selected, ...matches.filter((sp) => sp.id !== value)] : matches;
+  const visible = q ? matches : ordered.slice(0, 3);
+
+  return (
+    <div className="rounded-lg border border-slate-200">
+      <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2">
+        <Search className="h-4 w-4 shrink-0 text-slate-400" />
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search salespersons by name or role..."
+          className="w-full text-sm outline-none placeholder:text-slate-400"
+        />
+        {value && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className="shrink-0 text-xs font-medium text-slate-400 hover:text-red-600"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
+      <div className="max-h-56 overflow-y-auto">
+        {salespersons.length === 0 ? (
+          <p className="px-3 py-3 text-sm text-slate-400">No salespersons available.</p>
+        ) : visible.length === 0 ? (
+          <p className="px-3 py-3 text-sm text-slate-400">No matches for &ldquo;{search}&rdquo;.</p>
+        ) : (
+          visible.map((sp) => {
+            const isSel = sp.id === value;
+            return (
+              <button
+                type="button"
+                key={sp.id}
+                onClick={() => onChange(isSel ? '' : sp.id)}
+                className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-slate-50 ${isSel ? 'bg-blue-50' : ''}`}
+              >
+                <span className="truncate">
+                  <span className="font-medium text-slate-900">{sp.full_name}</span>
+                  {sp.role && <span className="text-slate-400"> — {sp.role}</span>}
+                </span>
+                {isSel && <Check className="h-4 w-4 shrink-0 text-blue-600" />}
+              </button>
+            );
+          })
+        )}
+      </div>
+
+      {!q && salespersons.length > 3 && (
+        <p className="border-t border-slate-100 px-3 py-1.5 text-xs text-slate-400">
+          Showing {visible.length} of {salespersons.length}. Search to find others.
+        </p>
+      )}
+    </div>
   );
 };
 

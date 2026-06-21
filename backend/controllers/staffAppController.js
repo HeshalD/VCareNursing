@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken');
 const sendEmail = require('../utils/email');
 const { sendWhatsAppOtp, sendWhatsAppMessage } = require('../utils/whatsapp');
 const { sendSmsOtp, sendSms } = require('../utils/sms');
-const { sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected } = require('../utils/metaWhatsapp');
+const { sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected, sendStaffAgreement } = require('../utils/metaWhatsapp');
 const { logActivity } = require('../utils/activityLogger');
 
 const getUploadedFileUrl = (files, fieldName) => (files && files[fieldName] && files[fieldName][0]) ? files[fieldName][0].path : null;
@@ -248,6 +248,25 @@ exports.resendStaffApplicationOtp = async (req, res) => {
   } catch (error) {
     console.error('Resend Staff OTP Error:', error);
     res.status(500).json({ message: 'Failed to resend OTP.' });
+  }
+};
+
+// Suggests the next auto-generated Staff ID. New staff are numbered EMP-5000 onwards;
+// everything below EMP-5000 is reserved for employees already registered in the system.
+exports.getNextStaffCode = async (req, res) => {
+  const START = 5000;
+  try {
+    const result = await db.query(`
+      SELECT COALESCE(MAX(CAST(SUBSTRING(staff_code FROM 'EMP-([0-9]+)$') AS INTEGER)), 0) AS max_num
+      FROM staff_profiles
+      WHERE staff_code ~ '^EMP-[0-9]+$'
+    `);
+    const maxNum = parseInt(result.rows[0].max_num, 10) || 0;
+    const next = maxNum >= START ? maxNum + 1 : START;
+    res.status(200).json({ staff_id: `EMP-${next}` });
+  } catch (error) {
+    console.error('Get Next Staff Code Error:', error);
+    res.status(500).json({ message: 'Failed to generate a Staff ID', error: error.message });
   }
 };
 
@@ -537,6 +556,72 @@ exports.acceptApplication = async (req, res) => {
   }
 };
 
+// Admin/internal staff manually sends the Independent Contractor Agreement (terms & conditions)
+// PDF to an approved applicant via WhatsApp.
+exports.sendApplicationAgreement = async (req, res) => {
+  const { applicationId } = req.params;
+
+  try {
+    const appResult = await db.query(
+      'SELECT * FROM staff_applications WHERE application_id = $1',
+      [applicationId]
+    );
+
+    if (appResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Application not found' });
+    }
+
+    const app = appResult.rows[0];
+
+    if (app.status !== 'ACCEPTED') {
+      return res.status(400).json({ message: 'The agreement can only be sent after the application is approved.' });
+    }
+
+    if (app.agreement_sent_at) {
+      return res.status(409).json({
+        message: 'The agreement has already been sent to this applicant.',
+        agreement_sent_at: app.agreement_sent_at,
+      });
+    }
+
+    if (!app.mobile_number) {
+      return res.status(400).json({ message: 'This applicant does not have a mobile number on file.' });
+    }
+
+    await sendStaffAgreement(app.mobile_number, app.full_name);
+
+    const updated = await db.query(
+      'UPDATE staff_applications SET agreement_sent_at = CURRENT_TIMESTAMP WHERE application_id = $1 RETURNING agreement_sent_at',
+      [applicationId]
+    );
+
+    // Activity log (non-fatal)
+    try {
+      const actorName = await getActorName(req.user.user_id);
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName,
+        actorRole: extractActorRole(req.user.role),
+        actionType: 'APPLICATION_AGREEMENT_SENT',
+        entityType: 'STAFF_APPLICATION',
+        entityId: String(applicationId),
+        details: { applicant_name: app.full_name, mobile_number: app.mobile_number },
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (send agreement):', logErr.message);
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: `Agreement sent to ${app.full_name} on WhatsApp.`,
+      agreement_sent_at: updated.rows[0].agreement_sent_at,
+    });
+  } catch (error) {
+    console.error('Send Agreement Error:', error.response?.data || error.message);
+    res.status(500).json({ message: 'Failed to send the agreement via WhatsApp.', error: error.message });
+  }
+};
+
 exports.rejectApplication = async (req, res) => {
   const { application_id, reason } = req.body;
 
@@ -646,15 +731,21 @@ exports.updateApplication = async (req, res) => {
       rolesArray = rolesArray.filter(r => r.length > 0);
     }
 
+    // If a new profile picture was uploaded, use its Cloudinary URL; otherwise keep the existing one
+    const newProfilePicture = req.files?.profile_picture?.[0];
+    const profilePictureUrl = newProfilePicture ? newProfilePicture.path : current.profile_picture_url;
+
     await db.query(
       `UPDATE staff_applications
        SET full_name = $1, email = $2, mobile_number = $3,
            applied_roles = $4::user_role_enum[], qualifications = $5,
            home_address = $6, location = $7, nic_number = $8,
-           gender = $9::gender_enum, date_of_birth = $10
-       WHERE application_id = $11`,
+           gender = $9::gender_enum, date_of_birth = $10,
+           profile_picture_url = $11
+       WHERE application_id = $12`,
       [full_name, email, mobile_number, rolesArray, qualifications,
-       home_address, location, nic_number, gender, date_of_birth, applicationId]
+       home_address, location, nic_number, gender, date_of_birth,
+       profilePictureUrl, applicationId]
     );
 
     const updated = await db.query(
@@ -677,6 +768,10 @@ exports.updateApplication = async (req, res) => {
     diff('location',       current.location,        location);
     diff('nic_number',     current.nic_number,      nic_number);
     diff('gender',         current.gender,          gender);
+
+    if (newProfilePicture && current.profile_picture_url !== profilePictureUrl) {
+      changes['profile_picture'] = { from: current.profile_picture_url, to: profilePictureUrl };
+    }
 
     const oldDob = current.date_of_birth ? new Date(current.date_of_birth).toISOString().substring(0, 10) : null;
     const newDob = date_of_birth || null;

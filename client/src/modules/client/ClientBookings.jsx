@@ -18,6 +18,16 @@ const formatDateLong = d => d
   ? new Date(d).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
   : '—';
 
+const formatTime = t => {
+  if (!t) return null;
+  const m = String(t).match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const period = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${m[2]} ${period}`;
+};
+
 const STATUS_META = {
   active:             { bg: '#f0fdf4', color: '#166534', border: '#bbf7d0', label: 'Active' },
   pending_termination:{ bg: '#fffbeb', color: '#92400e', border: '#fde68a', label: 'Pending Termination' },
@@ -334,6 +344,12 @@ const ClientBookings = () => {
                             <Calendar size={12} />
                             {formatDate(b.start_date)}
                           </div>
+                          {formatTime(details?.service_start_time) && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, fontSize: 11, color: '#94a3b8' }}>
+                              <Clock size={11} />
+                              {formatTime(details.service_start_time)}
+                            </div>
+                          )}
                         </td>
                         <td style={s.td}>
                           <div 
@@ -446,6 +462,7 @@ const ClientBookings = () => {
                     </div>
                   } />
                   <InfoItem label="Start Date" value={formatDateLong(selectedBooking.start_date)} />
+                  <InfoItem label="Start Time" value={formatTime(bookingDetails[selectedBooking.booking_id]?.service_start_time) || '—'} />
                 </div>
               </div>
 

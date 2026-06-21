@@ -39,7 +39,13 @@ router.get('/applications/:applicationId', protect, restrictTo('SUPER_ADMIN'), a
 });
 
 // Admin Only: Update application details
-router.put('/applications/:applicationId', protect, restrictTo('SUPER_ADMIN'), staffAppController.updateApplication);
+router.put('/applications/:applicationId', uploadApplicationFiles, protect, restrictTo('SUPER_ADMIN'), staffAppController.updateApplication);
+
+// Admin Only: Send the Independent Contractor Agreement PDF to an approved applicant via WhatsApp
+router.post('/applications/:applicationId/send-agreement', protect, restrictTo('SUPER_ADMIN'), staffAppController.sendApplicationAgreement);
+
+// Admin Only: Suggest the next auto-generated Staff ID (EMP-5000 onwards)
+router.get('/next-staff-code', protect, restrictTo('SUPER_ADMIN'), staffAppController.getNextStaffCode);
 
 // Admin Only: Accept Application
 router.post(
@@ -303,6 +309,32 @@ router.post(
   protect,
   restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
   staffController.createStaffDeduction
+);
+
+// Admin Notes (multiple notes per staff, shown as a carousel on the staff detail page)
+router.get(
+  '/:staff_profile_id/admin-notes',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getStaffAdminNotes
+);
+router.post(
+  '/:staff_profile_id/admin-notes',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+  staffController.createStaffAdminNote
+);
+router.put(
+  '/:staff_profile_id/admin-notes/:note_id',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+  staffController.updateStaffAdminNote
+);
+router.delete(
+  '/:staff_profile_id/admin-notes/:note_id',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+  staffController.deleteStaffAdminNote
 );
 
 // Update staff status to unavailable

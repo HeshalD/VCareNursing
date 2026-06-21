@@ -3,7 +3,7 @@ import { Plus, Pencil, Trash2, X, Users2, Loader2, ShieldCheck } from 'lucide-re
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 
-const ROLE_OPTIONS = ['COORDINATOR', 'ACCOUNTS', 'HR Manager', 'Operations', 'Sales', 'Admin'];
+const ROLE_OPTIONS = ['Sales', 'Accounts', 'Coordinator', 'HR Manager', 'Operations', 'Admin'];
 const LOGIN_ROLES = new Set(['COORDINATOR', 'ACCOUNTS']);
 const STATUS_OPTIONS = ['Active', 'Inactive', 'On Leave'];
 
@@ -23,6 +23,11 @@ const statusColor = (s) => {
   if (s === 'Inactive') return 'bg-red-100 text-red-700';
   return 'bg-amber-100 text-amber-700';
 };
+
+const isSalesRole = (role) => (role || '').toLowerCase().includes('sales');
+
+const money = (value) =>
+  `LKR ${parseFloat(value || 0).toLocaleString('en-LK', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
 const needsLoginAccount = (role) => LOGIN_ROLES.has(role?.trim().toUpperCase());
 
@@ -207,6 +212,7 @@ const InternalStaffPage = () => {
                   <th className="text-left px-5 py-3">Email</th>
                   <th className="text-left px-5 py-3">Phone</th>
                   <th className="text-left px-5 py-3">Status</th>
+                  <th className="text-left px-5 py-3">Sales</th>
                   <th className="text-left px-5 py-3">Joined</th>
                   <th className="text-right px-5 py-3">Actions</th>
                 </tr>
@@ -236,6 +242,18 @@ const InternalStaffPage = () => {
                       >
                         {member.status}
                       </span>
+                    </td>
+                    <td className="px-5 py-4">
+                      {isSalesRole(member.role) ? (
+                        <div className="leading-tight">
+                          <div className="font-semibold text-slate-900">
+                            {member.bookings_brought_count || 0} booking{(member.bookings_brought_count || 0) !== 1 ? 's' : ''}
+                          </div>
+                          <div className="text-xs text-slate-500">{money(member.total_sales_amount)}</div>
+                        </div>
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
                     </td>
                     <td className="px-5 py-4 text-slate-500">
                       {member.joined_date
@@ -345,7 +363,7 @@ const InternalStaffPage = () => {
                   <input
                     list="is-role-options"
                     className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-colors"
-                    placeholder="e.g. COORDINATOR"
+                    placeholder="e.g. Sales"
                     value={form.role}
                     onChange={set('role')}
                   />

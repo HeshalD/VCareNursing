@@ -101,7 +101,8 @@ const UserManagement = () => {
     email: client.email || 'N/A',
     phone: client.mobile_number || 'N/A',
     location: client.primary_address || 'Not set',
-    type: 'Client'
+    type: 'Client',
+    is_registration_fee_paid: Boolean(client.is_registration_fee_paid)
   });
 
   const formatStaffData = (staff) => ({
@@ -375,15 +376,24 @@ const UserManagement = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${user.status === 'Active' ? 'bg-green-50 text-green-700' :
-                          user.status === 'Pending' ? 'bg-amber-50 text-amber-700' :
-                          user.status === 'Available' ? 'bg-green-50 text-green-700' :
-                          user.status === 'Unavailable' ? 'bg-red-50 text-red-700' :
-                          'bg-slate-100 text-slate-500'
+                      {activeTab === 'clients' ? (
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${
+                          user.is_registration_fee_paid ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'
                         }`}>
-                        {user.status === 'Active' || user.status === 'Available' ? <CheckCircle className="w-3.5 h-3.5" /> : null}
-                        {user.status}
-                      </span>
+                          {user.is_registration_fee_paid ? <CheckCircle className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
+                          {user.is_registration_fee_paid ? 'Reg. Fee Paid' : 'Reg. Fee Pending'}
+                        </span>
+                      ) : (
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${user.status === 'Active' ? 'bg-green-50 text-green-700' :
+                            user.status === 'Pending' ? 'bg-amber-50 text-amber-700' :
+                            user.status === 'Available' ? 'bg-green-50 text-green-700' :
+                            user.status === 'Unavailable' ? 'bg-red-50 text-red-700' :
+                            'bg-slate-100 text-slate-500'
+                          }`}>
+                          {user.status === 'Active' || user.status === 'Available' ? <CheckCircle className="w-3.5 h-3.5" /> : null}
+                          {user.status}
+                        </span>
+                      )}
                     </td>
                     {activeTab === 'workers' && (
                       <td className="px-6 py-4">
@@ -462,7 +472,7 @@ const UserManagement = () => {
                                 <span className="font-medium">Gender:</span> <span className="capitalize">{user.gender}</span>
                               </p>
                               <p className="text-xs text-slate-600">
-                                <span className="font-medium">DOB:</span> {user.date_of_birth ? new Date(user.date_of_birth).toLocaleDateString() : 'N/A'}
+                                <span className="font-medium">DOB:</span> {user.date_of_birth ? new Date(user.date_of_birth).toLocaleDateString('en-GB') : 'N/A'}
                               </p>
                               <p className="text-xs text-slate-600">
                                 <span className="font-medium">Willing to Live In:</span> {user.willing_to_live_in ? 'Yes' : 'No'}

@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, RefreshCw, FileText, CircleDollarSign, ArrowRight,
   Upload, ExternalLink, Pencil, X, Save, User, Stethoscope,
-  BadgeCheck, MapPin, ChevronDown, ChevronUp, CheckCircle2
+  BadgeCheck, MapPin, ChevronDown, ChevronUp, CheckCircle2, Plus
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -425,16 +425,32 @@ const ServiceRequestSummaryPage = () => {
                   </div>
                   <h3 className="text-sm font-semibold text-slate-900">Quotation History</h3>
                 </div>
-                {request?.active_quote_id && (
-                  <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700">
-                    Active Quotation
-                  </span>
-                )}
+                <div className="flex items-center gap-2">
+                  {request?.active_quote_id && (
+                    <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700">
+                      Active Quotation
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/admin/quote-builder/${request.request_id}`)}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> New Quotation
+                  </button>
+                </div>
               </div>
 
               {quotes.length === 0 ? (
-                <div className="border-t border-slate-100 px-5 py-8 text-center text-sm text-slate-400">
-                  No quotations yet.
+                <div className="border-t border-slate-100 px-5 py-8 text-center">
+                  <p className="text-sm text-slate-400">No quotations yet.</p>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/admin/quote-builder/${request.request_id}`)}
+                    className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                  >
+                    <Plus className="h-4 w-4" /> Build Quotation
+                  </button>
                 </div>
               ) : (
                 <ul className="divide-y divide-slate-100 border-t border-slate-100">

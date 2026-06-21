@@ -137,6 +137,11 @@ const ClientDetailPage = () => {
   const [transactionsLoading, setTransactionsLoading] = useState(false);
   const [txPage, setTxPage] = useState(1);
 
+  // payment receipts (all receipts generated for this client's payments)
+  const [receipts, setReceipts] = useState([]);
+  const [receiptsLoading, setReceiptsLoading] = useState(false);
+  const [receiptBusy, setReceiptBusy] = useState('');
+
   // Notes state
   const [notes, setNotes] = useState([]);
   const [notesLoading, setNotesLoading] = useState(false);
@@ -208,6 +213,7 @@ const ClientDetailPage = () => {
       loadDetail();
       loadTransactions();
       loadNotes();
+      fetchReceipts();
     }
   }, [clientId]);
 
@@ -296,7 +302,6 @@ const ClientDetailPage = () => {
   const recentActivity = detail?.recent_activity || {};
 
   const activeBookings = useMemo(() => recentActivity.bookings || [], [recentActivity.bookings]);
-  const recentPayments = useMemo(() => recentActivity.payments || [], [recentActivity.payments]);
   const recentQuotes = useMemo(() => recentActivity.quotations || [], [recentActivity.quotations]);
   const recentAssignments = useMemo(() => recentActivity.staff_assignments || [], [recentActivity.staff_assignments]);
   const recentReviews = useMemo(() => recentActivity.reviews || [], [recentActivity.reviews]);
@@ -364,6 +369,31 @@ const ClientDetailPage = () => {
     }
   };
 
+  const fetchReceipts = async () => {
+    try {
+      setReceiptsLoading(true);
+      const res = await apiClient.getClientReceipts(clientId);
+      setReceipts(Array.isArray(res?.receipts) ? res.receipts : []);
+    } catch {
+      // non-fatal — payments still render without receipt links
+    } finally {
+      setReceiptsLoading(false);
+    }
+  };
+
+  const handleSendReceipt = async (receiptId) => {
+    try {
+      setReceiptBusy(receiptId);
+      setError('');
+      await apiClient.sendPaymentReceipt(receiptId);
+      await fetchReceipts();
+    } catch (err) {
+      setError(err.message || 'Failed to send receipt');
+    } finally {
+      setReceiptBusy('');
+    }
+  };
+
   const handlePaymentRecorded = async () => {
     setShowRecordPayment(false);
     try {
@@ -373,6 +403,9 @@ const ClientDetailPage = () => {
       ]);
       setDetail(refreshed.data || null);
       setClientTransactions(txRefreshed.data || []);
+      await fetchReceipts();
+      // Receipt PDF is generated asynchronously server-side; refetch shortly after.
+      setTimeout(fetchReceipts, 2500);
     } catch {
       // non-fatal — page data will be stale until manual refresh
     }
@@ -421,32 +454,93 @@ const ClientDetailPage = () => {
   const renderSection = () => {
     switch (activeSection) {
       case 'payments':
-        return recentPayments.length === 0 ? (
-          <EmptyState title="No payment history yet" />
+        return receiptsLoading && receipts.length === 0 ? (
+          <div className="flex items-center gap-2 py-10 text-sm text-slate-500">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading payments...
+          </div>
+        ) : receipts.length === 0 ? (
+          <EmptyState title="No payments recorded yet" />
         ) : (
           <SectionList>
-            {recentPayments.map((payment, index) => (
-              <ExpandableRow
-                key={payment.transaction_id || index}
-                summary={
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                    <span className="font-semibold text-slate-900">{payment.transaction_description || payment.category || 'Payment'}</span>
-                    <span className="font-bold text-slate-800">{formatMoney(payment.amount)}</span>
-                    <StatusBadge status={payment.status} />
-                    {payment.payment_method && <span className="text-sm text-slate-500">{payment.payment_method}</span>}
-                    <span className="text-xs text-slate-400">{formatDateTime(payment.created_at)}</span>
+            {receipts.map((rcpt, index) => {
+              const busy = receiptBusy === rcpt.receipt_id;
+              const items = Array.isArray(rcpt.line_items) ? rcpt.line_items : [];
+              return (
+                <ExpandableRow
+                  key={rcpt.receipt_id || index}
+                  summary={
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                      <span className="font-semibold text-slate-900">{rcpt.receipt_code}</span>
+                      <span className="font-bold text-slate-800">{formatMoney(rcpt.total_amount)}</span>
+                      {rcpt.whatsapp_sent ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                          <Check className="h-3 w-3" /> Sent
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">Not sent</span>
+                      )}
+                      {rcpt.payment_method && <span className="text-sm text-slate-500">{rcpt.payment_method.replace(/_/g, ' ')}</span>}
+                      <span className="text-xs text-slate-400">{formatDateTime(rcpt.payment_date || rcpt.created_at)}</span>
+                    </div>
+                  }
+                >
+                  <div className="space-y-4">
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                      <InfoRow label="Receipt No." value={rcpt.receipt_code} />
+                      <InfoRow label="Date" value={formatDateTime(rcpt.payment_date || rcpt.created_at)} />
+                      <InfoRow label="Amount" value={formatMoney(rcpt.total_amount)} />
+                      <InfoRow label="Method" value={(rcpt.payment_method || '-').replace(/_/g, ' ')} />
+                      <InfoRow label="Reference" value={rcpt.reference_number || '-'} />
+                      <InfoRow label="Delivery" value={rcpt.whatsapp_sent ? `Sent ${formatDateTime(rcpt.whatsapp_sent_at)}` : 'Not sent'} />
+                    </div>
+
+                    {items.length > 0 && (
+                      <div className="overflow-hidden rounded-lg border border-slate-200">
+                        <div className="bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Payment for</div>
+                        {items.map((it, i) => (
+                          <div key={i} className="flex items-center justify-between border-t border-slate-100 px-4 py-2.5">
+                            <div>
+                              <div className="text-sm font-medium text-slate-800">{it.label}</div>
+                              {it.description && <div className="text-xs text-slate-500">{it.description}</div>}
+                            </div>
+                            <div className="text-sm font-semibold text-slate-700">{formatMoney(it.amount)}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {rcpt.send_error && (
+                      <p className="text-xs text-red-600">Last WhatsApp send failed — try sending again.</p>
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      {rcpt.pdf_url ? (
+                        <a
+                          href={rcpt.pdf_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          <Download className="h-3.5 w-3.5" /> Download Receipt
+                        </a>
+                      ) : (
+                        <span className="text-xs text-amber-600">Receipt PDF generating…</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleSendReceipt(rcpt.receipt_id)}
+                        disabled={busy || !clientProfile.mobile_number}
+                        title={!clientProfile.mobile_number ? 'Client has no mobile number on record' : 'Send receipt via WhatsApp'}
+                        className="inline-flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2 text-xs font-semibold text-green-700 ring-1 ring-green-200 hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <MessageCircle className="h-3.5 w-3.5" />
+                        {busy ? 'Sending…' : rcpt.whatsapp_sent ? 'Resend Receipt' : 'Send Receipt'}
+                      </button>
+                    </div>
                   </div>
-                }
-              >
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  <InfoRow label="Date" value={formatDateTime(payment.created_at)} />
-                  <InfoRow label="Amount" value={formatMoney(payment.amount)} />
-                  <InfoRow label="Method" value={payment.payment_method || '-'} />
-                  <InfoRow label="Status" value={payment.status || '-'} />
-                  <InfoRow label="Reference" value={payment.reference_number || '-'} />
-                </div>
-              </ExpandableRow>
-            ))}
+                </ExpandableRow>
+              );
+            })}
           </SectionList>
         );
 

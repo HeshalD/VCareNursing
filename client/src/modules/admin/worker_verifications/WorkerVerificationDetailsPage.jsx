@@ -4,7 +4,7 @@ import {
   ArrowLeft, Check, X, Edit2, Save, XCircle, Eye, FileText,
   AlertCircle, ShieldAlert, ShieldCheck, Loader2, User, Phone,
   Mail, MapPin, Calendar, CreditCard, Briefcase, ClipboardList,
-  BadgeCheck, StickyNote, Building2, Plus, Trash2, Pencil
+  BadgeCheck, StickyNote, Building2, Plus, Trash2, Pencil, Camera, Send, FileSignature
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -62,11 +62,15 @@ const WorkerVerificationDetailsPage = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [editData, setEditData] = useState({});
   const [savingEdit, setSavingEdit] = useState(false);
+  const [profilePictureFile, setProfilePictureFile] = useState(null);
+  const [profilePicturePreview, setProfilePicturePreview] = useState(null);
 
-  const [approveModal, setApproveModal] = useState({ isOpen: false, staffId: '', adminRemarks: '' });
+  const [approveModal, setApproveModal] = useState({ isOpen: false, staffId: '', adminRemarks: '', staffIdLoading: false });
   const [rejectModal, setRejectModal] = useState({ isOpen: false, reason: '' });
   const [processingAction, setProcessingAction] = useState(false);
   const [actionError, setActionError] = useState('');
+
+  const [sendingAgreement, setSendingAgreement] = useState(false);
 
   const [bankAccounts, setBankAccounts] = useState([]);
   const [bankAccountsLoading, setBankAccountsLoading] = useState(false);
@@ -201,10 +205,13 @@ const WorkerVerificationDetailsPage = () => {
       const result = await apiClient.updateApplicationDetails(applicationId, {
         ...editData,
         applied_roles: editData.applied_roles,
-      });
+      }, profilePictureFile);
       apiClient.setToken(original);
       setApplication(result.data);
       setIsEditing(false);
+      if (profilePicturePreview) URL.revokeObjectURL(profilePicturePreview);
+      setProfilePictureFile(null);
+      setProfilePicturePreview(null);
     } catch (err) {
       setActionError(err.message || 'Error saving changes');
     } finally {
@@ -228,6 +235,52 @@ const WorkerVerificationDetailsPage = () => {
     });
     setIsEditing(false);
     setActionError('');
+    if (profilePicturePreview) URL.revokeObjectURL(profilePicturePreview);
+    setProfilePictureFile(null);
+    setProfilePicturePreview(null);
+  };
+
+  const handleProfilePictureChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!['image/jpeg', 'image/jpg', 'image/png'].includes(file.type)) {
+      setActionError('Profile picture must be a JPG or PNG image.');
+      return;
+    }
+    if (profilePicturePreview) URL.revokeObjectURL(profilePicturePreview);
+    setProfilePictureFile(file);
+    setProfilePicturePreview(URL.createObjectURL(file));
+    setActionError('');
+  };
+
+  const handleSendAgreement = async () => {
+    setSendingAgreement(true);
+    setActionError('');
+    try {
+      apiClient.setToken(adminToken);
+      const res = await apiClient.sendApplicationAgreement(applicationId);
+      setApplication(prev => ({
+        ...prev,
+        agreement_sent_at: res.agreement_sent_at || new Date().toISOString(),
+      }));
+    } catch (err) {
+      setActionError(err.message || 'Failed to send the agreement via WhatsApp.');
+    } finally {
+      setSendingAgreement(false);
+    }
+  };
+
+  const openApproveModal = async () => {
+    setActionError('');
+    setApproveModal({ isOpen: true, staffId: '', adminRemarks: '', staffIdLoading: true });
+    try {
+      apiClient.setToken(adminToken);
+      const res = await apiClient.getNextStaffCode();
+      // Only fill if the modal is still open and the admin hasn't typed anything yet
+      setApproveModal(p => (p.isOpen && !p.staffId ? { ...p, staffId: res.staff_id, staffIdLoading: false } : { ...p, staffIdLoading: false }));
+    } catch {
+      setApproveModal(p => ({ ...p, staffIdLoading: false }));
+    }
   };
 
   const handleApprove = async () => {
@@ -339,19 +392,39 @@ const WorkerVerificationDetailsPage = () => {
           {/* Profile Card */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
             <div className="flex flex-col items-center text-center">
-              {application.profile_picture_url ? (
-                <img
-                  src={application.profile_picture_url}
-                  alt={application.full_name}
-                  className="w-24 h-24 rounded-2xl object-cover mb-4"
-                />
-              ) : (
-                <div className="w-24 h-24 rounded-2xl bg-slate-200 flex items-center justify-center mb-4">
-                  <span className="text-slate-500 font-bold text-3xl">
-                    {application.full_name?.charAt(0) || 'A'}
-                  </span>
-                </div>
-              )}
+              {(() => {
+                const displayUrl = profilePicturePreview || application.profile_picture_url;
+                const avatar = displayUrl ? (
+                  <img
+                    src={displayUrl}
+                    alt={application.full_name}
+                    className="w-24 h-24 rounded-2xl object-cover"
+                  />
+                ) : (
+                  <div className="w-24 h-24 rounded-2xl bg-slate-200 flex items-center justify-center">
+                    <span className="text-slate-500 font-bold text-3xl">
+                      {application.full_name?.charAt(0) || 'A'}
+                    </span>
+                  </div>
+                );
+                return isEditing ? (
+                  <label className="relative group cursor-pointer mb-4" title="Change profile picture">
+                    {avatar}
+                    <div className="absolute inset-0 rounded-2xl bg-black/50 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center transition-opacity">
+                      <Camera className="w-6 h-6 text-white" />
+                      <span className="text-[10px] font-semibold text-white mt-1">Change</span>
+                    </div>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/jpg,image/png"
+                      onChange={handleProfilePictureChange}
+                      className="hidden"
+                    />
+                  </label>
+                ) : (
+                  <div className="mb-4">{avatar}</div>
+                );
+              })()}
               <h2 className="text-lg font-bold text-slate-900">{application.full_name}</h2>
               <p className="text-sm text-slate-500 mt-1">{roles.join(', ') || 'No roles'}</p>
               <p className="text-xs text-slate-400 mt-1">Applied {formatDate(application.applied_at)}</p>
@@ -613,6 +686,46 @@ const WorkerVerificationDetailsPage = () => {
             </div>
           )}
 
+          {/* Contractor Agreement (terms & conditions) — only shown after approval */}
+          {application.status === 'ACCEPTED' && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+              <div className="flex items-start gap-4">
+                <div className="p-2.5 bg-indigo-100 rounded-xl flex-shrink-0">
+                  <FileSignature className="w-5 h-5 text-indigo-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-sm font-semibold text-slate-800">Contractor Agreement</h3>
+                  {application.agreement_sent_at ? (
+                    <p className="text-xs text-green-700 mt-0.5 flex items-center gap-1.5">
+                      <BadgeCheck className="w-3.5 h-3.5 flex-shrink-0" />
+                      Sent to <span className="font-medium">{application.full_name}</span> on {formatDate(application.agreement_sent_at)}.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Send the Independent Contractor Agreement (terms &amp; conditions) PDF to{' '}
+                      <span className="font-medium text-slate-700">{application.full_name}</span> on WhatsApp
+                      {application.mobile_number ? ` (${application.mobile_number})` : ''}.
+                    </p>
+                  )}
+                </div>
+                {application.agreement_sent_at ? (
+                  <span className="flex items-center gap-2 px-4 py-2.5 font-medium rounded-xl flex-shrink-0 bg-green-50 text-green-700 border border-green-200">
+                    <Check className="w-4 h-4" /> Sent
+                  </span>
+                ) : (
+                  <button
+                    onClick={handleSendAgreement}
+                    disabled={sendingAgreement || !application.mobile_number}
+                    className="flex items-center gap-2 px-4 py-2.5 font-medium rounded-xl transition-all disabled:opacity-60 disabled:cursor-not-allowed flex-shrink-0 bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-600/20"
+                  >
+                    {sendingAgreement ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                    {sendingAgreement ? 'Sending...' : 'Send Agreement'}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Bank Accounts — only shown after approval */}
           {application.status === 'ACCEPTED' && application.staff_profile_id && (
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
@@ -724,7 +837,7 @@ const WorkerVerificationDetailsPage = () => {
                 <Edit2 className="w-4 h-4" /> Edit
               </button>
               <button
-                onClick={() => { setApproveModal({ isOpen: true, staffId: '', adminRemarks: '' }); setActionError(''); }}
+                onClick={openApproveModal}
                 className="flex items-center gap-2 px-5 py-2.5 bg-green-600 text-white font-medium rounded-xl hover:bg-green-500 transition-all shadow-lg shadow-green-600/20"
               >
                 <Check className="w-4 h-4" /> Approve
@@ -760,14 +873,19 @@ const WorkerVerificationDetailsPage = () => {
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1.5">
                   Staff ID <span className="text-red-500">*</span>
-                  <span className="text-xs font-normal text-slate-400 ml-2">e.g. VCN-001</span>
+                  <span className="text-xs font-normal text-slate-400 ml-2">auto-generated — you can edit it</span>
                 </label>
-                <input
-                  value={approveModal.staffId}
-                  onChange={e => setApproveModal(p => ({ ...p, staffId: e.target.value }))}
-                  placeholder="Enter a unique Staff ID"
-                  className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:border-green-300 focus:ring-2 focus:ring-green-100 outline-none"
-                />
+                <div className="relative">
+                  <input
+                    value={approveModal.staffId}
+                    onChange={e => setApproveModal(p => ({ ...p, staffId: e.target.value }))}
+                    placeholder={approveModal.staffIdLoading ? 'Generating Staff ID...' : 'e.g. EMP-5000'}
+                    className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:border-green-300 focus:ring-2 focus:ring-green-100 outline-none"
+                  />
+                  {approveModal.staffIdLoading && (
+                    <Loader2 className="w-4 h-4 animate-spin text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
+                  )}
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1.5 flex items-center gap-1">

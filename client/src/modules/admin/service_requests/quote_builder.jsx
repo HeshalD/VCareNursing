@@ -255,6 +255,9 @@ const QuoteBuilder = () => {
   }
 
   const totals = calculateTotals();
+  // A client who isn't in the database yet (no client profile) has, by definition,
+  // not paid the registration fee — treat a missing profile as "pending".
+  const registrationFeePaid = Boolean(clientProfile?.is_registration_fee_paid);
 
   return (
     <AdminLayout
@@ -292,15 +295,13 @@ const QuoteBuilder = () => {
               <span className="bg-white/15 text-white text-xs font-medium px-3 py-1.5 rounded-full border border-white/20">
                 {serviceRequest.service_model?.replace('_', ' ') || 'Standard'}
               </span>
-              {clientProfile && (
-                <span className={`text-xs font-medium px-3 py-1.5 rounded-full border ${
-                  clientProfile.is_registration_fee_paid
-                    ? 'bg-green-500/20 text-green-100 border-green-400/30'
-                    : 'bg-amber-500/20 text-amber-100 border-amber-400/30'
-                }`}>
-                  {clientProfile.is_registration_fee_paid ? '✓ Reg. Fee Paid' : '⚠ Reg. Fee Pending'}
-                </span>
-              )}
+              <span className={`text-xs font-medium px-3 py-1.5 rounded-full border ${
+                registrationFeePaid
+                  ? 'bg-green-500/20 text-green-100 border-green-400/30'
+                  : 'bg-amber-500/20 text-amber-100 border-amber-400/30'
+              }`}>
+                {registrationFeePaid ? '✓ Reg. Fee Paid' : '⚠ Reg. Fee Pending'}
+              </span>
             </div>
           </div>
         </div>
@@ -380,30 +381,33 @@ const QuoteBuilder = () => {
                 </div>
 
                 {/* Client Status */}
-                {clientProfile && (
-                  <>
-                    <div className="h-px bg-slate-100" />
-                    <div>
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className="w-6 h-6 rounded-md bg-slate-100 flex items-center justify-center flex-shrink-0">
-                          <BadgeCheck className="w-3.5 h-3.5 text-slate-500" />
-                        </div>
-                        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Client Status</span>
+                <>
+                  <div className="h-px bg-slate-100" />
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-6 h-6 rounded-md bg-slate-100 flex items-center justify-center flex-shrink-0">
+                        <BadgeCheck className="w-3.5 h-3.5 text-slate-500" />
                       </div>
-                      {clientProfile.is_registration_fee_paid ? (
-                        <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 px-3 py-2.5 rounded-lg border border-green-100 ml-8">
-                          <CheckCircle className="w-4 h-4 flex-shrink-0" />
-                          <span className="font-medium">Registration fee paid</span>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 px-3 py-2.5 rounded-lg border border-amber-100 ml-8">
+                      <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Client Status</span>
+                    </div>
+                    {registrationFeePaid ? (
+                      <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 px-3 py-2.5 rounded-lg border border-green-100 ml-8">
+                        <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                        <span className="font-medium">Registration fee paid</span>
+                      </div>
+                    ) : (
+                      <div className="ml-8 space-y-1">
+                        <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 px-3 py-2.5 rounded-lg border border-amber-100">
                           <AlertCircle className="w-4 h-4 flex-shrink-0" />
                           <span className="font-medium">Registration fee pending</span>
                         </div>
-                      )}
-                    </div>
-                  </>
-                )}
+                        {!clientProfile && (
+                          <p className="text-xs text-slate-400 px-1">Client not yet registered in the system.</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </>
               </div>
             )}
           </SectionCard>
