@@ -38,7 +38,7 @@ exports.getUpcomingEvents = async (req, res) => {
         const todayRes = await db.query(`SELECT (DATE(NOW() AT TIME ZONE 'Asia/Colombo'))::text AS d`);
         const today = todayRes.rows[0].d;
 
-        const [scheduledRes, pendingRes, predictionRes, attendanceRes] = await Promise.all([
+        const [scheduledRes, pendingRes, predictionRes, attendanceRes, leaveRes] = await Promise.all([
             db.query(`
                 SELECT
                     sa.action_id, sa.action_type, sa.effective_date::text AS effective_date,
@@ -123,6 +123,17 @@ exports.getUpcomingEvents = async (req, res) => {
                   AND (a.attendance_id IS NULL OR a.in_time IS NULL OR a.out_time IS NULL)
                 ORDER BY b.booking_code ASC
             `, [today]),
+            // 5. PENDING_LEAVE — staff leave requests awaiting an admin decision.
+            db.query(`
+                SELECT
+                    lr.leave_id, lr.start_date::text AS start_date, lr.end_date::text AS end_date,
+                    lr.reason, lr.requested_at,
+                    sp.full_name AS current_staff_name, sp.staff_code
+                FROM staff_leave_requests lr
+                JOIN staff_profiles sp ON sp.staff_profile_id = lr.staff_profile_id
+                WHERE lr.status = 'PENDING'
+                ORDER BY lr.start_date ASC
+            `),
         ]);
 
         const events = [];
@@ -197,6 +208,26 @@ exports.getUpcomingEvents = async (req, res) => {
                 effective_date: today,
                 status: 'PENDING',
                 due_bucket: 'TODAY',
+            });
+        }
+
+        for (const row of leaveRes.rows) {
+            events.push({
+                id: row.leave_id,
+                source: 'PENDING_LEAVE',
+                action_type: 'PENDING_LEAVE',
+                booking_id: null,
+                booking_code: null,
+                client_name: null,
+                patient_name: null,
+                current_staff_name: row.current_staff_name,
+                staff_code: row.staff_code,
+                start_date: row.start_date,
+                end_date: row.end_date,
+                effective_date: row.start_date,
+                reason: row.reason,
+                created_at: row.requested_at,
+                due_bucket: 'NEEDS_ACTION',
             });
         }
 

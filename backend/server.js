@@ -13,6 +13,7 @@ const paymentRoutes = require('./routes/paymentRoutes')
 const paymentSlipRoutes = require('./routes/paymentSlipRoutes')
 const migrateRoutes = require('./routes/migrateRoutes');
 const staffWalletRoutes = require('./routes/staffWalletRoutes');
+const staffLeaveRoutes = require('./routes/staffLeaveRoutes');
 const staffReviewRoutes = require('./routes/staffReviewRoutes')
 const financesRoutes = require('./routes/financesRoutes')
 const bankAccountRoutes = require('./routes/bankAccountRoutes');
@@ -99,6 +100,7 @@ app.use('/api/payment', paymentRoutes);
 app.use('/api/payment-slips', paymentSlipRoutes);
 app.use('/api/migrate', migrateRoutes); 
 app.use('/api/staff-wallet', staffWalletRoutes);
+app.use('/api/staff-leave', staffLeaveRoutes);
 app.use('/api/staff-reviews', staffReviewRoutes);
 
 app.use('/api/finances', financesRoutes);

@@ -68,4 +68,16 @@ const sendStaffAdvanceRejectedSms = (mobileNumber, staffName, amount, reason) =>
     `Hi ${staffName}, your advance request of LKR ${amount} could not be approved. Reason: ${reason || 'No reason provided'}. Please contact the VCare Nursing office for more information. - VCare Nursing`
   );
 
-module.exports = { sendSmsOtp, sendSms, sendStaffAdvanceApprovedSms, sendStaffAdvanceRejectedSms };
+const sendStaffLeaveApprovedSms = (mobileNumber, staffName, startDate, endDate, days) =>
+  sendSms(
+    mobileNumber,
+    `Hi ${staffName}, your leave request from ${startDate} to ${endDate} (${days} day${days === 1 ? '' : 's'}) has been approved. - VCare Nursing`
+  );
+
+const sendStaffLeaveRejectedSms = (mobileNumber, staffName, startDate, endDate, reason) =>
+  sendSms(
+    mobileNumber,
+    `Hi ${staffName}, your leave request from ${startDate} to ${endDate} could not be approved. Reason: ${reason || 'No reason provided'}. Please contact the VCare Nursing office for more information. - VCare Nursing`
+  );
+
+module.exports = { sendSmsOtp, sendSms, sendStaffAdvanceApprovedSms, sendStaffAdvanceRejectedSms, sendStaffLeaveApprovedSms, sendStaffLeaveRejectedSms };

@@ -3,7 +3,7 @@ import {
   Users, Calendar, DollarSign, Activity,
   Settings, LogOut, Bell, Search,
   ShieldCheck, FileText, SendHorizontal, Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet, Landmark,
-  ChevronLeft, ChevronRight, ClipboardList, History, HeartPulse, ArrowLeftRight, Banknote, Star, Lock, UserCog, CalendarClock, Briefcase, Receipt
+  ChevronLeft, ChevronRight, ClipboardList, History, HeartPulse, ArrowLeftRight, Banknote, Star, Lock, UserCog, CalendarClock, Briefcase, Receipt, CalendarOff
 } from 'lucide-react';
 import logo from '../../../assets/Logo/VCareLogo.png';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -117,6 +117,13 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
             label="Upcoming Events"
             path="/admin/upcoming-events"
             active={isActive('/admin/upcoming-events')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
+            icon={CalendarOff}
+            label="Leave Requests"
+            path="/admin/leave-requests"
+            active={isActive('/admin/leave-requests')}
             collapsed={collapsed}
           />
           <SidebarItem

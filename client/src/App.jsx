@@ -48,6 +48,7 @@ import UpcomingEvents from './modules/admin/upcoming_events/UpcomingEvents';
 import Statements from './modules/admin/statements/statements';
 import Earnings from './modules/public/service_team/Earnings';
 import AdvanceRequests from './modules/admin/advance_requests/advance_requests';
+import LeaveRequests from './modules/admin/leave_requests/LeaveRequests';
 import StaffWorkingHistory from './modules/admin/advance_requests/StaffWorkingHistory';
 import ForgotPasswordPage from './modules/auth/ForgotPasswordPage';
 import VerifyForgotPasswordOtp from './modules/auth/VerifyForgotPasswordOtp';
@@ -64,6 +65,7 @@ import WorkerBookings from './modules/public/service_team/WorkerBookings';
 import StaffMyProfile from './modules/public/service_team/StaffMyProfile';
 import StaffSettings from './modules/public/service_team/StaffSettings';
 import StaffChangeRequestPage from './modules/public/service_team/StaffChangeRequestPage';
+import StaffLeaveRequestPage from './modules/public/service_team/StaffLeaveRequestPage';
 import ChangeRequestsPage from './modules/admin/change_requests/ChangeRequestsPage';
 import ActivityLogPage from './modules/admin/activity_log/ActivityLogPage';
 import AdminReviewsPage from './modules/admin/reviews/AdminReviewsPage';
@@ -130,6 +132,7 @@ function App() {
             <Route path="/services/my-profile" element={<StaffMyProfile />} />
             <Route path="/services/settings" element={<StaffSettings />} />
             <Route path="/services/change-request" element={<StaffChangeRequestPage />} />
+            <Route path="/services/leave-request" element={<StaffLeaveRequestPage />} />
             <Route element={<ClientLayout />}>
               <Route path="/client/profile" element={<ClientProfile />} />
               <Route path="/client/bookings" element={<ClientBookings />} />
@@ -289,6 +292,11 @@ function App() {
             <Route path="/admin/advance-requests" element={
               <AdminAuthProvider>
                 <AdvanceRequests />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/leave-requests" element={
+              <AdminAuthProvider>
+                <LeaveRequests />
               </AdminAuthProvider>
             } />
             <Route path="/admin/staff-history/:staffProfileId" element={

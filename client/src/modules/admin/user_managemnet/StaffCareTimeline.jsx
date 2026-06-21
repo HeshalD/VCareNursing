@@ -16,6 +16,7 @@ const STATUS_META = {
   skipped:   { bar: '#9A9488', label: 'Skipped',      pillBg: 'rgba(154,148,136,.24)',pillColor: '#C4BFB5' },
   scheduled: { bar: '#D5CFC4', label: 'Scheduled',    pillBg: 'rgba(255,255,255,.12)',pillColor: '#CFC9BE' },
   off:       { bar: 'transparent', label: 'Off',      pillBg: 'rgba(255,255,255,.10)', pillColor: '#BCB6AB' },
+  leave:     { bar: '#8C5AA6', label: 'On leave',     pillBg: 'rgba(140,90,166,.24)', pillColor: '#D2B4E2' },
 };
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -28,7 +29,7 @@ const moneyFmt = (n) => `Rs ${Math.round(Number(n || 0)).toLocaleString('en-US')
 // Props:
 //   assignments       — rows from GET /staff/:id/attendance-calendar (booking_staff_assignments + booking/client/patient joins)
 //   attendanceRecords — rows from the same endpoint (staff_daily_attendance)
-const StaffCareTimeline = ({ assignments = [], attendanceRecords = [] }) => {
+const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], leaveDays = [] }) => {
   const [monthOffset, setMonthOffset] = useState(0);
   const [hoveredKey, setHoveredKey] = useState(null);
   const navigate = useNavigate();
@@ -62,6 +63,20 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [] }) => {
     return map;
   }, [attendanceRecords]);
 
+  // ── Approved leave lookup: set of ISO date strings the staff is off ───────
+  const leaveSet = useMemo(() => {
+    const set = new Set();
+    (leaveDays || []).forEach((lv) => {
+      if (!lv.start_date || !lv.end_date) return;
+      const start = new Date(lv.start_date); start.setHours(0, 0, 0, 0);
+      const end = new Date(lv.end_date); end.setHours(0, 0, 0, 0);
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        set.add(toLocalISO(d));
+      }
+    });
+    return set;
+  }, [leaveDays]);
+
   // Among all assignments covering this date, pick the latest-starting one —
   // mirrors CareTimeline's getNurseForDay so swaps/back-to-back bookings resolve correctly.
   const getAssignmentForDate = (date) => {
@@ -83,6 +98,11 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [] }) => {
     const assignment = getAssignmentForDate(date);
     const isToday = date.getTime() === today.getTime();
     const isFuture = date.getTime() > today.getTime();
+
+    // Approved leave overrides everything — the staff is off this day.
+    if (leaveSet.has(dateISO)) {
+      return { date, dateISO, isToday, isWork: false, isLeave: true, status: 'leave' };
+    }
 
     if (!assignment) {
       return { date, dateISO, isToday, isWork: false, status: 'off' };
@@ -124,7 +144,7 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [] }) => {
     }
     return weeks;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleMonth, assignments, attendanceByKey, bookingColorMap, today]);
+  }, [visibleMonth, assignments, attendanceByKey, bookingColorMap, leaveSet, today]);
 
   const monthAgg = useMemo(() => {
     let paid = 0, pending = 0, skipped = 0, scheduled = 0, earned = 0, potential = 0;
@@ -259,8 +279,8 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [] }) => {
                     className={`relative flex flex-col justify-between rounded-xl p-1.5 sm:p-2 select-none ${isClickable ? 'cursor-pointer' : 'cursor-default'}`}
                     style={{
                       aspectRatio: '1/1',
-                      background: cell.isWork ? cell.color.tint : '#FCFBF8',
-                      border: cell.isToday ? '1.5px solid #137A6B' : cell.isWork ? `1px solid ${cell.color.border}` : '1px dashed #DBD5CA',
+                      background: cell.isLeave ? '#F3ECF7' : cell.isWork ? cell.color.tint : '#FCFBF8',
+                      border: cell.isToday ? '1.5px solid #137A6B' : cell.isLeave ? '1px solid #DCC8E3' : cell.isWork ? `1px solid ${cell.color.border}` : '1px dashed #DBD5CA',
                       boxShadow: cell.isToday ? '0 0 0 3px rgba(19,122,107,.13)' : isHovered ? '0 12px 26px rgba(40,33,22,.18)' : 'none',
                       transform: isHovered ? 'translateY(-3px)' : 'none',
                       transition: 'transform .15s ease, box-shadow .15s ease',
@@ -289,6 +309,8 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [] }) => {
                         </div>
                         <div className="rounded-full w-full mt-1" style={{ height: 4, background: meta.bar, opacity: cell.status === 'scheduled' ? 0.75 : 1 }} />
                       </div>
+                    ) : cell.isLeave ? (
+                      <div className="text-[10px] font-semibold mt-auto" style={{ color: '#8C5AA6' }}>Leave</div>
                     ) : (
                       <div className="text-[10px] font-semibold text-[#BCB6AB] mt-auto">Off</div>
                     )}
@@ -348,6 +370,12 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [] }) => {
                               </div>
                             )}
                           </>
+                        ) : cell.isLeave ? (
+                          <div className="mt-2">
+                            <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: STATUS_META.leave.pillBg, color: STATUS_META.leave.pillColor }}>
+                              On approved leave
+                            </span>
+                          </div>
                         ) : (
                           <div className="text-[11px] text-[#A8A299] mt-2">No assignment this day</div>
                         )}
@@ -388,6 +416,9 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [] }) => {
         </div>
         <div className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">
           <span className="w-4 h-1.5 rounded-full inline-block" style={{ background: STATUS_META.scheduled.bar }} />Scheduled
+        </div>
+        <div className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">
+          <span className="w-3 h-3 rounded-sm inline-block" style={{ background: STATUS_META.leave.bar }} />On leave
         </div>
       </div>
     </div>

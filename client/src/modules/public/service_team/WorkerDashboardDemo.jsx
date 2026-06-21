@@ -15,6 +15,7 @@ import {
   Baby,
   Activity,
   AlertTriangle,
+  CalendarOff,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import apiClient from '../../../api/api';
@@ -274,6 +275,20 @@ const WorkerDashboardDemo = () => {
             >
               <FilePen className="h-4 w-4" />
               Request a Change
+            </Link>
+          </div>
+
+          <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-6 py-4 shadow-sm">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">Planning some time off?</p>
+              <p className="text-xs text-slate-500 mt-0.5">Request leave for a date range and track the status of your requests.</p>
+            </div>
+            <Link
+              to="/services/leave-request"
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors"
+            >
+              <CalendarOff className="h-4 w-4" />
+              Request Leave
             </Link>
           </div>
 

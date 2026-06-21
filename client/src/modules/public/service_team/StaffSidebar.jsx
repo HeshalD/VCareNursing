@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
-  LayoutDashboard, User, DollarSign, Settings, LogOut, Briefcase, Calendar, FilePen
+  LayoutDashboard, User, DollarSign, Settings, LogOut, Briefcase, Calendar, FilePen, CalendarOff
 } from 'lucide-react';
 import logoUrl from '../../../assets/Logo/VCareLogo.png';
 
@@ -77,6 +77,12 @@ const StaffSidebar = ({ staffProfileId }) => {
           label="Request Change"
           to="/services/change-request"
           active={location.pathname === '/services/change-request'}
+        />
+        <NavItem
+          icon={CalendarOff}
+          label="Request Leave"
+          to="/services/leave-request"
+          active={location.pathname === '/services/leave-request'}
         />
         <NavItem
           icon={Settings}

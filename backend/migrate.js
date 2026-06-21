@@ -679,6 +679,35 @@ async function runMigration() {
     );
   `);
 
+  // Staff leave requests — staff request time off, admin approves/rejects.
+  // Approved leaves are purely calendar markers (no pay/wallet impact).
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS staff_leave_requests (
+      leave_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      staff_profile_id UUID NOT NULL REFERENCES staff_profiles(staff_profile_id) ON DELETE CASCADE,
+      start_date DATE NOT NULL,
+      end_date DATE NOT NULL,
+      reason TEXT,
+      status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+      requested_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+      reviewed_at TIMESTAMP WITH TIME ZONE,
+      reviewed_by_user_id UUID REFERENCES users(user_id),
+      reviewed_by_name TEXT,
+      rejected_reason TEXT,
+      CHECK (end_date >= start_date)
+    );
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_staff_leave_requests_staff_status
+    ON staff_leave_requests(staff_profile_id, status);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_staff_leave_requests_status_start
+    ON staff_leave_requests(status, start_date);
+  `);
+
   // =========================================================
   // SPRINT 2 TABLES
   // =========================================================

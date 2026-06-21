@@ -338,6 +338,7 @@ const StaffDetailPageV2 = () => {
   const [reviewToggles, setReviewToggles] = useState({});
   const [togglingReviewId, setTogglingReviewId] = useState(null);
   const [attendanceCalendar, setAttendanceCalendar] = useState({ assignments: [], attendance: [] });
+  const [leaveSummary, setLeaveSummary] = useState({ total_leave_days: 0, month_leave_days: 0, approved_leaves: [] });
   const [adminNotes, setAdminNotes] = useState([]);
   const [adminNotesLoading, setAdminNotesLoading] = useState(true);
   const [adminNotesBusy, setAdminNotesBusy] = useState(false);
@@ -402,6 +403,7 @@ const StaffDetailPageV2 = () => {
       runAdminRequest(() => apiClient.getStaffDeductions(staffProfileId, { page: 1, limit: 50 })),
       runAdminRequest(() => apiClient.getStaffAttendanceCalendar(staffProfileId)),
       runAdminRequest(() => apiClient.getStaffAdminNotes(staffProfileId)),
+      runAdminRequest(() => apiClient.getStaffLeaveSummary(staffProfileId)),
     ]);
 
     const nextErrors = {};
@@ -409,6 +411,7 @@ const StaffDetailPageV2 = () => {
       detailRes, earningsRes, earningsTxRes, currentBookingRes, historyRes,
       payoutsSummaryRes, payoutsRes, bankAccountsRes, companyBankAccountsRes,
       changeRequestsRes, deductionsRes, attendanceCalendarRes, adminNotesRes,
+      leaveSummaryRes,
     ] = results;
 
     if (detailRes.status === 'fulfilled') {
@@ -462,6 +465,15 @@ const StaffDetailPageV2 = () => {
     if (adminNotesRes.status === 'fulfilled') setAdminNotes(safeArray(adminNotesRes.value?.data));
     else nextErrors.adminNotes = adminNotesRes.reason?.message;
     setAdminNotesLoading(false);
+
+    if (leaveSummaryRes.status === 'fulfilled') {
+      const ls = leaveSummaryRes.value?.data || {};
+      setLeaveSummary({
+        total_leave_days: ls.total_leave_days || 0,
+        month_leave_days: ls.month_leave_days || 0,
+        approved_leaves: safeArray(ls.approved_leaves),
+      });
+    } else nextErrors.leaveSummary = leaveSummaryRes.reason?.message;
 
     setSectionErrors(nextErrors);
     setLoading(false);
@@ -1605,12 +1617,27 @@ const StaffDetailPageV2 = () => {
             </div>
           </div>
 
+          {/* LEAVE SUMMARY */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 14, marginBottom: 18 }}>
+            <div style={{ background: '#fff', border: '1px solid #ECE7DF', borderRadius: 16, padding: '17px 18px' }}>
+              <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#9A9488' }}>Total leaves taken</div>
+              <div style={{ fontSize: 25, fontWeight: 800, letterSpacing: '-.02em', marginTop: 7 }}>{leaveSummary.total_leave_days} day{leaveSummary.total_leave_days === 1 ? '' : 's'}</div>
+              <div style={{ fontSize: 12.5, color: '#6F6A60', fontWeight: 600, marginTop: 4 }}>approved leave, all time</div>
+            </div>
+            <div style={{ background: '#fff', border: '1px solid #ECE7DF', borderRadius: 16, padding: '17px 18px' }}>
+              <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#9A9488' }}>Leaves this month</div>
+              <div style={{ fontSize: 25, fontWeight: 800, letterSpacing: '-.02em', marginTop: 7, color: '#8C5AA6' }}>{leaveSummary.month_leave_days} day{leaveSummary.month_leave_days === 1 ? '' : 's'}</div>
+              <div style={{ fontSize: 12.5, color: '#6F6A60', fontWeight: 600, marginTop: 4 }}>current calendar month</div>
+            </div>
+          </div>
+
           {/* WORK & PAY CALENDAR */}
-          {(attendanceCalendar.assignments.length > 0) && (
+          {(attendanceCalendar.assignments.length > 0 || leaveSummary.approved_leaves.length > 0) && (
             <div style={{ marginBottom: 18 }}>
               <StaffCareTimeline
                 assignments={attendanceCalendar.assignments}
                 attendanceRecords={attendanceCalendar.attendance}
+                leaveDays={leaveSummary.approved_leaves}
               />
             </div>
           )}

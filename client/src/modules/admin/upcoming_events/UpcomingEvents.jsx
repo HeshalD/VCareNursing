@@ -17,6 +17,7 @@ import {
   Ban,
   ExternalLink,
   ClipboardList,
+  CalendarOff,
 } from 'lucide-react';
 
 const fmt = (d) =>
@@ -42,6 +43,7 @@ const ACTION_TYPE_CONFIG = {
   NEGATIVE_BALANCE: { label: 'Negative Balance', Icon: AlertTriangle, color: 'text-red-600 bg-red-50' },
   EXPIRING_SOON: { label: 'Balance Expiring Soon', Icon: Wallet, color: 'text-amber-600 bg-amber-50' },
   ATTENDANCE_NEEDED: { label: 'Attendance Not Logged', Icon: ClipboardList, color: 'text-amber-600 bg-amber-50' },
+  PENDING_LEAVE: { label: 'Leave Request', Icon: CalendarOff, color: 'text-amber-600 bg-amber-50' },
 };
 
 const BucketBadge = ({ bucket }) => {
@@ -250,13 +252,17 @@ const UpcomingEvents = () => {
                       <ActionTypeTag actionType={event.action_type} />
                     </td>
                     <td className="px-6 py-4">
-                      <button
-                        onClick={() => navigate(`/admin/bookings/${event.booking_id}/v2`)}
-                        className="text-sm font-semibold font-mono text-blue-600 hover:underline inline-flex items-center gap-1"
-                      >
-                        {event.booking_code || event.booking_id}
-                        <ExternalLink className="w-3 h-3" />
-                      </button>
+                      {event.booking_id ? (
+                        <button
+                          onClick={() => navigate(`/admin/bookings/${event.booking_id}/v2`)}
+                          className="text-sm font-semibold font-mono text-blue-600 hover:underline inline-flex items-center gap-1"
+                        >
+                          {event.booking_code || event.booking_id}
+                          <ExternalLink className="w-3 h-3" />
+                        </button>
+                      ) : (
+                        <span className="text-sm text-slate-400">—</span>
+                      )}
                     </td>
                     <td className="px-6 py-4">
                       <p className="text-sm font-semibold text-slate-900">{event.client_name || '—'}</p>
@@ -324,6 +330,15 @@ const UpcomingEvents = () => {
                         >
                           <ClipboardList className="w-3.5 h-3.5" />
                           Log Attendance
+                        </button>
+                      )}
+                      {event.source === 'PENDING_LEAVE' && (
+                        <button
+                          onClick={() => navigate('/admin/leave-requests')}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-amber-700 bg-amber-50 rounded-lg hover:bg-amber-100 transition-colors"
+                        >
+                          <CalendarOff className="w-3.5 h-3.5" />
+                          Review Request
                         </button>
                       )}
                     </td>

@@ -305,4 +305,38 @@ const sendCandidateProfile = (mobileNumber, payerName, patientName, staffName, d
     [{ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: String(staffProfileId) }] }]
   );
 
-module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendPaymentRecorded, sendPaymentReceipt, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected, sendClientBookingStatement, sendStaffAgreement, sendCandidateProfile };
+// Sent to staff when their leave request is approved.
+// Body vars: {{1}} = staff name, {{2}} = start date, {{3}} = end date, {{4}} = number of days
+//
+// META TEMPLATE SPEC — vcare_leave_approved (UTILITY, en)
+// Header: NONE
+// Body:
+//   Hi {{1}},
+//
+//   Good news! Your leave request has been *approved*.
+//
+//   🗓️ *From:* {{2}}
+//   🗓️ *To:* {{3}}
+//   ⏳ *Duration:* {{4}} day(s)
+//
+//   Enjoy your time off. Please reach out to the VCare Nursing office if you have any questions.
+const sendStaffLeaveApproved = (mobileNumber, staffName, startDate, endDate, days) =>
+  sendTemplate(formatNumber(mobileNumber), 'vcare_leave_approved', 'en', [staffName, startDate, endDate, days]);
+
+// Sent to staff when their leave request is rejected.
+// Body vars: {{1}} = staff name, {{2}} = start date, {{3}} = end date, {{4}} = reason
+//
+// META TEMPLATE SPEC — vcare_leave_rejected (UTILITY, en)
+// Header: NONE
+// Body:
+//   Hi {{1}},
+//
+//   We're sorry, but your leave request from {{2}} to {{3}} could not be approved.
+//
+//   📝 *Reason:* {{4}}
+//
+//   Please contact the VCare Nursing office for more information.
+const sendStaffLeaveRejected = (mobileNumber, staffName, startDate, endDate, reason) =>
+  sendTemplate(formatNumber(mobileNumber), 'vcare_leave_rejected', 'en', [staffName, startDate, endDate, reason]);
+
+module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendPaymentRecorded, sendPaymentReceipt, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected, sendClientBookingStatement, sendStaffAgreement, sendCandidateProfile, sendStaffLeaveApproved, sendStaffLeaveRejected };

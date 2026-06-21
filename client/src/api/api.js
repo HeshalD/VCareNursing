@@ -1361,6 +1361,52 @@ class ApiClient {
     return this.request('/staff-wallet/advances/pending');
   }
 
+  // Staff Leave endpoints
+  async getMyLeaves() {
+    return this.request('/staff-leave/my-leaves');
+  }
+
+  async requestLeave(leaveData) {
+    return this.request('/staff-leave/request', {
+      method: 'POST',
+      body: JSON.stringify(leaveData),
+    });
+  }
+
+  async getAllLeaves(status) {
+    const url = status ? `/staff-leave/all?status=${encodeURIComponent(status)}` : '/staff-leave/all';
+    return this.request(url);
+  }
+
+  async getPendingLeaves() {
+    return this.request('/staff-leave/pending');
+  }
+
+  async getLeaveConflicts(leaveId) {
+    return this.request(`/staff-leave/${leaveId}/conflicts`);
+  }
+
+  async getLeaveReplacementCandidates(leaveId) {
+    return this.request(`/staff-leave/${leaveId}/candidates`);
+  }
+
+  async approveLeave(leaveId) {
+    return this.request(`/staff-leave/approve/${leaveId}`, {
+      method: 'POST',
+    });
+  }
+
+  async rejectLeave(leaveId, reason) {
+    return this.request(`/staff-leave/reject/${leaveId}`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  async getStaffLeaveSummary(staffProfileId) {
+    return this.request(`/staff-leave/summary/${staffProfileId}`);
+  }
+
   // Staff Review endpoints
   async createStaffReview(reviewData) {
     return this.request('/staff-reviews', {
