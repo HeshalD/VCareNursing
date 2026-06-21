@@ -112,10 +112,9 @@ const ReviewSection = () => {
 
               <div className="flex items-center gap-4 mt-auto">
                 <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-slate-100">
-                  <img src={review.image} alt={review.name} className="w-full h-full object-cover" />
+                  <img src={review.image} alt={review.role} className="w-full h-full object-cover" />
                 </div>
                 <div>
-                  <h4 className="font-bold text-slate-900">{review.name}</h4>
                   <div className="flex items-center gap-1.5">
                     <span className="text-sm text-slate-500">{review.role}</span>
                     <CheckCircle2 className="w-3.5 h-3.5 text-blue-500" />
