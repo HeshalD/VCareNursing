@@ -54,16 +54,23 @@ const app = express();
 startDailyInvoicing();
 
 // Middleware
-// CORS setup – only permit origins configured via env or development host
+// CORS setup – only permit origins configured via env or development host.
+// CLIENT_URL may be a single origin or a comma-separated list
+// (e.g. "https://vcarenursing.com,https://www.vcarenursing.com").
+const envOrigins = (process.env.CLIENT_URL || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
 const allowedOrigins = [
-  process.env.CLIENT_URL,
+  ...envOrigins,
   'http://localhost:3000',
   'http://127.0.0.1:3000',
   'http://localhost:5173',
   'http://127.0.0.1:5173',
   'http://localhost:3001',
   'http://127.0.0.1:3001',
-].filter(Boolean);
+];
 
 const corsOptions = {
   origin: (origin, callback) => {
