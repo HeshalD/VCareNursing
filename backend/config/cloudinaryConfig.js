@@ -1,39 +1,37 @@
-const cloudinary = require('cloudinary').v2;
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
+// Multer upload middleware backed by AWS S3 (formerly Cloudinary).
+// Filename kept as cloudinaryConfig.js so existing route imports don't change.
+//
+// multer-s3 exposes the uploaded URL on `file.location` (Cloudinary used
+// `file.path`). Consumers have been updated accordingly.
+
 const multer = require('multer');
+const multerS3 = require('multer-s3');
+const { s3, BUCKET } = require('./s3Config');
 
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
+// Maps the form field name to an S3 "folder" prefix.
+const folderMap = {
+  profile_picture: 'vcare_profile_pictures',
+  nic_front: 'vcare_nic_cards',
+  nic_back: 'vcare_nic_cards',
+  documents: 'vcare_documents',
+  payment_slip: 'vcare_payment_slips',
+  image: 'vcare_products',
+};
 
-// Storage for documents
-const documentStorage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: (req, file) => {
-    return {
-      folder: 'vcare_documents',
-      allowed_formats: ['pdf', 'doc', 'docx', 'jpg', 'png', 'jpeg'],
-      transformation: [{ width: 1000, height: 1000, crop: 'limit' }]
-    };
+const storage = multerS3({
+  s3,
+  bucket: BUCKET,
+  // Serve files with their real content-type so PDFs/images render inline.
+  contentType: multerS3.AUTO_CONTENT_TYPE,
+  key: (req, file, cb) => {
+    const folder = folderMap[file.fieldname] || 'vcare_documents';
+    const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+    cb(null, `${folder}/${Date.now()}_${safeName}`);
   },
 });
 
-// Storage for profile pictures
-const profilePictureStorage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: (req, file) => {
-    return {
-      folder: 'vcare_profile_pictures',
-      allowed_formats: ['jpg', 'png', 'jpeg'],
-      transformation: [{ width: 300, height: 300, crop: 'fill', gravity: 'face' }]
-    };
-  },
-});
-
-const upload = multer({ storage: documentStorage });
-const uploadProfilePicture = multer({ storage: profilePictureStorage });
+const upload = multer({ storage });
+const uploadProfilePicture = multer({ storage });
 
 // For applications that need both documents and profile picture
 const uploadDocuments = upload.array('documents', 5);

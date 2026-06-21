@@ -18,12 +18,15 @@ const WorkerRegistrationPage = () => {
   const [formData, setFormData] = useState({
     full_name: '', email: '', mobile_number: '', applied_roles: [], 
     qualifications: '', home_address: '', location: '', latitude: '', longitude: '',
-    documents: [], profile_picture: null, gender: '', willing_to_live_in: false, date_of_birth: ''
+    documents: [], profile_picture: null, gender: '', willing_to_live_in: false, date_of_birth: '',
+    nic_number: '', nic_front: null, nic_back: null
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [profilePicturePreview, setProfilePicturePreview] = useState('');
   const [documentPreviews, setDocumentPreviews] = useState([]);
+  const [nicFrontPreview, setNicFrontPreview] = useState('');
+  const [nicBackPreview, setNicBackPreview] = useState('');
   const [isConfirmed, setIsConfirmed] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({
     full_name: '',
@@ -36,7 +39,10 @@ const WorkerRegistrationPage = () => {
     gender: '',
     date_of_birth: '',
     documents: '',
-    profile_picture: ''
+    profile_picture: '',
+    nic_number: '',
+    nic_front: '',
+    nic_back: ''
   });
 
   // Auto-complete form fields if user is authenticated
@@ -89,6 +95,48 @@ const WorkerRegistrationPage = () => {
   const hasAutoCompletedAddress = () => {
     if (!isAuthenticated || !user) return false;
     return !!user.primary_address;
+  };
+
+  // Handle NIC front photo change
+  const handleNicFrontChange = (file) => {
+    if (file) {
+      setFormData(prev => ({ ...prev, nic_front: file }));
+      const error = validateField('nic_front', file);
+      setFieldErrors(prev => ({ ...prev, nic_front: error }));
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setNicFrontPreview(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // Handle NIC back photo change
+  const handleNicBackChange = (file) => {
+    if (file) {
+      setFormData(prev => ({ ...prev, nic_back: file }));
+      const error = validateField('nic_back', file);
+      setFieldErrors(prev => ({ ...prev, nic_back: error }));
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setNicBackPreview(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // Handle NIC front delete
+  const handleNicFrontDelete = () => {
+    setFormData(prev => ({ ...prev, nic_front: null }));
+    setNicFrontPreview('');
+    setFieldErrors(prev => ({ ...prev, nic_front: 'NIC front photo is required' }));
+  };
+
+  // Handle NIC back delete
+  const handleNicBackDelete = () => {
+    setFormData(prev => ({ ...prev, nic_back: null }));
+    setNicBackPreview('');
+    setFieldErrors(prev => ({ ...prev, nic_back: 'NIC back photo is required' }));
   };
 
   // Handle profile picture change
@@ -167,9 +215,7 @@ const WorkerRegistrationPage = () => {
         }
         break;
       case 'email':
-        if (!value || value.trim() === '') {
-          error = 'Email address is required';
-        } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+        if (value && value.trim() !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
           error = 'Valid email address is required';
         }
         break;
@@ -242,6 +288,23 @@ const WorkerRegistrationPage = () => {
           error = 'Profile picture is required';
         }
         break;
+      case 'nic_number':
+        if (!value || value.trim() === '') {
+          error = 'NIC number is required';
+        } else if (value.trim().length < 5) {
+          error = 'NIC number must be at least 5 characters';
+        }
+        break;
+      case 'nic_front':
+        if (!value) {
+          error = 'NIC front photo is required';
+        }
+        break;
+      case 'nic_back':
+        if (!value) {
+          error = 'NIC back photo is required';
+        }
+        break;
     }
     
     return error;
@@ -258,7 +321,6 @@ const WorkerRegistrationPage = () => {
   const isFormValid = () => {
     const requiredFields = {
       full_name: formData.full_name,
-      email: formData.email,
       mobile_number: formData.mobile_number,
       applied_roles: formData.applied_roles,
       qualifications: formData.qualifications,
@@ -267,7 +329,10 @@ const WorkerRegistrationPage = () => {
       gender: formData.gender,
       date_of_birth: formData.date_of_birth,
       documents: formData.documents,
-      profile_picture: formData.profile_picture
+      profile_picture: formData.profile_picture,
+      nic_number: formData.nic_number,
+      nic_front: formData.nic_front,
+      nic_back: formData.nic_back
     };
     
     // Check if all fields have values and no errors
@@ -280,7 +345,7 @@ const WorkerRegistrationPage = () => {
     return true;
   };
 
-  const totalSteps = 4;
+  const totalSteps = 5;
 
   const nextStep = () => {
     if (currentStep < totalSteps) setCurrentStep(prev => prev + 1);
@@ -316,29 +381,57 @@ const WorkerRegistrationPage = () => {
         longitude: formData.longitude,
         gender: formData.gender,
         willing_to_live_in: formData.willing_to_live_in,
-        date_of_birth: formData.date_of_birth
+        date_of_birth: formData.date_of_birth,
+        nic_number: formData.nic_number
       };
 
-      // Submit application with documents and profile picture
+      // Prepare form data with all files
+      const formDataWithFiles = new FormData();
+      Object.keys(applicationData).forEach(key => {
+        if (Array.isArray(applicationData[key])) {
+          formDataWithFiles.append(key, JSON.stringify(applicationData[key]));
+        } else {
+          formDataWithFiles.append(key, applicationData[key]);
+        }
+      });
+      
+      // Add documents
+      if (formData.documents && formData.documents.length > 0) {
+        formData.documents.forEach(doc => {
+          formDataWithFiles.append('documents', doc);
+        });
+      }
+      
+      // Add profile picture
+      if (formData.profile_picture) {
+        formDataWithFiles.append('profile_picture', formData.profile_picture);
+      }
+      
+      // Add NIC files
+      if (formData.nic_front) {
+        formDataWithFiles.append('nic_front', formData.nic_front);
+      }
+      if (formData.nic_back) {
+        formDataWithFiles.append('nic_back', formData.nic_back);
+      }
+      
+      // Submit application with all files
       const response = await apiClient.submitApplication(
         applicationData,
         formData.documents,
-        formData.profile_picture
+        formData.profile_picture,
+        formData.nic_front,
+        formData.nic_back
       );
 
       console.log('Application submitted successfully:', response);
       
       // Navigate to success page with application data
-      navigate('/worker-registration-success', { 
-        state: { 
-          applicationData: {
-            application_id: response.application_id || 'APP' + Date.now(),
-            full_name: formData.full_name,
-            email: formData.email,
-            mobile_number: formData.mobile_number,
-            applied_roles: formData.applied_roles
-          }
-        } 
+      navigate('/verify-staff-otp', {
+        state: {
+          applicationId: response.data?.application_id,
+          mobileNumber: formData.mobile_number
+        }
       });
       
     } catch (error) {
@@ -372,9 +465,10 @@ const WorkerRegistrationPage = () => {
               <div className="space-y-6">
                 {[
                   { id: 1, title: "Personal", icon: User },
-                  { id: 2, title: "Location", icon: MapPin },
-                  { id: 3, title: "Professional", icon: Briefcase },
-                  { id: 4, title: "Confirm", icon: CheckCircle }
+                  { id: 2, title: "NIC Details", icon: CreditCard },
+                  { id: 3, title: "Location", icon: MapPin },
+                  { id: 4, title: "Professional", icon: Briefcase },
+                  { id: 5, title: "Confirm", icon: CheckCircle }
                 ].map((step) => (
                   <div key={step.id} className="flex items-center gap-4">
                     <div className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all ${currentStep >= step.id
@@ -456,7 +550,7 @@ const WorkerRegistrationPage = () => {
                       <div className="grid md:grid-cols-2 gap-6">
                         <div className="md:col-span-2">
                           <label className="text-sm font-semibold text-slate-600 block mb-1">
-                            Full Name
+                            Name With Initials
                             {hasAutoCompletedFullName() && (
                               <span className="ml-2 text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full">From account</span>
                             )}
@@ -482,6 +576,7 @@ const WorkerRegistrationPage = () => {
                         <div>
                           <label className="text-sm font-semibold text-slate-600 block mb-1">
                             Email Address
+                            <span className="ml-2 text-xs text-slate-400 font-normal">(Optional)</span>
                             {hasAutoCompletedEmail() && (
                               <span className="ml-2 text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full">From account</span>
                             )}
@@ -489,16 +584,15 @@ const WorkerRegistrationPage = () => {
                           <input
                             type="email"
                             className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 placeholder:text-slate-400 ${
-                              hasAutoCompletedEmail() 
-                                ? 'bg-emerald-50 border-emerald-200' 
-                                : fieldErrors.email 
-                                  ? 'bg-red-50 border-red-300' 
+                              hasAutoCompletedEmail()
+                                ? 'bg-emerald-50 border-emerald-200'
+                                : fieldErrors.email
+                                  ? 'bg-red-50 border-red-300'
                                   : 'bg-slate-50 border-slate-200'
                             }`}
                             value={formData.email}
                             onChange={e => handleInputChange('email', e.target.value)}
                             placeholder="e.g. saman@example.com"
-                            required
                           />
                           {fieldErrors.email && (
                             <p className="text-xs text-red-500 mt-1">{fieldErrors.email}</p>
@@ -577,7 +671,7 @@ const WorkerRegistrationPage = () => {
                         <div>
                           <label className="text-sm font-semibold text-slate-600 block mb-1">Applied Roles</label>
                           <div className="grid grid-cols-2 gap-3">
-                            {['NURSE', 'CARETAKER', 'NANNY', 'COORDINATOR'].map((role) => (
+                            {['NURSE', 'CARETAKER', 'NANNY'].map((role) => (
                               <button
                                 key={role}
                                 type="button"
@@ -632,10 +726,178 @@ const WorkerRegistrationPage = () => {
                     </motion.div>
                   )}
 
-                  {/* Step 2: Location */}
+                  {/* Step 2: NIC Details */}
                   {currentStep === 2 && (
                     <motion.div
                       key="step2"
+                      variants={slideVariants}
+                      initial="hidden" animate="visible" exit="exit"
+                      className="space-y-6"
+                    >
+                      <h2 className="text-2xl font-bold text-slate-800 mb-6 hidden md:block">NIC Details</h2>
+                      <div className="space-y-6">
+                        <div>
+                          <label className="text-sm font-semibold text-slate-600 block mb-1">NIC Number</label>
+                          <input
+                            type="text"
+                            className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 placeholder:text-slate-400 ${
+                              fieldErrors.nic_number 
+                                ? 'bg-red-50 border-red-300' 
+                                : 'bg-slate-50 border-slate-200'
+                            }`}
+                            value={formData.nic_number}
+                            onChange={e => handleInputChange('nic_number', e.target.value)}
+                            placeholder="e.g. 123456789V"
+                            required
+                          />
+                          {fieldErrors.nic_number && (
+                            <p className="text-xs text-red-500 mt-1">{fieldErrors.nic_number}</p>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="text-sm font-semibold text-slate-600 block mb-1">NIC Front Photo</label>
+                          {nicFrontPreview ? (
+                            <div className="relative">
+                              <div className="mt-2 relative">
+                                <img
+                                  src={nicFrontPreview}
+                                  alt="NIC front preview"
+                                  className="w-full max-h-64 object-cover rounded-xl border-2 border-indigo-200 shadow-md"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={handleNicFrontDelete}
+                                  className="absolute -top-2 -right-2 w-8 h-8 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow-md"
+                                  title="Remove NIC front photo"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                              <div className="mt-3">
+                                <input
+                                  type="file"
+                                  id="nic-front-reupload"
+                                  className="hidden"
+                                  accept="image/*"
+                                  onChange={(e) => {
+                                    const file = e.target.files[0];
+                                    if (file) handleNicFrontChange(file);
+                                  }}
+                                />
+                                <label
+                                  htmlFor="nic-front-reupload"
+                                  className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition-colors cursor-pointer text-sm font-medium"
+                                >
+                                  <Upload className="w-4 h-4" />
+                                  Change Photo
+                                </label>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="relative">
+                              <input
+                                type="file"
+                                id="nic-front-upload"
+                                className="hidden"
+                                accept="image/*"
+                                onChange={(e) => {
+                                  const file = e.target.files[0];
+                                  if (file) handleNicFrontChange(file);
+                                }}
+                              />
+                              <label
+                                htmlFor="nic-front-upload"
+                                className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-300 rounded-xl bg-slate-50 hover:bg-slate-100 transition-all cursor-pointer group"
+                              >
+                                <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                                  <Upload className="w-8 h-8 text-slate-400 group-hover:text-indigo-500 mb-2 transition-colors" />
+                                  <p className="text-sm text-slate-500 font-medium">Click to upload NIC front</p>
+                                  <p className="text-xs text-slate-400 mt-1">JPG, PNG (Max 2MB)</p>
+                                </div>
+                              </label>
+                            </div>
+                          )}
+                          {fieldErrors.nic_front && (
+                            <p className="text-xs text-red-500 mt-1">{fieldErrors.nic_front}</p>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="text-sm font-semibold text-slate-600 block mb-1">NIC Back Photo</label>
+                          {nicBackPreview ? (
+                            <div className="relative">
+                              <div className="mt-2 relative">
+                                <img
+                                  src={nicBackPreview}
+                                  alt="NIC back preview"
+                                  className="w-full max-h-64 object-cover rounded-xl border-2 border-indigo-200 shadow-md"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={handleNicBackDelete}
+                                  className="absolute -top-2 -right-2 w-8 h-8 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow-md"
+                                  title="Remove NIC back photo"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                              <div className="mt-3">
+                                <input
+                                  type="file"
+                                  id="nic-back-reupload"
+                                  className="hidden"
+                                  accept="image/*"
+                                  onChange={(e) => {
+                                    const file = e.target.files[0];
+                                    if (file) handleNicBackChange(file);
+                                  }}
+                                />
+                                <label
+                                  htmlFor="nic-back-reupload"
+                                  className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition-colors cursor-pointer text-sm font-medium"
+                                >
+                                  <Upload className="w-4 h-4" />
+                                  Change Photo
+                                </label>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="relative">
+                              <input
+                                type="file"
+                                id="nic-back-upload"
+                                className="hidden"
+                                accept="image/*"
+                                onChange={(e) => {
+                                  const file = e.target.files[0];
+                                  if (file) handleNicBackChange(file);
+                                }}
+                              />
+                              <label
+                                htmlFor="nic-back-upload"
+                                className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-300 rounded-xl bg-slate-50 hover:bg-slate-100 transition-all cursor-pointer group"
+                              >
+                                <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                                  <Upload className="w-8 h-8 text-slate-400 group-hover:text-indigo-500 mb-2 transition-colors" />
+                                  <p className="text-sm text-slate-500 font-medium">Click to upload NIC back</p>
+                                  <p className="text-xs text-slate-400 mt-1">JPG, PNG (Max 2MB)</p>
+                                </div>
+                              </label>
+                            </div>
+                          )}
+                          {fieldErrors.nic_back && (
+                            <p className="text-xs text-red-500 mt-1">{fieldErrors.nic_back}</p>
+                          )}
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {/* Step 3: Location */}
+                  {currentStep === 3 && (
+                    <motion.div
+                      key="step3"
                       variants={slideVariants}
                       initial="hidden" animate="visible" exit="exit"
                       className="space-y-6"
@@ -666,7 +928,7 @@ const WorkerRegistrationPage = () => {
                           </div>
                         </div>
                           <div>
-                          <label className="text-sm font-semibold text-slate-600 block mb-1">District / City</label>
+                          <label className="text-sm font-semibold text-slate-600 block mb-1">City</label>
                           <input
                             type="text"
                             className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 placeholder:text-slate-400 ${
@@ -712,10 +974,10 @@ const WorkerRegistrationPage = () => {
                     </motion.div>
                   )}
 
-                  {/* Step 3: Professional */}
-                  {currentStep === 3 && (
+                  {/* Step 4: Professional */}
+                  {currentStep === 4 && (
                     <motion.div
-                      key="step3"
+                      key="step4"
                       variants={slideVariants}
                       initial="hidden" animate="visible" exit="exit"
                       className="space-y-6"
@@ -891,10 +1153,10 @@ const WorkerRegistrationPage = () => {
                     </motion.div>
                   )}
 
-                  {/* Step 4: Confirmation */}
-                  {currentStep === 4 && (
+                  {/* Step 5: Confirmation */}
+                  {currentStep === 5 && (
                     <motion.div
-                      key="step4"
+                      key="step5"
                       variants={slideVariants}
                       initial="hidden" animate="visible" exit="exit"
                       className="space-y-6"
@@ -976,8 +1238,10 @@ const WorkerRegistrationPage = () => {
                             </p>
                             <ul className="text-xs text-amber-600 space-y-1">
                               {!formData.full_name && <li>• Full Name</li>}
-                              {!formData.email && <li>• Email Address</li>}
                               {!formData.mobile_number && <li>• Mobile Number</li>}
+                              {!formData.nic_number && <li>• NIC Number</li>}
+                              {!formData.nic_front && <li>• NIC Front Photo</li>}
+                              {!formData.nic_back && <li>• NIC Back Photo</li>}
                               {(!formData.applied_roles || formData.applied_roles.length === 0) && <li>• Applied Roles</li>}
                               {!formData.qualifications && <li>• Qualifications</li>}
                               {!formData.home_address && <li>• Home Address</li>}
@@ -1004,6 +1268,30 @@ const WorkerRegistrationPage = () => {
                         </div>
                       )}
 
+                      {/* Terms and Conditions */}
+                      <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl">
+                        <div className="flex items-start gap-3">
+                          <div className="w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                            <FileText className="w-4 h-4 text-indigo-600" />
+                          </div>
+                          <div className="flex-1">
+                            <p className="text-sm font-semibold text-slate-800 mb-1">Terms & Conditions</p>
+                            <p className="text-xs text-slate-500 mb-2">
+                              By submitting this application, you agree to VCare's terms of service and privacy policy.
+                            </p>
+                            <a
+                              href="https://res.cloudinary.com/dohaktkth/image/upload/v1780652809/INDEPENDENT_CONTRACTOR_AGREEMENT_knloa6.pdf"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-800 hover:underline transition-colors"
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                              Read full Terms &amp; Conditions (PDF)
+                            </a>
+                          </div>
+                        </div>
+                      </div>
+
                       {/* Confirmation Checkbox */}
                       <div className="space-y-4">
                         <label className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl cursor-pointer hover:bg-amber-100 transition-colors">
@@ -1015,7 +1303,16 @@ const WorkerRegistrationPage = () => {
                           />
                           <div className="text-sm">
                             <p className="font-semibold text-amber-900">
-                              I confirm that all the information provided above is accurate and complete.
+                              I confirm that all the information provided above is accurate and complete, and I have read and agree to the{' '}
+                              <a
+                                href="https://res.cloudinary.com/dohaktkth/image/upload/v1780652809/INDEPENDENT_CONTRACTOR_AGREEMENT_knloa6.pdf"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-indigo-600 hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                Terms &amp; Conditions
+                              </a>.
                             </p>
                             <p className="text-amber-700 mt-1">
                               I understand that VCare will contact me within 24 hours regarding my application.
@@ -1056,7 +1353,7 @@ const WorkerRegistrationPage = () => {
                   <div /> /* Spacer */
                 )}
 
-                {currentStep < 4 ? (
+                {currentStep < 5 ? (
                   <button
                     type="button"
                     onClick={nextStep}

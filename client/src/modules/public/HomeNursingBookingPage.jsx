@@ -4,12 +4,35 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   User, Calendar, Phone, MapPin, Heart, CheckCircle, ShieldCheck,
   ArrowRight, UserCheck, Home, Clock, Star, Activity,
-  Stethoscope, Filter, Loader2, ChevronRight, ChevronLeft, Briefcase
+  Stethoscope, Filter, Loader2, ChevronRight, ChevronLeft
 } from 'lucide-react';
 import Navbar from '../../components/layout/Navbar';
 import Footer from '../../components/layout/Footer';
 import apiClient from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
+import homeNursingBg from '../../assets/images/HomeNursing.webp';
+
+// Selectable options for the Service Details step
+const SERVICE_MODELS = [
+  {
+    value: 'LIVE_IN',
+    label: 'Live In',
+    icon: Home,
+    description: 'A nurse stays in the home full-time for round-the-clock medical support.'
+  },
+  {
+    value: 'SHIFT_BASED',
+    label: 'Shift Based',
+    icon: Clock,
+    description: 'Set daily shifts covering day or night care, ideal for scheduled needs.'
+  },
+  {
+    value: 'VISITING',
+    label: 'Visiting',
+    icon: Stethoscope,
+    description: 'Short scheduled visits for medication, dressing changes, or vitals checks.'
+  }
+];
 
 const HomeNursingBookingPage = () => {
   const navigate = useNavigate();
@@ -25,6 +48,7 @@ const HomeNursingBookingPage = () => {
   const [shouldRefetchStaff, setShouldRefetchStaff] = useState(false);
   const [patients, setPatients] = useState([]);
   const [patientsLoading, setPatientsLoading] = useState(false);
+  const [staffSearch, setStaffSearch] = useState('');
 
   const [formData, setFormData] = useState({
     // Payer Information
@@ -35,6 +59,7 @@ const HomeNursingBookingPage = () => {
     // Patient Information
     patient_name: '',
     patient_age: '',
+    patient_gender: '',
     relationship: 'SELF',
     patient_condition: '',
 
@@ -145,6 +170,7 @@ const HomeNursingBookingPage = () => {
         ...prev,
         patient_name: '',
         patient_age: '',
+        patient_gender: '',
         relationship: 'SELF',
         patient_condition: ''
       }));
@@ -157,6 +183,7 @@ const HomeNursingBookingPage = () => {
         ...prev,
         patient_name: selectedPatient.full_name,
         patient_age: selectedPatient.age.toString(),
+        patient_gender: selectedPatient.gender || '',
         relationship: selectedPatient.relationship_to_client || 'OTHER',
         patient_condition: selectedPatient.medical_condition || ''
       }));
@@ -180,7 +207,7 @@ const HomeNursingBookingPage = () => {
 
   useEffect(() => {
     filterStaff();
-  }, [staffData, activeFilter]);
+  }, [staffData, activeFilter, staffSearch]);
 
   const fetchStaffData = async () => {
     try {
@@ -208,14 +235,11 @@ const HomeNursingBookingPage = () => {
           .map(staff => ({
             id: staff.staff_profile_id,
             name: staff.full_name,
-            age: 30 + Math.floor(Math.random() * 25),
             role: staff.role.includes('NURSE') ? 'Nurse' : 'Caretaker',
-            experience: Math.floor(Math.random() * 20) + 5,
             location: staff.home_address || 'Sri Lanka',
-            rating: (Math.random() * 1.5 + 3.5).toFixed(1),
-            reviews: Math.floor(Math.random() * 150) + 10,
+            rating: staff.average_rating ? parseFloat(staff.average_rating).toFixed(1) : null,
+            reviews: staff.total_reviews || 0,
             isVerified: staff.verification_status === 'VERIFIED',
-            price: `LKR ${Math.floor(Math.random() * 50000) + 30000}/mo`,
             image: staff.profile_picture_url || `https://i.pravatar.cc/300?u=${staff.staff_profile_id}`,
             badges: Array.isArray(staff.qualifications) && staff.qualifications.length > 0
               ? staff.qualifications.slice(0, 2)
@@ -240,38 +264,20 @@ const HomeNursingBookingPage = () => {
         const caretakers = caretakersResponse.data || [];
 
         // Transform API data to match expected format
-        const transformedStaff = [...nurses, ...caretakers].map(staff => {
-          // Calculate age from date_of_birth if available
-          let calculatedAge = 30; // Default fallback age
-          if (staff.date_of_birth) {
-            const birthDate = new Date(staff.date_of_birth);
-            const today = new Date();
-            let age = today.getFullYear() - birthDate.getFullYear();
-            const monthDiff = today.getMonth() - birthDate.getMonth();
-            if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
-              age--;
-            }
-            calculatedAge = age;
-          }
-
-          return {
-            id: staff.staff_profile_id,
-            name: staff.full_name,
-            age: calculatedAge,
-            role: staff.role.includes('NURSE') ? 'Nurse' : 'Caretaker',
-            experience: Math.floor(Math.random() * 20) + 5,
-            location: staff.home_address || 'Sri Lanka',
-            rating: (Math.random() * 1.5 + 3.5).toFixed(1),
-            reviews: Math.floor(Math.random() * 150) + 10,
-            isVerified: staff.verification_status === 'VERIFIED',
-            price: `LKR ${Math.floor(Math.random() * 50000) + 30000}/mo`,
-            image: staff.profile_picture_url || `https://i.pravatar.cc/300?u=${staff.staff_profile_id}`,
-            badges: Array.isArray(staff.qualifications) && staff.qualifications.length > 0
-              ? staff.qualifications.slice(0, 2)
-              : ['Experienced'],
-            staffType: staff.role.includes('NURSE') ? 'NURSE' : 'CARETAKER'
-          };
-        });
+        const transformedStaff = [...nurses, ...caretakers].map(staff => ({
+          id: staff.staff_profile_id,
+          name: staff.full_name,
+          role: staff.role.includes('NURSE') ? 'Nurse' : 'Caretaker',
+          location: staff.home_address || 'Sri Lanka',
+          rating: staff.average_rating ? parseFloat(staff.average_rating).toFixed(1) : null,
+          reviews: staff.total_reviews || 0,
+          isVerified: staff.verification_status === 'VERIFIED',
+          image: staff.profile_picture_url || `https://i.pravatar.cc/300?u=${staff.staff_profile_id}`,
+          badges: Array.isArray(staff.qualifications) && staff.qualifications.length > 0
+            ? staff.qualifications.slice(0, 2)
+            : ['Experienced'],
+          staffType: staff.role.includes('NURSE') ? 'NURSE' : 'CARETAKER'
+        }));
 
         console.log('Setting staff data (all):', transformedStaff);
         setStaffData(transformedStaff);
@@ -285,11 +291,12 @@ const HomeNursingBookingPage = () => {
   };
 
   const filterStaff = () => {
-    if (activeFilter === 'ALL') {
-      setFilteredStaff(staffData);
-    } else {
-      setFilteredStaff(staffData.filter(staff => staff.staffType === activeFilter));
+    let result = activeFilter === 'ALL' ? staffData : staffData.filter(s => s.staffType === activeFilter);
+    if (staffSearch.trim()) {
+      const q = staffSearch.toLowerCase();
+      result = result.filter(s => s.name.toLowerCase().includes(q) || s.location.toLowerCase().includes(q));
     }
+    setFilteredStaff(result);
   };
 
   const handleFilterChange = (filter) => {
@@ -376,10 +383,21 @@ const HomeNursingBookingPage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#0b1120] text-white">
+    <div className="relative min-h-screen text-white">
+      {/* Full-page background image, pinned to the viewport so it stays proportional */}
+      <div
+        className="fixed inset-0 z-0"
+        style={{
+          backgroundImage: `url(${homeNursingBg})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center'
+        }}
+      />
+      <div className="fixed inset-0 z-0 bg-[#0b1120]/80" />
+
       <Navbar />
 
-      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <div className="relative z-10 max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 pt-32 pb-12">
         {/* Header */}
         <div className="text-center mb-12">
           <div className="inline-flex items-center gap-2 px-3 py-1 bg-emerald-500/10 text-emerald-400 rounded-full text-xs font-bold uppercase tracking-wider mb-6">
@@ -399,7 +417,7 @@ const HomeNursingBookingPage = () => {
           <div className="flex items-center gap-4">
             {[
               { id: 1, title: "Payer Details", icon: User },
-              { id: 2, title: "Patient Info", icon: UserCheck },
+              { id: 2, title: "Care Profile Info", icon: UserCheck },
               { id: 3, title: "Service Details", icon: Heart },
               { id: 4, title: "Choose Caregiver", icon: CheckCircle }
             ].map((step, index) => (
@@ -421,7 +439,7 @@ const HomeNursingBookingPage = () => {
         </div>
 
         {/* Form Content */}
-        <div className="bg-[#0f172a] rounded-[32px] border border-white/5 overflow-hidden">
+        <div className="bg-[#0f172a]/90 backdrop-blur-md rounded-[32px] border border-white/10 overflow-hidden">
           <div className="p-8 md:p-12">
             <form onSubmit={(e) => e.preventDefault()}>
               <AnimatePresence mode="wait">
@@ -483,13 +501,13 @@ const HomeNursingBookingPage = () => {
                     initial="hidden" animate="visible" exit="exit"
                     className="space-y-6"
                   >
-                    <h2 className="text-2xl font-bold text-white mb-6">Patient Information</h2>
+                    <h2 className="text-2xl font-bold text-white mb-6">Care Profile Information</h2>
                     
                     {/* Patient Selection for Authenticated Clients */}
                     {isAuthenticated && patients.length > 0 && (
                       <div className="md:col-span-2 mb-6">
                         <label className="text-sm font-semibold text-slate-400 block mb-3">
-                          Select Registered Patient
+                          Select Registered Care Profile
                         </label>
                         <div className="grid gap-3 mb-4">
                           {patients.map(patient => (
@@ -515,6 +533,12 @@ const HomeNursingBookingPage = () => {
                                       <Heart className="w-4 h-4" />
                                       {patient.relationship_to_client || 'Other'}
                                     </span>
+                                    {patient.gender && (
+                                      <span className="flex items-center gap-1">
+                                        <UserCheck className="w-4 h-4" />
+                                        {patient.gender.charAt(0) + patient.gender.slice(1).toLowerCase()}
+                                      </span>
+                                    )}
                                   </div>
                                   {patient.medical_condition && (
                                     <p className="text-xs text-slate-500 mt-2">
@@ -542,7 +566,7 @@ const HomeNursingBookingPage = () => {
                             Clear selection
                           </button>
                           <span>•</span>
-                          <span>Or fill in form below for a new patient</span>
+                          <span>Or fill in form below for a new care profile</span>
                         </div>
                       </div>
                     )}
@@ -550,9 +574,9 @@ const HomeNursingBookingPage = () => {
                     <div className="grid md:grid-cols-2 gap-6">
                       <div className="md:col-span-2">
                         <label className="text-sm font-semibold text-slate-400 block mb-1">
-                          Patient Name
+                          Full Name
                           {isAuthenticated && patients.length > 0 && (
-                            <span className="ml-2 text-xs text-emerald-400">(Required if no patient selected above)</span>
+                            <span className="ml-2 text-xs text-emerald-400">(Required if no care profile selected above)</span>
                           )}
                         </label>
                         <input
@@ -578,7 +602,21 @@ const HomeNursingBookingPage = () => {
                         />
                       </div>
                       <div>
-                        <label className="text-sm font-semibold text-slate-400 block mb-1">Relationship to Patient</label>
+                        <label className="text-sm font-semibold text-slate-400 block mb-1">Gender</label>
+                        <select
+                          className="w-full px-4 py-3 bg-[#0b1120] border border-white/10 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-white"
+                          value={formData.patient_gender}
+                          onChange={e => setFormData({ ...formData, patient_gender: e.target.value })}
+                          onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
+                        >
+                          <option value="">— Select —</option>
+                          <option value="MALE">Male</option>
+                          <option value="FEMALE">Female</option>
+                          <option value="OTHER">Other</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-sm font-semibold text-slate-400 block mb-1">Relationship to Care Profile</label>
                         <select
                           className="w-full px-4 py-3 bg-[#0b1120] border border-white/10 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-white"
                           value={formData.relationship}
@@ -642,20 +680,6 @@ const HomeNursingBookingPage = () => {
                         />
                       </div>
                       <div>
-                        <label className="text-sm font-semibold text-slate-400 block mb-1">Service Model</label>
-                        <select
-                          className="w-full px-4 py-3 bg-[#0b1120] border border-white/10 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-white"
-                          value={formData.service_model}
-                          onChange={e => setFormData({ ...formData, service_model: e.target.value })}
-                          onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
-                          required
-                        >
-                          <option value="LIVE_IN">Live In</option>
-                          <option value="SHIFT_BASED">Shift Based</option>
-                          <option value="VISITING">Visiting</option>
-                        </select>
-                      </div>
-                      <div>
                         <label className="text-sm font-semibold text-slate-400 block mb-1">Preferred Caregiver Gender</label>
                         <select
                           className="w-full px-4 py-3 bg-[#0b1120] border border-white/10 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-white"
@@ -673,6 +697,36 @@ const HomeNursingBookingPage = () => {
                           <option value="MALE">Male</option>
                           <option value="FEMALE">Female</option>
                         </select>
+                      </div>
+
+                      {/* Service Model — card selection */}
+                      <div className="md:col-span-2">
+                        <label className="text-sm font-semibold text-slate-400 block mb-3">Service Model</label>
+                        <div className="grid sm:grid-cols-3 gap-4">
+                          {SERVICE_MODELS.map((opt) => {
+                            const isSelected = formData.service_model === opt.value;
+                            return (
+                              <button
+                                type="button"
+                                key={opt.value}
+                                onClick={() => setFormData({ ...formData, service_model: opt.value })}
+                                className={`text-left p-4 rounded-xl border-2 transition-all ${isSelected
+                                    ? 'border-emerald-500 bg-emerald-950'
+                                    : 'border-white/10 bg-[#0b1120] hover:border-emerald-500/50'
+                                  }`}
+                              >
+                                <div className="flex items-center justify-between mb-2">
+                                  <div className={`p-2 rounded-lg ${isSelected ? 'bg-emerald-500 text-white' : 'bg-white/10 text-slate-400'}`}>
+                                    <opt.icon className="w-5 h-5" />
+                                  </div>
+                                  {isSelected && <CheckCircle className="w-5 h-5 text-emerald-500 flex-shrink-0" />}
+                                </div>
+                                <h4 className="font-semibold text-white">{opt.label}</h4>
+                                <p className="text-xs text-slate-400 mt-1">{opt.description}</p>
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
                       <div className="md:col-span-2">
                         <label className="text-sm font-semibold text-slate-400 block mb-1">Additional Remarks (Optional)</label>
@@ -727,35 +781,38 @@ const HomeNursingBookingPage = () => {
                       </div>
                     </div>
 
-                    {/* Filter Buttons */}
-                    <div className="flex items-center gap-2 bg-white/5 rounded-full p-1 mb-8">
-                      <button
-                        onClick={() => handleFilterChange('ALL')}
-                        className={`px-6 py-2 rounded-full font-medium transition-all ${activeFilter === 'ALL'
-                            ? 'bg-emerald-500 text-white'
-                            : 'text-slate-400 hover:text-white'
-                          }`}
-                      >
-                        All Staff
-                      </button>
-                      <button
-                        onClick={() => handleFilterChange('NURSE')}
-                        className={`px-6 py-2 rounded-full font-medium transition-all ${activeFilter === 'NURSE'
-                            ? 'bg-emerald-500 text-white'
-                            : 'text-slate-400 hover:text-white'
-                          }`}
-                      >
-                        Nurses
-                      </button>
-                      <button
-                        onClick={() => handleFilterChange('CARETAKER')}
-                        className={`px-6 py-2 rounded-full font-medium transition-all ${activeFilter === 'CARETAKER'
-                            ? 'bg-emerald-500 text-white'
-                            : 'text-slate-400 hover:text-white'
-                          }`}
-                      >
-                        Caretakers
-                      </button>
+                    {/* Search & Filter */}
+                    <div className="flex flex-col sm:flex-row gap-3 mb-6">
+                      <div className="relative flex-1">
+                        <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                        <input
+                          type="text"
+                          value={staffSearch}
+                          onChange={e => setStaffSearch(e.target.value)}
+                          placeholder="Search by name or location..."
+                          className="w-full pl-9 pr-4 py-2.5 bg-[#0b1120] border border-white/10 rounded-xl text-sm text-white placeholder:text-slate-600 focus:ring-2 focus:ring-emerald-500 outline-none"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2 bg-white/5 rounded-full p-1">
+                        <button
+                          onClick={() => handleFilterChange('ALL')}
+                          className={`px-5 py-2 rounded-full font-medium transition-all text-sm ${activeFilter === 'ALL' ? 'bg-emerald-500 text-white' : 'text-slate-400 hover:text-white'}`}
+                        >
+                          All Staff
+                        </button>
+                        <button
+                          onClick={() => handleFilterChange('NURSE')}
+                          className={`px-5 py-2 rounded-full font-medium transition-all text-sm ${activeFilter === 'NURSE' ? 'bg-emerald-500 text-white' : 'text-slate-400 hover:text-white'}`}
+                        >
+                          Nurses
+                        </button>
+                        <button
+                          onClick={() => handleFilterChange('CARETAKER')}
+                          className={`px-5 py-2 rounded-full font-medium transition-all text-sm ${activeFilter === 'CARETAKER' ? 'bg-emerald-500 text-white' : 'text-slate-400 hover:text-white'}`}
+                        >
+                          Caretakers
+                        </button>
+                      </div>
                     </div>
 
                     {/* Loading State */}
@@ -811,19 +868,15 @@ const HomeNursingBookingPage = () => {
 
                             <div className="space-y-2">
                               <div className="flex items-center gap-2 text-sm text-slate-400">
-                                <Star className="w-4 h-4 text-emerald-500 fill-current" />
-                                <span>{staff.rating} ({staff.reviews} reviews)</span>
-                              </div>
-                              <div className="flex items-center gap-2 text-sm text-slate-400">
-                                <Briefcase className="w-4 h-4" />
-                                <span>{staff.experience} Years</span>
+                                <Star className={`w-4 h-4 fill-current ${staff.rating ? 'text-emerald-500' : 'text-slate-600'}`} />
+                                {staff.rating
+                                  ? <span>{staff.rating} <span className="text-slate-500">({staff.reviews} {staff.reviews === 1 ? 'review' : 'reviews'})</span></span>
+                                  : <span className="text-slate-500">No reviews yet</span>
+                                }
                               </div>
                               <div className="flex items-center gap-2 text-sm text-slate-400">
                                 <MapPin className="w-4 h-4" />
                                 <span>{staff.location}</span>
-                              </div>
-                              <div className="flex items-center gap-2 text-sm font-semibold text-emerald-400">
-                                <span>{staff.price}</span>
                               </div>
                             </div>
 
@@ -892,7 +945,9 @@ const HomeNursingBookingPage = () => {
         </div>
       </div>
 
-      <Footer />
+      <div className="relative z-10">
+        <Footer />
+      </div>
     </div>
   );
 };

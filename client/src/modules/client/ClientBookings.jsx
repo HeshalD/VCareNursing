@@ -18,6 +18,16 @@ const formatDateLong = d => d
   ? new Date(d).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
   : '—';
 
+const formatTime = t => {
+  if (!t) return null;
+  const m = String(t).match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const period = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${m[2]} ${period}`;
+};
+
 const STATUS_META = {
   active:             { bg: '#f0fdf4', color: '#166534', border: '#bbf7d0', label: 'Active' },
   pending_termination:{ bg: '#fffbeb', color: '#92400e', border: '#fde68a', label: 'Pending Termination' },
@@ -316,7 +326,7 @@ const ClientBookings = () => {
                       <tr key={b.booking_id || b.id} style={{ borderBottom: '1px solid #f8fafc' }}>
                         <td style={s.td}>
                           <span style={{ fontFamily: 'monospace', fontWeight: 600, fontSize: 13, color: '#0f172a' }}>
-                            #{b.booking_id || b.id}
+                            {b.booking_code || b.booking_id}
                           </span>
                         </td>
                         <td style={s.td}>
@@ -334,6 +344,12 @@ const ClientBookings = () => {
                             <Calendar size={12} />
                             {formatDate(b.start_date)}
                           </div>
+                          {formatTime(details?.service_start_time) && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, fontSize: 11, color: '#94a3b8' }}>
+                              <Clock size={11} />
+                              {formatTime(details.service_start_time)}
+                            </div>
+                          )}
                         </td>
                         <td style={s.td}>
                           <div 
@@ -423,7 +439,7 @@ const ClientBookings = () => {
               <div>
                 <h2 style={{ fontSize: 18, fontWeight: 700, color: '#0f172a', margin: 0 }}>Booking Details</h2>
                 <p style={{ fontSize: 12, color: '#64748b', margin: '4px 0 0' }}>
-                  Booking ID: #{selectedBooking.booking_id || selectedBooking.id}
+                  {selectedBooking.booking_code || selectedBooking.booking_id}
                 </p>
               </div>
               <button onClick={() => setSelectedBooking(null)} style={s.closeBtn}>
@@ -435,7 +451,7 @@ const ClientBookings = () => {
               <div style={{ ...s.infoBlock, marginBottom: 20 }}>
                 <h3 style={s.infoBlockTitle}><Calendar size={16} style={{ color: '#3b82f6' }} /> Booking Information</h3>
                 <div style={s.infoGrid}>
-                  <InfoItem label="Booking ID" value={`#${selectedBooking.booking_id || selectedBooking.id}`} />
+                  <InfoItem label="Booking" value={selectedBooking.booking_code || selectedBooking.booking_id} />
                   <InfoItem label="Status" value={<StatusBadge status={selectedBooking.status} />} />
                   <InfoItem label="Service Type" value={
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -446,6 +462,7 @@ const ClientBookings = () => {
                     </div>
                   } />
                   <InfoItem label="Start Date" value={formatDateLong(selectedBooking.start_date)} />
+                  <InfoItem label="Start Time" value={formatTime(bookingDetails[selectedBooking.booking_id]?.service_start_time) || '—'} />
                 </div>
               </div>
 

@@ -16,7 +16,6 @@ import {
   XCircle,
   AlertCircle,
   Calculator,
-  Users,
   Shield,
   ShieldOff,
   Settings
@@ -74,6 +73,19 @@ const ServiceRequests = () => {
         return 'bg-green-100 text-green-800 border-green-200';
       case 'CANCELLED':
         return 'bg-red-100 text-red-800 border-red-200';
+      case 'BOOKING_CREATED':
+        return 'bg-indigo-100 text-indigo-800 border-indigo-200';
+      default:
+        return 'bg-gray-100 text-gray-800 border-gray-200';
+    }
+  };
+
+  const getBookingStatusColor = (status) => {
+    switch (status) {
+      case 'PENDING':
+        return 'bg-amber-100 text-amber-800 border-amber-200';
+      case 'ACTIVE':
+        return 'bg-emerald-100 text-emerald-800 border-emerald-200';
       default:
         return 'bg-gray-100 text-gray-800 border-gray-200';
     }
@@ -91,6 +103,8 @@ const ServiceRequests = () => {
         return <CheckCircle className="w-4 h-4" />;
       case 'CANCELLED':
         return <XCircle className="w-4 h-4" />;
+      case 'BOOKING_CREATED':
+        return <CheckCircle className="w-4 h-4" />;
       default:
         return <FileText className="w-4 h-4" />;
     }
@@ -147,26 +161,27 @@ const ServiceRequests = () => {
       subtitle={`Total ${filteredRequests.length} requests`}
     >
       {/* Filters and Search */}
-      <div className="bg-white rounded-lg border border-slate-200 p-6 mb-6">
-        <div className="flex flex-col md:flex-row gap-4">
-          <div className="flex-1">
+      <div className="bg-white rounded-lg border border-slate-200 p-4 mb-6 shadow-sm">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+          <div className="md:col-span-2">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
               <input
                 type="text"
                 placeholder="Search by name, phone, or service type..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full pl-12 pr-4 py-3 border border-slate-200 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Filter className="w-4 h-4 text-slate-500" />
+
+          <div className="flex items-center gap-3">
+            <Filter className="w-5 h-5 text-slate-500" />
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="flex-1 px-3 py-2 border border-slate-200 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option key="all" value="all">All Status</option>
               <option key="new_lead" value="NEW_LEAD">New Lead</option>
@@ -174,170 +189,144 @@ const ServiceRequests = () => {
               <option key="contacted" value="CONTACTED">Contacted</option>
               <option key="confirmed" value="CONFIRMED">Confirmed</option>
               <option key="cancelled" value="CANCELLED">Cancelled</option>
+              <option key="booking_created" value="BOOKING_CREATED">Booking Created</option>
             </select>
           </div>
-          
-          {/* Proxy Mode Toggle */}
-          <div className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-lg">
-            {isProxyMode ? (
-              <Shield className="w-4 h-4 text-emerald-600" />
-            ) : (
-              <ShieldOff className="w-4 h-4 text-slate-400" />
-            )}
-            <span className={`text-sm font-medium ${isProxyMode ? 'text-emerald-600' : 'text-slate-500'}`}>
-              Proxy Mode
-            </span>
+
+          <div className="flex items-center justify-end gap-3">
+            {/* Proxy Mode Toggle */}
+            <div className="flex items-center gap-2 px-3 py-2 border border-slate-200 rounded-md bg-white shadow-sm">
+              {isProxyMode ? (
+                <Shield className="w-5 h-5 text-emerald-600" />
+              ) : (
+                <ShieldOff className="w-5 h-5 text-slate-400" />
+              )}
+              <span className={`text-sm font-medium ${isProxyMode ? 'text-emerald-600' : 'text-slate-600'}`}>
+                Proxy Mode
+              </span>
+              <button
+                onClick={() => setIsProxyMode(!isProxyMode)}
+                aria-pressed={isProxyMode}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${isProxyMode ? 'bg-emerald-600' : 'bg-slate-300'}`}
+                title="Toggle proxy mode"
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${isProxyMode ? 'translate-x-5' : 'translate-x-1'}`}
+                />
+              </button>
+            </div>
+
+            {/* Manage Presets Button */}
             <button
-              onClick={() => {
-                console.log('Toggle button clicked, current state:', isProxyMode);
-                setIsProxyMode(!isProxyMode);
-              }}
-              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                isProxyMode ? 'bg-emerald-600' : 'bg-slate-300'
-              }`}
+              onClick={() => setShowPresetManager(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-shadow shadow"
             >
-              <span
-                className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                  isProxyMode ? 'translate-x-5' : 'translate-x-1'
-                }`}
-              />
+              <Settings className="w-4 h-4" />
+              <span className="text-sm font-medium">Manage Presets</span>
             </button>
           </div>
-
-          {/* Manage Presets Button */}
-          <button
-            onClick={() => setShowPresetManager(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            <Settings className="w-4 h-4" />
-            Manage Presets
-          </button>
         </div>
       </div>
 
       {/* Service Requests List */}
-      <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+      <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm">
         {filteredRequests.length === 0 ? (
-          <div className="p-8 text-center">
-            <FileText className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-            <p className="text-slate-500">No service requests found</p>
+          <div className="p-12 text-center">
+            <div className="mx-auto mb-4 w-20 h-20 rounded-full bg-slate-50 flex items-center justify-center">
+              <FileText className="w-8 h-8 text-slate-300" />
+            </div>
+            <h3 className="text-lg font-semibold text-slate-900 mb-2">No service requests</h3>
+            <p className="text-sm text-slate-500">There are no service requests matching your filters.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-slate-50 border-b border-slate-200">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                    Request Details
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                    Patient Info
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                    Service
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                    Location
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                    Start Date
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                    Actions
-                  </th>
+            <table className="min-w-full divide-y divide-slate-200">
+              <thead className="bg-white">
+                <tr className="text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
+                  <th className="px-4 py-3">Request Details</th>
+                  <th className="px-4 py-3">Care Profile Info</th>
+                  <th className="px-4 py-3">Service</th>
+                  <th className="px-4 py-3">Location</th>
+                  <th className="px-4 py-3">Start Date</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Actions</th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-slate-200">
+              <tbody className="bg-white divide-y divide-slate-100">
                 {filteredRequests.map((request) => (
                   <tr key={request.request_id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-3 align-top">
                       <div>
+                        <div className="text-xs font-mono font-medium text-slate-500 mb-1">{request.service_request_code}</div>
                         <div className="font-medium text-slate-900">{request.payer_name}</div>
-                        <div className="flex items-center gap-1 text-sm text-slate-500 mt-1">
+                        <div className="flex items-center gap-2 text-sm text-slate-500 mt-1">
                           <Phone className="w-3 h-3" />
-                          {request.payer_mobile}
+                          <span>{request.payer_mobile}</span>
                         </div>
-                        <div className="text-xs text-slate-400 mt-1">
-                          {formatDate(request.created_at)}
-                        </div>
+                        <div className="text-xs text-slate-400 mt-1">{formatDate(request.created_at)}</div>
                       </div>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-3 align-top">
                       <div>
                         <div className="font-medium text-slate-900">{request.patient_name}</div>
-                        <div className="text-sm text-slate-500">
-                          Age: {request.patient_age} • {request.relationship_to_client}
-                        </div>
-                        <div className="text-sm text-slate-500 mt-1">
-                          {request.patient_condition}
-                        </div>
+                        <div className="text-sm text-slate-500">Age: {request.patient_age} • {request.relationship_to_client}</div>
+                        <div className="text-sm text-slate-500 mt-1">{request.patient_condition}</div>
                       </div>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-3 align-top">
                       <div>
                         <div className="font-medium text-slate-900">{request.service_type}</div>
-                        <div className="text-sm text-slate-500">
-                          {request.service_model?.replace('_', ' ')}
-                        </div>
+                        <div className="text-sm text-slate-500">{request.service_model?.replace('_', ' ')}</div>
                         {request.preferred_gender && (
-                          <div className="text-xs text-slate-500 mt-1">
-                            Prefers: {request.preferred_gender}
-                          </div>
+                          <div className="text-xs text-slate-500 mt-1">Prefers: {request.preferred_gender}</div>
                         )}
                       </div>
                     </td>
-                    <td className="px-6 py-4">
-                      <div className="max-w-xs">
-                        <div className="flex items-start gap-1">
-                          <MapPin className="w-3 h-3 text-slate-400 mt-0.5 flex-shrink-0" />
-                          <span className="text-sm text-slate-600 line-clamp-2">
-                            {request.location_address}
-                          </span>
-                        </div>
+                    <td className="px-4 py-3 align-top max-w-xs">
+                      <div className="flex items-start gap-2">
+                        <MapPin className="w-3 h-3 text-slate-400 mt-0.5 flex-shrink-0" />
+                        <span className="text-sm text-slate-600 line-clamp-2">{request.location_address}</span>
                       </div>
                     </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-1 text-sm text-slate-600">
+                    <td className="px-4 py-3 align-top">
+                      <div className="flex items-center gap-2 text-sm text-slate-600">
                         <Calendar className="w-3 h-3" />
-                        {request.start_date ? new Date(request.start_date).toLocaleDateString() : 'Not set'}
+                        <span>{request.start_date ? new Date(request.start_date).toLocaleDateString('en-GB') : 'Not set'}</span>
                       </div>
                     </td>
-                    <td className="px-6 py-4">
-                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(request.status || 'PENDING')}`}>
-                        {getStatusIcon(request.status || 'PENDING')}
-                        {request.status || 'PENDING'}
-                      </span>
+                    <td className="px-4 py-3 align-top">
+                      <div className="flex flex-col gap-1.5">
+                        <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold border ${getStatusColor(request.status || 'PENDING')}`}>
+                          {getStatusIcon(request.status || 'PENDING')}
+                          <span className="uppercase">{(request.status || 'PENDING').replace(/_/g, ' ')}</span>
+                        </span>
+                        {request.status === 'BOOKING_CREATED' && request.booking_status && (
+                          <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${getBookingStatusColor(request.booking_status)}`}>
+                            <span className="w-1.5 h-1.5 rounded-full bg-current opacity-70" />
+                            <span className="uppercase">{request.booking_status}</span>
+                          </span>
+                        )}
+                      </div>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-3 align-top">
                       <div className="flex items-center gap-2">
                         <button
-                          onClick={() => setSelectedRequest(request)}
-                          className="text-blue-600 hover:text-blue-800 transition-colors"
-                          title="View Details"
+                          onClick={() => navigate(`/admin/service-requests/${request.request_id}/summary`)}
+                          className="p-2 rounded-md bg-slate-50 hover:bg-slate-100 text-blue-600 transition"
+                          title="Open Summary"
                         >
                           <Eye className="w-4 h-4" />
                         </button>
-                        {request.status === 'NEW_LEAD' && (
+                        {['NEW_LEAD', 'PENDING'].includes(request.status || 'PENDING') && (
                           <button
                             onClick={() => navigate(`/admin/quote-builder/${request.request_id}`)}
-                            className="text-green-600 hover:text-green-800 transition-colors"
+                            className="p-2 rounded-md bg-slate-50 hover:bg-slate-100 text-green-600 transition"
                             title="Create Quote"
                           >
                             <Calculator className="w-4 h-4" />
                           </button>
                         )}
-                        {request.status === 'PENDING' && (
-                          <button
-                            onClick={() => navigate('/admin/staff-roster', { state: { serviceRequest: request } })}
-                            className="text-purple-600 hover:text-purple-800 transition-colors"
-                            title="Assign Staff"
-                          >
-                            <Users className="w-4 h-4" />
-                          </button>
-                        )}
+                        {/* Assign Staff removed — not used in this process */}
                       </div>
                     </td>
                   </tr>
@@ -382,7 +371,7 @@ const ServiceRequests = () => {
 
               {/* Patient Information */}
               <div>
-                <h3 className="font-semibold text-slate-900 mb-3">Patient Information</h3>
+                <h3 className="font-semibold text-slate-900 mb-3">Care Profile Information</h3>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-sm text-slate-500">Name</label>
@@ -422,7 +411,7 @@ const ServiceRequests = () => {
                   <div>
                     <label className="text-sm text-slate-500">Start Date</label>
                     <p className="font-medium">
-                      {selectedRequest.start_date ? new Date(selectedRequest.start_date).toLocaleDateString() : 'Not set'}
+                      {selectedRequest.start_date ? new Date(selectedRequest.start_date).toLocaleDateString('en-GB') : 'Not set'}
                     </p>
                   </div>
                 </div>

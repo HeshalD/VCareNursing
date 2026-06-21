@@ -1,0 +1,947 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;}
+  ::-webkit-scrollbar{height:8px;width:8px;}
+  ::-webkit-scrollbar-thumb{background:#D9D3C8;border-radius:8px;}
+</style>
+</helmet>
+<div data-screen-label="Staff Detail" style="--accent:#137A6B;min-height:100vh;background:#F6F3EC;font-family:'Hanken Grotesk',system-ui,sans-serif;color:#2A2722;-webkit-font-smoothing:antialiased;padding:26px 24px 60px;">
+  <div style="max-width:1180px;margin:0 auto;">
+
+    <!-- ======== HEADER ======== -->
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:22px;">
+      <div style="display:flex;align-items:center;gap:14px;">
+        <button style="display:inline-flex;align-items:center;gap:7px;background:#fff;border:1px solid #E7E1D6;border-radius:10px;padding:9px 13px;font-family:inherit;font-size:13px;font-weight:600;color:#5A554B;cursor:pointer;">
+          <span style="font-size:15px;line-height:1;">&#8592;</span> Back to roster
+        </button>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div style="width:34px;height:34px;border-radius:9px;background:var(--accent);display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px;font-weight:700;line-height:1;">+</div>
+          <div style="font-size:18px;font-weight:800;letter-spacing:-.01em;">VCare</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-family:'JetBrains Mono',monospace;font-size:12.5px;color:#8A8478;background:#fff;border:1px solid #E7E1D6;border-radius:8px;padding:7px 11px;">STF-0241</span>
+        <button style="display:inline-flex;align-items:center;gap:7px;background:#fff;border:1px solid #E7E1D6;border-radius:10px;padding:9px 13px;font-family:inherit;font-size:13px;font-weight:600;color:#5A554B;cursor:pointer;">&#8635; Refresh</button>
+        <button style="display:inline-flex;align-items:center;gap:7px;background:var(--accent);border:none;border-radius:10px;padding:9px 15px;font-family:inherit;font-size:13px;font-weight:600;color:#fff;cursor:pointer;">&#9211; Actions</button>
+      </div>
+    </div>
+
+    <!-- ======== HERO ======== -->
+    <div style="display:flex;align-items:flex-start;gap:18px;flex-wrap:wrap;margin-bottom:20px;">
+      <div style="width:62px;height:62px;border-radius:16px;background:#E4F1ED;color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;flex-shrink:0;">{{ initials }}</div>
+      <div style="flex:1;min-width:260px;">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px;">
+          <h1 style="margin:0;font-size:26px;font-weight:800;letter-spacing:-.02em;line-height:1.15;">{{ staffName }}</h1>
+          <span style="{{ statusPillStyle }}"><span style="{{ statusDotStyle }}"></span>{{ statusLabel }}</span>
+          <span style="display:inline-flex;align-items:center;gap:5px;background:#E7F0F8;color:#3F77B5;border-radius:999px;padding:5px 12px;font-size:12.5px;font-weight:700;white-space:nowrap;">&#10003; Verified</span>
+        </div>
+        <div style="font-size:15px;font-weight:600;color:#3A362F;margin-bottom:6px;">{{ designation }}</div>
+        <p style="margin:0;font-size:14px;color:#6F6A60;">STF-0241 &nbsp;&middot;&nbsp; +94&nbsp;77&nbsp;318&nbsp;4420 &nbsp;&middot;&nbsp; Joined Aug 2024 &nbsp;&middot;&nbsp; Currently on <strong style="color:#2A2722;font-weight:600;">Wijesinghe</strong> booking</p>
+      </div>
+    </div>
+
+    <!-- ======== STAT CARDS ======== -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px;">
+      <div style="background:#fff;border:1px solid #ECE7DF;border-radius:16px;padding:17px 18px;">
+        <div style="font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#9A9488;">Current earnings</div>
+        <div style="font-size:25px;font-weight:800;letter-spacing:-.02em;margin-top:7px;color:#2F8A5B;">Rs&nbsp;108,800</div>
+        <div style="font-size:12.5px;color:#2F8A5B;font-weight:600;margin-top:4px;">16 days this period</div>
+      </div>
+      <div style="background:#fff;border:1px solid #ECE7DF;border-radius:16px;padding:17px 18px;">
+        <div style="font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#9A9488;">Total earned</div>
+        <div style="font-size:25px;font-weight:800;letter-spacing:-.02em;margin-top:7px;">Rs&nbsp;695,400</div>
+        <div style="font-size:12.5px;color:#6F6A60;font-weight:600;margin-top:4px;">across 3 bookings</div>
+      </div>
+      <div style="background:#fff;border:1px solid #ECE7DF;border-radius:16px;padding:17px 18px;">
+        <div style="font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#9A9488;">Paid out</div>
+        <div style="font-size:25px;font-weight:800;letter-spacing:-.02em;margin-top:7px;">Rs&nbsp;667,000</div>
+        <div style="font-size:12.5px;color:#6F6A60;font-weight:600;margin-top:4px;">last Jun 1, 2026</div>
+      </div>
+      <div style="background:#fff;border:1px solid #ECE7DF;border-radius:16px;padding:17px 18px;">
+        <div style="font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#9A9488;">Outstanding payable</div>
+        <div style="font-size:25px;font-weight:800;letter-spacing:-.02em;margin-top:7px;color:#BC4338;">Rs&nbsp;108,800</div>
+        <div style="font-size:12.5px;color:#BC4338;font-weight:600;margin-top:4px;">awaiting payout</div>
+      </div>
+    </div>
+
+    <!-- ======== CARE TIMELINE (month by month) ======== -->
+    <div style="background:#fff;border:1px solid #ECE7DF;border-radius:20px;padding:22px 24px 24px;margin-bottom:18px;">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px;">
+        <div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <h2 style="margin:0;font-size:18px;font-weight:800;letter-spacing:-.01em;white-space:nowrap;">Care timeline</h2>
+            <span style="font-size:12px;color:#9A9488;font-weight:600;white-space:nowrap;">Hover a day to see the booking worked</span>
+          </div>
+          <div style="font-size:13px;color:#6F6A60;margin-top:5px;">Each block is one day worked. Colour shows which booking; the bar below shows payout status.</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:12.5px;font-weight:600;color:#8A8478;min-width:74px;text-align:right;">{{ monthLabel }}</span>
+          <div style="display:flex;gap:6px;">
+            <button onClick="{{ prevMonth }}" style="{{ prevBtnStyle }}">&#8249;</button>
+            <button onClick="{{ nextMonth }}" style="{{ nextBtnStyle }}">&#8250;</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- month summary -->
+      <div style="background:#FBF9F4;border:1px solid #EFEAE0;border-radius:14px;padding:15px 17px;margin-bottom:18px;">
+        <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:11px;">
+          <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;">
+            <span style="font-size:22px;font-weight:800;letter-spacing:-.02em;white-space:nowrap;">{{ monthTitle }}</span>
+            <span style="font-size:13.5px;color:#6F6A60;">{{ monthSummaryLine }}</span>
+          </div>
+          <div style="display:flex;gap:18px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:#5A554B;font-weight:600;"><span style="width:10px;height:10px;border-radius:3px;background:#2F8A5B;"></span>{{ paidCount }} paid</div>
+            <div style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:#5A554B;font-weight:600;"><span style="width:10px;height:10px;border-radius:3px;background:#C98A2E;"></span>{{ pendingCount }} pending</div>
+            <div style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:#5A554B;font-weight:600;"><span style="width:10px;height:10px;border-radius:3px;background:#D5CFC4;"></span>{{ schedCount }} scheduled</div>
+          </div>
+        </div>
+        <div style="display:flex;height:10px;border-radius:6px;overflow:hidden;background:#EAE5DB;">
+          <div style="{{ barPaidStyle }}"></div>
+          <div style="{{ barPendingStyle }}"></div>
+          <div style="{{ barSchedStyle }}"></div>
+        </div>
+      </div>
+
+      <!-- weekday header -->
+      <div style="display:flex;align-items:stretch;gap:16px;margin-bottom:9px;">
+        <div style="width:96px;flex-shrink:0;"></div>
+        <div style="flex:1;display:grid;grid-template-columns:repeat(7,1fr);gap:9px;">
+          <div style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#A39D91;text-align:center;">Mon</div>
+          <div style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#A39D91;text-align:center;">Tue</div>
+          <div style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#A39D91;text-align:center;">Wed</div>
+          <div style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#A39D91;text-align:center;">Thu</div>
+          <div style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#A39D91;text-align:center;">Fri</div>
+          <div style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#A39D91;text-align:center;">Sat</div>
+          <div style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#A39D91;text-align:center;">Sun</div>
+        </div>
+      </div>
+
+      <!-- week rows -->
+      <div style="display:flex;flex-direction:column;gap:9px;">
+        <sc-for list="{{ weeks }}" as="week" hint-placeholder-count="5">
+          <div style="display:flex;align-items:stretch;gap:16px;">
+            <div style="width:96px;flex-shrink:0;padding-top:6px;">
+              <div style="font-size:13px;font-weight:700;color:#3A362F;">{{ week.label }}</div>
+              <div style="font-size:11px;color:#A39D91;margin-top:2px;">{{ week.range }}</div>
+            </div>
+            <div style="flex:1;display:grid;grid-template-columns:repeat(7,1fr);gap:9px;">
+              <sc-for list="{{ week.days }}" as="cell" hint-placeholder-count="7">
+                <div onMouseEnter="{{ cell.onEnter }}" onMouseLeave="{{ onLeave }}" style="{{ cell.cellStyle }}">
+                  <sc-if value="{{ cell.filled }}" hint-placeholder-val="{{ true }}">
+                    <div style="display:flex;align-items:center;justify-content:space-between;">
+                      <span style="{{ cell.dayStyle }}">{{ cell.day }}</span>
+                      <sc-if value="{{ cell.isWork }}" hint-placeholder-val="{{ true }}">
+                        <span style="{{ cell.dotStyle }}"></span>
+                      </sc-if>
+                    </div>
+                    <sc-if value="{{ cell.isWork }}" hint-placeholder-val="{{ true }}">
+                      <div style="{{ cell.labelStyle }}">{{ cell.shortClient }}</div>
+                      <div style="{{ cell.barStyle }}"></div>
+                    </sc-if>
+                    <sc-if value="{{ cell.isOff }}" hint-placeholder-val="{{ false }}">
+                      <div style="font-size:10.5px;font-weight:600;color:#BCB6AB;margin-top:auto;">Off</div>
+                    </sc-if>
+                    <sc-if value="{{ cell.hovered }}" hint-placeholder-val="{{ false }}">
+                      <div style="{{ tipStyle }}">
+                        <div style="font-size:12px;font-weight:700;color:#fff;">{{ cell.tipDate }}</div>
+                        <div style="display:flex;align-items:center;gap:7px;margin-top:8px;">
+                          <span style="{{ cell.tipDotStyle }}"></span>
+                          <span style="font-size:12.5px;font-weight:600;color:#F2EFE8;white-space:nowrap;">{{ cell.tipClient }}</span>
+                        </div>
+                        <div style="font-size:11px;color:#A8A299;margin:1px 0 0 14px;">{{ cell.tipService }}</div>
+                        <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:#8E887E;margin:3px 0 0 14px;">{{ cell.tipCode }}</div>
+                        <div style="height:1px;background:rgba(255,255,255,.12);margin:9px 0;"></div>
+                        <div style="display:flex;align-items:center;justify-content:space-between;">
+                          <span style="font-size:11.5px;color:#A8A299;">{{ cell.tipEarnedLabel }}</span>
+                          <span style="font-size:12.5px;font-weight:700;color:#fff;">{{ cell.tipEarned }}</span>
+                        </div>
+                        <div style="margin-top:8px;"><span style="{{ cell.tipPillStyle }}">{{ cell.statusLabel }}</span></div>
+                        <div style="{{ caretStyle }}"></div>
+                      </div>
+                    </sc-if>
+                  </sc-if>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+
+      <!-- legend -->
+      <div style="display:flex;align-items:center;gap:22px;flex-wrap:wrap;margin-top:20px;padding-top:18px;border-top:1px solid #EFEAE0;">
+        <span style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#A39D91;">Booking worked</span>
+        <sc-for list="{{ bookingLegend }}" as="b" hint-placeholder-count="3">
+          <div style="display:flex;align-items:center;gap:7px;font-size:13px;color:#4A463E;font-weight:600;">
+            <span style="{{ b.swatchStyle }}"></span>{{ b.client }}
+          </div>
+        </sc-for>
+        <div style="width:1px;height:18px;background:#E7E1D6;"></div>
+        <div style="display:flex;align-items:center;gap:7px;font-size:13px;color:#4A463E;font-weight:600;"><span style="width:18px;height:6px;border-radius:3px;background:#2F8A5B;"></span>Paid</div>
+        <div style="display:flex;align-items:center;gap:7px;font-size:13px;color:#4A463E;font-weight:600;"><span style="width:18px;height:6px;border-radius:3px;background:#C98A2E;"></span>Pending</div>
+        <div style="display:flex;align-items:center;gap:7px;font-size:13px;color:#4A463E;font-weight:600;"><span style="width:18px;height:6px;border-radius:3px;background:#D5CFC4;"></span>Scheduled</div>
+      </div>
+    </div>
+
+    <!-- ======== TABS ======== -->
+    <div style="display:flex;gap:7px;margin-bottom:16px;background:#EEE9E0;padding:5px;border-radius:13px;width:fit-content;max-width:100%;flex-wrap:wrap;">
+      <sc-for list="{{ tabs }}" as="tab" hint-placeholder-count="8">
+        <button onClick="{{ tab.onClick }}" style="{{ tab.style }}">{{ tab.label }}</button>
+      </sc-for>
+    </div>
+
+    <!-- ===== OVERVIEW PANEL ===== -->
+    <sc-if value="{{ isOverview }}" hint-placeholder-val="{{ true }}">
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:16px;align-items:start;">
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:16px;padding:20px;">
+            <h3 style="margin:0 0 16px;font-size:15.5px;font-weight:700;">Staff information</h3>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+              <div><div style="font-size:11px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Full name</div><div style="font-size:14px;font-weight:600;margin-top:3px;">{{ staffName }}</div></div>
+              <div><div style="font-size:11px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Designation</div><div style="font-size:14px;margin-top:3px;">{{ designation }}</div></div>
+              <div><div style="font-size:11px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Email</div><div style="font-size:14px;margin-top:3px;">anusha.silva&#64;gmail.com</div></div>
+              <div><div style="font-size:11px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Phone</div><div style="font-size:14px;margin-top:3px;">+94 77 318 4420</div></div>
+              <div><div style="font-size:11px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Location</div><div style="font-size:14px;margin-top:3px;">Nugegoda, Colombo</div></div>
+              <div><div style="font-size:11px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Verification</div><div style="font-size:14px;margin-top:3px;color:#2F7A53;font-weight:600;">Verified</div></div>
+              <div><div style="font-size:11px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Willing to live in</div><div style="font-size:14px;margin-top:3px;">Yes</div></div>
+              <div><div style="font-size:11px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Member since</div><div style="font-size:14px;margin-top:3px;">Aug 14, 2024</div></div>
+              <div><div style="font-size:11px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Average rating</div><div style="font-size:14px;margin-top:3px;font-weight:600;">4.6 / 5</div></div>
+              <div><div style="font-size:11px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Total reviews</div><div style="font-size:14px;margin-top:3px;">27</div></div>
+            </div>
+          </div>
+
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:16px;padding:20px;">
+            <h3 style="margin:0 0 4px;font-size:15.5px;font-weight:700;">Account control</h3>
+            <p style="margin:0 0 15px;font-size:12.5px;color:#9A9488;">Deactivate or reactivate this staff account.</p>
+            <div style="background:#F1F8F1;border:1px solid #DCEEDD;border-radius:13px;padding:14px 15px;margin-bottom:14px;">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <span style="width:9px;height:9px;border-radius:50%;background:#2F8A5B;flex-shrink:0;"></span>
+                <div>
+                  <div style="font-size:13.5px;font-weight:700;color:#2A2722;">Account enabled</div>
+                  <div style="font-size:12px;color:#6F6A60;margin-top:1px;">This staff member can sign in and accept bookings.</div>
+                </div>
+              </div>
+            </div>
+            <button style="width:100%;background:#fff;border:1px solid #E3B5AF;border-radius:10px;padding:11px;font-family:inherit;font-size:13.5px;font-weight:700;color:#BC4338;cursor:pointer;">Deactivate account</button>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;">
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:16px;padding:20px;">
+            <h3 style="margin:0 0 15px;font-size:15.5px;font-weight:700;">Current assignment</h3>
+            <div style="display:flex;align-items:center;gap:13px;margin-bottom:16px;">
+              <span style="width:11px;height:11px;border-radius:50%;background:#3F77B5;flex-shrink:0;"></span>
+              <div>
+                <div style="font-size:15px;font-weight:700;">Sirimavo Wijesinghe</div>
+                <div style="font-size:12.5px;color:#6F6A60;">Elderly Day Care &middot; since May 15</div>
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:13px;">
+              <div><div style="font-size:11px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Booking code</div><div style="font-family:'JetBrains Mono',monospace;font-size:13px;margin-top:3px;">VC-2026-0419</div></div>
+              <div><div style="font-size:11px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Client</div><div style="font-size:13.5px;margin-top:3px;">Ramya Wijesinghe</div></div>
+              <div><div style="font-size:11px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Daily rate</div><div style="font-size:13.5px;margin-top:3px;">Rs&nbsp;6,800</div></div>
+              <div><div style="font-size:11px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Days worked</div><div style="font-size:13.5px;margin-top:3px;">33 days</div></div>
+            </div>
+          </div>
+
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:16px;padding:20px;">
+            <h3 style="margin:0 0 15px;font-size:15.5px;font-weight:700;">Recent activity</h3>
+            <div style="display:flex;flex-direction:column;gap:9px;">
+              <sc-for list="{{ recentBookings }}" as="r" hint-placeholder-count="3">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;background:#FBF9F4;border:1px solid #EFEAE0;border-radius:11px;padding:11px 13px;">
+                  <div style="display:flex;align-items:center;gap:9px;">
+                    <span style="{{ r.dotStyle }}"></span>
+                    <div>
+                      <div style="font-size:13px;font-weight:600;">{{ r.client }}</div>
+                      <div style="font-size:11.5px;color:#A39D91;">{{ r.meta }}</div>
+                    </div>
+                  </div>
+                  <span style="font-size:13px;font-weight:700;color:#5A554B;">{{ r.amount }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- ===== BOOKINGS PANEL ===== -->
+    <sc-if value="{{ isBookings }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;">
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:14px;padding:15px 16px;"><div style="font-size:11.5px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Total bookings</div><div style="font-size:18px;font-weight:800;margin-top:5px;">3</div></div>
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:14px;padding:15px 16px;"><div style="font-size:11.5px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Days worked</div><div style="font-size:18px;font-weight:800;margin-top:5px;">93</div></div>
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:14px;padding:15px 16px;"><div style="font-size:11.5px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Active booking</div><div style="font-size:18px;font-weight:800;margin-top:5px;color:#3F77B5;">Wijesinghe</div></div>
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:14px;padding:15px 16px;"><div style="font-size:11.5px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Avg per booking</div><div style="font-size:18px;font-weight:800;margin-top:5px;">Rs&nbsp;231,800</div></div>
+        </div>
+
+        <div style="background:#fff;border:1px solid #ECE7DF;border-radius:16px;padding:20px;">
+          <h3 style="margin:0 0 15px;font-size:15.5px;font-weight:700;">Booking history</h3>
+          <div style="display:grid;grid-template-columns:1fr 1.2fr 1.2fr 0.9fr 1fr 0.8fr 1fr;gap:10px;padding-bottom:9px;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#A39D91;border-bottom:1px solid #EFEAE0;">
+            <span>Booking</span><span>Client</span><span>Care profile</span><span>Status</span><span>Dates</span><span style="text-align:right;">Days</span><span style="text-align:right;">Salary</span>
+          </div>
+          <sc-for list="{{ bookingHistory }}" as="b" hint-placeholder-count="3">
+            <div style="display:grid;grid-template-columns:1fr 1.2fr 1.2fr 0.9fr 1fr 0.8fr 1fr;gap:10px;padding:13px 0;border-bottom:1px solid #F2EEE6;align-items:center;">
+              <div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#5A554B;">{{ b.code }}</div>
+              <div style="display:flex;align-items:center;gap:8px;"><span style="{{ b.dotStyle }}"></span><span style="font-size:13.5px;font-weight:600;">{{ b.client }}</span></div>
+              <div style="font-size:13px;color:#5A554B;">{{ b.patient }}</div>
+              <div><span style="{{ b.statusStyle }}">{{ b.status }}</span></div>
+              <div style="font-size:12.5px;color:#5A554B;">{{ b.dates }}</div>
+              <div style="text-align:right;font-size:13px;color:#5A554B;">{{ b.days }}</div>
+              <div style="text-align:right;font-size:13.5px;font-weight:700;color:#2F8A5B;">{{ b.salary }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- ===== EARNINGS PANEL ===== -->
+    <sc-if value="{{ isEarnings }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;">
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:14px;padding:15px 16px;"><div style="font-size:11.5px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Current earnings</div><div style="font-size:18px;font-weight:800;margin-top:5px;color:#2F8A5B;">Rs&nbsp;108,800</div></div>
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:14px;padding:15px 16px;"><div style="font-size:11.5px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Total earned</div><div style="font-size:18px;font-weight:800;margin-top:5px;">Rs&nbsp;695,400</div></div>
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:14px;padding:15px 16px;"><div style="font-size:11.5px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Paid out</div><div style="font-size:18px;font-weight:800;margin-top:5px;">Rs&nbsp;667,000</div></div>
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:14px;padding:15px 16px;"><div style="font-size:11.5px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Outstanding</div><div style="font-size:18px;font-weight:800;margin-top:5px;color:#BC4338;">Rs&nbsp;108,800</div></div>
+        </div>
+
+        <div style="background:#fff;border:1px solid #ECE7DF;border-radius:16px;padding:20px;">
+          <h3 style="margin:0 0 15px;font-size:15.5px;font-weight:700;">Earnings transactions</h3>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1.1fr 0.9fr 1fr 0.9fr;gap:10px;padding-bottom:9px;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#A39D91;border-bottom:1px solid #EFEAE0;">
+            <span>Transaction</span><span>Date</span><span>Category</span><span>Type</span><span>Reference</span><span style="text-align:right;">Amount</span>
+          </div>
+          <sc-for list="{{ earningsTx }}" as="t" hint-placeholder-count="5">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1.1fr 0.9fr 1fr 0.9fr;gap:10px;padding:12px 0;border-bottom:1px solid #F2EEE6;align-items:center;">
+              <div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#5A554B;">{{ t.id }}</div>
+              <div style="font-size:12.5px;color:#5A554B;">{{ t.date }}</div>
+              <div><span style="display:inline-block;font-size:11.5px;font-weight:600;color:#5A554B;background:#F4F1EA;border-radius:7px;padding:3px 9px;">{{ t.category }}</span></div>
+              <div><span style="{{ t.typeStyle }}">{{ t.type }}</span></div>
+              <div style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#6F6A60;">{{ t.ref }}</div>
+              <div style="text-align:right;font-size:13.5px;font-weight:700;color:{{ t.amountColor }};">{{ t.amount }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- ===== PAYOUTS PANEL ===== -->
+    <sc-if value="{{ isPayouts }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;">
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:14px;padding:15px 16px;"><div style="font-size:11.5px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">All-time paid</div><div style="font-size:18px;font-weight:800;margin-top:5px;">Rs&nbsp;667,000</div></div>
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:14px;padding:15px 16px;"><div style="font-size:11.5px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Paid this month</div><div style="font-size:18px;font-weight:800;margin-top:5px;color:#2F8A5B;">Rs&nbsp;196,000</div></div>
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:14px;padding:15px 16px;"><div style="font-size:11.5px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Outstanding</div><div style="font-size:18px;font-weight:800;margin-top:5px;color:#BC4338;">Rs&nbsp;108,800</div></div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1.55fr 1fr;gap:16px;align-items:start;">
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:16px;padding:20px;">
+            <h3 style="margin:0 0 15px;font-size:15.5px;font-weight:700;">Payout history</h3>
+            <div style="display:grid;grid-template-columns:1fr 1.1fr 1fr 0.9fr 1fr;gap:10px;padding-bottom:9px;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#A39D91;border-bottom:1px solid #EFEAE0;">
+              <span>Payout</span><span>Date</span><span>Method</span><span>Status</span><span style="text-align:right;">Amount</span>
+            </div>
+            <sc-for list="{{ payouts }}" as="p" hint-placeholder-count="3">
+              <div style="display:grid;grid-template-columns:1fr 1.1fr 1fr 0.9fr 1fr;gap:10px;padding:13px 0;border-bottom:1px solid #F2EEE6;align-items:center;">
+                <div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#5A554B;">{{ p.id }}</div>
+                <div style="font-size:12.5px;color:#5A554B;">{{ p.date }}</div>
+                <div><span style="display:inline-block;font-size:11.5px;font-weight:600;color:#5A554B;background:#F4F1EA;border-radius:7px;padding:3px 9px;">{{ p.method }}</span></div>
+                <div><span style="{{ p.statusStyle }}">{{ p.status }}</span></div>
+                <div style="text-align:right;font-size:13.5px;font-weight:700;">{{ p.amount }}</div>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:16px;padding:20px;">
+            <h3 style="margin:0 0 4px;font-size:15.5px;font-weight:700;">Record a payout</h3>
+            <p style="margin:0 0 15px;font-size:12.5px;color:#9A9488;">Writes to the payroll ledger.</p>
+            <div style="display:flex;flex-direction:column;gap:11px;">
+              <div>
+                <label style="display:block;font-size:11.5px;font-weight:600;color:#7A756A;margin-bottom:5px;">Amount</label>
+                <input placeholder="0.00" style="width:100%;border:1px solid #E2DCD0;border-radius:10px;padding:10px 12px;font-family:inherit;font-size:14px;color:#2A2722;outline:none;background:#FCFBF8;" />
+              </div>
+              <div>
+                <label style="display:block;font-size:11.5px;font-weight:600;color:#7A756A;margin-bottom:5px;">Company bank account</label>
+                <select style="width:100%;border:1px solid #E2DCD0;border-radius:10px;padding:10px 12px;font-family:inherit;font-size:14px;color:#2A2722;outline:none;background:#FCFBF8;">
+                  <option>VCare Operating &middot; Commercial Bank</option>
+                  <option>VCare Payroll &middot; Sampath Bank</option>
+                </select>
+              </div>
+              <div>
+                <label style="display:block;font-size:11.5px;font-weight:600;color:#7A756A;margin-bottom:5px;">Staff bank account</label>
+                <select style="width:100%;border:1px solid #E2DCD0;border-radius:10px;padding:10px 12px;font-family:inherit;font-size:14px;color:#2A2722;outline:none;background:#FCFBF8;">
+                  <option>Commercial Bank &middot; 8051234567</option>
+                  <option>Sampath Bank &middot; 1027889900</option>
+                </select>
+              </div>
+              <div>
+                <label style="display:block;font-size:11.5px;font-weight:600;color:#7A756A;margin-bottom:5px;">Reference (optional)</label>
+                <input placeholder="TRF / receipt no." style="width:100%;border:1px solid #E2DCD0;border-radius:10px;padding:10px 12px;font-family:inherit;font-size:14px;outline:none;background:#FCFBF8;" />
+              </div>
+              <button style="margin-top:3px;width:100%;background:var(--accent);border:none;border-radius:10px;padding:12px;font-family:inherit;font-size:14px;font-weight:700;color:#fff;cursor:pointer;">Record payout</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- ===== DEDUCTIONS PANEL ===== -->
+    <sc-if value="{{ isDeductions }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:14px;padding:15px 16px;"><div style="font-size:11.5px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Total deducted</div><div style="font-size:18px;font-weight:800;margin-top:5px;color:#BC4338;">Rs&nbsp;7,500</div></div>
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:14px;padding:15px 16px;"><div style="font-size:11.5px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Total entries</div><div style="font-size:18px;font-weight:800;margin-top:5px;">2</div></div>
+        </div>
+
+        <div style="background:#fff;border:1px solid #ECE7DF;border-radius:16px;padding:20px;">
+          <h3 style="margin:0 0 4px;font-size:15.5px;font-weight:700;">Apply deduction</h3>
+          <p style="margin:0 0 15px;font-size:12.5px;color:#9A9488;">Deducts from earnings. A WhatsApp message and SMS are sent automatically.</p>
+          <div style="display:grid;grid-template-columns:1fr 1.5fr auto;gap:11px;align-items:end;">
+            <div>
+              <label style="display:block;font-size:11.5px;font-weight:600;color:#7A756A;margin-bottom:5px;">Amount (LKR)</label>
+              <input placeholder="0.00" style="width:100%;border:1px solid #E2DCD0;border-radius:10px;padding:10px 12px;font-family:inherit;font-size:14px;outline:none;background:#FCFBF8;" />
+            </div>
+            <div>
+              <label style="display:block;font-size:11.5px;font-weight:600;color:#7A756A;margin-bottom:5px;">Reason</label>
+              <input placeholder="e.g. Uniform deposit, advance repayment" style="width:100%;border:1px solid #E2DCD0;border-radius:10px;padding:10px 12px;font-family:inherit;font-size:14px;outline:none;background:#FCFBF8;" />
+            </div>
+            <button style="background:#BC4338;border:none;border-radius:10px;padding:11px 18px;font-family:inherit;font-size:14px;font-weight:700;color:#fff;cursor:pointer;white-space:nowrap;">Apply deduction</button>
+          </div>
+        </div>
+
+        <div style="background:#fff;border:1px solid #ECE7DF;border-radius:16px;padding:20px;">
+          <h3 style="margin:0 0 15px;font-size:15.5px;font-weight:700;">Deduction history</h3>
+          <div style="display:grid;grid-template-columns:1fr 1.6fr 1fr 0.9fr 1fr;gap:10px;padding-bottom:9px;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#A39D91;border-bottom:1px solid #EFEAE0;">
+            <span>Date</span><span>Reason</span><span>Recorded by</span><span>Status</span><span style="text-align:right;">Amount</span>
+          </div>
+          <sc-for list="{{ deductions }}" as="d" hint-placeholder-count="2">
+            <div style="display:grid;grid-template-columns:1fr 1.6fr 1fr 0.9fr 1fr;gap:10px;padding:13px 0;border-bottom:1px solid #F2EEE6;align-items:center;">
+              <div style="font-size:12.5px;color:#5A554B;">{{ d.date }}</div>
+              <div style="font-size:13.5px;font-weight:600;">{{ d.reason }}</div>
+              <div style="font-size:13px;color:#5A554B;">{{ d.by }}</div>
+              <div><span style="{{ d.statusStyle }}">{{ d.status }}</span></div>
+              <div style="text-align:right;font-size:13.5px;font-weight:700;color:#BC4338;">{{ d.amount }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- ===== REVIEWS PANEL ===== -->
+    <sc-if value="{{ isReviews }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;">
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:14px;padding:15px 16px;"><div style="font-size:11.5px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Average rating</div><div style="font-size:18px;font-weight:800;margin-top:5px;color:#C98A2E;">4.6 &#9733;</div></div>
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:14px;padding:15px 16px;"><div style="font-size:11.5px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Total reviews</div><div style="font-size:18px;font-weight:800;margin-top:5px;">27</div></div>
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:14px;padding:15px 16px;"><div style="font-size:11.5px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">5-star reviews</div><div style="font-size:18px;font-weight:800;margin-top:5px;">18</div></div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1.4fr;gap:16px;align-items:start;">
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:16px;padding:20px;">
+            <h3 style="margin:0 0 15px;font-size:15.5px;font-weight:700;">Rating distribution</h3>
+            <div style="display:flex;flex-direction:column;gap:11px;">
+              <sc-for list="{{ distribution }}" as="row" hint-placeholder-count="5">
+                <div style="display:flex;align-items:center;gap:12px;">
+                  <div style="width:46px;font-size:12.5px;font-weight:600;color:#5A554B;">{{ row.label }}</div>
+                  <div style="flex:1;height:9px;border-radius:5px;background:#EFEAE0;overflow:hidden;"><div style="{{ row.barStyle }}"></div></div>
+                  <div style="width:28px;text-align:right;font-size:12.5px;font-weight:700;">{{ row.count }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:16px;padding:20px;">
+            <h3 style="margin:0 0 15px;font-size:15.5px;font-weight:700;">Recent reviews</h3>
+            <div style="display:flex;flex-direction:column;gap:12px;">
+              <sc-for list="{{ reviews }}" as="rev" hint-placeholder-count="3">
+                <div style="background:#FBF9F4;border:1px solid #EFEAE0;border-radius:13px;padding:14px 16px;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                    <div>
+                      <div style="font-size:13.5px;font-weight:700;">{{ rev.client }}</div>
+                      <div style="font-size:11.5px;color:#A39D91;">{{ rev.date }}</div>
+                    </div>
+                    <span style="display:inline-flex;align-items:center;gap:4px;background:#FBF1DD;color:#C98A2E;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;">&#9733; {{ rev.rating }}</span>
+                  </div>
+                  <p style="margin:9px 0 0;font-size:13px;color:#5A554B;line-height:1.5;">{{ rev.text }}</p>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- ===== BANK ACCOUNTS PANEL ===== -->
+    <sc-if value="{{ isBank }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+          <div>
+            <h3 style="margin:0;font-size:15.5px;font-weight:700;">Staff bank accounts</h3>
+            <p style="margin:3px 0 0;font-size:12.5px;color:#9A9488;">Personal bank account records for this staff member.</p>
+          </div>
+          <button style="display:inline-flex;align-items:center;gap:7px;background:var(--accent);border:none;border-radius:10px;padding:10px 15px;font-family:inherit;font-size:13px;font-weight:600;color:#fff;cursor:pointer;">+ Add account</button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;">
+          <sc-for list="{{ bankAccounts }}" as="acc" hint-placeholder-count="2">
+            <div style="background:#fff;border:1px solid #ECE7DF;border-radius:16px;padding:18px;">
+              <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:14px;">
+                <div>
+                  <div style="font-size:14.5px;font-weight:700;">{{ acc.holder }}</div>
+                  <div style="font-size:12.5px;color:#6F6A60;margin-top:2px;">{{ acc.bank }}</div>
+                </div>
+                <span style="{{ acc.statusStyle }}">{{ acc.statusLabel }}</span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:7px;font-size:12.5px;color:#5A554B;margin-bottom:14px;">
+                <div style="display:flex;justify-content:space-between;gap:10px;"><span style="color:#9A9488;">Account no.</span><span style="font-family:'JetBrains Mono',monospace;">{{ acc.number }}</span></div>
+                <div style="display:flex;justify-content:space-between;gap:10px;"><span style="color:#9A9488;">Branch</span><span>{{ acc.branch }}</span></div>
+                <div style="display:flex;justify-content:space-between;gap:10px;"><span style="color:#9A9488;">Currency</span><span>{{ acc.currency }}</span></div>
+              </div>
+              <div style="display:flex;gap:8px;border-top:1px solid #F2EEE6;padding-top:12px;">
+                <button style="flex:1;background:#FCFBF8;border:1px solid #E7E1D6;border-radius:9px;padding:8px;font-family:inherit;font-size:12.5px;font-weight:600;color:#5A554B;cursor:pointer;">Edit</button>
+                <button style="flex:1;background:#fff;border:1px solid #E3B5AF;border-radius:9px;padding:8px;font-family:inherit;font-size:12.5px;font-weight:600;color:#BC4338;cursor:pointer;">Remove</button>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- ===== CHANGE HISTORY PANEL ===== -->
+    <sc-if value="{{ isChanges }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;">
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:14px;padding:15px 16px;"><div style="font-size:11.5px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Total requests</div><div style="font-size:18px;font-weight:800;margin-top:5px;">3</div></div>
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:14px;padding:15px 16px;"><div style="font-size:11.5px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Pending</div><div style="font-size:18px;font-weight:800;margin-top:5px;color:#C98A2E;">0</div></div>
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:14px;padding:15px 16px;"><div style="font-size:11.5px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Approved</div><div style="font-size:18px;font-weight:800;margin-top:5px;color:#2F8A5B;">2</div></div>
+          <div style="background:#fff;border:1px solid #ECE7DF;border-radius:14px;padding:15px 16px;"><div style="font-size:11.5px;font-weight:600;color:#9A9488;text-transform:uppercase;letter-spacing:.04em;">Rejected</div><div style="font-size:18px;font-weight:800;margin-top:5px;color:#BC4338;">1</div></div>
+        </div>
+
+        <div style="background:#fff;border:1px solid #ECE7DF;border-radius:16px;padding:20px;">
+          <h3 style="margin:0 0 15px;font-size:15.5px;font-weight:700;">Change request history</h3>
+          <div style="display:flex;flex-direction:column;gap:11px;">
+            <sc-for list="{{ changeRequests }}" as="req" hint-placeholder-count="3">
+              <div style="border:1px solid #ECE7DF;border-radius:13px;overflow:hidden;">
+                <div onClick="{{ req.onToggle }}" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;cursor:pointer;background:#FCFBF8;">
+                  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                    <span style="{{ req.typeStyle }}">{{ req.typeLabel }}</span>
+                    <span style="{{ req.statusStyle }}">{{ req.status }}</span>
+                    <span style="font-size:12.5px;color:#8A8478;">Submitted {{ req.submitted }}</span>
+                  </div>
+                  <span style="font-size:15px;color:#A39D91;">{{ req.chevron }}</span>
+                </div>
+                <sc-if value="{{ req.isOpen }}" hint-placeholder-val="{{ false }}">
+                  <div style="border-top:1px solid #EFEAE0;padding:15px 16px;background:#fff;">
+                    <div style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#A39D91;margin-bottom:9px;">Requested change</div>
+                    <div style="display:flex;align-items:center;gap:9px;background:#FBF9F4;border:1px solid #EFEAE0;border-radius:10px;padding:10px 12px;font-size:13px;flex-wrap:wrap;">
+                      <span style="font-weight:600;color:#5A554B;">{{ req.field }}</span>
+                      <span style="color:#BC4338;text-decoration:line-through;">{{ req.oldVal }}</span>
+                      <span style="color:#A39D91;">&#8594;</span>
+                      <span style="font-weight:600;color:#2F8A5B;">{{ req.newVal }}</span>
+                    </div>
+                    <div style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#A39D91;margin:16px 0 11px;">Audit trail</div>
+                    <div style="display:flex;flex-direction:column;gap:12px;padding-left:6px;">
+                      <sc-for list="{{ req.audit }}" as="a" hint-placeholder-count="2">
+                        <div style="display:flex;align-items:flex-start;gap:11px;">
+                          <span style="{{ a.dotStyle }}"></span>
+                          <div>
+                            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span style="{{ a.badgeStyle }}">{{ a.action }}</span><span style="font-size:13px;font-weight:600;">{{ a.by }}</span><span style="font-size:11.5px;color:#A39D91;">{{ a.at }}</span></div>
+                            <sc-if value="{{ a.hasNote }}" hint-placeholder-val="{{ false }}"><div style="font-size:12.5px;color:#6F6A60;font-style:italic;margin-top:3px;">{{ a.note }}</div></sc-if>
+                          </div>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1180,&quot;height&quot;:1700},&quot;staffName&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;Anusha Silva&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;designation&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;Registered Nurse&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;status&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;Active&quot;,&quot;On leave&quot;,&quot;Suspended&quot;],&quot;default&quot;:&quot;Active&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+class Component extends DCLogic {
+  state = {
+    activeTab: 'overview',
+    monthIndex: 3,   // 0=Mar .. 3=Jun 2026
+    hovered: null,   // 'YYYY-M-D'
+    expandedReq: null,
+  };
+
+  // ---------- domain ----------
+  today() { return new Date(2026, 5, 16); }       // Jun 16, 2026
+  payCutoff() { return new Date(2026, 5, 8); }    // days before this are paid out
+
+  months() {
+    return [
+      { y: 2026, m: 2, name: 'March' },
+      { y: 2026, m: 3, name: 'April' },
+      { y: 2026, m: 4, name: 'May' },
+      { y: 2026, m: 5, name: 'June' },
+    ];
+  }
+
+  bookings() {
+    return [
+      { key: 'A', client: 'Kamala Perera',   short: 'Perera',     patient: 'Sunil Perera',       service: '24/7 Home Nursing', code: 'VC-2026-0188', rate: 8500, solid: '#C2603F', tint: '#FAEEE7', border: '#E6C8B9' },
+      { key: 'B', client: 'Nimal Fonseka',   short: 'Fonseka',    patient: 'Nimal Fonseka',      service: 'Post-Surgery Care', code: 'VC-2026-0291', rate: 7200, solid: '#8C5AA6', tint: '#F2EAF5', border: '#DCC8E3' },
+      { key: 'C', client: 'Ramya Wijesinghe',short: 'Wijesinghe', patient: 'Sirimavo Wijesinghe',service: 'Elderly Day Care',  code: 'VC-2026-0419', rate: 6800, solid: '#3F77B5', tint: '#E8F1F9', border: '#C3D8EC' },
+    ];
+  }
+
+  segments() {
+    const B = this.bookings();
+    return [
+      { booking: B[0], start: new Date(2026, 2, 4),  end: new Date(2026, 3, 2)  }, // Mar 4 – Apr 2
+      { booking: B[1], start: new Date(2026, 3, 10), end: new Date(2026, 4, 9)  }, // Apr 10 – May 9
+      { booking: B[2], start: new Date(2026, 4, 15), end: new Date(2026, 5, 28) }, // May 15 – Jun 28
+    ];
+  }
+
+  assignmentFor(date) {
+    const t = date.getTime();
+    for (const s of this.segments()) {
+      if (t >= s.start.getTime() && t <= s.end.getTime()) return s.booking;
+    }
+    return null;
+  }
+
+  statusFor(date, hasWork) {
+    if (!hasWork) return 'off';
+    if (date.getTime() > this.today().getTime()) return 'scheduled';
+    if (date.getTime() < this.payCutoff().getTime()) return 'paid';
+    return 'pending';
+  }
+
+  // ---------- formatting ----------
+  money(n) { return 'Rs\u00a0' + Math.round(n).toLocaleString('en-US'); }
+  fmtFull(d) { return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }); }
+  fmtShort(d) { return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
+  clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  statusMeta(status) {
+    if (status === 'paid')      return { bar: '#2F8A5B', label: 'Paid',           pillBg: 'rgba(47,138,91,.22)',  pillColor: '#84D6A4' };
+    if (status === 'pending')   return { bar: '#C98A2E', label: 'Awaiting payout',pillBg: 'rgba(201,138,46,.24)', pillColor: '#E9C583' };
+    if (status === 'scheduled') return { bar: '#D5CFC4', label: 'Scheduled',      pillBg: 'rgba(255,255,255,.12)',pillColor: '#CFC9BE' };
+    return { bar: 'transparent', label: 'Day off', pillBg: 'rgba(255,255,255,.10)', pillColor: '#BCB6AB' };
+  }
+
+  // ---------- calendar build ----------
+  makeBlank(keyId) {
+    return {
+      _k: keyId, filled: false, isWork: false, isOff: false, hovered: false,
+      onEnter: () => {},
+      cellStyle: { height: '80px', borderRadius: '12px', border: 'none', background: 'transparent', pointerEvents: 'none' },
+    };
+  }
+
+  makeCell(date) {
+    const booking = this.assignmentFor(date);
+    const hasWork = !!booking;
+    const status = this.statusFor(date, hasWork);
+    const meta = this.statusMeta(status);
+    const day = date.getDate();
+    const isToday = date.getTime() === this.today().getTime();
+    const key = date.getFullYear() + '-' + date.getMonth() + '-' + day;
+    const hovered = this.state.hovered === key;
+    const isWork = status === 'paid' || status === 'pending' || status === 'scheduled';
+    const isOff = status === 'off';
+
+    const cellStyle = {
+      position: 'relative', height: '80px', borderRadius: '12px', padding: '7px 9px',
+      display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', gap: '3px',
+      boxSizing: 'border-box', cursor: 'default',
+      transition: 'transform .15s ease, box-shadow .15s ease',
+      background: isWork ? booking.tint : '#FCFBF8',
+      border: isWork ? ('1px solid ' + booking.border) : '1px dashed #DBD5CA',
+    };
+    if (isToday) { cellStyle.border = '1.5px solid var(--accent)'; cellStyle.boxShadow = '0 0 0 3px rgba(19,122,107,.13)'; }
+    if (hovered) { cellStyle.transform = 'translateY(-3px)'; cellStyle.boxShadow = '0 12px 26px rgba(40,33,22,.18)'; cellStyle.zIndex = 30; }
+
+    return {
+      _k: key, filled: true, isWork, isOff, hovered,
+      day: String(day),
+      shortClient: isWork ? booking.short : '',
+      onEnter: () => this.setState({ hovered: key }),
+      cellStyle,
+      dayStyle: {
+        fontFamily: "'JetBrains Mono',monospace", fontSize: '12.5px', fontWeight: 700,
+        color: isToday ? '#0C5C50' : (isWork ? '#5A554B' : '#B4AEA3'),
+      },
+      dotStyle: { width: '9px', height: '9px', borderRadius: '50%', background: isWork ? booking.solid : '#CFC9BE' },
+      labelStyle: { fontSize: '10.5px', fontWeight: 600, color: '#7A756A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+      barStyle: { height: '5px', borderRadius: '3px', width: '100%', marginTop: 'auto', background: meta.bar, opacity: status === 'scheduled' ? 0.75 : 1 },
+      // tooltip
+      tipDate: this.fmtFull(date) + (isToday ? ' \u00b7 Today' : ''),
+      tipDotStyle: { width: '9px', height: '9px', borderRadius: '50%', background: isWork ? booking.solid : '#8E887E', flexShrink: 0 },
+      tipClient: isWork ? booking.client : 'No assignment',
+      tipService: isWork ? booking.service : 'Rest day',
+      tipCode: isWork ? booking.code : '\u2014',
+      tipEarnedLabel: isWork ? (status === 'scheduled' ? 'Will earn' : 'Earned today') : 'Earned today',
+      tipEarned: isWork ? this.money(booking.rate) : '\u2014',
+      statusLabel: meta.label,
+      tipPillStyle: { display: 'inline-block', fontSize: '10.5px', fontWeight: 700, padding: '3px 9px', borderRadius: '999px', background: meta.pillBg, color: meta.pillColor },
+    };
+  }
+
+  buildMonth() {
+    const mo = this.months()[this.state.monthIndex];
+    const first = new Date(mo.y, mo.m, 1);
+    const lead = (first.getDay() + 6) % 7; // Monday-start offset
+    const daysInMonth = new Date(mo.y, mo.m + 1, 0).getDate();
+
+    const cells = [];
+    for (let i = 0; i < lead; i++) cells.push(this.makeBlank('lead-' + i));
+    for (let d = 1; d <= daysInMonth; d++) cells.push(this.makeCell(new Date(mo.y, mo.m, d)));
+    while (cells.length % 7 !== 0) cells.push(this.makeBlank('trail-' + cells.length));
+
+    const weeks = [];
+    for (let w = 0; w < cells.length / 7; w++) {
+      const slice = cells.slice(w * 7, w * 7 + 7);
+      // range from first/last real day in the week
+      const reals = slice.filter(c => c.filled).map(c => parseInt(c.day, 10));
+      let range = '';
+      if (reals.length) {
+        const a = new Date(mo.y, mo.m, reals[0]);
+        const b = new Date(mo.y, mo.m, reals[reals.length - 1]);
+        range = this.fmtShort(a) + ' \u2013 ' + this.fmtShort(b);
+      }
+      weeks.push({ label: 'Week ' + (w + 1), range, days: slice });
+    }
+    return weeks;
+  }
+
+  monthAggregates() {
+    const mo = this.months()[this.state.monthIndex];
+    const daysInMonth = new Date(mo.y, mo.m + 1, 0).getDate();
+    let paid = 0, pending = 0, sched = 0, earned = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const date = new Date(mo.y, mo.m, d);
+      const booking = this.assignmentFor(date);
+      if (!booking) continue;
+      const st = this.statusFor(date, true);
+      if (st === 'paid') { paid++; earned += booking.rate; }
+      else if (st === 'pending') { pending++; earned += booking.rate; }
+      else if (st === 'scheduled') { sched++; }
+    }
+    return { paid, pending, sched, earned, worked: paid + pending };
+  }
+
+  // ---------- render ----------
+  renderVals() {
+    const props = this.props || {};
+    const staffName = props.staffName || 'Anusha Silva';
+    const designation = props.designation || 'Registered Nurse';
+    const statusVal = props.status || 'Active';
+    const initials = staffName.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
+
+    const statusMap = {
+      'Active':   { bg: '#E3F1E8', col: '#2F7A53', dot: '#2F8A5B' },
+      'On leave': { bg: '#FBF1DD', col: '#B07A1E', dot: '#C98A2E' },
+      'Suspended':{ bg: '#F7E6E3', col: '#BC4338', dot: '#C2483C' },
+    };
+    const sm = statusMap[statusVal] || statusMap['Active'];
+
+    // ----- timeline nav -----
+    const idx = this.state.monthIndex;
+    const months = this.months();
+    const mo = months[idx];
+    const canPrev = idx > 0, canNext = idx < months.length - 1;
+    const navBtn = (enabled) => ({
+      width: '34px', height: '34px', borderRadius: '9px', border: '1px solid #E7E1D6', background: '#fff',
+      fontFamily: 'inherit', fontSize: '17px', lineHeight: 1, color: enabled ? '#5A554B' : '#CFC9BE',
+      cursor: enabled ? 'pointer' : 'not-allowed',
+    });
+
+    const agg = this.monthAggregates();
+    const assigned = agg.paid + agg.pending + agg.sched;
+    const pct = (n) => assigned ? (n / assigned * 100) : 0;
+    const seg = (w, bg) => ({ width: w + '%', background: bg });
+    const summaryLine = agg.worked + ' days worked \u00b7 ' + this.money(agg.earned) + ' earned'
+      + (agg.sched ? (' \u00b7 ' + agg.sched + ' scheduled') : '');
+
+    // ----- tabs -----
+    const tab = (id, label) => ({
+      label,
+      onClick: () => this.setState({ activeTab: id }),
+      style: {
+        border: 'none', borderRadius: '9px', padding: '9px 15px', fontFamily: 'inherit',
+        fontSize: '13px', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
+        background: this.state.activeTab === id ? '#fff' : 'transparent',
+        color: this.state.activeTab === id ? '#2A2722' : '#7A756A',
+        boxShadow: this.state.activeTab === id ? '0 1px 3px rgba(40,33,22,.12)' : 'none',
+      },
+    });
+
+    const B = this.bookings();
+    const dot = (col) => ({ width: '10px', height: '10px', borderRadius: '50%', background: col, flexShrink: 0 });
+    const swatch = (col) => ({ width: '12px', height: '12px', borderRadius: '4px', background: col });
+    const pill = (col, bg) => ({ display: 'inline-block', fontSize: '11.5px', fontWeight: 600, padding: '3px 9px', borderRadius: '7px', background: bg, color: col });
+
+    // ----- change requests -----
+    const auditDot = (col) => ({ width: '9px', height: '9px', borderRadius: '50%', background: col, marginTop: '4px', flexShrink: 0 });
+    const auditBadge = (col, bg) => ({ display: 'inline-block', fontSize: '10.5px', fontWeight: 700, padding: '2px 8px', borderRadius: '999px', background: bg, color: col });
+    const reqDefs = [
+      {
+        id: 'r1', typeLabel: 'Profile update', typeBg: '#E7F0F8', typeCol: '#3F77B5', status: 'Approved', stCol: '#2F7A53', stBg: '#E3F1E8',
+        submitted: 'May 10, 2026', field: 'Phone number', oldVal: '+94 77 318 4111', newVal: '+94 77 318 4420',
+        audit: [
+          { action: 'SUBMITTED', by: 'Anusha Silva', at: 'May 10, 9:14 AM', dot: '#9A9488', bg: '#F1EDE5', note: '' },
+          { action: 'APPROVED', by: 'Admin (Dilrukshi)', at: 'May 11, 2:02 PM', dot: '#2F8A5B', bg: '#E3F1E8', note: 'Verified against NIC on file.' },
+        ],
+      },
+      {
+        id: 'r2', typeLabel: 'Bank add', typeBg: '#E3F1E8', typeCol: '#2F7A53', status: 'Approved', stCol: '#2F7A53', stBg: '#E3F1E8',
+        submitted: 'Apr 28, 2026', field: 'New account', oldVal: '\u2014', newVal: 'Sampath Bank \u00b7 1027889900',
+        audit: [
+          { action: 'SUBMITTED', by: 'Anusha Silva', at: 'Apr 28, 11:40 AM', dot: '#9A9488', bg: '#F1EDE5', note: '' },
+          { action: 'APPROVED', by: 'Admin (Roshan)', at: 'Apr 29, 10:15 AM', dot: '#2F8A5B', bg: '#E3F1E8', note: '' },
+        ],
+      },
+      {
+        id: 'r3', typeLabel: 'Profile update', typeBg: '#E7F0F8', typeCol: '#3F77B5', status: 'Rejected', stCol: '#BC4338', stBg: '#F7E6E3',
+        submitted: 'Mar 15, 2026', field: 'Home address', oldVal: 'Nugegoda, Colombo', newVal: 'Maharagama, Colombo',
+        audit: [
+          { action: 'SUBMITTED', by: 'Anusha Silva', at: 'Mar 15, 4:50 PM', dot: '#9A9488', bg: '#F1EDE5', note: '' },
+          { action: 'REJECTED', by: 'Admin (Dilrukshi)', at: 'Mar 16, 9:30 AM', dot: '#C2483C', bg: '#F7E6E3', note: 'Proof of address required before update.' },
+        ],
+      },
+    ];
+    const changeRequests = reqDefs.map(r => ({
+      typeLabel: r.typeLabel, typeStyle: pill(r.typeCol, r.typeBg),
+      status: r.status, statusStyle: pill(r.stCol, r.stBg),
+      submitted: r.submitted, field: r.field, oldVal: r.oldVal, newVal: r.newVal,
+      isOpen: this.state.expandedReq === r.id,
+      chevron: this.state.expandedReq === r.id ? '\u2303' : '\u2304',
+      onToggle: () => this.setState(s => ({ expandedReq: s.expandedReq === r.id ? null : r.id })),
+      audit: r.audit.map(a => ({
+        action: a.action, by: a.by, at: a.at, note: a.note, hasNote: !!a.note,
+        dotStyle: auditDot(a.dot), badgeStyle: auditBadge(a.dot === '#9A9488' ? '#7A756A' : a.action === 'APPROVED' ? '#2F7A53' : '#BC4338', a.bg),
+      })),
+    }));
+
+    return {
+      // identity
+      staffName, designation, initials,
+      statusLabel: statusVal,
+      statusPillStyle: { display: 'inline-flex', alignItems: 'center', gap: '6px', background: sm.bg, color: sm.col, borderRadius: '999px', padding: '5px 12px', fontSize: '12.5px', fontWeight: 700 },
+      statusDotStyle: { width: '7px', height: '7px', borderRadius: '50%', background: sm.dot },
+
+      // timeline
+      weeks: this.buildMonth(),
+      monthLabel: mo.name.slice(0, 3) + ' ' + mo.y,
+      monthTitle: mo.name + ' ' + mo.y,
+      monthSummaryLine: summaryLine,
+      paidCount: agg.paid, pendingCount: agg.pending, schedCount: agg.sched,
+      barPaidStyle: seg(pct(agg.paid), '#2F8A5B'),
+      barPendingStyle: seg(pct(agg.pending), '#C98A2E'),
+      barSchedStyle: seg(pct(agg.sched), '#D5CFC4'),
+      prevMonth: () => this.setState({ monthIndex: this.clamp(idx - 1, 0, months.length - 1), hovered: null }),
+      nextMonth: () => this.setState({ monthIndex: this.clamp(idx + 1, 0, months.length - 1), hovered: null }),
+      prevBtnStyle: navBtn(canPrev), nextBtnStyle: navBtn(canNext),
+      onLeave: () => this.setState({ hovered: null }),
+      tipStyle: {
+        position: 'absolute', bottom: 'calc(100% + 11px)', left: '50%', transform: 'translateX(-50%)',
+        width: '186px', background: '#23211C', borderRadius: '12px', padding: '12px 13px',
+        boxShadow: '0 18px 38px rgba(28,23,15,.36)', zIndex: 50, pointerEvents: 'none', border: '1px solid rgba(255,255,255,.08)',
+      },
+      caretStyle: {
+        position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)', width: 0, height: 0,
+        borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderTop: '7px solid #23211C',
+      },
+      bookingLegend: B.map(b => ({ client: b.client, swatchStyle: swatch(b.solid) })),
+
+      // tabs
+      tabs: [
+        tab('overview', 'Overview'), tab('bookings', 'Bookings'), tab('earnings', 'Earnings'),
+        tab('payouts', 'Payouts'), tab('deductions', 'Deductions'), tab('reviews', 'Reviews'),
+        tab('bank', 'Bank accounts'), tab('changes', 'Change history'),
+      ],
+      isOverview: this.state.activeTab === 'overview',
+      isBookings: this.state.activeTab === 'bookings',
+      isEarnings: this.state.activeTab === 'earnings',
+      isPayouts: this.state.activeTab === 'payouts',
+      isDeductions: this.state.activeTab === 'deductions',
+      isReviews: this.state.activeTab === 'reviews',
+      isBank: this.state.activeTab === 'bank',
+      isChanges: this.state.activeTab === 'changes',
+
+      // overview
+      recentBookings: [
+        { client: 'Ramya Wijesinghe', meta: 'Elderly Day Care \u00b7 active', amount: this.money(6800), dotStyle: dot(B[2].solid) },
+        { client: 'Nimal Fonseka', meta: 'Post-Surgery Care \u00b7 completed', amount: this.money(216000), dotStyle: dot(B[1].solid) },
+        { client: 'Kamala Perera', meta: '24/7 Home Nursing \u00b7 completed', amount: this.money(255000), dotStyle: dot(B[0].solid) },
+      ],
+
+      // bookings
+      bookingHistory: [
+        { code: B[0].code, client: B[0].client, patient: B[0].patient, status: 'Completed', dates: 'Mar 4 \u2013 Apr 2', days: '30', salary: this.money(255000), dotStyle: dot(B[0].solid), statusStyle: pill('#7A756A', '#F1EDE5') },
+        { code: B[1].code, client: B[1].client, patient: B[1].patient, status: 'Completed', dates: 'Apr 10 \u2013 May 9', days: '30', salary: this.money(216000), dotStyle: dot(B[1].solid), statusStyle: pill('#7A756A', '#F1EDE5') },
+        { code: B[2].code, client: B[2].client, patient: B[2].patient, status: 'Active', dates: 'May 15 \u2013 now', days: '33', salary: this.money(224400), dotStyle: dot(B[2].solid), statusStyle: pill('#2F7A53', '#E3F1E8') },
+      ],
+
+      // earnings
+      earningsTx: [
+        { id: 'TXN-9920', date: 'Jun 16, 2026', category: 'Salary accrual', type: 'CREDIT', ref: 'Day 33', amount: this.money(6800), amountColor: '#2A2722', typeStyle: pill('#2F7A53', '#E3F1E8') },
+        { id: 'TXN-9885', date: 'Jun 08, 2026', category: 'Salary accrual', type: 'CREDIT', ref: 'Day 25', amount: this.money(6800), amountColor: '#2A2722', typeStyle: pill('#2F7A53', '#E3F1E8') },
+        { id: 'PAY-3301', date: 'Jun 01, 2026', category: 'Payout', type: 'DEBIT', ref: 'TRF-771204', amount: '\u2212\u00a0' + this.money(196000).replace('Rs\u00a0', 'Rs\u00a0'), amountColor: '#BC4338', typeStyle: pill('#BC4338', '#F7E6E3') },
+        { id: 'TXN-9120', date: 'May 30, 2026', category: 'Salary accrual', type: 'CREDIT', ref: 'Days 16\u201326', amount: this.money(74800), amountColor: '#2A2722', typeStyle: pill('#2F7A53', '#E3F1E8') },
+        { id: 'DED-0042', date: 'May 18, 2026', category: 'Deduction', type: 'DEBIT', ref: 'Uniform', amount: '\u2212\u00a0' + this.money(2500), amountColor: '#BC4338', typeStyle: pill('#BC4338', '#F7E6E3') },
+        { id: 'PAY-3188', date: 'May 02, 2026', category: 'Payout', type: 'DEBIT', ref: 'TRF-766510', amount: '\u2212\u00a0' + this.money(255000), amountColor: '#BC4338', typeStyle: pill('#BC4338', '#F7E6E3') },
+      ],
+
+      // payouts
+      payouts: [
+        { id: 'PAY-3301', date: 'Jun 01, 2026', method: 'Bank transfer', status: 'Completed', amount: this.money(196000), statusStyle: pill('#2F7A53', '#E3F1E8') },
+        { id: 'PAY-3188', date: 'May 02, 2026', method: 'Bank transfer', status: 'Completed', amount: this.money(255000), statusStyle: pill('#2F7A53', '#E3F1E8') },
+        { id: 'PAY-3050', date: 'Apr 03, 2026', method: 'Cash deposit', status: 'Completed', amount: this.money(216000), statusStyle: pill('#2F7A53', '#E3F1E8') },
+      ],
+
+      // deductions
+      deductions: [
+        { date: 'May 18, 2026', reason: 'Uniform deposit', by: 'Admin (Roshan)', status: 'Applied', amount: this.money(2500), statusStyle: pill('#7A756A', '#F1EDE5') },
+        { date: 'Apr 22, 2026', reason: 'Advance repayment', by: 'Admin (Dilrukshi)', status: 'Applied', amount: this.money(5000), statusStyle: pill('#7A756A', '#F1EDE5') },
+      ],
+
+      // reviews
+      distribution: [
+        { label: '5 \u2605', count: 18, barStyle: { height: '100%', width: '100%', background: '#C98A2E' } },
+        { label: '4 \u2605', count: 6, barStyle: { height: '100%', width: '34%', background: '#C98A2E' } },
+        { label: '3 \u2605', count: 2, barStyle: { height: '100%', width: '12%', background: '#C98A2E' } },
+        { label: '2 \u2605', count: 0, barStyle: { height: '100%', width: '0%', background: '#C98A2E' } },
+        { label: '1 \u2605', count: 1, barStyle: { height: '100%', width: '6%', background: '#C98A2E' } },
+      ],
+      reviews: [
+        { client: 'Ramya Wijesinghe', date: 'Jun 9, 2026', rating: 5, text: 'Anusha is wonderful with my mother. Always punctual, gentle and keeps detailed notes on medication.' },
+        { client: 'Kamala Perera', date: 'Apr 1, 2026', rating: 5, text: 'Took excellent care of my father after his stroke. Very professional and reassuring throughout.' },
+        { client: 'Nimal Fonseka', date: 'May 8, 2026', rating: 4, text: 'Attentive and reliable during my post-surgery recovery. Communication could be a little quicker.' },
+      ],
+
+      // bank
+      bankAccounts: [
+        { holder: 'Anusha Silva', bank: 'Commercial Bank', branch: 'Colombo 03', number: '8051234567', currency: 'LKR', statusLabel: 'Active', statusStyle: pill('#2F7A53', '#E3F1E8') },
+        { holder: 'Anusha Silva', bank: 'Sampath Bank', branch: 'Nugegoda', number: '1027889900', currency: 'LKR', statusLabel: 'Inactive', statusStyle: pill('#BC4338', '#F7E6E3') },
+      ],
+
+      // changes
+      changeRequests,
+    };
+  }
+}
+</script>
+</body>
+</html>

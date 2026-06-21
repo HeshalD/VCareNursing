@@ -1,99 +1,251 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Users, Calendar, DollarSign, Activity,
   Settings, LogOut, Bell, Search,
-  ShieldCheck, FileText, SendHorizontal , Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet
+  ShieldCheck, FileText, SendHorizontal, Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet, Landmark,
+  ChevronLeft, ChevronRight, ClipboardList, History, HeartPulse, ArrowLeftRight, Banknote, Star, Lock, UserCog, CalendarClock, Briefcase, Receipt, CalendarOff
 } from 'lucide-react';
+import logo from '../../../assets/Logo/VCareLogo.png';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useAdminAuth } from '../../../context/AdminAuthContext';
+
+const ROLE_LABELS = {
+  SUPER_ADMIN: 'Super Admin',
+  COORDINATOR: 'Coordinator',
+  ACCOUNTS: 'Accounts',
+};
+
+const parseToken = (token) => {
+  try {
+    return JSON.parse(atob(token.split('.')[1]));
+  } catch {
+    return null;
+  }
+};
 
 const AdminLayout = ({ children, title, subtitle, actions }) => {
   const location = useLocation();
   const navigate = useNavigate();
+  const { adminToken } = useAdminAuth();
+  const [collapsed, setCollapsed] = useState(false);
+
+  const adminInfo = useMemo(() => {
+    if (!adminToken) return { name: 'Admin User', roleLabel: 'Admin' };
+    const payload = parseToken(adminToken);
+    if (!payload) return { name: 'Admin User', roleLabel: 'Admin' };
+    const rawRole = typeof payload.role === 'string'
+      ? payload.role.replace(/[{}]/g, '').split(',')[0].trim()
+      : 'Admin';
+    return {
+      name: payload.full_name || (rawRole === 'SUPER_ADMIN' ? 'Admin' : payload.mobile_number) || 'Admin',
+      roleLabel: ROLE_LABELS[rawRole] || rawRole,
+    };
+  }, [adminToken]);
 
   const isActive = (path) => location.pathname === path;
 
   const handleLogout = () => {
-    // Clear any authentication tokens/user data here if needed
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    navigate('/');
+    localStorage.removeItem('adminToken');
+    localStorage.removeItem('adminUser');
+    navigate('/admin');
   };
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans text-slate-900">
       {/* Sidebar */}
-      <aside className="w-64 bg-slate-900 text-white hidden md:flex flex-col flex-shrink-0 transition-all duration-300">
-        <div className="p-6 border-b border-slate-800">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-white">V</div>
-            <span className="text-xl font-bold tracking-tight">VCare Admin</span>
+      <aside className={`bg-slate-900 text-white hidden md:flex flex-col flex-shrink-0 transition-all duration-300 ${collapsed ? 'w-20' : 'w-64'}`}>
+        <div className="p-4 border-b border-slate-800 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-3">
+            <img src={logo} alt="VCare" className={`rounded-md object-contain ${collapsed ? 'w-8 h-8' : 'w-10 h-10'}`} />
+            {!collapsed && <span className="text-xl font-bold tracking-tight">VCare Admin</span>}
           </div>
+          <button
+            onClick={() => setCollapsed(!collapsed)}
+            className="p-1 rounded-md text-slate-300 hover:text-white hover:bg-slate-800"
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={collapsed ? 'Expand' : 'Collapse'}
+          >
+            {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+          </button>
         </div>
 
-        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+        <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
           <SidebarItem
             icon={Activity}
             label="Overview"
             path="/admin/dashboard"
             active={isActive('/admin/dashboard')}
+            collapsed={collapsed}
           />
-          <div className="pt-4 pb-2">
-            <p className="px-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Management</p>
-          </div>
           <SidebarItem
             icon={Users}
             label="User Management"
             path="/admin/users"
             active={isActive('/admin/users') || isActive('/admin/proxy-user-management')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
+            icon={UserCog}
+            label="Internal Staff"
+            path="/admin/internal-staff"
+            active={isActive('/admin/internal-staff')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
+            icon={Briefcase}
+            label="Salespersons"
+            path="/admin/salespersons"
+            active={isActive('/admin/salespersons')}
+            collapsed={collapsed}
           />
           <SidebarItem
             icon={SendHorizontal}
             label="Service Requests"
             path="/admin/service-requests"
             active={isActive('/admin/service-requests')}
+            collapsed={collapsed}
           />
           <SidebarItem
             icon={AlertTriangle}
             label="Termination Requests"
             path="/admin/termination-requests"
             active={isActive('/admin/termination-requests')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
+            icon={CalendarClock}
+            label="Upcoming Events"
+            path="/admin/upcoming-events"
+            active={isActive('/admin/upcoming-events')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
+            icon={CalendarOff}
+            label="Leave Requests"
+            path="/admin/leave-requests"
+            active={isActive('/admin/leave-requests')}
+            collapsed={collapsed}
           />
           <SidebarItem
             icon={CalendarDays}
             label="Bookings"
             path="/admin/bookings"
             active={isActive('/admin/bookings')}
+            collapsed={collapsed}
           />
           <SidebarItem
             icon={FileText}
             label="Statements"
             path="/admin/statements"
             active={isActive('/admin/statements')}
+            collapsed={collapsed}
           />
           <SidebarItem
             icon={Wallet}
             label="Advance Requests"
             path="/admin/advance-requests"
             active={isActive('/admin/advance-requests')}
+            collapsed={collapsed}
           />
           <SidebarItem
             icon={ShieldCheck}
             label="Worker Verification"
             path="/admin/workers"
             active={isActive('/admin/workers')}
+            collapsed={collapsed}
           />
           <SidebarItem
             icon={DollarSign}
             label="Financials"
             path="/admin/financial"
             active={isActive('/admin/financial')}
+            collapsed={collapsed}
           />
-          {/*<SidebarItem
+          <SidebarItem
+            icon={ArrowLeftRight}
+            label="Transactions"
+            path="/admin/transactions"
+            active={isActive('/admin/transactions')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
+            icon={Receipt}
+            label="Client Payments"
+            path="/admin/client-payments"
+            active={isActive('/admin/client-payments')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
+            icon={Banknote}
+            label="Staff Salaries"
+            path="/admin/salaries"
+            active={isActive('/admin/salaries')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
+            icon={FileText}
+            label="Salary Sheets"
+            path="/admin/salary-sheets"
+            active={isActive('/admin/salary-sheets')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
+            icon={Landmark}
+            label="Bank Accounts"
+            path="/admin/bank-accounts"
+            active={isActive('/admin/bank-accounts')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
+            icon={FileText}
+            label="Quotations"
+            path="/admin/quotations"
+            active={isActive('/admin/quotations')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
             icon={FileText}
             label="Reports"
             path="/admin/reports"
-            active={isActive('/admin/reports')}
+            active={location.pathname.startsWith('/admin/reports')}
+            collapsed={collapsed}
           />
+          <SidebarItem
+            icon={HeartPulse}
+            label="Care Profiles"
+            path="/admin/patients"
+            active={isActive('/admin/patients')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
+            icon={ClipboardList}
+            label="Change Requests"
+            path="/admin/change-requests"
+            active={isActive('/admin/change-requests')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
+            icon={Star}
+            label="Reviews"
+            path="/admin/reviews"
+            active={isActive('/admin/reviews')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
+            icon={Lock}
+            label="Permissions"
+            path="/admin/permissions"
+            active={isActive('/admin/permissions')}
+            collapsed={collapsed}
+          />
+          <SidebarItem
+            icon={History}
+            label="Activity Log"
+            path="/admin/activity-log"
+            active={isActive('/admin/activity-log')}
+            collapsed={collapsed}
+          />
+          {/*
           <SidebarItem
             icon={Settings}
             label="Settings"
@@ -102,13 +254,14 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
           />*/}
         </nav>
 
-        <div className="p-4 border-t border-slate-800">
-          <button 
+        <div className="p-3 border-t border-slate-800">
+          <button
             onClick={handleLogout}
-            className="flex items-center gap-3 text-slate-400 hover:text-white transition-colors w-full px-4 py-2 rounded-lg hover:bg-slate-800"
+            className={`flex items-center gap-3 text-slate-400 hover:text-white transition-colors w-full px-3 py-2 rounded-lg hover:bg-slate-800 ${collapsed ? 'justify-center' : ''}`}
+            title="Logout"
           >
             <LogOut className="w-5 h-5" />
-            <span className="font-medium">Logout</span>
+            {!collapsed && <span className="font-medium">Logout</span>}
           </button>
         </div>
       </aside>
@@ -138,11 +291,14 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
             </button>
             <div className="flex items-center gap-3 pl-6 border-l border-slate-200">
               <div className="text-right hidden sm:block">
-                <p className="font-bold text-sm text-slate-900">Admin User</p>
-                <p className="text-xs text-slate-500">Super Admin</p>
+                <p className="font-bold text-sm text-slate-900">{adminInfo.name}</p>
+                <p className="text-xs text-slate-500">{adminInfo.roleLabel}</p>
               </div>
               <div className="w-10 h-10 bg-slate-200 rounded-full overflow-hidden border-2 border-slate-100">
-                <img src="https://ui-avatars.com/api/?name=Admin+User&background=0D8ABC&color=fff" alt="Admin" />
+                <img
+                  src={`https://ui-avatars.com/api/?name=${encodeURIComponent(adminInfo.name)}&background=0D8ABC&color=fff`}
+                  alt={adminInfo.name}
+                />
               </div>
             </div>
           </div>
@@ -171,19 +327,20 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
   );
 };
 
-const SidebarItem = ({ icon: Icon, label, path, active, badge }) => (
+const SidebarItem = ({ icon: Icon, label, path, active, badge, collapsed }) => (
   <Link
     to={path}
-    className={`w-full flex items-center justify-between px-4 py-3 rounded-lg mb-1 transition-all ${active
+    title={label}
+    className={`w-full flex items-center ${collapsed ? 'justify-center' : 'justify-between'} px-3 py-2 rounded-lg mb-1 transition-colors duration-200 ${active
         ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50'
-        : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+        : 'text-slate-300 hover:bg-slate-800 hover:text-white'
       }`}
   >
-    <div className="flex items-center gap-3">
+    <div className={`flex items-center gap-3 ${collapsed ? 'justify-center' : ''}`}>
       <Icon className="w-5 h-5" />
-      <span className="font-medium text-sm">{label}</span>
+      {!collapsed && <span className="font-medium text-sm">{label}</span>}
     </div>
-    {badge && (
+    {!collapsed && badge && (
       <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">{badge}</span>
     )}
   </Link>

@@ -9,11 +9,43 @@ const db = require('../config/db');
 // Public: Apply to join VCare
 router.post('/apply', uploadApplicationFiles, staffAppController.submitApplication);
 
+// Public: Verify phone OTP after application submission
+router.post('/verify-otp', staffAppController.verifyStaffApplicationOtp);
+
+// Public: Resend phone OTP for application
+router.post('/resend-otp', staffAppController.resendStaffApplicationOtp);
+
 // Admin Only: View all applications
 router.get('/applications', protect, restrictTo('SUPER_ADMIN'), async (req, res) => {
   const apps = await db.query('SELECT * FROM staff_applications ORDER BY applied_at DESC');
   res.status(200).json(apps.rows);
 });
+
+// Admin Only: Get single application by ID (includes staff_profile_id if accepted)
+router.get('/applications/:applicationId', protect, restrictTo('SUPER_ADMIN'), async (req, res) => {
+  try {
+    const result = await db.query(`
+      SELECT sa.*, sp.staff_profile_id
+      FROM staff_applications sa
+      LEFT JOIN users u ON u.mobile_number = sa.mobile_number
+      LEFT JOIN staff_profiles sp ON sp.user_id = u.user_id
+      WHERE sa.application_id = $1
+    `, [req.params.applicationId]);
+    if (result.rows.length === 0) return res.status(404).json({ message: 'Application not found' });
+    res.status(200).json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching application' });
+  }
+});
+
+// Admin Only: Update application details
+router.put('/applications/:applicationId', uploadApplicationFiles, protect, restrictTo('SUPER_ADMIN'), staffAppController.updateApplication);
+
+// Admin Only: Send the Independent Contractor Agreement PDF to an approved applicant via WhatsApp
+router.post('/applications/:applicationId/send-agreement', protect, restrictTo('SUPER_ADMIN'), staffAppController.sendApplicationAgreement);
+
+// Admin Only: Suggest the next auto-generated Staff ID (EMP-5000 onwards)
+router.get('/next-staff-code', protect, restrictTo('SUPER_ADMIN'), staffAppController.getNextStaffCode);
 
 // Admin Only: Accept Application
 router.post(
@@ -65,10 +97,245 @@ router.get(
 // Create staff profile with file upload support
 router.post('/proxy-create', uploadApplicationFiles, protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), staffController.createStaffProfile);
 
+// Admin: Staff salaries overview (all staff with outstanding payables)
 router.get(
-    '/:staff_profile_id/assignments', 
-    protect, 
+  '/salaries/overview',
+  protect,
+  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  staffController.getStaffSalariesOverview
+);
+
+// Admin: Bulk payout for multiple staff
+router.post(
+  '/salaries/bulk-payouts',
+  protect,
+  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  staffController.bulkStaffPayouts
+);
+
+// Admin: Full export data for Excel download
+router.get(
+  '/salaries/full-export',
+  protect,
+  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  staffController.getStaffSalariesExportData
+);
+
+// Admin: Salary sheet PDF ledger
+router.get(
+  '/salary-sheets/ledger',
+  protect,
+  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  staffController.getSalarySheetLedger
+);
+
+// Admin: Bulk resend salary sheet notifications (must be before /:id route)
+router.post(
+  '/salary-sheets/bulk-send-notifications',
+  protect,
+  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  staffController.bulkResendSalarySheetNotifications
+);
+
+// Admin: Resend WhatsApp + SMS for a single salary sheet payout
+router.post(
+  '/salary-sheets/:staff_payment_id/send-notification',
+  protect,
+  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  staffController.resendSalarySheetNotification
+);
+
+// Admin: Per-booking salary breakdown for a staff member
+router.get(
+  '/:staff_profile_id/booking-salary-breakdown',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getStaffBookingSalaryBreakdown
+);
+
+// Admin: Monthly earnings breakdown for a staff member (Pay Modal preview)
+router.get(
+  '/:staff_profile_id/monthly-earnings',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getStaffMonthlyEarnings
+);
+
+router.get(
+    '/:staff_profile_id/assignments',
+    protect,
     staffController.getStaffAssignments
+);
+
+// Admin: aggregated staff detail for admin UI
+router.get(
+  '/:staff_profile_id/admin-detail',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getAdminStaffDetail
+);
+
+// Get current active booking for staff (admin view)
+router.get(
+  '/:staff_profile_id/current-booking',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getCurrentBooking
+);
+
+// Booking history (assignment-centric) for staff (admin view)
+router.get(
+  '/:staff_profile_id/booking-history',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getBookingHistory
+);
+
+// Full attendance calendar (assignment spans + per-day attendance) for staff
+// Admins can view any staff member's calendar; staff can only view their own (enforced in controller).
+router.get(
+  '/:staff_profile_id/attendance-calendar',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'STAFF', 'NURSE', 'CARETAKER', 'NANNY'),
+  staffController.getAttendanceCalendar
+);
+
+// Soft deactivate/reactivate staff account
+router.patch(
+  '/:staff_profile_id/deactivate',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.deactivateStaffAccount
+);
+
+router.patch(
+  '/:staff_profile_id/reactivate',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.reactivateStaffAccount
+);
+
+// Staff bank accounts management (list/create/update/delete)
+router.get(
+  '/:staff_profile_id/bank-accounts',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'NANNY', 'NURSE', 'CARETAKER'),
+  staffController.getStaffBankAccounts
+);
+
+router.post(
+  '/:staff_profile_id/bank-accounts',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'NANNY', 'NURSE', 'CARETAKER'),
+  staffController.createStaffBankAccount
+);
+
+router.put(
+  '/:staff_profile_id/bank-accounts/:staff_bank_account_id',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'NANNY', 'NURSE', 'CARETAKER'),
+  staffController.updateStaffBankAccount
+);
+
+router.delete(
+  '/:staff_profile_id/bank-accounts/:staff_bank_account_id',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'NANNY', 'NURSE', 'CARETAKER'),
+  staffController.deleteStaffBankAccount
+);
+
+// Payouts history and summary for staff (admin view)
+router.get(
+  '/:staff_profile_id/payouts/summary',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getPayoutsSummary
+);
+
+router.get(
+  '/:staff_profile_id/payouts',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getPayouts
+);
+
+// Earnings summary and transactions for staff (admin view)
+router.get(
+  '/:staff_profile_id/earnings-summary',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getEarningsSummary
+);
+
+router.get(
+  '/:staff_profile_id/earnings-transactions',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getEarningsTransactions
+);
+
+// Earnings breakdown pages
+router.get(
+  '/:staff_profile_id/total-earnings-breakdown',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getTotalEarningsBreakdown
+);
+
+router.get(
+  '/:staff_profile_id/current-earnings-breakdown',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getCurrentEarningsBreakdown
+);
+
+// Admin: Record a payout to a staff member (company -> staff personal bank)
+router.post(
+  '/:staff_profile_id/payouts',
+  protect,
+  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  staffController.createStaffPayout
+);
+
+// Deductions
+router.get(
+  '/:staff_profile_id/deductions',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getStaffDeductions
+);
+
+router.post(
+  '/:staff_profile_id/deductions',
+  protect,
+  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  staffController.createStaffDeduction
+);
+
+// Admin Notes (multiple notes per staff, shown as a carousel on the staff detail page)
+router.get(
+  '/:staff_profile_id/admin-notes',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getStaffAdminNotes
+);
+router.post(
+  '/:staff_profile_id/admin-notes',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+  staffController.createStaffAdminNote
+);
+router.put(
+  '/:staff_profile_id/admin-notes/:note_id',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+  staffController.updateStaffAdminNote
+);
+router.delete(
+  '/:staff_profile_id/admin-notes/:note_id',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+  staffController.deleteStaffAdminNote
 );
 
 // Update staff status to unavailable

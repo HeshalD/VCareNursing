@@ -130,7 +130,7 @@ const WorkerRegistrationSuccessPage = () => {
                       <Calendar className="w-4 h-4 text-slate-400" />
                       <span className="text-sm text-slate-600">Submitted:</span>
                       <span className="font-medium text-slate-900">
-                        {new Date().toLocaleDateString()}
+                        {new Date().toLocaleDateString('en-GB')}
                       </span>
                     </div>
                   </div>

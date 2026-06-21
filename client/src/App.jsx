@@ -16,18 +16,23 @@ import BookingSuccessPage from './modules/public/BookingSuccessPage';
 import WorkersTeamPage from './modules/public/service_team/WorkersTeamPage';
 import WorkerRegistrationPage from './modules/public/service_team/WorkerRegistrationPage';
 import WorkerRegistrationSuccessPage from './modules/public/service_team/WorkerRegistrationSuccessPage';
+import VerifyStaffOTP from './modules/public/service_team/VerifyStaffOTP';
 import WorkerDashboardDemo from './modules/public/service_team/WorkerDashboardDemo';
 import ClientDashboardDemo from './modules/public/ClientDashboardDemo';
 import ClientProfileDemo from './modules/public/ClientProfileDemo';
 import AdminDashboard from './modules/admin/admin_dashboard_main/AdminDashboard';
 import UserManagement from './modules/admin/user_managemnet/user_managemnet';
+import ClientDetailPage from './modules/admin/user_managemnet/client_detail_page';
 import ProxyUserManagement from './modules/admin/user_managemnet/proxy_user_management';
 import ServiceRequests from './modules/admin/service_requests/service_requests';
 import ProxyServiceRequest from './modules/admin/service_requests/proxy_service_request';
 import QuoteBuilder from './modules/admin/service_requests/quote_builder';
 import WorkerVerification from './modules/admin/worker_verifications/worker_verifications';
+import WorkerVerificationDetailsPage from './modules/admin/worker_verifications/WorkerVerificationDetailsPage';
 import Financials from './modules/admin/financial/financial';
+import BankAccounts from './modules/admin/back_accounts/bank_accounts';
 import Reports from './modules/admin/reports/reports';
+import SalesByCustomer from './modules/admin/reports/sales_by_customer';
 import Settings from './modules/admin/settings/settings';
 import AdminLoginPage from './modules/admin/AdminLoginPage';
 import { AdminAuthProvider } from './context/AdminAuthContext';
@@ -39,9 +44,12 @@ import StaffRoster from './modules/admin/service_requests/staff_roster';
 import Bookings from './modules/admin/bookings/Bookings';
 import ClientBookings from './modules/client/ClientBookings';
 import TerminationRequests from './modules/admin/termination_requests/termination_requests';
+import UpcomingEvents from './modules/admin/upcoming_events/UpcomingEvents';
 import Statements from './modules/admin/statements/statements';
 import Earnings from './modules/public/service_team/Earnings';
 import AdvanceRequests from './modules/admin/advance_requests/advance_requests';
+import LeaveRequests from './modules/admin/leave_requests/LeaveRequests';
+import StaffWorkingHistory from './modules/admin/advance_requests/StaffWorkingHistory';
 import ForgotPasswordPage from './modules/auth/ForgotPasswordPage';
 import VerifyForgotPasswordOtp from './modules/auth/VerifyForgotPasswordOtp';
 import ResetPasswordPage from './modules/auth/ResetPasswordPage';
@@ -54,6 +62,34 @@ import ClientFinancial from './modules/client/ClientFinancial';
 import ClientReviews from './modules/client/ClientReviews';
 import ClientLayout from './modules/client/components/ClientLayout';
 import WorkerBookings from './modules/public/service_team/WorkerBookings';
+import StaffMyProfile from './modules/public/service_team/StaffMyProfile';
+import StaffSettings from './modules/public/service_team/StaffSettings';
+import StaffChangeRequestPage from './modules/public/service_team/StaffChangeRequestPage';
+import StaffLeaveRequestPage from './modules/public/service_team/StaffLeaveRequestPage';
+import ChangeRequestsPage from './modules/admin/change_requests/ChangeRequestsPage';
+import ActivityLogPage from './modules/admin/activity_log/ActivityLogPage';
+import AdminReviewsPage from './modules/admin/reviews/AdminReviewsPage';
+import QuotationsPage from './modules/admin/service_quotes/quotations';
+import QuotationDetailsPage from './modules/admin/service_quotes/quotation_details';
+import ServiceRequestSummaryPage from './modules/admin/service_requests/service_request_summary';
+import BookingStaffRosterPage from './modules/admin/service_requests/booking_staff_roster';
+import BookingStaffAssignmentPage from './modules/admin/service_requests/booking_staff_assignment';
+import BookingDetailPage from './modules/admin/bookings/BookingDetailPageV2';
+import BookingDetailPageV2 from './modules/admin/bookings/BookingDetailPageV2';
+import StaffDetailPage from './modules/admin/user_managemnet/StaffDetailPageV2';
+import StaffDetailPageV2 from './modules/admin/user_managemnet/StaffDetailPageV2';
+import TotalEarningsBreakdownPage from './modules/admin/user_managemnet/TotalEarningsBreakdownPage';
+import CurrentEarningsBreakdownPage from './modules/admin/user_managemnet/CurrentEarningsBreakdownPage';
+import PatientsPage from './modules/admin/patients/patients';
+import PatientDetailPage from './modules/admin/patients/patient_details';
+import TransactionsPage from './modules/admin/transactions/TransactionsPage';
+import ClientPaymentsLedgerPage from './modules/admin/payments/ClientPaymentsLedgerPage';
+import StaffSalariesPage from './modules/admin/salaries/StaffSalariesPage';
+import SalarySheetLedgerPage from './modules/admin/salaries/SalarySheetLedgerPage';
+import StaffPermissionsPage from './modules/admin/permissions/StaffPermissionsPage';
+import InternalStaffPage from './modules/admin/internal_staff/InternalStaffPage';
+import SalespersonsPage from './modules/admin/salespersons/SalespersonsPage';
+import SalespersonDetailPage from './modules/admin/salespersons/SalespersonDetailPage';
 
 function App() {
   return (
@@ -88,10 +124,15 @@ function App() {
             <Route path="/booking-success" element={<BookingSuccessPage />} />
             <Route path="/services/join-team" element={<WorkersTeamPage />} />
             <Route path="/services/apply" element={<WorkerRegistrationPage />} />
+            <Route path="/verify-staff-otp" element={<VerifyStaffOTP />} />
             <Route path="/worker-registration-success" element={<WorkerRegistrationSuccessPage />} />
             <Route path="/services/provider-dashboard" element={<WorkerDashboardDemo />} />
             <Route path="/services/earnings" element={<Earnings />} />
             <Route path="/services/bookings" element={<WorkerBookings />} />
+            <Route path="/services/my-profile" element={<StaffMyProfile />} />
+            <Route path="/services/settings" element={<StaffSettings />} />
+            <Route path="/services/change-request" element={<StaffChangeRequestPage />} />
+            <Route path="/services/leave-request" element={<StaffLeaveRequestPage />} />
             <Route element={<ClientLayout />}>
               <Route path="/client/profile" element={<ClientProfile />} />
               <Route path="/client/bookings" element={<ClientBookings />} />
@@ -110,6 +151,11 @@ function App() {
                 <UserManagement />
               </AdminAuthProvider>
             } />
+            <Route path="/admin/users/:clientId/detail" element={
+              <AdminAuthProvider>
+                <ClientDetailPage />
+              </AdminAuthProvider>
+            } />
             <Route path="/admin/proxy-user-management" element={
               <AdminAuthProvider>
                 <ProxyUserManagement />
@@ -118,6 +164,11 @@ function App() {
             <Route path="/admin/service-requests" element={
               <AdminAuthProvider>
                 <ServiceRequests />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/service-requests/:requestId/summary" element={
+              <AdminAuthProvider>
+                <ServiceRequestSummaryPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/proxy-service-requests" element={
@@ -130,6 +181,11 @@ function App() {
                 <TerminationRequests />
               </AdminAuthProvider>
             } />
+            <Route path="/admin/upcoming-events" element={
+              <AdminAuthProvider>
+                <UpcomingEvents />
+              </AdminAuthProvider>
+            } />
             <Route path="/admin/quote-builder/:requestId?" element={
               <AdminAuthProvider>
                 <QuoteBuilder />
@@ -140,9 +196,34 @@ function App() {
                 <StaffRoster />
               </AdminAuthProvider>
             } />
+            <Route path="/admin/staff/:staffProfileId/detail" element={
+              <AdminAuthProvider>
+                <StaffDetailPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/staff/:staffProfileId/v2" element={
+              <AdminAuthProvider>
+                <StaffDetailPageV2 />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/staff/:staffProfileId/total-earnings" element={
+              <AdminAuthProvider>
+                <TotalEarningsBreakdownPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/staff/:staffProfileId/current-earnings" element={
+              <AdminAuthProvider>
+                <CurrentEarningsBreakdownPage />
+              </AdminAuthProvider>
+            } />
             <Route path="/admin/workers" element={
               <AdminAuthProvider>
                 <WorkerVerification />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/workers/:applicationId" element={
+              <AdminAuthProvider>
+                <WorkerVerificationDetailsPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/financial" element={
@@ -150,10 +231,53 @@ function App() {
                 <Financials />
               </AdminAuthProvider>
             } />
+            <Route path="/admin/bank-accounts" element={
+              <AdminAuthProvider>
+                <BankAccounts />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/quotations" element={
+              <AdminAuthProvider>
+                <QuotationsPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/quotations/:quoteId" element={
+              <AdminAuthProvider>
+                <QuotationDetailsPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/bookings/:bookingId/staff-roster" element={
+              <AdminAuthProvider>
+                <BookingStaffRosterPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/bookings/:bookingId/staff-assignment" element={
+              <AdminAuthProvider>
+                <BookingStaffAssignmentPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/bookings/:bookingId/detail" element={
+              <AdminAuthProvider>
+                <BookingDetailPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/bookings/:bookingId/v2" element={
+              <AdminAuthProvider>
+                <BookingDetailPageV2 />
+              </AdminAuthProvider>
+            } />
             <Route path="/admin/reports" element={
               <AdminAuthProvider>
                 <Reports />
               </AdminAuthProvider>
+            } />
+            <Route path="/admin/reports/sales-by-customer" element={
+              <AdminAuthProvider>
+                <SalesByCustomer />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/reports/sales_by_customer" element={
+              <Navigate to="/admin/reports/sales-by-customer" replace />
             } />
             <Route path="/admin/bookings" element={
               <AdminAuthProvider>
@@ -168,6 +292,81 @@ function App() {
             <Route path="/admin/advance-requests" element={
               <AdminAuthProvider>
                 <AdvanceRequests />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/leave-requests" element={
+              <AdminAuthProvider>
+                <LeaveRequests />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/staff-history/:staffProfileId" element={
+              <AdminAuthProvider>
+                <StaffWorkingHistory />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/change-requests" element={
+              <AdminAuthProvider>
+                <ChangeRequestsPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/patients" element={
+              <AdminAuthProvider>
+                <PatientsPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/patients/:patientId/detail" element={
+              <AdminAuthProvider>
+                <PatientDetailPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/activity-log" element={
+              <AdminAuthProvider>
+                <ActivityLogPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/reviews" element={
+              <AdminAuthProvider>
+                <AdminReviewsPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/transactions" element={
+              <AdminAuthProvider>
+                <TransactionsPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/client-payments" element={
+              <AdminAuthProvider>
+                <ClientPaymentsLedgerPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/salaries" element={
+              <AdminAuthProvider>
+                <StaffSalariesPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/salary-sheets" element={
+              <AdminAuthProvider>
+                <SalarySheetLedgerPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/permissions" element={
+              <AdminAuthProvider>
+                <StaffPermissionsPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/internal-staff" element={
+              <AdminAuthProvider>
+                <InternalStaffPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/salespersons" element={
+              <AdminAuthProvider>
+                <SalespersonsPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/salespersons/:id" element={
+              <AdminAuthProvider>
+                <SalespersonDetailPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/settings" element={

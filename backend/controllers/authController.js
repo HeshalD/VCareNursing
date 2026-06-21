@@ -3,6 +3,7 @@ const db = require('../config/db');
 const jwt = require('jsonwebtoken');
 const sendEmail = require('../utils/email');
 const { sendWhatsAppOtp } = require('../utils/whatsapp');
+const { sendSmsOtp } = require('../utils/sms');
 
 exports.registerClient = async (req, res, next) => {
   const { mobile_number, password, full_name, client_type, terms_accepted, email, gender, primary_address } = req.body;
@@ -85,53 +86,34 @@ exports.registerClient = async (req, res, next) => {
     // COMMIT TRANSACTION
     await client.query('COMMIT');
 
-    // Send OTP email and WhatsApp
+    // Send OTP via WhatsApp and SMS (email temporarily disabled)
     let emailSent = false;
     let whatsappSent = false;
+    let smsSent = false;
 
-    // Email sending temporarily disabled
-    /*
-    // Try sending email first
-    const emailResult = await sendEmail({ email: email, subject: 'VCare OTP', message: `Your code: ${otp}` });
-    if (!emailResult.skipped) {
-      emailSent = true;
-      console.log('Email sent successfully');
-    } else {
-      console.log('Email skipped:', emailResult.reason);
-    }
-    */
+    const [whatsappResult, smsResult] = await Promise.allSettled([
+      sendWhatsAppOtp(mobile_number, otp),
+      sendSmsOtp(mobile_number, otp)
+    ]);
 
-    try {
-      // Try sending WhatsApp
-      await sendWhatsAppOtp(mobile_number, otp);
-      whatsappSent = true;
-      console.log('WhatsApp sent successfully');
-    } catch (whatsappError) {
-      console.error("WhatsApp failed to send:", whatsappError);
-      console.error("WhatsApp Error:", whatsappError.message);
-    }
+    whatsappSent = whatsappResult.status === 'fulfilled';
+    smsSent = smsResult.status === 'fulfilled';
 
-    // Log overall notification status
-    if (!emailSent && !whatsappSent) {
-      console.error("Both email and WhatsApp failed to send");
-    } else if (!emailSent) {
-      console.warn("Email failed but WhatsApp succeeded");
-    } else if (!whatsappSent) {
-      console.warn("WhatsApp failed but email succeeded");
-    } else {
-      console.log("Both email and WhatsApp sent successfully");
-    }
+    if (!whatsappSent) console.error("WhatsApp OTP failed:", whatsappResult.reason?.message);
+    if (!smsSent) console.error("SMS OTP failed:", smsResult.reason?.message);
+    if (!whatsappSent && !smsSent) console.error("Both WhatsApp and SMS failed to send OTP");
 
     res.status(201).json({
       status: 'success',
-      message: 'Registration successful. Please verify the OTP sent to your email and WhatsApp.',
+      message: 'Registration successful. Please verify the OTP sent to your WhatsApp and phone number.',
       data: {
         userId: userId,
         profileId: newProfile.rows[0].client_profile_id,
         payment_required: true,
         amount_due: 10000.00,
         email_sent: emailSent,
-        whatsapp_sent: whatsappSent
+        whatsapp_sent: whatsappSent,
+        sms_sent: smsSent
       }
     });
 
@@ -203,7 +185,8 @@ exports.resendOtp = async (req, res) => {
         subject: 'Your New VCare Verification Code',
         message: `Your new verification code is: ${newOtp}. It expires in 10 minutes.`
       }), */
-      sendWhatsAppOtp(user.mobile_number, newOtp)
+      sendWhatsAppOtp(user.mobile_number, newOtp),
+      sendSmsOtp(user.mobile_number, newOtp)
     ]);
 
     // Log to terminal for easy testing without checking phone
@@ -273,6 +256,10 @@ exports.login = async (req, res) => {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
+    const isTempPassword = /^[a-z0-9]{8}$/.test(password) &&
+                           !/[A-Z]/.test(password) &&
+                           !/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password);
+
     // Update last_login timestamp
     await db.query(
       'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE user_id = $1',
@@ -298,9 +285,16 @@ exports.login = async (req, res) => {
     const staffProfile = staffRes.rows[0] || null;
 
     // 4. Generate JWT Token
-    // We embed the user_id, full_name, mobile_number, gender, and primary_address in the JWT payload
-    // Priority: client profile full_name > staff profile full_name > fallback
-    const fullName = clientProfile?.full_name || staffProfile?.full_name || null;
+    // Priority: client profile > staff profile > internal_staff (for COORDINATOR/ACCOUNTS)
+    let fullName = clientProfile?.full_name || staffProfile?.full_name || null;
+
+    if (!fullName) {
+      const internalStaffRes = await db.query(
+        'SELECT full_name FROM internal_staff WHERE user_id = $1',
+        [user.user_id]
+      );
+      fullName = internalStaffRes.rows[0]?.full_name || null;
+    }
     
     const tokenPayload = { 
       id: user.user_id, 
@@ -324,19 +318,28 @@ exports.login = async (req, res) => {
     res.status(200).json({
       status: 'success',
       token,
+      // Prompt a forced password change for both staff and freshly-onboarded clients
+      // who are still using their system-generated temporary password.
+      requires_password_change: isTempPassword && (!!staffProfile || !!clientProfile),
       data: {
         user_id: user.user_id,
         mobile_number: mobile_number,
         email: user.email || null,
+        // Top-level staff_info mirrors staffLogin response shape for the password-change redirect
+        is_staff: !!staffProfile,
+        staff_info: staffProfile ? {
+          staff_id: staffProfile.staff_profile_id,
+          name: staffProfile.full_name,
+          status: staffProfile.verification_status
+        } : null,
         roles: {
-          is_client: !!clientProfile, // Boolean: true if they have a client profile
+          is_client: !!clientProfile,
           client_id: clientProfile ? clientProfile.client_profile_id : null,
           client_info: clientProfile ? {
             name: clientProfile.full_name,
             type: clientProfile.client_type
           } : null,
-
-          is_staff: !!staffProfile, // Boolean: true if they have a staff profile
+          is_staff: !!staffProfile,
           staff_id: staffProfile ? staffProfile.staff_profile_id : null,
           staff_info: staffProfile ? {
             name: staffProfile.full_name,
@@ -472,13 +475,16 @@ exports.requestForgotPasswordOtp = async (req, res) => {
       [user.user_id, otp, expiresAt]
     );
 
-    // 6. Send OTP via WhatsApp (and email if enabled)
-    try {
-      await sendWhatsAppOtp(mobile_number, otp);
-      console.log('Password reset OTP sent via WhatsApp');
-    } catch (whatsappError) {
-      console.error("WhatsApp failed to send password reset OTP:", whatsappError.message);
-    }
+    // 6. Send OTP via WhatsApp and SMS
+    const [wpReset, smsReset] = await Promise.allSettled([
+      sendWhatsAppOtp(mobile_number, otp),
+      sendSmsOtp(mobile_number, otp)
+    ]);
+
+    if (wpReset.status === 'fulfilled') console.log('Password reset OTP sent via WhatsApp');
+    else console.error("WhatsApp failed to send password reset OTP:", wpReset.reason?.message);
+    if (smsReset.status === 'fulfilled') console.log('Password reset OTP sent via SMS');
+    else console.error("SMS failed to send password reset OTP:", smsReset.reason?.message);
 
     // Log OTP for development/testing
     console.log(`[DEV ONLY] Password reset OTP for User ${user.user_id}: ${otp}`);

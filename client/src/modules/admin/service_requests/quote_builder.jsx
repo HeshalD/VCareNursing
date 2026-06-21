@@ -4,9 +4,7 @@ import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import {
   User,
-  Phone,
   MapPin,
-  Calendar,
   FileText,
   Calculator,
   Send,
@@ -14,18 +12,44 @@ import {
   CheckCircle,
   ArrowLeft,
   Plus,
-  Minus
+  Minus,
+  Tag,
+  Stethoscope,
+  BadgeCheck,
+  Layers
 } from 'lucide-react';
 import QuoteLineItem from '../service_quotes/QuoteLineItem';
 import PresetItemSelector from '../service_quotes/PresetItemSelector';
 import QuoteSummary from '../service_quotes/QuoteSummary';
 import PresetManager from '../service_quotes/PresetManager';
 
+const InfoRow = ({ label, value }) => (
+  <div className="flex items-start justify-between gap-4 py-2.5">
+    <span className="text-xs font-medium text-slate-400 uppercase tracking-wide whitespace-nowrap">{label}</span>
+    <span className="text-sm font-medium text-slate-800 text-right">{value}</span>
+  </div>
+);
+
+const SectionCard = ({ children, className = '' }) => (
+  <div className={`bg-white rounded-xl border border-slate-200 shadow-sm ${className}`}>
+    {children}
+  </div>
+);
+
+const CardHeader = ({ icon: Icon, title, iconColor = 'text-slate-500', children }) => (
+  <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/70 rounded-t-xl flex items-center justify-between">
+    <div className="flex items-center gap-2.5">
+      <Icon className={`w-4 h-4 ${iconColor}`} />
+      <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-wider">{title}</h3>
+    </div>
+    {children}
+  </div>
+);
+
 const QuoteBuilder = () => {
   const { requestId } = useParams();
   const navigate = useNavigate();
-  
-  // State
+
   const [serviceRequest, setServiceRequest] = useState(null);
   const [clientProfile, setClientProfile] = useState(null);
   const [presets, setPresets] = useState([]);
@@ -52,12 +76,10 @@ const QuoteBuilder = () => {
       setError('No service request ID provided');
       return;
     }
-    
     try {
       setLoading(true);
       const response = await apiClient.getServiceRequestById(requestId);
       setServiceRequest(response.data);
-      
       if (response.data.client_id) {
         try {
           const clientResponse = await apiClient.getClientProfile(response.data.client_id);
@@ -98,9 +120,7 @@ const QuoteBuilder = () => {
   const fetchPresets = async () => {
     try {
       const response = await fetch('/api/quotes/presets', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
       });
       const data = await response.json();
       setPresets(data.data || []);
@@ -110,22 +130,17 @@ const QuoteBuilder = () => {
   };
 
   const addPresetItem = (presetItem) => {
-    const newItem = {
-      ...presetItem,
-      sort_order: lineItems.length
-    };
-    setLineItems([...lineItems, newItem]);
+    setLineItems([...lineItems, { ...presetItem, sort_order: lineItems.length }]);
   };
 
   const addCustomItem = (type) => {
-    const newItem = {
+    setLineItems([...lineItems, {
       item_type: type,
       description: '',
       quantity: 1,
       unit_price: 0,
-      sort_order: lineItems.length
-    };
-    setLineItems([...lineItems, newItem]);
+      sort_order: lineItems.length,
+    }]);
   };
 
   const updateLineItem = (index, updatedItem) => {
@@ -135,80 +150,53 @@ const QuoteBuilder = () => {
   };
 
   const deleteLineItem = (index) => {
-    const newItems = lineItems.filter((_, i) => i !== index);
-    const reorderedItems = newItems.map((item, i) => ({
-      ...item,
-      sort_order: i
-    }));
-    setLineItems(reorderedItems);
+    setLineItems(
+      lineItems.filter((_, i) => i !== index).map((item, i) => ({ ...item, sort_order: i }))
+    );
   };
 
   const moveLineItem = (index, direction) => {
     const newItems = [...lineItems];
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    
     if (targetIndex < 0 || targetIndex >= lineItems.length) return;
-    
     [newItems[index], newItems[targetIndex]] = [newItems[targetIndex], newItems[index]];
-    
-    const reorderedItems = newItems.map((item, i) => ({
-      ...item,
-      sort_order: i
-    }));
-    
-    setLineItems(reorderedItems);
+    setLineItems(newItems.map((item, i) => ({ ...item, sort_order: i })));
   };
 
   const calculateTotals = () => {
     let totalCharges = 0;
     let totalDiscounts = 0;
-    
     lineItems.forEach(item => {
-      if (item.item_type === 'CHARGE') {
-        totalCharges += parseFloat(item.amount) || 0;
-      } else if (item.item_type === 'DISCOUNT') {
-        totalDiscounts += Math.abs(parseFloat(item.amount) || 0);
-      }
+      if (item.item_type === 'CHARGE') totalCharges += parseFloat(item.amount) || 0;
+      else if (item.item_type === 'DISCOUNT') totalDiscounts += Math.abs(parseFloat(item.amount) || 0);
     });
-
-    return {
-      totalCharges,
-      totalDiscounts,
-      subtotal: totalCharges - totalDiscounts
-    };
+    return { totalCharges, totalDiscounts, subtotal: totalCharges - totalDiscounts };
   };
 
   const handleCreateQuote = async (e) => {
     e.preventDefault();
     if (!serviceRequest || lineItems.length === 0) return;
-
     const totals = calculateTotals();
     if (totals.subtotal <= 0) {
       setError('Quote total must be greater than zero');
       return;
     }
-
     try {
       setCreatingQuote(true);
       setError('');
-
       const response = await fetch('/api/quotes/create-modular', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          Authorization: `Bearer ${localStorage.getItem('token')}`,
         },
         body: JSON.stringify({
           request_id: serviceRequest.request_id,
           line_items: lineItems,
-          terms_conditions: termsConditions
-        })
+          terms_conditions: termsConditions,
+        }),
       });
-
-      if (!response.ok) {
-        throw new Error('Failed to create quote');
-      }
-
+      if (!response.ok) throw new Error('Failed to create quote');
       const data = await response.json();
       setCreatedQuote(data.data);
     } catch (err) {
@@ -221,7 +209,6 @@ const QuoteBuilder = () => {
 
   const handleSendPDF = async () => {
     if (!createdQuote) return;
-
     try {
       setSendingPDF(true);
       await apiClient.sendQuotePDF(createdQuote.quote_id);
@@ -235,21 +222,11 @@ const QuoteBuilder = () => {
     }
   };
 
-  const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
-
   if (loading) {
     return (
-      <AdminLayout title="Modular Quote Builder" subtitle="Loading...">
+      <AdminLayout title="Quote Builder" subtitle="Loading...">
         <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+          <div className="animate-spin rounded-full h-10 w-10 border-2 border-slate-200 border-t-blue-600" />
         </div>
       </AdminLayout>
     );
@@ -257,185 +234,244 @@ const QuoteBuilder = () => {
 
   if (error && !serviceRequest) {
     return (
-      <AdminLayout title="Modular Quote Builder" subtitle="Error">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <div className="flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-red-600" />
-            <span className="text-red-800">{error}</span>
+      <AdminLayout title="Quote Builder" subtitle="Error">
+        <div className="max-w-md mx-auto mt-10">
+          <div className="bg-red-50 border border-red-200 rounded-xl p-5">
+            <div className="flex items-center gap-3 mb-4">
+              <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+              <span className="text-red-800 font-medium">{error}</span>
+            </div>
+            <button
+              onClick={() => navigate('/admin/service-requests')}
+              className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 font-medium transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back to Service Requests
+            </button>
           </div>
-          <button
-            onClick={() => navigate('/admin/service-requests')}
-            className="mt-4 flex items-center gap-2 text-blue-600 hover:text-blue-800"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Service Requests
-          </button>
         </div>
       </AdminLayout>
     );
   }
 
   const totals = calculateTotals();
+  // A client who isn't in the database yet (no client profile) has, by definition,
+  // not paid the registration fee — treat a missing profile as "pending".
+  const registrationFeePaid = Boolean(clientProfile?.is_registration_fee_paid);
 
   return (
-    <AdminLayout 
-      title="Modular Quote Builder" 
-      subtitle={serviceRequest ? `Quote for ${serviceRequest.patient_name}` : 'Create Quote'}
+    <AdminLayout
+      title="Quote Builder"
+      subtitle={serviceRequest ? `Service Request for ${serviceRequest.patient_name}` : 'Create Quote'}
     >
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        {/* Left Side - Service Request Details */}
-        <div className="xl:col-span-1">
-          <div className="bg-white rounded-lg border border-slate-200">
-            <div className="p-6 border-b border-slate-200">
-              <div className="flex items-center gap-3">
-                <FileText className="w-5 h-5 text-blue-600" />
-                <h2 className="text-lg font-semibold text-slate-900">Service Request Details</h2>
-              </div>
+      {/* Back navigation */}
+      <div className="mb-5">
+        <button
+          onClick={() => navigate('/admin/service-requests')}
+          className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-slate-800 transition-colors font-medium"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to Service Requests
+        </button>
+      </div>
+
+      {/* Context banner */}
+      {serviceRequest && (
+        <div className="mb-6 bg-gradient-to-r from-blue-600 to-blue-700 rounded-xl p-5 shadow-md shadow-blue-100">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="text-blue-200 text-xs font-semibold uppercase tracking-widest mb-1">Creating Quote For</p>
+              <h2 className="text-xl font-bold text-white leading-tight">{serviceRequest.patient_name}</h2>
+              <p className="text-blue-200 text-sm mt-1">
+                Payer: <span className="text-white font-medium">{serviceRequest.payer_name}</span>
+                <span className="mx-2 opacity-50">·</span>
+                {serviceRequest.payer_mobile}
+              </p>
             </div>
-            
+            <div className="flex flex-wrap gap-2">
+              <span className="bg-white/15 text-white text-xs font-medium px-3 py-1.5 rounded-full border border-white/20">
+                {serviceRequest.service_type}
+              </span>
+              <span className="bg-white/15 text-white text-xs font-medium px-3 py-1.5 rounded-full border border-white/20">
+                {serviceRequest.service_model?.replace('_', ' ') || 'Standard'}
+              </span>
+              <span className={`text-xs font-medium px-3 py-1.5 rounded-full border ${
+                registrationFeePaid
+                  ? 'bg-green-500/20 text-green-100 border-green-400/30'
+                  : 'bg-amber-500/20 text-amber-100 border-amber-400/30'
+              }`}>
+                {registrationFeePaid ? '✓ Reg. Fee Paid' : '⚠ Reg. Fee Pending'}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Main layout */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start">
+
+        {/* Left: sticky details panel */}
+        <div className="xl:col-span-1 xl:sticky xl:top-6">
+          <SectionCard>
+            <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/70 rounded-t-xl">
+              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Request Details</h3>
+            </div>
+
             {serviceRequest && (
-              <div className="p-6 space-y-6">
-                {/* Payer Information */}
+              <div className="p-5 space-y-4">
+
+                {/* Payer */}
                 <div>
-                  <h3 className="font-medium text-slate-900 mb-3 flex items-center gap-2">
-                    <User className="w-4 h-4" />
-                    Payer Information
-                  </h3>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-500">Name:</span>
-                      <span className="text-sm font-medium">{serviceRequest.payer_name}</span>
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="w-6 h-6 rounded-md bg-blue-100 flex items-center justify-center flex-shrink-0">
+                      <User className="w-3.5 h-3.5 text-blue-600" />
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-500">Mobile:</span>
-                      <span className="text-sm font-medium">{serviceRequest.payer_mobile}</span>
-                    </div>
+                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Payer</span>
+                  </div>
+                  <div className="pl-8 divide-y divide-slate-100">
+                    <InfoRow label="Name" value={serviceRequest.payer_name} />
+                    <InfoRow label="Mobile" value={serviceRequest.payer_mobile} />
                   </div>
                 </div>
 
-                {/* Patient Information */}
+                <div className="h-px bg-slate-100" />
+
+                {/* Care Profile */}
                 <div>
-                  <h3 className="font-medium text-slate-900 mb-3 flex items-center gap-2">
-                    <User className="w-4 h-4" />
-                    Patient Information
-                  </h3>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-500">Name:</span>
-                      <span className="text-sm font-medium">{serviceRequest.patient_name}</span>
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="w-6 h-6 rounded-md bg-purple-100 flex items-center justify-center flex-shrink-0">
+                      <Stethoscope className="w-3.5 h-3.5 text-purple-600" />
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-500">Age:</span>
-                      <span className="text-sm font-medium">{serviceRequest.patient_age} years</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-500">Condition:</span>
-                      <span className="text-sm font-medium">{serviceRequest.patient_condition}</span>
-                    </div>
+                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Care Profile</span>
+                  </div>
+                  <div className="pl-8 divide-y divide-slate-100">
+                    <InfoRow label="Name" value={serviceRequest.patient_name} />
+                    <InfoRow label="Age" value={`${serviceRequest.patient_age} years`} />
+                    <InfoRow label="Condition" value={serviceRequest.patient_condition} />
                   </div>
                 </div>
 
-                {/* Service Details */}
+                <div className="h-px bg-slate-100" />
+
+                {/* Service */}
                 <div>
-                  <h3 className="font-medium text-slate-900 mb-3 flex items-center gap-2">
-                    <FileText className="w-4 h-4" />
-                    Service Details
-                  </h3>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-500">Service Type:</span>
-                      <span className="text-sm font-medium">{serviceRequest.service_type}</span>
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="w-6 h-6 rounded-md bg-emerald-100 flex items-center justify-center flex-shrink-0">
+                      <FileText className="w-3.5 h-3.5 text-emerald-600" />
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-500">Service Model:</span>
-                      <span className="text-sm font-medium">
-                        {serviceRequest.service_model?.replace('_', ' ') || 'Not specified'}
-                      </span>
-                    </div>
+                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Service</span>
+                  </div>
+                  <div className="pl-8 divide-y divide-slate-100">
+                    <InfoRow label="Type" value={serviceRequest.service_type} />
+                    <InfoRow label="Model" value={serviceRequest.service_model?.replace('_', ' ') || 'Not specified'} />
                   </div>
                 </div>
+
+                <div className="h-px bg-slate-100" />
 
                 {/* Location */}
                 <div>
-                  <h3 className="font-medium text-slate-900 mb-3 flex items-center gap-2">
-                    <MapPin className="w-4 h-4" />
-                    Service Location
-                  </h3>
-                  <p className="text-sm text-slate-700">{serviceRequest.location_address}</p>
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-6 h-6 rounded-md bg-orange-100 flex items-center justify-center flex-shrink-0">
+                      <MapPin className="w-3.5 h-3.5 text-orange-600" />
+                    </div>
+                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Location</span>
+                  </div>
+                  <p className="text-sm text-slate-700 leading-relaxed pl-8">{serviceRequest.location_address}</p>
                 </div>
 
-                {/* Registration Fee Status */}
-                {clientProfile && (
+                {/* Client Status */}
+                <>
+                  <div className="h-px bg-slate-100" />
                   <div>
-                    <h3 className="font-medium text-slate-900 mb-3">Client Status</h3>
-                    {clientProfile.is_registration_fee_paid ? (
-                      <div className="flex items-center gap-2 text-sm text-green-600 bg-green-50 px-3 py-2 rounded-lg border border-green-200">
-                        <CheckCircle className="w-4 h-4" />
-                        <span>Registration fee already paid</span>
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-6 h-6 rounded-md bg-slate-100 flex items-center justify-center flex-shrink-0">
+                        <BadgeCheck className="w-3.5 h-3.5 text-slate-500" />
+                      </div>
+                      <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Client Status</span>
+                    </div>
+                    {registrationFeePaid ? (
+                      <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 px-3 py-2.5 rounded-lg border border-green-100 ml-8">
+                        <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                        <span className="font-medium">Registration fee paid</span>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-2 text-sm text-amber-600 bg-amber-50 px-3 py-2 rounded-lg border border-amber-200">
-                        <AlertCircle className="w-4 h-4" />
-                        <span>Registration fee pending</span>
+                      <div className="ml-8 space-y-1">
+                        <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 px-3 py-2.5 rounded-lg border border-amber-100">
+                          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                          <span className="font-medium">Registration fee pending</span>
+                        </div>
+                        {!clientProfile && (
+                          <p className="text-xs text-slate-400 px-1">Client not yet registered in the system.</p>
+                        )}
                       </div>
                     )}
                   </div>
-                )}
+                </>
               </div>
             )}
-          </div>
+          </SectionCard>
         </div>
 
-        {/* Right Side - Quote Builder */}
-        <div className="xl:col-span-2 space-y-6">
+        {/* Right: quote builder */}
+        <div className="xl:col-span-2 space-y-5">
           {!createdQuote ? (
             <>
-              {/* Preset Selector */}
-              <div className="bg-white rounded-lg border border-slate-200 p-6">
-                <PresetItemSelector
-                  presets={presets}
-                  onSelectPreset={addPresetItem}
-                  onManagePresets={() => setShowPresetManager(true)}
-                />
-              </div>
-
-              {/* Custom Item Buttons */}
-              <div className="bg-white rounded-lg border border-slate-200 p-6">
-                <h3 className="font-medium text-slate-900 mb-4">Add Custom Items</h3>
-                <div className="flex gap-3">
-                  <button
-                    type="button"
-                    onClick={() => addCustomItem('CHARGE')}
-                    className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                  >
-                    <Plus className="w-4 h-4" />
-                    Add Charge
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => addCustomItem('DISCOUNT')}
-                    className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-                  >
-                    <Minus className="w-4 h-4" />
-                    Add Discount
-                  </button>
+              {/* Add Items — presets + custom buttons unified */}
+              <SectionCard>
+                <CardHeader icon={Layers} title="Add Items" iconColor="text-blue-500" />
+                <div className="p-5 space-y-4">
+                  <PresetItemSelector
+                    presets={presets}
+                    onSelectPreset={addPresetItem}
+                    onManagePresets={() => setShowPresetManager(true)}
+                  />
+                  <div className="flex items-center gap-3">
+                    <div className="h-px flex-1 bg-slate-100" />
+                    <span className="text-xs text-slate-400 font-medium">or add custom item</span>
+                    <div className="h-px flex-1 bg-slate-100" />
+                  </div>
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => addCustomItem('CHARGE')}
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg hover:bg-emerald-100 active:scale-[0.98] transition-all font-medium text-sm"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Add Charge
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => addCustomItem('DISCOUNT')}
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-red-50 text-red-700 border border-red-200 rounded-lg hover:bg-red-100 active:scale-[0.98] transition-all font-medium text-sm"
+                    >
+                      <Minus className="w-4 h-4" />
+                      Add Discount
+                    </button>
+                  </div>
                 </div>
-              </div>
+              </SectionCard>
 
-              {/* Line Items */}
-              <div className="bg-white rounded-lg border border-slate-200">
-                <div className="p-6 border-b border-slate-200">
-                  <h3 className="font-medium text-slate-900">Quote Items ({lineItems.length})</h3>
-                </div>
-                
-                <div className="p-6">
+              {/* Quote Items list */}
+              <SectionCard>
+                <CardHeader icon={Tag} title="Quote Items" iconColor="text-slate-500">
+                  {lineItems.length > 0 && (
+                    <span className="bg-blue-100 text-blue-700 text-xs font-bold px-2.5 py-1 rounded-full">
+                      {lineItems.length} {lineItems.length === 1 ? 'item' : 'items'}
+                    </span>
+                  )}
+                </CardHeader>
+                <div className="p-5">
                   {lineItems.length === 0 ? (
-                    <div className="text-center py-8 text-slate-500">
-                      <Calculator className="w-12 h-12 mx-auto mb-4 text-slate-300" />
-                      <p>No items added yet. Add preset items or create custom charges/discounts.</p>
+                    <div className="text-center py-12 border-2 border-dashed border-slate-200 rounded-xl">
+                      <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mx-auto mb-3">
+                        <Calculator className="w-6 h-6 text-slate-300" />
+                      </div>
+                      <p className="text-sm font-medium text-slate-500">No items added yet</p>
+                      <p className="text-xs text-slate-400 mt-1">Select a preset or add a custom charge above</p>
                     </div>
                   ) : (
-                    <div className="space-y-4">
+                    <div className="space-y-3">
                       {lineItems.map((item, index) => (
                         <QuoteLineItem
                           key={index}
@@ -452,34 +488,37 @@ const QuoteBuilder = () => {
                     </div>
                   )}
                 </div>
-              </div>
+              </SectionCard>
 
-              {/* Quote Summary */}
-              <QuoteSummary
-                lineItems={lineItems}
-                termsConditions={termsConditions}
-                onTermsChange={setTermsConditions}
-              />
+              {/* Summary + Terms */}
+              <SectionCard>
+                <CardHeader icon={Calculator} title="Summary & Terms" iconColor="text-slate-500" />
+                <div className="p-5">
+                  <QuoteSummary
+                    lineItems={lineItems}
+                    termsConditions={termsConditions}
+                    onTermsChange={setTermsConditions}
+                  />
+                </div>
+              </SectionCard>
 
-              {/* Error Message */}
+              {/* Error */}
               {error && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                  <div className="flex items-center gap-3">
-                    <AlertCircle className="w-5 h-5 text-red-600" />
-                    <span className="text-red-800">{error}</span>
-                  </div>
+                <div className="flex items-center gap-3 bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-800">
+                  <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+                  <span>{error}</span>
                 </div>
               )}
 
-              {/* Submit Button */}
+              {/* Create Quote CTA */}
               <button
                 onClick={handleCreateQuote}
                 disabled={creatingQuote || lineItems.length === 0 || totals.subtotal <= 0}
-                className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="w-full bg-blue-600 text-white py-3.5 px-6 rounded-xl font-semibold text-sm hover:bg-blue-700 active:scale-[0.99] transition-all disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-sm shadow-blue-100"
               >
                 {creatingQuote ? (
                   <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white/30 border-t-white" />
                     Creating Quote...
                   </>
                 ) : (
@@ -491,47 +530,38 @@ const QuoteBuilder = () => {
               </button>
             </>
           ) : (
-            /* Quote Created Success */
-            <div className="bg-white rounded-lg border border-slate-200 p-6">
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
-                <div className="flex items-center gap-3">
-                  <CheckCircle className="w-5 h-5 text-green-600" />
-                  <div>
-                    <h3 className="font-medium text-green-900">Quote Created Successfully!</h3>
-                    <p className="text-sm text-green-700">
-                      Quote Number: {createdQuote.estimate_number}
-                    </p>
-                  </div>
+            /* Success state */
+            <SectionCard className="overflow-hidden">
+              <div className="bg-gradient-to-br from-emerald-500 to-green-600 px-8 py-10 text-center">
+                <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                  <CheckCircle className="w-9 h-9 text-white" />
                 </div>
+                <h3 className="text-xl font-bold text-white">Quote Created Successfully!</h3>
+                <p className="text-green-100 text-sm mt-1">{createdQuote.estimate_number}</p>
               </div>
 
-              {/* Quote Details */}
-              <div className="bg-slate-50 rounded-lg p-4 space-y-3 mb-6">
-                <h3 className="font-medium text-slate-900">Quote Details</h3>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-slate-600">Quote Number:</span>
-                    <span className="font-medium">{createdQuote.estimate_number}</span>
+              <div className="p-6 space-y-4">
+                <div className="bg-slate-50 rounded-xl border border-slate-100 divide-y divide-slate-100">
+                  <div className="flex justify-between items-center px-4 py-3">
+                    <span className="text-sm text-slate-500">Quote Number</span>
+                    <span className="text-sm font-semibold text-slate-800">{createdQuote.estimate_number}</span>
                   </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-slate-600">Total Amount:</span>
-                    <span className="font-bold text-blue-600">
+                  <div className="flex justify-between items-center px-4 py-3">
+                    <span className="text-sm text-slate-500">Total Amount</span>
+                    <span className="text-base font-bold text-blue-600">
                       Rs. {createdQuote.total_amount?.toLocaleString()}
                     </span>
                   </div>
                 </div>
-              </div>
 
-              {/* Action Buttons */}
-              <div className="space-y-3">
                 <button
                   onClick={handleSendPDF}
                   disabled={sendingPDF}
-                  className="w-full bg-green-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-green-700 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  className="w-full bg-emerald-600 text-white py-3.5 rounded-xl font-semibold text-sm hover:bg-emerald-700 transition-colors disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   {sendingPDF ? (
                     <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white/30 border-t-white" />
                       Sending PDF...
                     </>
                   ) : (
@@ -548,25 +578,14 @@ const QuoteBuilder = () => {
                     setLineItems([]);
                     setTermsConditions('The initial estimated amount is non-refundable.');
                   }}
-                  className="w-full bg-slate-200 text-slate-700 py-3 px-4 rounded-lg font-medium hover:bg-slate-300 transition-colors"
+                  className="w-full bg-white text-slate-600 border border-slate-200 py-3 rounded-xl font-medium text-sm hover:bg-slate-50 transition-colors"
                 >
                   Create Another Quote
                 </button>
               </div>
-            </div>
+            </SectionCard>
           )}
         </div>
-      </div>
-
-      {/* Back Button */}
-      <div className="mt-6">
-        <button
-          onClick={() => navigate('/admin/service-requests')}
-          className="flex items-center gap-2 text-slate-600 hover:text-slate-900 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back to Service Requests
-        </button>
       </div>
 
       {/* Preset Manager Modal */}

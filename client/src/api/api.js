@@ -273,6 +273,20 @@ class ApiClient {
 
   }
 
+  async getAdminClientDetail(clientId) {
+    return this.request(`/client/${clientId}/detail`);
+  }
+
+  async getAdminClientBookings(clientId) {
+    return this.request(`/client/${clientId}/bookings`);
+  }
+
+  async getAdminClientBookingsPaginated(clientId, { active_page = 1, recent_page = 1, page_size = 5, search = '' } = {}) {
+    const params = new URLSearchParams({ active_page, recent_page, page_size });
+    if (search) params.set('search', search);
+    return this.request(`/client/${clientId}/bookings-paginated?${params.toString()}`);
+  }
+
   async getClientProfileByUserId(userId) {
     try {
       return this.request(`/client/profile/user/${userId}`);
@@ -375,6 +389,17 @@ class ApiClient {
 
   }
 
+  async getSentCandidates(requestId) {
+    return this.request(`/service-requests/${requestId}/sent-candidates`);
+  }
+
+  async sendCandidateProfile(requestId, staffProfileId) {
+    return this.request(`/service-requests/${requestId}/send-candidate`, {
+      method: 'POST',
+      body: JSON.stringify({ staff_profile_id: staffProfileId }),
+    });
+  }
+
   async updateServiceRequestStatus(requestId, status) {
     return this.request(`/service-requests/${requestId}/status`, {
       method: 'PUT',
@@ -384,8 +409,144 @@ class ApiClient {
 
   }
 
+  async updateServiceRequest(requestId, data) {
+    return this.request(`/service-requests/${requestId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data)
+    });
+  }
+
   async getServiceRequestQuotes(requestId) {
     return this.request(`/quotes/request/${requestId}`);
+  }
+
+  async getServiceRequestQuoteList(requestId) {
+    return this.request(`/quotes/request/${requestId}/list`);
+  }
+
+  async getQuoteDetails(quoteId) {
+    return this.request(`/quotes/${quoteId}/details`);
+  }
+
+  async getQuotePaymentProgress(quoteId) {
+    return this.request(`/quotes/${quoteId}/payment-progress`);
+  }
+
+  async getQuotePayments(quoteId) {
+    return this.request(`/quotes/${quoteId}/payments`);
+  }
+
+  async getBookingAssignmentFormData(bookingId) {
+    return this.request(`/assignments/${bookingId}/assignment-form`);
+  }
+
+  async assignStaffToBooking(bookingId, assignmentData) {
+    return this.request(`/assignments/${bookingId}/assign-staff`, {
+      method: 'POST',
+      body: JSON.stringify(assignmentData),
+    });
+  }
+
+  async getBookingAssignments(bookingId) {
+    return this.request(`/assignments/${bookingId}/assignments`);
+  }
+
+  // ── Salesperson crediting ──
+  async getSalespersons() {
+    return this.request('/salespersons');
+  }
+
+  async getBookingSalesperson(bookingId) {
+    return this.request(`/salespersons/booking/${bookingId}`);
+  }
+
+  async getSalespersonBookings(salespersonId) {
+    return this.request(`/salespersons/${salespersonId}/bookings`);
+  }
+
+  async creditBookingSalesperson(bookingId, salespersonId) {
+    return this.request(`/salespersons/booking/${bookingId}/credit`, {
+      method: 'POST',
+      body: JSON.stringify({ salesperson_id: salespersonId }),
+    });
+  }
+
+  async switchBookingSalesperson(bookingId, salespersonId, switchReason = null) {
+    return this.request(`/salespersons/booking/${bookingId}/switch`, {
+      method: 'PUT',
+      body: JSON.stringify({ salesperson_id: salespersonId, switch_reason: switchReason }),
+    });
+  }
+
+  async recordQuotePayment(quoteId, paymentData, paymentSlipFile = null) {
+    if (paymentSlipFile) {
+      const formData = new FormData();
+      Object.entries(paymentData).forEach(([key, value]) => {
+        if (value !== null && value !== undefined && value !== '') {
+          formData.append(key, value);
+        }
+      });
+      formData.append('payment_slip', paymentSlipFile);
+
+      return this.request(`/quotes/${quoteId}/record-payment`, {
+        method: 'POST',
+        headers: {
+          ...(this.token && { Authorization: `Bearer ${this.token}` }),
+        },
+        body: formData,
+      });
+    }
+
+    return this.request(`/quotes/${quoteId}/record-payment`, {
+      method: 'POST',
+      body: JSON.stringify(paymentData),
+    });
+  }
+
+  async recordBookingPayment(bookingId, paymentData, paymentSlipFile = null) {
+    if (paymentSlipFile) {
+      const formData = new FormData();
+      Object.entries(paymentData).forEach(([key, value]) => {
+        if (value !== null && value !== undefined && value !== '') {
+          formData.append(key, value);
+        }
+      });
+      formData.append('payment_slip', paymentSlipFile);
+
+      return this.request(`/bookings/${bookingId}/record-payment`, {
+        method: 'POST',
+        headers: {
+          ...(this.token && { Authorization: `Bearer ${this.token}` }),
+        },
+        body: formData,
+      });
+    }
+
+    return this.request(`/bookings/${bookingId}/record-payment`, {
+      method: 'POST',
+      body: JSON.stringify(paymentData),
+    });
+  }
+
+  async walletPayoffBooking(bookingId, amount, notes = null) {
+    return this.request(`/bookings/${bookingId}/wallet-payoff`, {
+      method: 'POST',
+      body: JSON.stringify({ amount, notes }),
+    });
+  }
+
+  async verifyQuotePayment(paymentId, verification_notes) {
+    return this.request(`/payments/${paymentId}/verify`, {
+      method: 'POST',
+      body: JSON.stringify({ verification_notes }),
+    });
+  }
+
+  async rejectQuotePayment(paymentId, rejection_reason) {
+    return this.request(`/payments/${paymentId}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ rejection_reason }),
+    });
   }
 
   async convertToBooking(bookingData, paymentSlipFile) {
@@ -409,6 +570,10 @@ class ApiClient {
       },
       body: formData,
     });
+  }
+
+  async checkQuoteBooking(quoteId) {
+    return this.request(`/quotes/${quoteId}/check-booking`);
   }
 
   async createQuotation(quoteData) {
@@ -436,7 +601,7 @@ class ApiClient {
 
   // Staff endpoints
 
-  async submitApplication(applicationData, documentFiles, profilePictureFile) {
+  async submitApplication(applicationData, documentFiles, profilePictureFile, nicFrontFile, nicBackFile) {
 
     const formData = new FormData();
 
@@ -480,6 +645,18 @@ class ApiClient {
 
     }
 
+    if (nicFrontFile) {
+
+      formData.append('nic_front', nicFrontFile);
+
+    }
+
+    if (nicBackFile) {
+
+      formData.append('nic_back', nicBackFile);
+
+    }
+
 
 
     return this.request('/staff/apply', {
@@ -502,6 +679,20 @@ class ApiClient {
 
 
 
+  async verifyStaffApplicationOtp(applicationId, otpCode) {
+    return this.request('/staff/verify-otp', {
+      method: 'POST',
+      body: JSON.stringify({ application_id: applicationId, otp_code: otpCode }),
+    });
+  }
+
+  async resendStaffApplicationOtp(applicationId) {
+    return this.request('/staff/resend-otp', {
+      method: 'POST',
+      body: JSON.stringify({ application_id: applicationId }),
+    });
+  }
+
   async getApplications() {
 
     return this.request('/staff/applications');
@@ -510,13 +701,50 @@ class ApiClient {
 
 
 
-  async acceptApplication(applicationId) {
+  async getApplication(applicationId) {
+    return this.request(`/staff/applications/${applicationId}`);
+  }
+
+  async updateApplicationDetails(applicationId, data, profilePictureFile = null) {
+    const formData = new FormData();
+    Object.keys(data).forEach(key => {
+      if (key === 'applied_roles' && Array.isArray(data[key])) {
+        formData.append(key, JSON.stringify(data[key]));
+      } else {
+        formData.append(key, data[key] ?? '');
+      }
+    });
+    if (profilePictureFile) {
+      formData.append('profile_picture', profilePictureFile);
+    }
+
+    return this.request(`/staff/applications/${applicationId}`, {
+      method: 'PUT',
+      headers: {
+        // Let the browser set Content-Type with the multipart boundary
+        ...(this.token && { Authorization: `Bearer ${this.token}` }),
+      },
+      body: formData,
+    });
+  }
+
+  async getNextStaffCode() {
+    return this.request('/staff/next-staff-code');
+  }
+
+  async sendApplicationAgreement(applicationId) {
+    return this.request(`/staff/applications/${applicationId}/send-agreement`, {
+      method: 'POST',
+    });
+  }
+
+  async acceptApplication(applicationId, extras = {}) {
 
     return this.request('/staff/accept', {
 
       method: 'POST',
 
-      body: JSON.stringify({ application_id: applicationId }),
+      body: JSON.stringify({ application_id: applicationId, ...extras }),
 
     });
 
@@ -636,6 +864,180 @@ class ApiClient {
     return this.request(url);
   }
 
+  async getAdminStaffDetail(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/admin-detail`);
+  }
+
+  async getStaffCurrentBooking(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/current-booking`);
+  }
+
+  async getStaffBookingHistory(staffProfileId, filters = {}) {
+    const queryParams = new URLSearchParams(filters).toString();
+    const url = queryParams ? `/staff/${staffProfileId}/booking-history?${queryParams}` : `/staff/${staffProfileId}/booking-history`;
+    return this.request(url);
+  }
+
+  async getStaffAttendanceCalendar(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/attendance-calendar`);
+  }
+
+  async getStaffEarningsSummary(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/earnings-summary`);
+  }
+
+  async getStaffEarningsTransactions(staffProfileId, filters = {}) {
+    const queryParams = new URLSearchParams(filters).toString();
+    const url = queryParams ? `/staff/${staffProfileId}/earnings-transactions?${queryParams}` : `/staff/${staffProfileId}/earnings-transactions`;
+    return this.request(url);
+  }
+
+  async getStaffPayoutsSummary(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/payouts/summary`);
+  }
+
+  async getStaffPayouts(staffProfileId, filters = {}) {
+    const queryParams = new URLSearchParams(filters).toString();
+    const url = queryParams ? `/staff/${staffProfileId}/payouts?${queryParams}` : `/staff/${staffProfileId}/payouts`;
+    return this.request(url);
+  }
+
+  async createStaffPayout(staffProfileId, payoutData) {
+    return this.request(`/staff/${staffProfileId}/payouts`, {
+      method: 'POST',
+      body: JSON.stringify(payoutData),
+    });
+  }
+
+  async getStaffTotalEarningsBreakdown(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/total-earnings-breakdown`);
+  }
+
+  async getStaffSalariesOverview(showAll = false) {
+    return this.request(`/staff/salaries/overview${showAll ? '?all=true' : ''}`);
+  }
+
+  async getStaffSalariesExportData() {
+    return this.request('/staff/salaries/full-export');
+  }
+
+  async getStaffBookingSalaryBreakdown(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/booking-salary-breakdown`);
+  }
+
+  async getStaffMonthlyEarnings(staffProfileId, year, month) {
+    return this.request(`/staff/${staffProfileId}/monthly-earnings?year=${year}&month=${month}`);
+  }
+
+  async getSalarySheetLedger() {
+    return this.request('/staff/salary-sheets/ledger');
+  }
+
+  async resendSalarySheetNotification(staffPaymentId) {
+    return this.request(`/staff/salary-sheets/${staffPaymentId}/send-notification`, { method: 'POST' });
+  }
+
+  async bulkResendSalarySheetNotifications(staffPaymentIds, mode = 'selective') {
+    return this.request('/staff/salary-sheets/bulk-send-notifications', {
+      method: 'POST',
+      body: JSON.stringify({ staff_payment_ids: staffPaymentIds, mode }),
+    });
+  }
+
+  async bulkStaffPayouts(payouts, companyBankAccountId, paymentMethod, referenceNumber, notes) {
+    return this.request('/staff/salaries/bulk-payouts', {
+      method: 'POST',
+      body: JSON.stringify({
+        payouts,
+        company_bank_account_id: companyBankAccountId,
+        payment_method: paymentMethod,
+        reference_number: referenceNumber,
+        notes,
+      }),
+    });
+  }
+
+  async getStaffCurrentEarningsBreakdown(staffProfileId, filters = {}) {
+    const queryParams = new URLSearchParams(filters).toString();
+    const url = queryParams
+      ? `/staff/${staffProfileId}/current-earnings-breakdown?${queryParams}`
+      : `/staff/${staffProfileId}/current-earnings-breakdown`;
+    return this.request(url);
+  }
+
+  async getStaffBankAccounts(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/bank-accounts`);
+  }
+
+  async createStaffBankAccount(staffProfileId, data) {
+    return this.request(`/staff/${staffProfileId}/bank-accounts`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateStaffBankAccount(staffProfileId, bankAccountId, data) {
+    return this.request(`/staff/${staffProfileId}/bank-accounts/${bankAccountId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteStaffBankAccount(staffProfileId, bankAccountId) {
+    return this.request(`/staff/${staffProfileId}/bank-accounts/${bankAccountId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getStaffDeductions(staffProfileId, filters = {}) {
+    const queryParams = new URLSearchParams(filters).toString();
+    const url = queryParams ? `/staff/${staffProfileId}/deductions?${queryParams}` : `/staff/${staffProfileId}/deductions`;
+    return this.request(url);
+  }
+
+  async createStaffDeduction(staffProfileId, data) {
+    return this.request(`/staff/${staffProfileId}/deductions`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getStaffAdminNotes(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/admin-notes`);
+  }
+
+  async createStaffAdminNote(staffProfileId, note) {
+    return this.request(`/staff/${staffProfileId}/admin-notes`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    });
+  }
+
+  async updateStaffAdminNote(staffProfileId, noteId, note) {
+    return this.request(`/staff/${staffProfileId}/admin-notes/${noteId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ note }),
+    });
+  }
+
+  async deleteStaffAdminNote(staffProfileId, noteId) {
+    return this.request(`/staff/${staffProfileId}/admin-notes/${noteId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async deactivateStaffAccount(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/deactivate`, {
+      method: 'PATCH',
+    });
+  }
+
+  async reactivateStaffAccount(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/reactivate`, {
+      method: 'PATCH',
+    });
+  }
+
   // Booking endpoints
   async createBooking(bookingData) {
     return this.request('/bookings', {
@@ -660,6 +1062,99 @@ class ApiClient {
 
   async getBookingById(bookingId) {
     return this.request(`/bookings/${bookingId}`);
+  }
+
+  async getAdminBookingDetail(bookingId) {
+    return this.request(`/bookings/${bookingId}/admin-detail`);
+  }
+
+  async getBookingTerminationHistory(bookingId) {
+    return this.request(`/bookings/${bookingId}/termination-requests`);
+  }
+
+  async getBookingInvoiceBreakdown(bookingId) {
+    return this.request(`/bookings/${bookingId}/invoice-breakdown`);
+  }
+
+  async getBookingStaffAllocationHistory(bookingId) {
+    return this.request(`/bookings/${bookingId}/staff-allocation-history`);
+  }
+
+  async completeBooking(bookingId, bookingData) {
+    return this.request(`/bookings/${bookingId}/complete`, {
+      method: 'POST',
+      body: JSON.stringify(bookingData),
+    });
+  }
+
+  async adminTerminateBooking(bookingId, bookingData) {
+    return this.request(`/bookings/${bookingId}/admin-terminate`, {
+      method: 'POST',
+      body: JSON.stringify(bookingData),
+    });
+  }
+
+  async swapBookingStaff(bookingId, swapData) {
+    return this.request(`/bookings/${bookingId}/swap-staff`, {
+      method: 'POST',
+      body: JSON.stringify(swapData),
+    });
+  }
+
+  // ── Daily attendance & manual daily invoicing ──────────────────────────
+
+  async getBookingAttendance(bookingId) {
+    return this.request(`/bookings/${bookingId}/attendance`);
+  }
+
+  async upsertBookingAttendance(bookingId, attendanceData) {
+    return this.request(`/bookings/${bookingId}/attendance`, {
+      method: 'POST',
+      body: JSON.stringify(attendanceData),
+    });
+  }
+
+  async confirmAttendanceSalary(attendanceId, approve) {
+    return this.request(`/bookings/attendance/${attendanceId}/confirm-salary`, {
+      method: 'POST',
+      body: JSON.stringify({ approve }),
+    });
+  }
+
+  async getBookingDailyInvoices(bookingId) {
+    return this.request(`/bookings/${bookingId}/daily-invoices`);
+  }
+
+  // ── Payment receipts ──────────────────────────────────────────────
+  async getAllReceipts(filters = {}) {
+    const queryParams = new URLSearchParams(filters).toString();
+    return this.request(queryParams ? `/payment-receipts?${queryParams}` : '/payment-receipts');
+  }
+
+  async getBookingReceipts(bookingId) {
+    return this.request(`/payment-receipts/booking/${bookingId}`);
+  }
+
+  async getClientReceipts(clientId) {
+    return this.request(`/payment-receipts/client/${clientId}`);
+  }
+
+  async sendPaymentReceipt(receiptId) {
+    return this.request(`/payment-receipts/${receiptId}/send`, { method: 'POST' });
+  }
+
+  async confirmBookingDailyInvoice(bookingId, payload) {
+    return this.request(`/bookings/${bookingId}/daily-invoices`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async updateBookingInvoicingMode(bookingId, invoicing_mode) {
+    return this.request(`/bookings/${bookingId}/invoicing-mode`, {
+      method: 'PATCH',
+      body: JSON.stringify({ invoicing_mode }),
+    });
   }
 
   async getActiveBookingByClientID(clientId = '') {
@@ -690,19 +1185,50 @@ class ApiClient {
     return this.request('/bookings/terminations/pending');
   }
 
-  async approveTerminationRequest(terminationId, finalEndDate) {
+  async getTerminationHistory() {
+    return this.request('/bookings/terminations/history');
+  }
+
+  async approveTerminationRequest(terminationId, finalEndDate, settlementAction, settlementNote) {
     return this.request(`/bookings/terminations/approve/${terminationId}`, {
       method: 'POST',
-      body: JSON.stringify({ final_end_date: finalEndDate }),
+      body: JSON.stringify({
+        final_end_date: finalEndDate,
+        settlement_action: settlementAction,
+        settlement_note: settlementNote || null,
+      }),
+    });
+  }
+
+  // ── Scheduled actions / Upcoming Events ────────────────────────────────
+
+  async getUpcomingEvents() {
+    return this.request('/scheduled-actions/upcoming');
+  }
+
+  async cancelScheduledAction(actionId) {
+    return this.request(`/scheduled-actions/${actionId}/cancel`, {
+      method: 'POST',
+    });
+  }
+
+  async executeScheduledActionNow(actionId) {
+    return this.request(`/scheduled-actions/${actionId}/execute-now`, {
+      method: 'POST',
     });
   }
 
   // Statement endpoints
-  async getClientStatement(clientId, dateRange) {
-    return this.request(`/statement/${clientId}`, {
-      method: 'POST',
-      body: JSON.stringify(dateRange),
-    });
+  async getClientStatement(clientId, dateRange = {}) {
+    const params = new URLSearchParams();
+    if (dateRange.start_date) params.set('start_date', dateRange.start_date);
+    if (dateRange.end_date) params.set('end_date', dateRange.end_date);
+    const qs = params.toString();
+    return this.request(`/statement/${clientId}${qs ? `?${qs}` : ''}`);
+  }
+
+  async getClientTransactions(clientId) {
+    return this.request(`/statement/transactions/${clientId}`);
   }
 
   async downloadClientStatement(clientId, dateRange) {
@@ -731,6 +1257,30 @@ class ApiClient {
       console.error('PDF Download Error:', error);
       throw error;
     }
+  }
+
+  async sendClientStatementToWhatsApp(clientId, dateRange) {
+    return this.request(`/statement/whatsapp/${clientId}`, {
+      method: 'POST',
+      body: JSON.stringify(dateRange),
+    });
+  }
+
+  async resendStatementWhatsApp(statementId) {
+    return this.request(`/statement/whatsapp-resend/${statementId}`, {
+      method: 'POST',
+    });
+  }
+
+  async deleteStatement(statementId) {
+    return this.request(`/statement/${statementId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getSavedStatements(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return this.request(`/statement/saved${qs ? '?' + qs : ''}`);
   }
 
   // Admin Staff Management endpoints
@@ -762,11 +1312,25 @@ class ApiClient {
     });
   }
 
+  async getMyWallet() {
+    return this.request('/staff-wallet/my-wallet');
+  }
+
   async requestAdvance(advanceData) {
     return this.request('/staff-wallet/request-advance', {
       method: 'POST',
       body: JSON.stringify(advanceData),
     });
+  }
+
+  async getMyAdvances() {
+    return this.request('/staff-wallet/my-advances');
+  }
+
+  async getMyCurrentEarningsBreakdown(filters = {}) {
+    const queryParams = new URLSearchParams(filters).toString();
+    const url = queryParams ? `/staff-wallet/my-earnings-breakdown?${queryParams}` : `/staff-wallet/my-earnings-breakdown`;
+    return this.request(url);
   }
 
   async getAllAdvances() {
@@ -797,6 +1361,52 @@ class ApiClient {
     return this.request('/staff-wallet/advances/pending');
   }
 
+  // Staff Leave endpoints
+  async getMyLeaves() {
+    return this.request('/staff-leave/my-leaves');
+  }
+
+  async requestLeave(leaveData) {
+    return this.request('/staff-leave/request', {
+      method: 'POST',
+      body: JSON.stringify(leaveData),
+    });
+  }
+
+  async getAllLeaves(status) {
+    const url = status ? `/staff-leave/all?status=${encodeURIComponent(status)}` : '/staff-leave/all';
+    return this.request(url);
+  }
+
+  async getPendingLeaves() {
+    return this.request('/staff-leave/pending');
+  }
+
+  async getLeaveConflicts(leaveId) {
+    return this.request(`/staff-leave/${leaveId}/conflicts`);
+  }
+
+  async getLeaveReplacementCandidates(leaveId) {
+    return this.request(`/staff-leave/${leaveId}/candidates`);
+  }
+
+  async approveLeave(leaveId) {
+    return this.request(`/staff-leave/approve/${leaveId}`, {
+      method: 'POST',
+    });
+  }
+
+  async rejectLeave(leaveId, reason) {
+    return this.request(`/staff-leave/reject/${leaveId}`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  async getStaffLeaveSummary(staffProfileId) {
+    return this.request(`/staff-leave/summary/${staffProfileId}`);
+  }
+
   // Staff Review endpoints
   async createStaffReview(reviewData) {
     return this.request('/staff-reviews', {
@@ -807,6 +1417,34 @@ class ApiClient {
 
   async getClientReviews(clientProfileId, page = 1, limit = 10) {
     return this.request(`/staff-reviews/client/${clientProfileId}?page=${page}&limit=${limit}`);
+  }
+
+  async getReviewableBookings() {
+    return this.request('/staff-reviews/reviewable');
+  }
+
+  async getAdminAllReviews({ page = 1, limit = 10, is_visible, search = '' } = {}) {
+    const params = new URLSearchParams({ page, limit });
+    if (is_visible !== undefined && is_visible !== '') params.set('is_visible', is_visible);
+    if (search) params.set('search', search);
+    return this.request(`/staff-reviews?${params.toString()}`);
+  }
+
+  async toggleReviewVisibility(reviewId) {
+    return this.request(`/staff-reviews/${reviewId}/visibility`, { method: 'PATCH' });
+  }
+
+  async getUnreviewedBookings({ page = 1, limit = 10, search = '' } = {}) {
+    const params = new URLSearchParams({ page, limit });
+    if (search) params.set('search', search);
+    return this.request(`/staff-reviews/unreviewed-bookings?${params.toString()}`);
+  }
+
+  async sendReviewRequest(bookingId) {
+    return this.request('/staff-reviews/send-review-request', {
+      method: 'POST',
+      body: JSON.stringify({ booking_id: bookingId }),
+    });
   }
 
   // Finances endpoints
@@ -830,6 +1468,43 @@ class ApiClient {
 
   async getCreditAlertsSummary() {
     return this.request('/finances/credit-alerts-summary');
+  }
+
+  // Bank Account Management endpoints
+  async getBankAccounts() {
+    return this.request('/bank-accounts');
+  }
+
+  async createBankAccount(accountData) {
+    return this.request('/bank-accounts', {
+      method: 'POST',
+      body: JSON.stringify(accountData),
+    });
+  }
+
+  async updateBankAccount(accountId, accountData) {
+    return this.request(`/bank-accounts/${accountId}`, {
+      method: 'PUT',
+      body: JSON.stringify(accountData),
+    });
+  }
+
+  async deactivateBankAccount(accountId) {
+    return this.request(`/bank-accounts/${accountId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getBankAccountTransactions(accountId, filters = {}) {
+    const query = new URLSearchParams(filters).toString();
+    const endpoint = query
+      ? `/bank-accounts/${accountId}/transactions?${query}`
+      : `/bank-accounts/${accountId}/transactions`;
+    return this.request(endpoint);
+  }
+
+  async getBankAccountReconciliation(accountId) {
+    return this.request(`/bank-accounts/${accountId}/reconciliation`);
   }
 
   async getStoreSummary() {
@@ -880,7 +1555,7 @@ class ApiClient {
   }
 
   async getStaffBookings(staffId) {
-    return this.request(`/bookings/staff/${staffId}`);
+    return this.request(`/assignments/staff/${staffId}/bookings`);
   }
 
   // Financial endpoints
@@ -945,8 +1620,228 @@ class ApiClient {
   }
 
   // Patient endpoints
+  async getAllPatients(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return this.request(`/patients/all${qs ? `?${qs}` : ''}`);
+  }
+
   async getPatientsByClient(clientId) {
     return this.request(`/patients/client/${clientId}`);
+  }
+
+  async createPatient(patientData) {
+    return this.request('/patients/create', {
+      method: 'POST',
+      body: JSON.stringify(patientData),
+    });
+  }
+
+  async updatePatient(patientId, patientData) {
+    return this.request(`/patients/${patientId}`, {
+      method: 'PUT',
+      body: JSON.stringify(patientData),
+    });
+  }
+
+  async deletePatient(patientId) {
+    return this.request(`/patients/${patientId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getPatientDetail(patientId) {
+    return this.request(`/patients/${patientId}/detail`);
+  }
+
+  // Staff change request endpoints (staff-facing)
+  async submitChangeRequest(data) {
+    return this.request('/staff-change-requests', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getMyChangeRequests() {
+    return this.request('/staff-change-requests/my');
+  }
+
+  // Staff change request endpoints (admin-facing)
+  async getAllChangeRequests(params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const endpoint = query ? `/staff-change-requests?${query}` : '/staff-change-requests';
+    return this.request(endpoint);
+  }
+
+  async claimChangeRequest(id) {
+    return this.request(`/staff-change-requests/${id}/claim`, {
+      method: 'PATCH',
+    });
+  }
+
+  async resolveChangeRequest(id, data) {
+    return this.request(`/staff-change-requests/${id}/resolve`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getChangeRequestLogs(id) {
+    return this.request(`/staff-change-requests/${id}/logs`);
+  }
+
+  // Booking Notes endpoints
+  async getBookingNotes(bookingId) {
+    return this.request(`/bookings/${bookingId}/notes`);
+  }
+
+  async addBookingNote(bookingId, noteData) {
+    return this.request(`/bookings/${bookingId}/notes`, {
+      method: 'POST',
+      body: JSON.stringify(noteData),
+    });
+  }
+
+  async updateBookingNote(bookingId, noteId, noteData) {
+    return this.request(`/bookings/${bookingId}/notes/${noteId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(noteData),
+    });
+  }
+
+  async deleteBookingNote(bookingId, noteId) {
+    return this.request(`/bookings/${bookingId}/notes/${noteId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getClientNotes(clientId, params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const endpoint = query ? `/client/${clientId}/notes?${query}` : `/client/${clientId}/notes`;
+    return this.request(endpoint);
+  }
+
+  async addClientNote(clientId, noteData) {
+    return this.request(`/client/${clientId}/notes`, {
+      method: 'POST',
+      body: JSON.stringify(noteData),
+    });
+  }
+
+  async updateClientNote(clientId, noteId, noteData) {
+    return this.request(`/client/${clientId}/notes/${noteId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(noteData),
+    });
+  }
+
+  async deleteClientNote(clientId, noteId) {
+    return this.request(`/client/${clientId}/notes/${noteId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Client Payment Recording endpoints
+  async recordClientPayment(clientId, paymentData, paymentSlipFile = null) {
+    if (paymentSlipFile) {
+      const formData = new FormData();
+      formData.append('payment_slip', paymentSlipFile);
+      const { allocations, ...rest } = paymentData;
+      Object.entries(rest).forEach(([key, value]) => {
+        if (value !== null && value !== undefined && value !== '') {
+          formData.append(key, value);
+        }
+      });
+      formData.append('allocations', JSON.stringify(allocations));
+      return this.request(`/client-payments/${clientId}/record`, {
+        method: 'POST',
+        headers: { ...(this.token && { Authorization: `Bearer ${this.token}` }) },
+        body: formData,
+      });
+    }
+    return this.request(`/client-payments/${clientId}/record`, {
+      method: 'POST',
+      body: JSON.stringify(paymentData),
+    });
+  }
+
+  async getClientPaymentRecords(clientId) {
+    return this.request(`/client-payments/${clientId}`);
+  }
+
+  // Activity log endpoints
+  async getActivityLog(params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const endpoint = query ? `/activity-log?${query}` : '/activity-log';
+    return this.request(endpoint);
+  }
+
+  async getActivityLogByActor(userId, params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const endpoint = query ? `/activity-log/actor/${userId}?${query}` : `/activity-log/actor/${userId}`;
+    return this.request(endpoint);
+  }
+
+  // Transactions endpoints
+  async getAllTransactions(params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const endpoint = query ? `/transactions?${query}` : '/transactions';
+    return this.request(endpoint);
+  }
+
+  async getTransactionMeta() {
+    return this.request('/transactions/meta');
+  }
+
+  async createManualTransaction(transactionData) {
+    return this.request('/transactions/manual', {
+      method: 'POST',
+      body: JSON.stringify(transactionData),
+    });
+  }
+
+  // Permissions endpoints
+  async getPermissionsRegistry() {
+    return this.request('/permissions/registry');
+  }
+
+  async getAdminUsers() {
+    return this.request('/permissions/admin-users');
+  }
+
+  async getUserPermissions(userId) {
+    return this.request(`/permissions/users/${userId}`);
+  }
+
+  async setUserPermissions(userId, permissions) {
+    return this.request(`/permissions/users/${userId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ permissions }),
+    });
+  }
+
+  // Internal Staff endpoints
+  async listInternalStaff() {
+    return this.request('/internal-staff');
+  }
+
+  async createInternalStaff(data) {
+    return this.request('/internal-staff', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateInternalStaff(id, data) {
+    return this.request(`/internal-staff/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteInternalStaff(id) {
+    return this.request(`/internal-staff/${id}`, {
+      method: 'DELETE',
+    });
   }
 }
 

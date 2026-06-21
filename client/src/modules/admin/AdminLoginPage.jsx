@@ -52,15 +52,12 @@ const AdminLoginPage = () => {
           
           console.log('Processed user role:', userRole);
           
-          if (userRole === 'SUPER_ADMIN') {
-            // Use adminLogin from context
+          const ADMIN_ROLES = ['SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'];
+          if (ADMIN_ROLES.includes(userRole)) {
             adminLogin(response.token, response.user);
-            
-            console.log('Admin login successful:', response);
             navigate('/admin/dashboard');
           } else {
-            setError('Access denied. SUPER_ADMIN privileges required.');
-            console.log('User role from token:', userRole);
+            setError('Access denied. Admin privileges required.');
           }
         } catch (decodeError) {
           console.error('Error decoding token:', decodeError);

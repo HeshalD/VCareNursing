@@ -13,10 +13,24 @@ const paymentRoutes = require('./routes/paymentRoutes')
 const paymentSlipRoutes = require('./routes/paymentSlipRoutes')
 const migrateRoutes = require('./routes/migrateRoutes');
 const staffWalletRoutes = require('./routes/staffWalletRoutes');
+const staffLeaveRoutes = require('./routes/staffLeaveRoutes');
 const staffReviewRoutes = require('./routes/staffReviewRoutes')
 const financesRoutes = require('./routes/financesRoutes')
+const bankAccountRoutes = require('./routes/bankAccountRoutes');
+const staffAssignmentRoutes = require('./routes/staffAssignmentRoutes');
+const staffChangeRequestRoutes = require('./routes/staffChangeRequestRoutes');
+const activityLogRoutes = require('./routes/activityLogRoutes');
+const clientPaymentRoutes = require('./routes/clientPaymentRoutes');
+const receiptRoutes = require('./routes/receiptRoutes');
+const transactionRoutes = require('./routes/transactionRoutes');
+const permissionsRoutes = require('./routes/permissionsRoutes');
+const internalStaffRoutes = require('./routes/internalStaffRoutes');
+const scheduledActionsRoutes = require('./routes/scheduledActionsRoutes');
+const salespersonRoutes = require('./routes/salespersonRoutes');
 
 const startDailyInvoicing = require('./cron/dailyInvoicing');
+
+const VERIFY_TOKEN = "nursing_verify_token";
 
 require('dotenv').config();
 
@@ -66,6 +80,12 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json()); // Body parser
 
+// Request Logger
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  next();
+});
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/client', clientRoutes);
@@ -80,8 +100,21 @@ app.use('/api/payment', paymentRoutes);
 app.use('/api/payment-slips', paymentSlipRoutes);
 app.use('/api/migrate', migrateRoutes); 
 app.use('/api/staff-wallet', staffWalletRoutes);
+app.use('/api/staff-leave', staffLeaveRoutes);
 app.use('/api/staff-reviews', staffReviewRoutes);
+
 app.use('/api/finances', financesRoutes);
+app.use('/api/bank-accounts', bankAccountRoutes);
+app.use('/api/assignments', staffAssignmentRoutes);
+app.use('/api/staff-change-requests', staffChangeRequestRoutes);
+app.use('/api/activity-log', activityLogRoutes);
+app.use('/api/client-payments', clientPaymentRoutes);
+app.use('/api/payment-receipts', receiptRoutes);
+app.use('/api/transactions', transactionRoutes);
+app.use('/api/permissions', permissionsRoutes);
+app.use('/api/internal-staff', internalStaffRoutes);
+app.use('/api/scheduled-actions', scheduledActionsRoutes);
+app.use('/api/salespersons', salespersonRoutes);
 
 // Health check endpoint for Render
 app.get('/health', (req, res) => {
@@ -90,6 +123,40 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime()
   });
+});
+
+app.get("/webhook", (req, res) => {
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  console.log("Webhook verification request received");
+
+  // Check token matches
+  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+    console.log("Webhook verified successfully");
+
+    return res.status(200).send(challenge);
+  }
+
+  console.log("Webhook verification failed");
+
+  return res.sendStatus(403);
+});
+
+app.post("/webhook", (req, res) => {
+  console.log("Incoming WhatsApp event:");
+
+  console.dir(req.body, { depth: null });
+
+  /*
+    Example payload structure you will receive:
+    - messages
+    - statuses (delivered/read)
+  */
+
+  // IMPORTANT: Always respond 200 quickly
+  res.sendStatus(200);
 });
 
 // Global Error Handler

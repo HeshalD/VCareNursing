@@ -1,4 +1,41 @@
 const db = require('../config/db');
+const { logActivity } = require('../utils/activityLogger');
+const { sendSms } = require('../utils/sms');
+const { sendServiceRequestConfirmed, sendCandidateProfile } = require('../utils/metaWhatsapp');
+
+const formatServiceType = (type) => {
+    if (!type) return 'our services';
+    return type.charAt(0).toUpperCase() + type.slice(1).toLowerCase();
+};
+
+const formatDate = (dateStr) => {
+    if (!dateStr) return 'the requested date';
+    return new Date(dateStr).toLocaleDateString('en-LK', { day: 'numeric', month: 'long', year: 'numeric' });
+};
+
+const sendServiceRequestNotifications = async (mobileNumber, payerName, serviceType, startDate) => {
+    const formattedType = formatServiceType(serviceType);
+    const formattedDate = formatDate(startDate);
+    const smsBody = `Hi ${payerName},\n\nWe have received your service request for ${formattedType} on ${formattedDate}.\n\nOur team is reviewing your request and will get back to you with a quote shortly.\n\nThank you for choosing VCare Nursing.`;
+
+    const [smsRes, waRes] = await Promise.allSettled([
+        sendSms(mobileNumber, smsBody),
+        sendServiceRequestConfirmed(mobileNumber, payerName, formattedType, formattedDate),
+    ]);
+
+    if (smsRes.status === 'rejected') console.error('[ServiceRequest] SMS failed:', smsRes.reason?.message);
+    if (waRes.status === 'rejected')  console.error('[ServiceRequest] WhatsApp failed:', waRes.reason?.message);
+};
+
+function extractActorRole(role) {
+    const raw = Array.isArray(role) ? role[0] : role;
+    return typeof raw === 'string' ? raw.replace(/\{|\}/g, '').split(',')[0].trim() : String(raw);
+}
+
+async function getActorName(userId) {
+    const result = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [userId]);
+    return result.rows[0]?.full_name || 'Admin';
+}
 
 exports.submitServiceRequest = async (req, res) => {
     try {
@@ -7,6 +44,7 @@ exports.submitServiceRequest = async (req, res) => {
             payer_mobile,
             patient_name,
             patient_age,
+            patient_gender, // Care profile's own gender (MALE/FEMALE/OTHER)
             relationship, // This maps to relationship_to_client
             patient_condition,
             service_type,
@@ -52,17 +90,18 @@ exports.submitServiceRequest = async (req, res) => {
                 service_model,
                 location_address, 
                 gps_coordinates, 
-                start_date, 
+                start_date,
                 remarks,
                 preferred_gender,
-                preferred_staff_id
+                preferred_staff_id,
+                gender
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9::service_model_enum, $10, 
-                CASE WHEN $11::double precision IS NOT NULL AND $12::double precision IS NOT NULL 
+                $1, $2, $3, $4, $5, $6, $7, $8, $9::service_model_enum, $10,
+                CASE WHEN $11::double precision IS NOT NULL AND $12::double precision IS NOT NULL
                      THEN point($12::double precision, $11::double precision)
-                     ELSE NULL 
-                END, 
-                $13, $14, $15::gender_preference_enum, $16
+                     ELSE NULL
+                END,
+                $13, $14, $15::gender_preference_enum, $16, $17::gender_enum
             )
             RETURNING *;
         `;
@@ -83,13 +122,14 @@ exports.submitServiceRequest = async (req, res) => {
             start_date,         // $13
             remarks,            // $14
             preferred_gender || 'ANY', // $15 (default to ANY if not provided)
-            preferred_staff_id || null  // $16 (optional preferred staff)
+            preferred_staff_id || null,  // $16 (optional preferred staff)
+            patient_gender || null  // $17 (care profile's own gender, optional)
         ];
 
         const result = await db.query(query, values);
 
-        // 3. Phase 1 SMS: "Request Received" (Mockup)
-        console.log(`SMS to ${payer_mobile}: Request Received. A VCare Agent will contact you shortly.`);
+        // 3. Send SMS + WhatsApp confirmation (non-fatal)
+        sendServiceRequestNotifications(payer_mobile, payer_name, service_type, start_date).catch(() => {});
 
         res.status(201).json({
             status: 'success',
@@ -106,7 +146,12 @@ exports.submitServiceRequest = async (req, res) => {
 // Admin Method to get all leads for the [🏠 HOME] tab
 exports.getAllLeads = async (req, res) => {
     try {
-        const result = await db.query('SELECT * FROM service_requests ORDER BY created_at DESC');
+        const result = await db.query(`
+            SELECT sr.*, b.status AS booking_status, b.booking_id
+            FROM service_requests sr
+            LEFT JOIN bookings b ON b.request_id = sr.request_id
+            ORDER BY sr.created_at DESC
+        `);
         res.status(200).json({ status: 'success', data: result.rows });
     } catch (error) {
         res.status(500).json({ message: "Error fetching leads" });
@@ -192,6 +237,7 @@ exports.createServiceRequest = async (req, res) => {
         payer_mobile,
         patient_name,
         patient_age,
+        patient_gender, // Care profile's own gender (MALE/FEMALE/OTHER)
         relationship_to_client,
         patient_condition,
         service_type,
@@ -291,16 +337,17 @@ exports.createServiceRequest = async (req, res) => {
                 preferred_gender,
                 preferred_staff_id,
                 status,
+                gender,
                 created_at
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9::service_model_enum, $10,
-                CASE WHEN $11::double precision IS NOT NULL AND $12::double precision IS NOT NULL 
+                CASE WHEN $11::double precision IS NOT NULL AND $12::double precision IS NOT NULL
                      THEN point($12::double precision, $11::double precision)
-                     ELSE NULL 
+                     ELSE NULL
                 END,
-                $13, $14, $15::gender_preference_enum, $16, $17, NOW()
+                $13, $14, $15::gender_preference_enum, $16, $17, $18::gender_enum, NOW()
             )
-            RETURNING 
+            RETURNING
                 request_id,
                 client_id,
                 payer_name,
@@ -318,6 +365,7 @@ exports.createServiceRequest = async (req, res) => {
                 preferred_gender,
                 preferred_staff_id,
                 status,
+                gender,
                 created_at
         `;
 
@@ -338,18 +386,43 @@ exports.createServiceRequest = async (req, res) => {
             remarks || null,
             finalPreferredGender.toUpperCase(),
             preferred_staff_id || null,
-            finalStatus
+            finalStatus,
+            patient_gender || null
         ];
 
         const result = await db.query(insertQuery, insertValues);
+        const newRequest = result.rows[0];
 
-        // Send notification (optional - similar to staff creation)
-        console.log(`Service request created: ${result.rows[0].request_id} for ${payer_name}`);
+        // Log activity (non-fatal)
+        try {
+            const actorName = await getActorName(req.user.user_id);
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: extractActorRole(req.user.role),
+                actionType: 'SERVICE_REQUEST_CREATED',
+                entityType: 'SERVICE_REQUEST',
+                entityId: newRequest.request_id,
+                details: {
+                    payer_name,
+                    payer_mobile,
+                    patient_name,
+                    service_type,
+                    client_id: client_id || null,
+                    proxy: true
+                }
+            });
+        } catch (logErr) {
+            console.error('Activity log error (non-fatal):', logErr);
+        }
+
+        // Send SMS + WhatsApp confirmation (non-fatal)
+        sendServiceRequestNotifications(payer_mobile, payer_name, service_type, start_date).catch(() => {});
 
         res.status(201).json({
             status: 'success',
             message: 'Service request created successfully',
-            data: result.rows[0]
+            data: newRequest
         });
 
     } catch (error) {
@@ -452,6 +525,115 @@ exports.getClientServiceRequestsWithQuotes = async (req, res) => {
     }
 };
 
+exports.updateServiceRequest = async (req, res) => {
+    const { id } = req.params;
+    const {
+        payer_name,
+        payer_mobile,
+        patient_name,
+        patient_age,
+        relationship_to_client,
+        patient_condition,
+        service_type,
+        service_model,
+        location_address,
+        start_date,
+        remarks,
+        preferred_gender,
+        status
+    } = req.body;
+
+    try {
+        const existing = await db.query('SELECT * FROM service_requests WHERE request_id = $1', [id]);
+        if (existing.rows.length === 0) {
+            return res.status(404).json({ status: 'error', message: 'Service request not found' });
+        }
+        const old = existing.rows[0];
+
+        const result = await db.query(
+            `UPDATE service_requests SET
+                payer_name = COALESCE($1, payer_name),
+                payer_mobile = COALESCE($2, payer_mobile),
+                patient_name = COALESCE($3, patient_name),
+                patient_age = COALESCE($4, patient_age),
+                relationship_to_client = $5,
+                patient_condition = $6,
+                service_type = COALESCE($7, service_type),
+                service_model = COALESCE($8::service_model_enum, service_model),
+                location_address = $9,
+                start_date = $10,
+                remarks = $11,
+                preferred_gender = COALESCE($12::gender_preference_enum, preferred_gender),
+                status = COALESCE($13, status)
+             WHERE request_id = $14
+             RETURNING *`,
+            [
+                payer_name || null,
+                payer_mobile || null,
+                patient_name || null,
+                patient_age != null ? parseInt(patient_age) : null,
+                relationship_to_client !== undefined ? relationship_to_client : old.relationship_to_client,
+                patient_condition !== undefined ? patient_condition : old.patient_condition,
+                service_type || null,
+                service_model || null,
+                location_address !== undefined ? location_address : old.location_address,
+                start_date !== undefined ? start_date : old.start_date,
+                remarks !== undefined ? remarks : old.remarks,
+                preferred_gender || null,
+                status || null,
+                id
+            ]
+        );
+
+        const newServiceModel = result.rows[0].service_model;
+        if (newServiceModel && newServiceModel !== old.service_model) {
+            await db.query(
+                `UPDATE bookings SET service_model = $1::service_model_enum WHERE request_id = $2`,
+                [newServiceModel, id]
+            );
+        }
+
+        const changes = {};
+        const fields = [
+            'payer_name', 'payer_mobile', 'patient_name', 'patient_age',
+            'relationship_to_client', 'patient_condition', 'service_type',
+            'service_model', 'location_address', 'start_date', 'remarks',
+            'preferred_gender', 'status'
+        ];
+        for (const field of fields) {
+            const oldVal = String(old[field] ?? '');
+            const newVal = String(result.rows[0][field] ?? '');
+            if (oldVal !== newVal) {
+                changes[field] = { from: old[field], to: result.rows[0][field] };
+            }
+        }
+
+        try {
+            const actorName = await getActorName(req.user.user_id);
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: extractActorRole(req.user.role),
+                actionType: 'SERVICE_REQUEST_UPDATED',
+                entityType: 'SERVICE_REQUEST',
+                entityId: id,
+                details: {
+                    request_id: id,
+                    payer_name: result.rows[0].payer_name,
+                    changes
+                }
+            });
+        } catch (logErr) {
+            console.error('Activity log error:', logErr);
+        }
+
+        res.status(200).json({ status: 'success', data: result.rows[0] });
+    } catch (error) {
+        console.error('Update Service Request Error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to update service request' });
+    }
+};
+
 exports.getClientServiceRequestsWithPayments = async (req, res) => {
     try {
         const { client_id } = req.params;
@@ -485,5 +667,108 @@ exports.getClientServiceRequestsWithPayments = async (req, res) => {
             status: 'error',
             message: 'Failed to fetch service requests with payments'
         });
+    }
+};
+
+// List staff profiles already sent to the client as candidates for a service request.
+exports.getSentCandidates = async (req, res) => {
+    const { id } = req.params;
+    try {
+        const result = await db.query(
+            `SELECT staff_profile_id, sent_at FROM service_request_sent_candidates WHERE request_id = $1`,
+            [id]
+        );
+        res.status(200).json({ status: 'success', data: result.rows });
+    } catch (error) {
+        console.error('Error fetching sent candidates:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to fetch sent candidates' });
+    }
+};
+
+// Send a staff member's profile to the client as a candidate for a service request, via WhatsApp.
+// A given staff profile can be sent only once per service request (enforced by a UNIQUE constraint).
+exports.sendCandidateProfile = async (req, res) => {
+    const { id } = req.params; // service request id
+    const { staff_profile_id } = req.body;
+
+    if (!staff_profile_id) {
+        return res.status(400).json({ status: 'error', message: 'staff_profile_id is required' });
+    }
+
+    try {
+        const srRes = await db.query(
+            `SELECT request_id, payer_name, payer_mobile, patient_name FROM service_requests WHERE request_id = $1`,
+            [id]
+        );
+        if (!srRes.rows.length) {
+            return res.status(404).json({ status: 'error', message: 'Service request not found' });
+        }
+        const sr = srRes.rows[0];
+
+        if (!sr.payer_mobile) {
+            return res.status(400).json({ status: 'error', message: 'This service request has no client mobile number on file.' });
+        }
+
+        const staffRes = await db.query(
+            `SELECT staff_profile_id, full_name, designation, profile_picture_url FROM staff_profiles WHERE staff_profile_id = $1`,
+            [staff_profile_id]
+        );
+        if (!staffRes.rows.length) {
+            return res.status(404).json({ status: 'error', message: 'Staff profile not found' });
+        }
+        const staff = staffRes.rows[0];
+
+        // Enforce one-time send per (service request, staff) before hitting WhatsApp.
+        const dup = await db.query(
+            `SELECT 1 FROM service_request_sent_candidates WHERE request_id = $1 AND staff_profile_id = $2`,
+            [id, staff_profile_id]
+        );
+        if (dup.rows.length) {
+            return res.status(409).json({ status: 'error', message: `${staff.full_name}'s profile has already been sent to this client for this request.` });
+        }
+
+        // The profile link is delivered via the template's dynamic URL button — we pass only the
+        // staff_profile_id suffix; the base URL is configured on the Meta template.
+        await sendCandidateProfile(
+            sr.payer_mobile,
+            sr.payer_name || 'there',
+            sr.patient_name || 'your patient',
+            staff.full_name,
+            staff.designation,
+            staff.staff_profile_id
+        );
+
+        // Record the send only after WhatsApp succeeds.
+        const inserted = await db.query(
+            `INSERT INTO service_request_sent_candidates (request_id, staff_profile_id, sent_by)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (request_id, staff_profile_id) DO NOTHING
+             RETURNING staff_profile_id, sent_at`,
+            [id, staff_profile_id, req.user.user_id]
+        );
+
+        try {
+            const actorName = await getActorName(req.user.user_id);
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: extractActorRole(req.user.role),
+                actionType: 'CANDIDATE_PROFILE_SENT',
+                entityType: 'SERVICE_REQUEST',
+                entityId: String(id),
+                details: { staff_name: staff.full_name, staff_profile_id, client_name: sr.payer_name },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (send candidate):', logErr.message);
+        }
+
+        res.status(200).json({
+            status: 'success',
+            message: `${staff.full_name}'s profile sent to ${sr.payer_name || 'the client'} on WhatsApp.`,
+            data: inserted.rows[0] || { staff_profile_id, sent_at: new Date().toISOString() },
+        });
+    } catch (error) {
+        console.error('Send Candidate Profile Error:', error.response?.data || error.message);
+        res.status(500).json({ status: 'error', message: 'Failed to send the candidate profile via WhatsApp.' });
     }
 };

@@ -18,7 +18,10 @@ import {
   XCircle,
   AlertCircle,
   FileText,
-  Mail
+  Mail,
+  Send,
+  Check,
+  Loader2
 } from 'lucide-react';
 
 const StaffRoster = () => {
@@ -54,9 +57,46 @@ const StaffRoster = () => {
   // Get service request data from location state
   const serviceRequest = location.state?.serviceRequest;
 
+  // Candidate profiles already sent to the client for this service request (one-time per staff)
+  const [sentCandidateIds, setSentCandidateIds] = useState(new Set());
+  const [sendingCandidateId, setSendingCandidateId] = useState(null);
+  const [candidateNotice, setCandidateNotice] = useState(null); // { type: 'success' | 'error', text }
+
   useEffect(() => {
     fetchStaff();
   }, [statusFilter, genderFilter, liveInFilter, roleFilter, adminSearchTerm, adminRoleFilter, adminLiveInFilter, useSmartFiltering]);
+
+  useEffect(() => {
+    const requestId = serviceRequest?.request_id;
+    if (!requestId) return;
+    (async () => {
+      try {
+        const res = await apiClient.getSentCandidates(requestId);
+        setSentCandidateIds(new Set((res.data || []).map((r) => r.staff_profile_id)));
+      } catch (err) {
+        console.error('Failed to load sent candidates:', err);
+      }
+    })();
+  }, [serviceRequest?.request_id]);
+
+  const handleSendCandidate = async (staffMember) => {
+    if (!serviceRequest?.request_id) return;
+    setSendingCandidateId(staffMember.staff_profile_id);
+    setCandidateNotice(null);
+    try {
+      await apiClient.sendCandidateProfile(serviceRequest.request_id, staffMember.staff_profile_id);
+      setSentCandidateIds((prev) => new Set(prev).add(staffMember.staff_profile_id));
+      setCandidateNotice({ type: 'success', text: `${staffMember.full_name}'s profile sent to ${serviceRequest.payer_name || 'the client'}.` });
+    } catch (err) {
+      // If it was already sent (409), still mark it as sent so the UI is consistent.
+      if (err?.status === 409 || /already been sent/i.test(err?.message || '')) {
+        setSentCandidateIds((prev) => new Set(prev).add(staffMember.staff_profile_id));
+      }
+      setCandidateNotice({ type: 'error', text: err?.message || 'Failed to send candidate profile.' });
+    } finally {
+      setSendingCandidateId(null);
+    }
+  };
 
   const fetchStaff = async () => {
     try {
@@ -370,7 +410,7 @@ const StaffRoster = () => {
                 </div>
                 <div className="flex items-center gap-2">
                   <Calendar className="w-4 h-4 text-blue-600" />
-                  <span className="text-blue-800">Start: {new Date(serviceRequest.start_date).toLocaleDateString()}</span>
+                  <span className="text-blue-800">Start: {new Date(serviceRequest.start_date).toLocaleDateString('en-GB')}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <FileText className="w-4 h-4 text-blue-600" />
@@ -564,6 +604,21 @@ const StaffRoster = () => {
         )}
       </div>
 
+      {/* Candidate send notice */}
+      {candidateNotice && (
+        <div className={`mb-4 flex items-center gap-2 rounded-lg border px-4 py-3 text-sm ${
+          candidateNotice.type === 'success'
+            ? 'bg-green-50 border-green-200 text-green-800'
+            : 'bg-red-50 border-red-200 text-red-800'
+        }`}>
+          {candidateNotice.type === 'success' ? <CheckCircle className="w-4 h-4 flex-shrink-0" /> : <AlertCircle className="w-4 h-4 flex-shrink-0" />}
+          <span className="flex-1">{candidateNotice.text}</span>
+          <button onClick={() => setCandidateNotice(null)} className="opacity-60 hover:opacity-100">
+            <XCircle className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Staff List */}
       <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
         {filteredStaff.length === 0 ? (
@@ -682,8 +737,29 @@ const StaffRoster = () => {
                         >
                           <User className="w-4 h-4" />
                         </button>
-                        
-                        
+
+                        {serviceRequest && (
+                          sentCandidateIds.has(staffMember.staff_profile_id) ? (
+                            <span
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-green-700 bg-green-50 border border-green-200 rounded-lg"
+                              title="This profile has already been sent to the client"
+                            >
+                              <Check className="w-3.5 h-3.5" /> Sent
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => handleSendCandidate(staffMember)}
+                              disabled={sendingCandidateId === staffMember.staff_profile_id}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg disabled:opacity-60 disabled:cursor-not-allowed"
+                              title="Send this candidate's profile to the client via WhatsApp"
+                            >
+                              {sendingCandidateId === staffMember.staff_profile_id
+                                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                : <Send className="w-3.5 h-3.5" />}
+                              Send to client
+                            </button>
+                          )
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -772,6 +848,21 @@ const StaffRoster = () => {
                   <p className="text-sm text-slate-900">{selectedStaff.home_address}</p>
                 </div>
               )}
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  onClick={() => navigate(`/admin/staff/${selectedStaff.staff_profile_id}/detail`)}
+                  className="px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg"
+                >
+                  Open full detail page
+                </button>
+                <button
+                  onClick={() => setSelectedStaff(null)}
+                  className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -846,7 +937,7 @@ const StaffRoster = () => {
                       </div>
                       <div className="flex items-center gap-2">
                         <Calendar className="w-4 h-4 text-blue-600" />
-                        <span className="text-blue-800">Start: {new Date(serviceRequest.start_date).toLocaleDateString()}</span>
+                        <span className="text-blue-800">Start: {new Date(serviceRequest.start_date).toLocaleDateString('en-GB')}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <FileText className="w-4 h-4 text-blue-600" />
@@ -1079,7 +1170,7 @@ const StaffRoster = () => {
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                           <div className="flex items-center gap-2">
-                            <span className="text-xs text-slate-500">Patient:</span>
+                            <span className="text-xs text-slate-500">Care Profile:</span>
                             <span className="text-sm font-medium text-slate-900">{serviceRequest.patient_name}</span>
                           </div>
                           <div className="flex items-center gap-2">
@@ -1092,7 +1183,7 @@ const StaffRoster = () => {
                           </div>
                           <div className="flex items-center gap-2">
                             <Calendar className="w-3 h-3 text-slate-400" />
-                            <span className="text-sm text-slate-700">{new Date(serviceRequest.start_date).toLocaleDateString()}</span>
+                            <span className="text-sm text-slate-700">{new Date(serviceRequest.start_date).toLocaleDateString('en-GB')}</span>
                           </div>
                         </div>
                       </div>

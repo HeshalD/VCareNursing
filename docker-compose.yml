@@ -31,18 +31,12 @@ services:
       DB_NAME: vcarenursing
       DB_USER: vcareuser
       DB_PASSWORD: vcarepass123
-      # Add your other environment variables here
-      # JWT_SECRET: your-jwt-secret
-      # CLOUDINARY_CLOUD_NAME: your-cloud-name
-      # CLOUDINARY_API_KEY: your-api-key
-      # CLOUDINARY_API_SECRET: your-api-secret
-      # EMAIL_HOST: smtp.gmail.com
-      # EMAIL_PORT: 587
-      # EMAIL_USER: your-email@gmail.com
-      # EMAIL_PASS: your-app-password
-      # TWILIO_ACCOUNT_SID: your-twilio-sid
-      # TWILIO_AUTH_TOKEN: your-twilio-token
-      # TWILIO_PHONE_NUMBER: your-twilio-phone
+      # In production, supply the rest via an env_file (see DEPLOYMENT_GUIDE.md):
+      #   env_file:
+      #     - ./backend/.env
+      # Required keys: JWT_SECRET, AWS_REGION, AWS_ACCESS_KEY_ID,
+      # AWS_SECRET_ACCESS_KEY, AWS_S3_BUCKET_NAME, EMAIL_*, TWILIO_*,
+      # META_WHATSAPP_TOKEN, META_WA_PHONE_NUMBER_ID. See .env.example.
     ports:
       - "5000:5000"
     depends_on:

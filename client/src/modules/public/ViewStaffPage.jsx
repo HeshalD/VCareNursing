@@ -44,11 +44,12 @@ export default function StaffDirectory() {
           padding: "1.5rem",
           display: "flex",
           flexDirection: "column",
-          gap: 16,
+          gap: 14,
           cursor: "pointer",
           transition: "transform 0.18s, box-shadow 0.18s, border-color 0.18s",
           animation: `fadeUp 0.35s ease both`,
           animationDelay: `${index * 40}ms`,
+          position: "relative",
         }}
         onMouseEnter={e => {
           e.currentTarget.style.transform = "translateY(-4px)";
@@ -68,53 +69,58 @@ export default function StaffDirectory() {
           }
         `}</style>
 
-        {/* Top: Avatar + Status */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        {/* Status badge — absolute top-right */}
+        <span style={{
+          position: "absolute", top: 16, right: 16,
+          display: "flex", alignItems: "center", gap: 5,
+          background: st.bg, color: st.text,
+          fontSize: 11, fontWeight: 600,
+          padding: "4px 10px", borderRadius: 999,
+          letterSpacing: "0.02em",
+        }}>
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: st.dot }} />
+          {statusText}
+        </span>
+
+        {/* Avatar — centered */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 8 }}>
           {member.profile_picture_url ? (
-            <img 
-              src={member.profile_picture_url} 
+            <img
+              src={member.profile_picture_url}
               alt={member.full_name}
               style={{
-                width: 52, height: 52, borderRadius: 16,
-                objectCover: "cover"
+                width: 150, height: 150, borderRadius: 16,
+                objectFit: "cover",
+                border: "3px solid #f1f5f9",
               }}
             />
           ) : (
             <div style={{
-              width: 52, height: 52, borderRadius: 16,
+              width: 150, height: 150, borderRadius: 16,
               background: color + "18",
+              border: `3px solid ${color}22`,
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 16, fontWeight: 600,
+              fontSize: 40, fontWeight: 700,
               color: color,
               letterSpacing: "0.5px",
             }}>
               {member.full_name?.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'ST'}
             </div>
           )}
-          <span style={{
-            display: "flex", alignItems: "center", gap: 5,
-            background: st.bg, color: st.text,
-            fontSize: 11, fontWeight: 600,
-            padding: "4px 10px", borderRadius: 999,
-            letterSpacing: "0.02em",
-          }}>
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: st.dot }} />
-            {statusText}
-          </span>
         </div>
 
-        {/* Name + Role */}
-        <div>
-          <p style={{ margin: "0 0 3px", fontSize: 15, fontWeight: 600, color: "#0f172a", lineHeight: 1.3 }}>
+        {/* Name + Role — centered */}
+        <div style={{ textAlign: "center" }}>
+          <p style={{ margin: "0 0 3px", fontSize: 15, fontWeight: 700, color: "#0f172a", lineHeight: 1.3 }}>
             {member.full_name || 'Unknown'}
           </p>
-          <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>
+          <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>
             {member.designation || (member.role && Array.isArray(member.role) ? member.role.join(', ') : member.role) || 'Staff Member'}
           </p>
         </div>
 
         {/* Meta */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#64748b" }}>
             <MapPin size={12} color="#94a3b8" />
             {member.location || 'Location not specified'}
@@ -126,7 +132,6 @@ export default function StaffDirectory() {
               color: color,
               fontSize: 11, fontWeight: 600,
               padding: "3px 10px", borderRadius: 999,
-              alignSelf: "flex-start",
               letterSpacing: "0.02em",
             }}>
               {member.specialization}
@@ -145,13 +150,13 @@ export default function StaffDirectory() {
             {member.average_rating > 0 ? (
               <>
                 <span style={{ fontSize: 13, fontWeight: 600, color: "#0f172a" }}>{member.average_rating.toFixed(1)}</span>
-                <span style={{ fontSize: 12, color: "#94a3b8" }}>({member.total_reviews || 0} reviews)</span>
+                <span style={{ fontSize: 12, color: "#94a3b8" }}>({member.total_reviews || 0})</span>
               </>
             ) : (
               <span style={{ fontSize: 12, color: "#94a3b8" }}>No ratings yet</span>
             )}
           </div>
-          <button 
+          <button
             onClick={() => navigate(`/services/staff-profile/${member.staff_profile_id}`)}
             style={{
               padding: "7px 16px",
@@ -597,148 +602,3 @@ export default function StaffDirectory() {
   );
 }
 
-function StaffCard({ member, index }) {
-  const avatarColors = ["#2563eb", "#0891b2", "#7c3aed", "#059669", "#dc2626", "#d97706", "#be185d", "#0d9488", "#4f46e5", "#7c3aed"];
-  const color = avatarColors[index % avatarColors.length];
-  const statusText = member.current_status?.replace('_', ' ') || 'Unknown';
-  const st = statusStyle[statusText] || statusStyle["Available"];
-
-  return (
-    <div
-      style={{
-        background: "#fff",
-        border: "1px solid #e9ecef",
-        borderRadius: 20,
-        padding: "1.5rem",
-        display: "flex",
-        flexDirection: "column",
-        gap: 16,
-        cursor: "pointer",
-        transition: "transform 0.18s, box-shadow 0.18s, border-color 0.18s",
-        animation: `fadeUp 0.35s ease both`,
-        animationDelay: `${index * 40}ms`,
-      }}
-      onMouseEnter={e => {
-        e.currentTarget.style.transform = "translateY(-4px)";
-        e.currentTarget.style.boxShadow = "0 12px 32px rgba(0,0,0,0.08)";
-        e.currentTarget.style.borderColor = "#c7d9ff";
-      }}
-      onMouseLeave={e => {
-        e.currentTarget.style.transform = "translateY(0)";
-        e.currentTarget.style.boxShadow = "none";
-        e.currentTarget.style.borderColor = "#e9ecef";
-      }}
-    >
-      <style>{`
-        @keyframes fadeUp {
-          from { opacity: 0; transform: translateY(16px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
-
-      {/* Top: Avatar + Status */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        {member.profile_picture_url ? (
-          <img 
-            src={member.profile_picture_url} 
-            alt={member.full_name}
-            style={{
-              width: 52, height: 52, borderRadius: 16,
-              objectCover: "cover"
-            }}
-          />
-        ) : (
-          <div style={{
-            width: 52, height: 52, borderRadius: 16,
-            background: color + "18",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 16, fontWeight: 600,
-            color: color,
-            letterSpacing: "0.5px",
-          }}>
-            {member.full_name?.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'ST'}
-          </div>
-        )}
-        <span style={{
-          display: "flex", alignItems: "center", gap: 5,
-          background: st.bg, color: st.text,
-          fontSize: 11, fontWeight: 600,
-          padding: "4px 10px", borderRadius: 999,
-          letterSpacing: "0.02em",
-        }}>
-          <span style={{ width: 6, height: 6, borderRadius: "50%", background: st.dot }} />
-          {statusText}
-        </span>
-      </div>
-
-      {/* Name + Role */}
-      <div>
-        <p style={{ margin: "0 0 3px", fontSize: 15, fontWeight: 600, color: "#0f172a", lineHeight: 1.3 }}>
-          {member.full_name || 'Unknown'}
-        </p>
-        <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>
-          {member.designation || (member.role && Array.isArray(member.role) ? member.role.join(', ') : member.role) || 'Staff Member'}
-        </p>
-      </div>
-
-      {/* Meta */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#64748b" }}>
-          <MapPin size={12} color="#94a3b8" />
-          {member.location || 'Location not specified'}
-        </div>
-        {member.specialization && (
-          <div style={{
-            display: "inline-flex", alignItems: "center",
-            background: color + "12",
-            color: color,
-            fontSize: 11, fontWeight: 600,
-            padding: "3px 10px", borderRadius: 999,
-            alignSelf: "flex-start",
-            letterSpacing: "0.02em",
-          }}>
-            {member.specialization}
-          </div>
-        )}
-      </div>
-
-      {/* Footer */}
-      <div style={{
-        borderTop: "1px solid #f1f5f9",
-        paddingTop: 14,
-        display: "flex", justifyContent: "space-between", alignItems: "center",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-          <Star size={13} color="#f59e0b" fill="#f59e0b" />
-          {member.average_rating > 0 ? (
-            <>
-              <span style={{ fontSize: 13, fontWeight: 600, color: "#0f172a" }}>{member.average_rating.toFixed(1)}</span>
-              <span style={{ fontSize: 12, color: "#94a3b8" }}>({member.total_reviews || 0} reviews)</span>
-            </>
-          ) : (
-            <span style={{ fontSize: 12, color: "#94a3b8" }}>No ratings yet</span>
-          )}
-        </div>
-        <button 
-          onClick={() => navigate(`/services/staff-profile/${member.staff_profile_id}`)}
-          style={{
-            padding: "7px 16px",
-            background: "#2563eb",
-            color: "#fff",
-            border: "none",
-            borderRadius: 999,
-            fontSize: 12,
-            fontWeight: 600,
-            cursor: "pointer",
-            transition: "background 0.15s",
-            letterSpacing: "0.01em",
-          }}
-          onMouseEnter={e => e.currentTarget.style.background = "#1d4ed8"}
-          onMouseLeave={e => e.currentTarget.style.background = "#2563eb"}
-        >
-          View Profile
-        </button>
-      </div>
-    </div>
-  );
-}

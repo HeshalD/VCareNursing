@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { motion, useScroll, useTransform } from 'framer-motion';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   Heart, Baby, Home, ArrowRight, ShieldCheck,
   Activity, Star, Globe, Clock, CheckCircle2,
@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import Navbar from '../../components/layout/Navbar';
 import Footer from '../../components/layout/Footer';
+import Popup from '../../components/common/Popup';
 import ReviewSection from './components/ReviewSection';
 
 // Reusing the background image from Login for consistency, but using it differently
@@ -387,6 +388,21 @@ const BrowseStaffSection = () => {
 
 
 const LandingPage = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [showWelcome, setShowWelcome] = useState(false);
+  const [welcomeName, setWelcomeName] = useState('');
+
+  // Show a welcome popup right after a successful login
+  useEffect(() => {
+    if (location.state?.showWelcome) {
+      setWelcomeName(location.state.userName || '');
+      setShowWelcome(true);
+      // Clear the navigation state so the popup doesn't reappear on refresh/back
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location, navigate]);
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 selection:bg-blue-100">
       <Navbar />
@@ -396,6 +412,15 @@ const LandingPage = () => {
       <JoinTeamBanner />
       <ReviewSection />
       <Footer />
+
+      <Popup
+        isOpen={showWelcome}
+        onClose={() => setShowWelcome(false)}
+        variant="success"
+        title={welcomeName ? `Welcome back, ${welcomeName}!` : 'Welcome back!'}
+        message="You're successfully signed in to VCare. Explore trusted caregivers and manage your care services all in one place."
+        primaryAction={{ label: 'Get started', onClick: () => setShowWelcome(false) }}
+      />
     </div>
   );
 };

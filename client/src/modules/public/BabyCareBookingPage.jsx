@@ -4,12 +4,41 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   User, Calendar, Phone, MapPin, Heart, CheckCircle, ShieldCheck,
   ArrowRight, UserCheck, Baby, Filter, Loader2,
-  ChevronRight, ChevronLeft, Briefcase, Home, Clock, Star
+  ChevronRight, ChevronLeft, Home, Clock, Star
 } from 'lucide-react';
 import Navbar from '../../components/layout/Navbar';
 import Footer from '../../components/layout/Footer';
 import apiClient from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
+import babyCareBg from '../../assets/images/BabyCare.webp';
+
+// Selectable options for the Service Details step
+const SERVICE_MODELS = [
+  {
+    value: 'VISITING',
+    label: 'Visiting',
+    icon: Calendar,
+    description: 'Short scheduled visits for feeding, play, or nap-time check-ins.'
+  },
+  {
+    value: 'LIVE_IN',
+    label: 'Live In',
+    icon: Home,
+    description: 'A nanny stays in the home full-time for round-the-clock care.'
+  },
+  {
+    value: 'PART_TIME',
+    label: 'Part Time',
+    icon: Clock,
+    description: 'A few hours a day — perfect for working parents needing extra hands.'
+  },
+  {
+    value: 'FULL_TIME',
+    label: 'Full Time',
+    icon: Heart,
+    description: 'Full working-day care covering meals, play, and daily routines.'
+  }
+];
 
 const BabyCareBookingPage = () => {
   const navigate = useNavigate();
@@ -25,6 +54,7 @@ const BabyCareBookingPage = () => {
   const [shouldRefetchStaff, setShouldRefetchStaff] = useState(false);
   const [patients, setPatients] = useState([]);
   const [patientsLoading, setPatientsLoading] = useState(false);
+  const [staffSearch, setStaffSearch] = useState('');
 
   const [formData, setFormData] = useState({
     // Payer Information
@@ -35,6 +65,7 @@ const BabyCareBookingPage = () => {
     // Baby Information
     patient_name: '',
     patient_age: '',
+    patient_gender: '',
     relationship: 'PARENT',
     patient_condition: '',
 
@@ -145,6 +176,7 @@ const BabyCareBookingPage = () => {
         ...prev,
         patient_name: '',
         patient_age: '',
+        patient_gender: '',
         relationship: 'PARENT',
         patient_condition: ''
       }));
@@ -157,6 +189,7 @@ const BabyCareBookingPage = () => {
         ...prev,
         patient_name: selectedPatient.full_name,
         patient_age: selectedPatient.age.toString(),
+        patient_gender: selectedPatient.gender || '',
         relationship: selectedPatient.relationship_to_client || 'OTHER',
         patient_condition: selectedPatient.medical_condition || ''
       }));
@@ -180,7 +213,7 @@ const BabyCareBookingPage = () => {
 
   useEffect(() => {
     filterStaff();
-  }, [staffData, activeFilter]);
+  }, [staffData, activeFilter, staffSearch]);
 
   const fetchStaffData = async () => {
     try {
@@ -208,14 +241,11 @@ const BabyCareBookingPage = () => {
           .map(staff => ({
             id: staff.staff_profile_id,
             name: staff.full_name,
-            age: Math.floor(Math.random() * 20) + 25,
             role: 'Nanny',
-            experience: Math.floor(Math.random() * 15) + 2,
             location: staff.home_address || 'Sri Lanka',
-            rating: (Math.random() * 1.5 + 3.5).toFixed(1),
-            reviews: Math.floor(Math.random() * 150) + 10,
+            rating: staff.average_rating ? parseFloat(staff.average_rating).toFixed(1) : null,
+            reviews: staff.total_reviews || 0,
             isVerified: staff.verification_status === 'VERIFIED',
-            price: `LKR ${Math.floor(Math.random() * 800) + 600}/hr`,
             image: staff.profile_picture_url || `https://i.pravatar.cc/300?u=${staff.staff_profile_id}`,
             badges: Array.isArray(staff.qualifications) && staff.qualifications.length > 0
               ? staff.qualifications.slice(0, 2)
@@ -235,38 +265,20 @@ const BabyCareBookingPage = () => {
         const nannies = nanniesResponse.data || [];
 
         // Transform API data to match expected format
-        const transformedStaff = nannies.map(staff => {
-          // Calculate age from date_of_birth if available
-          let calculatedAge = 25; // Default fallback age
-          if (staff.date_of_birth) {
-            const birthDate = new Date(staff.date_of_birth);
-            const today = new Date();
-            let age = today.getFullYear() - birthDate.getFullYear();
-            const monthDiff = today.getMonth() - birthDate.getMonth();
-            if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
-              age--;
-            }
-            calculatedAge = age;
-          }
-
-          return {
-            id: staff.staff_profile_id,
-            name: staff.full_name,
-            age: calculatedAge,
-            role: 'Nanny',
-            experience: Math.floor(Math.random() * 15) + 2,
-            location: staff.home_address || 'Sri Lanka',
-            rating: (Math.random() * 1.5 + 3.5).toFixed(1),
-            reviews: Math.floor(Math.random() * 150) + 10,
-            isVerified: staff.verification_status === 'VERIFIED',
-            price: `LKR ${Math.floor(Math.random() * 800) + 600}/hr`,
-            image: staff.profile_picture_url || `https://i.pravatar.cc/300?u=${staff.staff_profile_id}`,
-            badges: Array.isArray(staff.qualifications) && staff.qualifications.length > 0
-              ? staff.qualifications.slice(0, 2)
-              : ['Experienced'],
-            staffType: 'NANNY'
-          };
-        });
+        const transformedStaff = nannies.map(staff => ({
+          id: staff.staff_profile_id,
+          name: staff.full_name,
+          role: 'Nanny',
+          location: staff.home_address || 'Sri Lanka',
+          rating: staff.average_rating ? parseFloat(staff.average_rating).toFixed(1) : null,
+          reviews: staff.total_reviews || 0,
+          isVerified: staff.verification_status === 'VERIFIED',
+          image: staff.profile_picture_url || `https://i.pravatar.cc/300?u=${staff.staff_profile_id}`,
+          badges: Array.isArray(staff.qualifications) && staff.qualifications.length > 0
+            ? staff.qualifications.slice(0, 2)
+            : ['Experienced'],
+          staffType: 'NANNY'
+        }));
 
         console.log('Setting staff data (all):', transformedStaff);
         setStaffData(transformedStaff);
@@ -280,11 +292,12 @@ const BabyCareBookingPage = () => {
   };
 
   const filterStaff = () => {
-    if (activeFilter === 'ALL') {
-      setFilteredStaff(staffData);
-    } else {
-      setFilteredStaff(staffData.filter(staff => staff.staffType === activeFilter));
+    let result = activeFilter === 'ALL' ? staffData : staffData.filter(s => s.staffType === activeFilter);
+    if (staffSearch.trim()) {
+      const q = staffSearch.toLowerCase();
+      result = result.filter(s => s.name.toLowerCase().includes(q) || s.location.toLowerCase().includes(q));
     }
+    setFilteredStaff(result);
   };
 
   const handleFilterChange = (filter) => {
@@ -371,16 +384,27 @@ const BabyCareBookingPage = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="relative min-h-screen">
+      {/* Full-page background image, pinned to the viewport so it stays proportional */}
+      <div
+        className="fixed inset-0 z-0"
+        style={{
+          backgroundImage: `url(${babyCareBg})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center'
+        }}
+      />
+      <div className="fixed inset-0 z-0 bg-slate-900/50" />
+
       <Navbar />
 
-      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <div className="relative z-10 max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 pt-32 pb-12">
         {/* Header */}
         <div className="text-center mb-12">
-          <h1 className="text-4xl md:text-5xl font-bold text-slate-900 mb-4">
+          <h1 className="text-4xl md:text-5xl font-bold text-white mb-4">
             Book Baby Care Service
           </h1>
-          <p className="text-lg text-slate-600 max-w-3xl mx-auto">
+          <p className="text-lg text-slate-100 max-w-3xl mx-auto">
             Find the perfect nanny for your little one in just a few simple steps
           </p>
         </div>
@@ -399,12 +423,12 @@ const BabyCareBookingPage = () => {
                   <div className={`p-3 rounded-full ${currentStep >= step.id ? 'bg-rose-500 text-white border-rose-500' : 'bg-white text-slate-400 border-slate-300'}`}>
                     <step.icon className="w-6 h-6" />
                   </div>
-                  <span className={`text-sm font-medium mt-2 ${currentStep >= step.id ? 'text-slate-900' : 'text-slate-400'}`}>
+                  <span className={`text-sm font-medium mt-2 ${currentStep >= step.id ? 'text-white' : 'text-slate-300'}`}>
                     {step.title}
                   </span>
                 </div>
                 {index < 3 && (
-                  <div className={`h-0.5 w-16 transition-all ${currentStep > step.id ? 'bg-rose-500' : 'bg-slate-300'}`} />
+                  <div className={`h-0.5 w-16 transition-all ${currentStep > step.id ? 'bg-rose-500' : 'bg-white/30'}`} />
                 )}
               </React.Fragment>
             ))}
@@ -412,7 +436,7 @@ const BabyCareBookingPage = () => {
         </div>
 
         {/* Form Content */}
-        <div className="bg-white rounded-[32px] shadow-xl border border-slate-100 overflow-hidden">
+        <div className="bg-white/90 backdrop-blur-md rounded-[32px] shadow-xl border border-white/40 overflow-hidden">
           <div className="p-8 md:p-12">
             <form onSubmit={(e) => e.preventDefault()}>
               <AnimatePresence mode="wait">
@@ -506,6 +530,12 @@ const BabyCareBookingPage = () => {
                                       <Heart className="w-4 h-4" />
                                       {patient.relationship_to_client || 'Other'}
                                     </span>
+                                    {patient.gender && (
+                                      <span className="flex items-center gap-1">
+                                        <UserCheck className="w-4 h-4" />
+                                        {patient.gender.charAt(0) + patient.gender.slice(1).toLowerCase()}
+                                      </span>
+                                    )}
                                   </div>
                                   {patient.medical_condition && (
                                     <p className="text-xs text-slate-500 mt-2">
@@ -567,6 +597,20 @@ const BabyCareBookingPage = () => {
                           placeholder="e.g. 6 months, 2 years"
                           required
                         />
+                      </div>
+                      <div>
+                        <label className="text-sm font-semibold text-slate-600 block mb-1">Gender</label>
+                        <select
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-slate-900"
+                          value={formData.patient_gender}
+                          onChange={e => setFormData({ ...formData, patient_gender: e.target.value })}
+                          onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
+                        >
+                          <option value="">— Select —</option>
+                          <option value="MALE">Male</option>
+                          <option value="FEMALE">Female</option>
+                          <option value="OTHER">Other</option>
+                        </select>
                       </div>
                       <div>
                         <label className="text-sm font-semibold text-slate-600 block mb-1">Relationship to Baby</label>
@@ -632,21 +676,6 @@ const BabyCareBookingPage = () => {
                         />
                       </div>
                       <div>
-                        <label className="text-sm font-semibold text-slate-600 block mb-1">Service Model</label>
-                        <select
-                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-slate-900"
-                          value={formData.service_model}
-                          onChange={e => setFormData({ ...formData, service_model: e.target.value })}
-                          onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
-                          required
-                        >
-                          <option value="VISITING">Visiting</option>
-                          <option value="LIVE_IN">Live In</option>
-                          <option value="PART_TIME">Part Time</option>
-                          <option value="FULL_TIME">Full Time</option>
-                        </select>
-                      </div>
-                      <div>
                         <label className="text-sm font-semibold text-slate-600 block mb-1">Preferred Nanny Gender</label>
                         <select
                           className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-slate-900"
@@ -664,6 +693,36 @@ const BabyCareBookingPage = () => {
                           <option value="MALE">Male</option>
                           <option value="FEMALE">Female</option>
                         </select>
+                      </div>
+
+                      {/* Service Model — card selection */}
+                      <div className="md:col-span-2">
+                        <label className="text-sm font-semibold text-slate-600 block mb-3">Service Model</label>
+                        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                          {SERVICE_MODELS.map((opt) => {
+                            const isSelected = formData.service_model === opt.value;
+                            return (
+                              <button
+                                type="button"
+                                key={opt.value}
+                                onClick={() => setFormData({ ...formData, service_model: opt.value })}
+                                className={`text-left p-4 rounded-xl border-2 transition-all ${isSelected
+                                    ? 'border-rose-500 bg-rose-50'
+                                    : 'border-slate-200 bg-white hover:border-rose-300'
+                                  }`}
+                              >
+                                <div className="flex items-center justify-between mb-2">
+                                  <div className={`p-2 rounded-lg ${isSelected ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                                    <opt.icon className="w-5 h-5" />
+                                  </div>
+                                  {isSelected && <CheckCircle className="w-5 h-5 text-rose-500 flex-shrink-0" />}
+                                </div>
+                                <h4 className="font-semibold text-slate-800">{opt.label}</h4>
+                                <p className="text-xs text-slate-500 mt-1">{opt.description}</p>
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
                       <div className="md:col-span-2">
                         <label className="text-sm font-semibold text-slate-600 block mb-1">Additional Remarks (Optional)</label>
@@ -718,26 +777,32 @@ const BabyCareBookingPage = () => {
                       </div>
                     </div>
 
-                    {/* Filter Buttons */}
-                    <div className="flex items-center gap-2 bg-slate-100 rounded-full p-1 mb-8">
-                      <button
-                        onClick={() => handleFilterChange('ALL')}
-                        className={`px-6 py-2 rounded-full font-medium transition-all ${activeFilter === 'ALL'
-                            ? 'bg-white text-slate-900 shadow-sm'
-                            : 'text-slate-600 hover:text-slate-900'
-                          }`}
-                      >
-                        All Nannies
-                      </button>
-                      <button
-                        onClick={() => handleFilterChange('NANNY')}
-                        className={`px-6 py-2 rounded-full font-medium transition-all ${activeFilter === 'NANNY'
-                            ? 'bg-white text-slate-900 shadow-sm'
-                            : 'text-slate-600 hover:text-slate-900'
-                          }`}
-                      >
-                        Nannies
-                      </button>
+                    {/* Search & Filter */}
+                    <div className="flex flex-col sm:flex-row gap-3 mb-6">
+                      <div className="relative flex-1">
+                        <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                        <input
+                          type="text"
+                          value={staffSearch}
+                          onChange={e => setStaffSearch(e.target.value)}
+                          placeholder="Search by name or location..."
+                          className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-rose-500 outline-none"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2 bg-slate-100 rounded-full p-1">
+                        <button
+                          onClick={() => handleFilterChange('ALL')}
+                          className={`px-5 py-2 rounded-full font-medium transition-all text-sm ${activeFilter === 'ALL' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                        >
+                          All Nannies
+                        </button>
+                        <button
+                          onClick={() => handleFilterChange('NANNY')}
+                          className={`px-5 py-2 rounded-full font-medium transition-all text-sm ${activeFilter === 'NANNY' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                        >
+                          Nannies
+                        </button>
+                      </div>
                     </div>
 
                     {/* Loading State */}
@@ -793,19 +858,15 @@ const BabyCareBookingPage = () => {
 
                             <div className="space-y-2">
                               <div className="flex items-center gap-2 text-sm text-slate-600">
-                                <Star className="w-4 h-4 text-rose-500 fill-current" />
-                                <span>{staff.rating} ({staff.reviews} reviews)</span>
-                              </div>
-                              <div className="flex items-center gap-2 text-sm text-slate-600">
-                                <Briefcase className="w-4 h-4" />
-                                <span>{staff.experience}</span>
+                                <Star className={`w-4 h-4 fill-current ${staff.rating ? 'text-rose-500' : 'text-slate-300'}`} />
+                                {staff.rating
+                                  ? <span>{staff.rating} <span className="text-slate-400">({staff.reviews} {staff.reviews === 1 ? 'review' : 'reviews'})</span></span>
+                                  : <span className="text-slate-400">No reviews yet</span>
+                                }
                               </div>
                               <div className="flex items-center gap-2 text-sm text-slate-600">
                                 <MapPin className="w-4 h-4" />
                                 <span>{staff.location}</span>
-                              </div>
-                              <div className="flex items-center gap-2 text-sm font-semibold text-rose-600">
-                                <span>{staff.price}</span>
                               </div>
                             </div>
 
@@ -874,7 +935,9 @@ const BabyCareBookingPage = () => {
         </div>
       </div>
 
-      <Footer />
+      <div className="relative z-10">
+        <Footer />
+      </div>
     </div>
   );
 };

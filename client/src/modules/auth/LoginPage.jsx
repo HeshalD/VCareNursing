@@ -85,8 +85,9 @@ const LoginPage = () => {
           // Staff member - redirect to provider dashboard
           navigate('/services/provider-dashboard');
         } else {
-          // Client or other user - redirect to home page
-          navigate('/');
+          // Client or other user - redirect to home page with a welcome popup
+          const userName = response.data.full_name || response.data.first_name || '';
+          navigate('/', { state: { showWelcome: true, userName } });
         }
       }
     } catch (err) {

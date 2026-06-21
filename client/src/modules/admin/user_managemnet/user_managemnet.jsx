@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Filter, MoreHorizontal, User, Mail, Phone, MapPin, CheckCircle, XCircle, DollarSign, ChevronDown, ChevronUp, FileText, Calendar, Home, Briefcase, UserCircle, Shield, ShieldOff } from 'lucide-react';
+import { Search, Filter, MoreHorizontal, User, Mail, Phone, MapPin, CheckCircle, XCircle, DollarSign, ChevronDown, ChevronUp, FileText, Calendar, Home, Briefcase, UserCircle, Shield, ShieldOff, Eye } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 
@@ -96,11 +96,13 @@ const UserManagement = () => {
 
   const formatClientData = (client) => ({
     id: client.client_profile_id,
+    client_code: client.client_code,
     name: client.full_name || 'Unknown',
     email: client.email || 'N/A',
     phone: client.mobile_number || 'N/A',
     location: client.primary_address || 'Not set',
-    type: 'Client'
+    type: 'Client',
+    is_registration_fee_paid: Boolean(client.is_registration_fee_paid)
   });
 
   const formatStaffData = (staff) => ({
@@ -120,7 +122,11 @@ const UserManagement = () => {
     gender: staff.gender || 'N/A',
     willing_to_live_in: staff.willing_to_live_in || false,
     date_of_birth: staff.date_of_birth || null,
-    location_city: staff.location || 'N/A'
+    location_city: staff.location || 'N/A',
+    // NIC fields
+    nic_number: staff.nic_number || null,
+    nic_front_url: staff.nic_front_url || null,
+    nic_back_url: staff.nic_back_url || null
   });
 
   // Apply filters and sorting
@@ -182,6 +188,14 @@ const UserManagement = () => {
       newExpanded.add(userId);
     }
     setExpandedRows(newExpanded);
+  };
+
+  const openClientDetail = (clientId) => {
+    navigate(`/admin/users/${clientId}/detail`);
+  };
+
+  const openStaffDetail = (staffProfileId) => {
+    navigate(`/admin/staff/${staffProfileId}/detail`);
   };
 
   return (
@@ -317,7 +331,16 @@ const UserManagement = () => {
               ) : (
                 displayData.map((user) => (
                   <React.Fragment key={user.id}>
-                    <tr className="hover:bg-slate-50 transition-colors">
+                    <tr
+                      className={`transition-colors ${activeTab === 'clients' || activeTab === 'workers' ? 'cursor-pointer hover:bg-slate-50' : 'hover:bg-slate-50'}`}
+                      onClick={
+                        activeTab === 'clients'
+                          ? () => openClientDetail(user.id)
+                          : activeTab === 'workers'
+                            ? () => openStaffDetail(user.id)
+                            : undefined
+                      }
+                    >
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
                           {user.profile_picture_url ? (
@@ -353,15 +376,24 @@ const UserManagement = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${user.status === 'Active' ? 'bg-green-50 text-green-700' :
-                          user.status === 'Pending' ? 'bg-amber-50 text-amber-700' :
-                          user.status === 'Available' ? 'bg-green-50 text-green-700' :
-                          user.status === 'Unavailable' ? 'bg-red-50 text-red-700' :
-                          'bg-slate-100 text-slate-500'
+                      {activeTab === 'clients' ? (
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${
+                          user.is_registration_fee_paid ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'
                         }`}>
-                        {user.status === 'Active' || user.status === 'Available' ? <CheckCircle className="w-3.5 h-3.5" /> : null}
-                        {user.status}
-                      </span>
+                          {user.is_registration_fee_paid ? <CheckCircle className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
+                          {user.is_registration_fee_paid ? 'Reg. Fee Paid' : 'Reg. Fee Pending'}
+                        </span>
+                      ) : (
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${user.status === 'Active' ? 'bg-green-50 text-green-700' :
+                            user.status === 'Pending' ? 'bg-amber-50 text-amber-700' :
+                            user.status === 'Available' ? 'bg-green-50 text-green-700' :
+                            user.status === 'Unavailable' ? 'bg-red-50 text-red-700' :
+                            'bg-slate-100 text-slate-500'
+                          }`}>
+                          {user.status === 'Active' || user.status === 'Available' ? <CheckCircle className="w-3.5 h-3.5" /> : null}
+                          {user.status}
+                        </span>
+                      )}
                     </td>
                     {activeTab === 'workers' && (
                       <td className="px-6 py-4">
@@ -379,9 +411,25 @@ const UserManagement = () => {
                     )}
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center gap-2 justify-end">
+                        {activeTab === 'clients' && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openClientDetail(user.id);
+                            }}
+                            className="text-blue-600 hover:text-blue-800 p-1 rounded-lg hover:bg-blue-50 transition-colors mr-1"
+                            title="View Client Details"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                        )}
                         {activeTab === 'workers' && (
                           <button
-                            onClick={() => handleUpdateThreshold(user)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleUpdateThreshold(user);
+                            }}
                             className="text-blue-600 hover:text-blue-800 p-1 rounded-lg hover:bg-blue-50 transition-colors mr-2"
                             title="Update Advance Threshold"
                           >
@@ -389,13 +437,19 @@ const UserManagement = () => {
                           </button>
                         )}
                         <button
-                          onClick={() => toggleRowExpansion(user.id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleRowExpansion(user.id);
+                          }}
                           className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors"
                           title="View Details"
                         >
                           {expandedRows.has(user.id) ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                         </button>
-                        <button className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors">
+                        <button
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors"
+                        >
                           <MoreHorizontal className="w-5 h-5" />
                         </button>
                       </div>
@@ -407,15 +461,6 @@ const UserManagement = () => {
                     <tr className="bg-slate-50">
                       <td colSpan={activeTab === 'workers' ? "7" : "5"} className="px-6 py-4">
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                          {/* Qualifications */}
-                          <div className="bg-white p-3 rounded-lg border border-slate-200">
-                            <div className="flex items-center gap-2 mb-2">
-                              <Briefcase className="w-4 h-4 text-blue-600" />
-                              <h4 className="text-sm font-semibold text-slate-700">Qualifications</h4>
-                            </div>
-                            <p className="text-xs text-slate-600">{user.qualifications}</p>
-                          </div>
-                          
                           {/* Personal Details */}
                           <div className="bg-white p-3 rounded-lg border border-slate-200">
                             <div className="flex items-center gap-2 mb-2">
@@ -427,12 +472,63 @@ const UserManagement = () => {
                                 <span className="font-medium">Gender:</span> <span className="capitalize">{user.gender}</span>
                               </p>
                               <p className="text-xs text-slate-600">
-                                <span className="font-medium">DOB:</span> {user.date_of_birth ? new Date(user.date_of_birth).toLocaleDateString() : 'N/A'}
+                                <span className="font-medium">DOB:</span> {user.date_of_birth ? new Date(user.date_of_birth).toLocaleDateString('en-GB') : 'N/A'}
                               </p>
                               <p className="text-xs text-slate-600">
                                 <span className="font-medium">Willing to Live In:</span> {user.willing_to_live_in ? 'Yes' : 'No'}
                               </p>
                             </div>
+                          </div>
+
+                          {(user.nic_number || user.nic_front_url || user.nic_back_url) && (
+                            <div className="bg-white p-3 rounded-lg border border-slate-200 md:col-span-2 lg:col-span-1">
+                              <div className="flex items-center gap-2 mb-2">
+                                <Shield className="w-4 h-4 text-red-600" />
+                                <h4 className="text-sm font-semibold text-slate-700">NIC Details</h4>
+                              </div>
+                              {user.nic_number && (
+                                <p className="text-xs text-slate-600 mb-2 font-medium">
+                                  NIC: {user.nic_number}
+                                </p>
+                              )}
+                              {(user.nic_front_url || user.nic_back_url) && (
+                                <div className="space-y-1">
+                                  {user.nic_front_url && (
+                                    <button
+                                      onClick={() => window.open(user.nic_front_url, '_blank')}
+                                      className="w-full text-left p-2 bg-blue-50 rounded hover:bg-blue-100 transition-colors flex items-center justify-between group"
+                                    >
+                                      <span className="text-xs text-slate-600 group-hover:text-blue-700">
+                                        <FileText className="w-3 h-3 inline mr-1" />
+                                        NIC Front
+                                      </span>
+                                      <Eye className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600" />
+                                    </button>
+                                  )}
+                                  {user.nic_back_url && (
+                                    <button
+                                      onClick={() => window.open(user.nic_back_url, '_blank')}
+                                      className="w-full text-left p-2 bg-blue-50 rounded hover:bg-blue-100 transition-colors flex items-center justify-between group"
+                                    >
+                                      <span className="text-xs text-slate-600 group-hover:text-blue-700">
+                                        <FileText className="w-3 h-3 inline mr-1" />
+                                        NIC Back
+                                      </span>
+                                      <Eye className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600" />
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Qualifications */}
+                          <div className="bg-white p-3 rounded-lg border border-slate-200">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Briefcase className="w-4 h-4 text-blue-600" />
+                              <h4 className="text-sm font-semibold text-slate-700">Qualifications</h4>
+                            </div>
+                            <p className="text-xs text-slate-600">{user.qualifications}</p>
                           </div>
                           
                           {/* Location Details */}
@@ -518,7 +614,7 @@ const UserManagement = () => {
                   <div>
                     <h4 className="font-semibold text-blue-800">Worker Information</h4>
                     <p className="text-blue-700 text-sm mt-1">
-                      {selectedWorker.full_name || `Worker #${selectedWorker.staff_profile_id}`}
+                      {selectedWorker.full_name || `Worker #${selectedWorker.staff_code || selectedWorker.staff_profile_id}`}
                     </p>
                     <p className="text-blue-600 text-xs mt-1">
                       Current Threshold: Rs. {selectedWorker.advance_threshold_amount?.toLocaleString('en-IN') || '0'}

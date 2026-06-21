@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { User, Lock, Eye, EyeOff, Mail, Phone, CreditCard, MapPin } from 'lucide-react';
+import { User, Lock, Eye, EyeOff, Mail, Phone, MapPin } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import loginBg from '../../assets/images/Gemini_Generated_Image_5nmpua5nmpua5nmp.png';
 import apiClient from '../../api/api';
@@ -15,7 +15,6 @@ const RegisterPage = () => {
     fullName: '',
     email: '',
     phone: '',
-    nic: '',
     password: '',
     client_type: 'INDIVIDUAL',
     terms_accepted: false,
@@ -27,7 +26,6 @@ const RegisterPage = () => {
     fullName: '',
     email: '',
     phone: '',
-    nic: '',
     password: '',
     gender: '',
     primary_address: ''
@@ -41,7 +39,7 @@ const RegisterPage = () => {
 
   const validateField = (name, value) => {
     let error = '';
-    
+
     switch (name) {
       case 'fullName':
         if (!value.trim()) {
@@ -66,11 +64,6 @@ const RegisterPage = () => {
           error = 'Mobile number must be 10 digits starting with 07';
         }
         break;
-      case 'nic':
-        if (!value.trim()) {
-          error = 'NIC is required';
-        }
-        break;
       case 'password':
         if (!value.trim()) {
           error = 'Password is required';
@@ -81,7 +74,7 @@ const RegisterPage = () => {
           const hasSpecial = /[!@#$%^&*(),.?":{}|<>]/.test(value);
           const hasUpper = /[A-Z]/.test(value);
           const hasLower = /[a-z]/.test(value);
-          
+
           if (!((hasNumber && hasSpecial) || (hasUpper && hasLower))) {
             error = 'Password must include a number and special character OR uppercase and lowercase letters';
           }
@@ -100,7 +93,7 @@ const RegisterPage = () => {
         }
         break;
     }
-    
+
     return error;
   };
 
@@ -108,7 +101,7 @@ const RegisterPage = () => {
     if (!password) {
       return { score: 0, message: '', color: 'text-gray-500' };
     }
-    
+
     let score = 0;
     const checks = {
       length: password.length >= 6,
@@ -118,11 +111,11 @@ const RegisterPage = () => {
       hasLower: /[a-z]/.test(password),
       hasGoodLength: password.length >= 8
     };
-    
+
     Object.values(checks).forEach(passed => {
       if (passed) score++;
     });
-    
+
     if (score <= 2) {
       return { score, message: 'Weak', color: 'text-red-500' };
     } else if (score <= 4) {
@@ -134,11 +127,11 @@ const RegisterPage = () => {
 
   const handleInputChange = (name, value) => {
     setFormData({ ...formData, [name]: value });
-    
+
     // Real-time validation
     const error = validateField(name, value);
     setFieldErrors({ ...fieldErrors, [name]: error });
-    
+
     // Password strength indicator
     if (name === 'password') {
       setPasswordStrength(calculatePasswordStrength(value));
@@ -147,7 +140,7 @@ const RegisterPage = () => {
 
   const validateForm = () => {
     const errors = {};
-    
+
     // Validate all fields
     Object.keys(formData).forEach(key => {
       if (key !== 'client_type' && key !== 'terms_accepted') {
@@ -155,19 +148,19 @@ const RegisterPage = () => {
         if (error) errors[key] = error;
       }
     });
-    
+
     setFieldErrors(errors);
-    
+
     if (!formData.terms_accepted) {
       setError('You must accept the Terms & Conditions');
       return false;
     }
-    
+
     if (Object.keys(errors).length > 0) {
       setError('Please fix all validation errors');
       return false;
     }
-    
+
     return true;
   };
 
@@ -175,7 +168,7 @@ const RegisterPage = () => {
     e.preventDefault();
     setError('');
     setSuccess('');
-    
+
     if (!validateForm()) {
       return;
     }
@@ -192,16 +185,16 @@ const RegisterPage = () => {
         gender: formData.gender,
         primary_address: formData.primary_address
       });
-      
+
       // Registration successful
       console.log('Registration successful:', response);
-      setSuccess('Registration successful! Please check your email for OTP verification.');
-      
+      setSuccess('Registration successful! Please check your mobile for OTP verification.');
+
       // Redirect to OTP verification page after 2 seconds
       setTimeout(() => {
-        navigate('/verify-otp-reg', { state: { email: formData.email, userId: response.data?.userId } });
+        navigate('/verify-otp-reg', { state: { email: formData.email, mobileNumber: formData.phone, userId: response.data?.userId } });
       }, 2000);
-      
+
     } catch (err) {
       setError(err.message || 'Registration failed. Please try again.');
       console.error('Registration error:', err);
@@ -272,11 +265,10 @@ const RegisterPage = () => {
                 <div className="relative group">
                   <input
                     type="text"
-                    className={`w-full bg-slate-50 border rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none transition-all ${
-                      fieldErrors.fullName 
-                        ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500' 
+                    className={`w-full bg-slate-50 border rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none transition-all ${fieldErrors.fullName
+                        ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500'
                         : 'border-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500'
-                    }`}
+                      }`}
                     placeholder="Enter your full name"
                     value={formData.fullName}
                     onChange={(e) => handleInputChange('fullName', e.target.value)}
@@ -296,11 +288,10 @@ const RegisterPage = () => {
                 <div className="relative group">
                   <input
                     type="email"
-                    className={`w-full bg-slate-50 border rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none transition-all ${
-                      fieldErrors.email 
-                        ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500' 
+                    className={`w-full bg-slate-50 border rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none transition-all ${fieldErrors.email
+                        ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500'
                         : 'border-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500'
-                    }`}
+                      }`}
                     placeholder="name@example.com"
                     value={formData.email}
                     onChange={(e) => handleInputChange('email', e.target.value)}
@@ -320,11 +311,10 @@ const RegisterPage = () => {
                 <div className="relative group">
                   <input
                     type="tel"
-                    className={`w-full bg-slate-50 border rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none transition-all ${
-                      fieldErrors.phone 
-                        ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500' 
+                    className={`w-full bg-slate-50 border rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none transition-all ${fieldErrors.phone
+                        ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500'
                         : 'border-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500'
-                    }`}
+                      }`}
                     placeholder="07XXXXXXXX"
                     value={formData.phone}
                     onChange={(e) => handleInputChange('phone', e.target.value)}
@@ -338,30 +328,6 @@ const RegisterPage = () => {
                 )}
               </div>
 
-              {/* NIC Input */}
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-slate-700 block">NIC Number</label>
-                <div className="relative group">
-                  <input
-                    type="text"
-                    className={`w-full bg-slate-50 border rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none transition-all ${
-                      fieldErrors.nic 
-                        ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500' 
-                        : 'border-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500'
-                    }`}
-                    placeholder="Enter your NIC number"
-                    value={formData.nic}
-                    onChange={(e) => handleInputChange('nic', e.target.value)}
-                  />
-                  <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500">
-                    <CreditCard className="w-5 h-5" />
-                  </div>
-                </div>
-                {fieldErrors.nic && (
-                  <p className="text-xs text-red-500 mt-1">{fieldErrors.nic}</p>
-                )}
-              </div>
-
               {/* Gender Selection */}
               <div className="space-y-1">
                 <label className="text-sm font-medium text-slate-700 block">Gender</label>
@@ -369,22 +335,20 @@ const RegisterPage = () => {
                   <button
                     type="button"
                     onClick={() => handleInputChange('gender', 'MALE')}
-                    className={`px-4 py-3 rounded-lg border-2 transition-all font-medium ${
-                      formData.gender === 'MALE'
+                    className={`px-4 py-3 rounded-lg border-2 transition-all font-medium ${formData.gender === 'MALE'
                         ? 'border-blue-500 bg-blue-50 text-blue-700'
                         : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
-                    }`}
+                      }`}
                   >
                     Male
                   </button>
                   <button
                     type="button"
                     onClick={() => handleInputChange('gender', 'FEMALE')}
-                    className={`px-4 py-3 rounded-lg border-2 transition-all font-medium ${
-                      formData.gender === 'FEMALE'
+                    className={`px-4 py-3 rounded-lg border-2 transition-all font-medium ${formData.gender === 'FEMALE'
                         ? 'border-blue-500 bg-blue-50 text-blue-700'
                         : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
-                    }`}
+                      }`}
                   >
                     Female
                   </button>
@@ -400,11 +364,10 @@ const RegisterPage = () => {
                 <div className="relative group">
                   <input
                     type="text"
-                    className={`w-full bg-slate-50 border rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none transition-all ${
-                      fieldErrors.primary_address 
-                        ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500' 
+                    className={`w-full bg-slate-50 border rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none transition-all ${fieldErrors.primary_address
+                        ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500'
                         : 'border-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500'
-                    }`}
+                      }`}
                     placeholder="Enter your primary address"
                     value={formData.primary_address}
                     onChange={(e) => handleInputChange('primary_address', e.target.value)}
@@ -424,11 +387,10 @@ const RegisterPage = () => {
                 <div className="relative group">
                   <input
                     type={showPassword ? 'text' : 'password'}
-                    className={`w-full bg-slate-50 border rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none transition-all ${
-                      fieldErrors.password 
-                        ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500' 
+                    className={`w-full bg-slate-50 border rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none transition-all ${fieldErrors.password
+                        ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500'
                         : 'border-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500'
-                    }`}
+                      }`}
                     placeholder="Create a strong password"
                     value={formData.password}
                     onChange={(e) => handleInputChange('password', e.target.value)}
@@ -454,11 +416,10 @@ const RegisterPage = () => {
                       </span>
                     </div>
                     <div className="w-full bg-slate-200 rounded-full h-2">
-                      <div 
-                        className={`h-2 rounded-full transition-all duration-300 ${
-                          passwordStrength.score <= 2 ? 'bg-red-500' :
-                          passwordStrength.score <= 4 ? 'bg-yellow-500' : 'bg-green-500'
-                        }`}
+                      <div
+                        className={`h-2 rounded-full transition-all duration-300 ${passwordStrength.score <= 2 ? 'bg-red-500' :
+                            passwordStrength.score <= 4 ? 'bg-yellow-500' : 'bg-green-500'
+                          }`}
                         style={{ width: `${(passwordStrength.score / 6) * 100}%` }}
                       />
                     </div>
@@ -477,13 +438,15 @@ const RegisterPage = () => {
                 />
                 <label htmlFor="terms" className="text-sm text-slate-600 leading-relaxed">
                   I agree to the{' '}
-                  <Link to="/terms" className="text-blue-600 hover:text-blue-500 font-medium underline">
-                    Terms & Conditions
-                  </Link>
-                  {' '}and{' '}
-                  <Link to="/privacy" className="text-blue-600 hover:text-blue-500 font-medium underline">
-                    Privacy Policy
-                  </Link>
+                  <a
+                    href="https://res.cloudinary.com/dohaktkth/image/upload/v1780652854/VCare_Client_Service_Agreement_znjsim.pdf"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-indigo-600 hover:underline"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    Terms &amp; Conditions
+                  </a>
                 </label>
               </div>
             </motion.div>

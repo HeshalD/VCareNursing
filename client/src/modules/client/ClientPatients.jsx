@@ -35,18 +35,18 @@ const RegBadge = ({ paid }) => (
   <span style={{
     display: 'inline-block',
     background: paid ? '#f0fdf4' : '#fffbeb',
-    color: paid ? '#166534' : '#92400e',
-    border: `1px solid ${paid ? '#bbf7d0' : '#fde68a'}`,
+    color: paid ? '#166534' : '#166534',
+    border: `1px solid ${paid ? '#bbf7d0' : '#bbf7d0'}`,
     borderRadius: 4, padding: '1px 8px',
     fontSize: 10, fontWeight: 700,
     letterSpacing: '0.06em', textTransform: 'uppercase',
   }}>
-    {paid ? 'Registered' : 'Fee Pending'}
+    {paid ? 'Registered' : 'Registered'}
   </span>
 );
 
 const FORM_EMPTY = {
-  full_name: '', age: '', relationship_to_client: '',
+  full_name: '', age: '', gender: '', relationship_to_client: '',
   medical_condition: '', residential_address: '',
   emergency_contact_name: '', emergency_contact_number: '',
 };
@@ -107,6 +107,7 @@ const PatientCard = ({ patient, onEdit, onDelete, expanded, onToggle }) => {
         <div style={s.cardFooter}>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <RegBadge paid={patient.is_registration_fee_paid} />
+            {patient.gender && <GenderBadge gender={patient.gender} />}
           </div>
           <button onClick={onToggle} style={s.detailToggle}>
             {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
@@ -119,10 +120,11 @@ const PatientCard = ({ patient, onEdit, onDelete, expanded, onToggle }) => {
       {expanded && (
         <div style={s.expandedCard}>
           <div style={s.expandedBody}>
-            <DetailSection title="Patient Details" icon={<User size={11} />}>
-              <MetaPair label="Patient ID" value={`#${patient.patient_id}`} mono />
+            <DetailSection title="Care Profile Details" icon={<User size={11} />}>
+              <MetaPair label="Profile ID" value={`#${patient.patient_id}`} mono />
               <MetaPair label="Full Name"  value={patient.full_name} />
               <MetaPair label="Age"        value={`${patient.age} years`} />
+              <MetaPair label="Gender"     value={GENDER_BADGE[patient.gender]?.label} />
               <MetaPair label="Relationship" value={patient.relationship_to_client} />
             </DetailSection>
 
@@ -210,6 +212,7 @@ const PatientFormModal = ({ mode, formData, onChange, onSubmit, onClose, saving 
           onChange={e => onChange(key, e.target.value)}
           style={s.input}
         >
+          <option value="">— Select —</option>
           <option value="MALE">Male</option>
           <option value="FEMALE">Female</option>
           <option value="OTHER">Other</option>
@@ -233,7 +236,7 @@ const PatientFormModal = ({ mode, formData, onChange, onSubmit, onClose, saving 
       <div style={s.modal}>
         {/* Modal header */}
         <div style={s.modalHeader}>
-          <h2 style={s.modalTitle}>{isEdit ? 'Edit Patient' : 'Add New Patient'}</h2>
+          <h2 style={s.modalTitle}>{isEdit ? 'Edit Care Profile' : 'Add New Care Profile'}</h2>
           <button onClick={onClose} style={s.modalClose}>
             <X size={16} />
           </button>
@@ -242,7 +245,10 @@ const PatientFormModal = ({ mode, formData, onChange, onSubmit, onClose, saving 
         {/* Modal body */}
         <div style={s.modalBody}>
           {field('Full Name', 'full_name', { required: true })}
-          {field('Age', 'age', { type: 'number', required: true })}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px 20px' }}>
+            {field('Age', 'age', { type: 'number', required: true })}
+            {field('Gender', 'gender', { select: true })}
+          </div>
           {field('Relationship to Client', 'relationship_to_client', { required: true })}
           {field('Medical Condition', 'medical_condition', { textarea: true, required: true })}
           {field('Residential Address', 'residential_address', { required: true })}
@@ -262,7 +268,7 @@ const PatientFormModal = ({ mode, formData, onChange, onSubmit, onClose, saving 
             {saving
               ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
               : <Save size={13} />}
-            {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Patient'}
+            {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Care Profile'}
           </button>
         </div>
       </div>
@@ -276,7 +282,7 @@ const DeleteModal = ({ patient, onConfirm, onClose }) => (
   <div style={s.overlay}>
     <div style={{ ...s.modal, maxWidth: 400 }}>
       <div style={s.modalHeader}>
-        <h2 style={s.modalTitle}>Delete Patient</h2>
+        <h2 style={s.modalTitle}>Delete Care Profile</h2>
         <button onClick={onClose} style={s.modalClose}><X size={16} /></button>
       </div>
       <div style={{ padding: '24px 28px' }}>
@@ -297,7 +303,7 @@ const DeleteModal = ({ patient, onConfirm, onClose }) => (
         {patient?.has_active_bookings && (
           <div style={{ ...s.alertError, marginTop: 12 }}>
             <AlertCircle size={13} style={{ color: '#dc2626', flexShrink: 0 }} />
-            <span>This patient has active bookings and cannot be deleted.</span>
+            <span>This care profile has active bookings and cannot be deleted.</span>
           </div>
         )}
       </div>
@@ -362,7 +368,7 @@ const ClientPatients = () => {
       const res = await fetch(`/api/patients/client/${clientId}`, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
       });
-      if (!res.ok) throw new Error('Failed to fetch patients');
+      if (!res.ok) throw new Error('Failed to fetch care profiles');
       const data = await res.json();
       setPatients(data.data || []);
     } catch (err) {
@@ -383,11 +389,11 @@ const ClientPatients = () => {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
         body: JSON.stringify({ client_id: clientProfile.client_profile_id, ...formData, age: parseInt(formData.age) }),
       });
-      if (!res.ok) throw new Error('Failed to add patient');
+      if (!res.ok) throw new Error('Failed to add care profile');
       setShowAddModal(false);
       setFormData(FORM_EMPTY);
       await fetchPatients(clientProfile.client_profile_id);
-      flash('Patient added successfully.');
+      flash('Care Profile added successfully.');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -403,11 +409,11 @@ const ClientPatients = () => {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
         body: JSON.stringify({ ...formData, age: parseInt(formData.age) }),
       });
-      if (!res.ok) throw new Error('Failed to update patient');
+      if (!res.ok) throw new Error('Failed to update care profile');
       setShowEditModal(false);
       setFormData(FORM_EMPTY);
       await fetchPatients(clientProfile.client_profile_id);
-      flash('Patient updated successfully.');
+      flash('Care Profile updated successfully.');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -421,10 +427,10 @@ const ClientPatients = () => {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
       });
-      if (!res.ok) { const d = await res.json(); throw new Error(d.message || 'Failed to delete patient'); }
+      if (!res.ok) { const d = await res.json(); throw new Error(d.message || 'Failed to delete care profile'); }
       setShowDeleteModal(false);
       await fetchPatients(clientProfile.client_profile_id);
-      flash('Patient removed.');
+      flash('Care Profile removed.');
     } catch (err) {
       setError(err.message);
     }
@@ -434,6 +440,7 @@ const ClientPatients = () => {
     setSelectedPatient(patient);
     setFormData({
       full_name: patient.full_name, age: String(patient.age),
+      gender: patient.gender || '',
       relationship_to_client: patient.relationship_to_client,
       medical_condition: patient.medical_condition,
       residential_address: patient.residential_address,
@@ -472,7 +479,7 @@ const ClientPatients = () => {
         <style>{kf}</style>
         <div style={s.centerState}>
           <Loader2 size={28} style={{ color: '#64748b', animation: 'spin 1s linear infinite' }} />
-          <p style={s.loadingText}>Loading patients</p>
+          <p style={s.loadingText}>Loading care profiles</p>
         </div>
       </div>
     );
@@ -487,11 +494,11 @@ const ClientPatients = () => {
         <header style={s.pageHeader}>
           <div>
             <p style={s.breadcrumb}>Account</p>
-            <h1 style={s.pageTitle}>Patients</h1>
+            <h1 style={s.pageTitle}>Care Profiles</h1>
           </div>
           <button onClick={() => { setFormData(FORM_EMPTY); setShowAddModal(true); }} style={s.addBtn}>
             <Plus size={14} />
-            Add Patient
+            Add Care Profile
           </button>
         </header>
 
@@ -514,7 +521,7 @@ const ClientPatients = () => {
           <div style={s.statPill}>
             <User size={14} style={{ color: '#64748b' }} />
             <span style={s.statPillValue}>{patients.length}</span>
-            <span style={s.statPillLabel}>Total Patients</span>
+            <span style={s.statPillLabel}>Total Profiles</span>
           </div>
           <div style={s.statPill}>
             <CheckCircle size={14} style={{ color: '#16a34a' }} />
@@ -545,17 +552,17 @@ const ClientPatients = () => {
           <div style={s.emptyState}>
             <User size={36} style={{ color: '#cbd5e1', marginBottom: 12 }} />
             <p style={s.emptyTitle}>
-              {searchTerm ? 'No matching patients' : 'No patients yet'}
+              {searchTerm ? 'No matching care profiles' : 'No care profiles yet'}
             </p>
             <p style={s.emptyBody}>
               {searchTerm
                 ? 'Try a different name or condition.'
-                : 'Add your first patient to get started.'}
+                : 'Add your first care profile to get started.'}
             </p>
             {!searchTerm && (
               <button onClick={() => { setFormData(FORM_EMPTY); setShowAddModal(true); }} style={{ ...s.addBtn, marginTop: 16 }}>
                 <Plus size={14} />
-                Add Patient
+                Add Care Profile
               </button>
             )}
           </div>

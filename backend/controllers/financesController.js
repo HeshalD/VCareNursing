@@ -13,7 +13,7 @@ const getOverview = async (req, res) => {
     const totalInvoicedQuery = `
       SELECT COALESCE(SUM(amount), 0) as total_invoiced 
       FROM transactions 
-      WHERE category = 'SERVICE_INVOICE'
+      WHERE category IN ('SERVICE_INVOICE', 'REGISTRATION_FEE')
     `;
     
     // Get total refunds issued
@@ -409,9 +409,9 @@ const getRevenueChart = async (req, res) => {
       SELECT 
         DATE_TRUNC('${dateTruncFormat}', created_at) as period,
         COALESCE(SUM(CASE WHEN category = 'CLIENT_PAYMENT' THEN amount ELSE 0 END), 0) as revenue,
-        COALESCE(SUM(CASE WHEN category = 'SERVICE_INVOICE' THEN amount ELSE 0 END), 0) as invoiced
+        COALESCE(SUM(CASE WHEN category IN ('SERVICE_INVOICE', 'REGISTRATION_FEE') THEN amount ELSE 0 END), 0) as invoiced
       FROM transactions
-      WHERE category IN ('CLIENT_PAYMENT', 'SERVICE_INVOICE')
+      WHERE category IN ('CLIENT_PAYMENT', 'SERVICE_INVOICE', 'REGISTRATION_FEE')
         AND created_at >= DATE_TRUNC('${dateTruncFormat}', CURRENT_DATE - INTERVAL '${limit} ${dateTruncFormat}s')
       GROUP BY DATE_TRUNC('${dateTruncFormat}', created_at)
       ORDER BY period ASC
