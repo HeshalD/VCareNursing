@@ -27,6 +27,7 @@ const permissionsRoutes = require('./routes/permissionsRoutes');
 const internalStaffRoutes = require('./routes/internalStaffRoutes');
 const scheduledActionsRoutes = require('./routes/scheduledActionsRoutes');
 const salespersonRoutes = require('./routes/salespersonRoutes');
+const dashboardRoutes = require('./routes/dashboardRoutes');
 
 const startDailyInvoicing = require('./cron/dailyInvoicing');
 
@@ -122,6 +123,7 @@ app.use('/api/permissions', permissionsRoutes);
 app.use('/api/internal-staff', internalStaffRoutes);
 app.use('/api/scheduled-actions', scheduledActionsRoutes);
 app.use('/api/salespersons', salespersonRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 
 // Health check endpoint for Render
 app.get('/health', (req, res) => {

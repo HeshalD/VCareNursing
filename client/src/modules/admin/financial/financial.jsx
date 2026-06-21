@@ -18,18 +18,38 @@ const fmt = (val) =>
 
 const CATEGORY_COLORS = {
   CLIENT_PAYMENT: '#6366f1',
+  BOOKING_PAYMENT: '#6366f1',
+  WALLET_TOPUP: '#0ea5e9',
   SERVICE_INVOICE: '#f59e0b',
+  REGISTRATION_FEE: '#fb923c',
   WALLET_REFUND: '#10b981',
+  WALLET_DEBIT: '#14b8a6',
   STAFF_SALARY: '#3b82f6',
+  STAFF_SALARY_PAID: '#2563eb',
+  STAFF_ADVANCE: '#a855f7',
+  STAFF_DEDUCTION: '#ef4444',
   AGENCY_FEE: '#8b5cf6',
+  BOOKING_SETTLEMENT: '#64748b',
+  OTHER_INCOME: '#22c55e',
+  OTHER_EXPENSE: '#dc2626',
 };
 
 const CATEGORY_LABELS = {
   CLIENT_PAYMENT: 'Client Payment',
+  BOOKING_PAYMENT: 'Booking Payment',
+  WALLET_TOPUP: 'Wallet Top-up',
   SERVICE_INVOICE: 'Service Invoice',
+  REGISTRATION_FEE: 'Registration Fee',
   WALLET_REFUND: 'Wallet Refund',
+  WALLET_DEBIT: 'Wallet Debit',
   STAFF_SALARY: 'Staff Salary',
+  STAFF_SALARY_PAID: 'Staff Salary Paid',
+  STAFF_ADVANCE: 'Staff Advance',
+  STAFF_DEDUCTION: 'Staff Deduction',
   AGENCY_FEE: 'Agency Fee',
+  BOOKING_SETTLEMENT: 'Booking Settlement',
+  OTHER_INCOME: 'Other Income',
+  OTHER_EXPENSE: 'Other Expense',
 };
 
 const STATUS_STYLES = {
@@ -401,11 +421,17 @@ const Financials = () => {
               className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-200"
             >
               <option value="">All Categories</option>
-              <option value="CLIENT_PAYMENT">Client Payment</option>
+              <option value="BOOKING_PAYMENT">Booking Payment</option>
+              <option value="WALLET_TOPUP">Wallet Top-up</option>
               <option value="SERVICE_INVOICE">Service Invoice</option>
+              <option value="REGISTRATION_FEE">Registration Fee</option>
               <option value="WALLET_REFUND">Wallet Refund</option>
               <option value="STAFF_SALARY">Staff Salary</option>
+              <option value="STAFF_SALARY_PAID">Staff Salary Paid</option>
+              <option value="STAFF_ADVANCE">Staff Advance</option>
               <option value="AGENCY_FEE">Agency Fee</option>
+              <option value="OTHER_INCOME">Other Income</option>
+              <option value="OTHER_EXPENSE">Other Expense</option>
             </select>
 
             {/* Status Filter */}

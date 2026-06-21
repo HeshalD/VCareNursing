@@ -3,38 +3,39 @@ const db = require('../config/db');
 const getOverview = async (req, res) => {
   try {
     // Get total revenue collected from client payments
+    // (CLIENT_PAYMENT is the legacy category; current flows write BOOKING_PAYMENT / WALLET_TOPUP)
     const totalRevenueQuery = `
-      SELECT COALESCE(SUM(amount), 0) as total_revenue_collected 
-      FROM transactions 
-      WHERE category = 'CLIENT_PAYMENT'
+      SELECT COALESCE(SUM(amount), 0) as total_revenue_collected
+      FROM transactions
+      WHERE category IN ('CLIENT_PAYMENT', 'BOOKING_PAYMENT', 'WALLET_TOPUP')
     `;
-    
+
     // Get total invoiced amount
     const totalInvoicedQuery = `
-      SELECT COALESCE(SUM(amount), 0) as total_invoiced 
-      FROM transactions 
+      SELECT COALESCE(SUM(amount), 0) as total_invoiced
+      FROM transactions
       WHERE category IN ('SERVICE_INVOICE', 'REGISTRATION_FEE')
     `;
-    
+
     // Get total refunds issued
     const totalRefundsQuery = `
-      SELECT COALESCE(SUM(amount), 0) as total_refunds_issued 
-      FROM transactions 
+      SELECT COALESCE(SUM(amount), 0) as total_refunds_issued
+      FROM transactions
       WHERE category = 'WALLET_REFUND'
     `;
-    
-    // Get active bookings count
+
+    // Get active bookings count (OVERDUE bookings are still running, just behind on payment)
     const activeBookingsCountQuery = `
-      SELECT COUNT(*) as active_bookings_count 
-      FROM bookings 
-      WHERE status = 'ACTIVE'
+      SELECT COUNT(*) as active_bookings_count
+      FROM bookings
+      WHERE status IN ('ACTIVE', 'OVERDUE')
     `;
-    
+
     // Get total daily burn rate
     const dailyBurnRateQuery = `
-      SELECT COALESCE(SUM(daily_rate), 0) as total_daily_burn_rate 
-      FROM bookings 
-      WHERE status = 'ACTIVE'
+      SELECT COALESCE(SUM(daily_rate), 0) as total_daily_burn_rate
+      FROM bookings
+      WHERE status IN ('ACTIVE', 'OVERDUE')
     `;
 
     // Execute all queries in parallel
@@ -140,9 +141,9 @@ const getTransactions = async (req, res) => {
 
     // Main query with joins
     const query = `
-      SELECT 
+      SELECT
         t.transaction_id,
-        COALESCE(cp.full_name, 'Unknown Client') as client_name,
+        COALESCE(cp.full_name, sp.full_name, t.external_party, 'Unknown') as client_name,
         COALESCE(b.service_type, 'Unknown Service') as service_type,
         t.category,
         t.amount,
@@ -152,6 +153,7 @@ const getTransactions = async (req, res) => {
         t.created_at
       FROM transactions t
       LEFT JOIN client_profiles cp ON t.client_id = cp.client_profile_id
+      LEFT JOIN staff_profiles sp ON t.staff_profile_id = sp.staff_profile_id
       LEFT JOIN bookings b ON t.booking_id = b.booking_id
       ${whereClause}
       ORDER BY t.created_at DESC
@@ -406,12 +408,12 @@ const getRevenueChart = async (req, res) => {
 
     // Query revenue data grouped by period
     const query = `
-      SELECT 
+      SELECT
         DATE_TRUNC('${dateTruncFormat}', created_at) as period,
-        COALESCE(SUM(CASE WHEN category = 'CLIENT_PAYMENT' THEN amount ELSE 0 END), 0) as revenue,
+        COALESCE(SUM(CASE WHEN category IN ('CLIENT_PAYMENT', 'BOOKING_PAYMENT', 'WALLET_TOPUP') THEN amount ELSE 0 END), 0) as revenue,
         COALESCE(SUM(CASE WHEN category IN ('SERVICE_INVOICE', 'REGISTRATION_FEE') THEN amount ELSE 0 END), 0) as invoiced
       FROM transactions
-      WHERE category IN ('CLIENT_PAYMENT', 'SERVICE_INVOICE', 'REGISTRATION_FEE')
+      WHERE category IN ('CLIENT_PAYMENT', 'BOOKING_PAYMENT', 'WALLET_TOPUP', 'SERVICE_INVOICE', 'REGISTRATION_FEE')
         AND created_at >= DATE_TRUNC('${dateTruncFormat}', CURRENT_DATE - INTERVAL '${limit} ${dateTruncFormat}s')
       GROUP BY DATE_TRUNC('${dateTruncFormat}', created_at)
       ORDER BY period ASC
@@ -455,7 +457,7 @@ const getPaymentMethodsChart = async (req, res) => {
         COALESCE(SUM(amount), 0) as total,
         COUNT(*) as count
       FROM transactions
-      WHERE category = 'CLIENT_PAYMENT'
+      WHERE category IN ('CLIENT_PAYMENT', 'BOOKING_PAYMENT', 'WALLET_TOPUP')
         AND payment_method IS NOT NULL
       GROUP BY payment_method
       ORDER BY total DESC

@@ -1447,6 +1447,12 @@ class ApiClient {
     });
   }
 
+  // Dashboard endpoints
+  async getDashboardOverview(tab) {
+    const queryParams = tab ? `?tab=${encodeURIComponent(tab)}` : '';
+    return this.request(`/dashboard/overview${queryParams}`);
+  }
+
   // Finances endpoints
   async getFinancesOverview() {
     return this.request('/finances/overview');
