@@ -35,6 +35,7 @@ import Reports from './modules/admin/reports/reports';
 import SalesByCustomer from './modules/admin/reports/sales_by_customer';
 import Settings from './modules/admin/settings/settings';
 import AdminLoginPage from './modules/admin/AdminLoginPage';
+import DeviceActivationPage from './modules/admin/DeviceActivationPage';
 import { AdminAuthProvider } from './context/AdminAuthContext';
 import ScrollToTop from './components/common/ScrollToTop';
 import './App.css';
@@ -63,7 +64,6 @@ import ClientReviews from './modules/client/ClientReviews';
 import ClientLayout from './modules/client/components/ClientLayout';
 import WorkerBookings from './modules/public/service_team/WorkerBookings';
 import StaffMyProfile from './modules/public/service_team/StaffMyProfile';
-import StaffSettings from './modules/public/service_team/StaffSettings';
 import StaffChangeRequestPage from './modules/public/service_team/StaffChangeRequestPage';
 import StaffLeaveRequestPage from './modules/public/service_team/StaffLeaveRequestPage';
 import ChangeRequestsPage from './modules/admin/change_requests/ChangeRequestsPage';
@@ -88,6 +88,7 @@ import StaffSalariesPage from './modules/admin/salaries/StaffSalariesPage';
 import SalarySheetLedgerPage from './modules/admin/salaries/SalarySheetLedgerPage';
 import StaffPermissionsPage from './modules/admin/permissions/StaffPermissionsPage';
 import InternalStaffPage from './modules/admin/internal_staff/InternalStaffPage';
+import ActiveSessionsPage from './modules/admin/active_sessions/ActiveSessionsPage';
 import SalespersonsPage from './modules/admin/salespersons/SalespersonsPage';
 import SalespersonDetailPage from './modules/admin/salespersons/SalespersonDetailPage';
 
@@ -111,6 +112,7 @@ function App() {
                 <AdminLoginPage />
               </AdminAuthProvider>
             } />
+            <Route path="/admin/activate-device" element={<DeviceActivationPage />} />
             <Route path="/verify-otp-reg" element={<VerifyOTPReg />} />
             <Route path="/services/home-nursing" element={<HomeNursingPage />} />
             <Route path="/services/home-nursing/book" element={<HomeNursingBookingPage />} />
@@ -130,7 +132,6 @@ function App() {
             <Route path="/services/earnings" element={<Earnings />} />
             <Route path="/services/bookings" element={<WorkerBookings />} />
             <Route path="/services/my-profile" element={<StaffMyProfile />} />
-            <Route path="/services/settings" element={<StaffSettings />} />
             <Route path="/services/change-request" element={<StaffChangeRequestPage />} />
             <Route path="/services/leave-request" element={<StaffLeaveRequestPage />} />
             <Route element={<ClientLayout />}>
@@ -357,6 +358,11 @@ function App() {
             <Route path="/admin/internal-staff" element={
               <AdminAuthProvider>
                 <InternalStaffPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/active-sessions" element={
+              <AdminAuthProvider>
+                <ActiveSessionsPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/salespersons" element={

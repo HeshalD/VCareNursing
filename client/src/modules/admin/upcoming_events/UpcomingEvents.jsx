@@ -174,7 +174,7 @@ const UpcomingEvents = () => {
       subtitle={`${filteredEvents.length} item${filteredEvents.length !== 1 ? 's' : ''} — scheduled actions, pending approvals, and balance forecasts`}
     >
       {/* Summary Cards */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
         {([
           ['NEEDS_ACTION', 'Needs Action'],
           ['TODAY', 'Today'],

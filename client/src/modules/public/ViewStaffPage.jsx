@@ -307,7 +307,7 @@ export default function StaffDirectory() {
       <div style={{
         background: "#fff",
         borderBottom: "1px solid #e9ecef",
-        padding: "0 2rem",
+        padding: "0 clamp(1rem, 4vw, 2rem)",
         position: "sticky",
         top: 0,
         zIndex: 50,
@@ -334,7 +334,7 @@ export default function StaffDirectory() {
         </div>
       </div>
 
-      <div style={{ maxWidth: 1280, margin: "0 auto", padding: "2.5rem 2rem" }}>
+      <div style={{ maxWidth: 1280, margin: "0 auto", padding: "2.5rem clamp(1rem, 4vw, 2rem)" }}>
 
         {/* Page Title */}
         <div style={{ marginBottom: "2rem" }}>
@@ -533,9 +533,9 @@ export default function StaffDirectory() {
         {loading ? (
           <div style={{ textAlign: "center", padding: "3rem 0" }}>
             <div style={{ fontSize: 16, color: "#64748b", marginBottom: "1rem" }}>Loading staff profiles...</div>
-            <div style={{ 
+            <div style={{
               display: "grid",
-              gridTemplateColumns: "repeat(4, 1fr)",
+              gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
               gap: 20,
             }}>
               {[...Array(8)].map((_, i) => (
@@ -572,7 +572,7 @@ export default function StaffDirectory() {
             {filtered.length > 0 ? (
               <div style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(4, 1fr)",
+                gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
                 gap: 20,
               }}>
                 {filtered.slice(0, 12).map((member, i) => (

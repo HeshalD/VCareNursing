@@ -210,7 +210,7 @@ const TerminationRequests = () => {
       subtitle={`${filteredRequests.length} pending request${filteredRequests.length !== 1 ? 's' : ''}`}
     >
       {/* Urgency Summary Cards */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         {(['IMMEDIATE', 'TODAY', 'FUTURE']).map((key) => {
           const cfg = URGENCY_CONFIG[key];
           const isActive = urgencyFilter === key;

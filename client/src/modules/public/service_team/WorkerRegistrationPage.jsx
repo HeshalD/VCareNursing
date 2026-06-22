@@ -503,11 +503,11 @@ const WorkerRegistrationPage = () => {
           </div>
 
           {/* Right Content - Multi-step Form */}
-          <div className="w-full md:w-2/3 bg-white p-8 md:p-12 relative flex flex-col">
+          <div className="w-full md:w-2/3 bg-white p-6 sm:p-8 md:p-12 relative flex flex-col">
             {/* Mobile Header (Visible only on mobile) */}
             <div className="md:hidden mb-6 pb-6 border-b border-slate-100">
               <h1 className="text-2xl font-bold text-slate-900">Step {currentStep} of {totalSteps}</h1>
-              <div className="w-full bg-slate-100 h-2rounded-full mt-2">
+              <div className="w-full bg-slate-100 h-2 rounded-full mt-2">
                 <div
                   className="h-2 bg-indigo-600 rounded-full transition-all duration-300"
                   style={{ width: `${(currentStep / totalSteps) * 100}%` }}

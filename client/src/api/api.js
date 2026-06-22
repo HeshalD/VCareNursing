@@ -72,7 +72,13 @@ class ApiClient {
 
       if (!response.ok) {
 
-        throw new Error(data.message || 'API request failed');
+        const error = new Error(data.message || 'API request failed');
+
+        error.code = data.code;
+
+        error.status = response.status;
+
+        throw error;
 
       }
 
@@ -118,7 +124,9 @@ class ApiClient {
 
         mobile_number: credentials.identifier,
 
-        password: credentials.password
+        password: credentials.password,
+
+        ...(credentials.device_id && { device_id: credentials.device_id })
 
       }),
 
@@ -1847,6 +1855,47 @@ class ApiClient {
   async deleteInternalStaff(id) {
     return this.request(`/internal-staff/${id}`, {
       method: 'DELETE',
+    });
+  }
+
+  // Device binding endpoints
+  async assignDevice(userId, label) {
+    return this.request('/devices/assign', {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId, label }),
+    });
+  }
+
+  async activateDevice({ activation_code, device_id, password }) {
+    return this.request('/devices/activate', {
+      method: 'POST',
+      body: JSON.stringify({ activation_code, device_id, password }),
+    });
+  }
+
+  async revokeDevice(deviceRowId) {
+    return this.request(`/devices/${deviceRowId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async listDevicesForUser(userId) {
+    return this.request(`/devices/user/${userId}`);
+  }
+
+  async listAllSessions() {
+    return this.request('/devices/sessions');
+  }
+
+  async forceLogoutSession(sessionId) {
+    return this.request(`/devices/sessions/${sessionId}/force-logout`, {
+      method: 'POST',
+    });
+  }
+
+  async deviceLogout() {
+    return this.request('/devices/logout', {
+      method: 'POST',
     });
   }
 }

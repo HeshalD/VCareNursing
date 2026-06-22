@@ -413,7 +413,7 @@ const ElderlyCareBookingPage = () => {
       <div className="relative z-10 max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 pt-32 pb-12">
         {/* Header */}
         <div className="text-center mb-12">
-          <h1 className="text-4xl md:text-5xl font-bold text-white mb-4">
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-white mb-4">
             Book Elderly Care Service
           </h1>
           <p className="text-lg text-slate-100 max-w-3xl mx-auto">
@@ -422,8 +422,8 @@ const ElderlyCareBookingPage = () => {
         </div>
 
         {/* Progress Steps */}
-        <div className="flex justify-center mb-12">
-          <div className="flex items-center gap-4">
+        <div className="flex justify-start sm:justify-center mb-8 sm:mb-12 overflow-x-auto -mx-4 px-4">
+          <div className="flex items-center gap-2 sm:gap-4">
             {[
               { id: 1, title: "Payer Details", icon: User },
               { id: 2, title: "Care Profile Info", icon: UserCheck },
@@ -431,16 +431,16 @@ const ElderlyCareBookingPage = () => {
               { id: 4, title: "Choose Caregiver", icon: CheckCircle }
             ].map((step, index) => (
               <React.Fragment key={step.id}>
-                <div className="flex flex-col items-center">
-                  <div className={`p-3 rounded-full ${currentStep >= step.id ? 'bg-amber-600 text-white border-amber-600' : 'bg-white text-slate-400 border-slate-300'}`}>
-                    <step.icon className="w-6 h-6" />
+                <div className="flex flex-col items-center flex-shrink-0">
+                  <div className={`p-2.5 sm:p-3 rounded-full ${currentStep >= step.id ? 'bg-amber-600 text-white border-amber-600' : 'bg-white text-slate-400 border-slate-300'}`}>
+                    <step.icon className="w-5 h-5 sm:w-6 sm:h-6" />
                   </div>
-                  <span className={`text-sm font-medium mt-2 ${currentStep >= step.id ? 'text-white' : 'text-slate-300'}`}>
+                  <span className={`text-[11px] sm:text-sm font-medium mt-2 whitespace-nowrap ${currentStep >= step.id ? 'text-white' : 'text-slate-300'}`}>
                     {step.title}
                   </span>
                 </div>
                 {index < 3 && (
-                  <div className={`h-0.5 w-16 transition-all ${currentStep > step.id ? 'bg-amber-600' : 'bg-white/30'}`} />
+                  <div className={`h-0.5 w-8 sm:w-16 flex-shrink-0 transition-all ${currentStep > step.id ? 'bg-amber-600' : 'bg-white/30'}`} />
                 )}
               </React.Fragment>
             ))}
@@ -448,8 +448,8 @@ const ElderlyCareBookingPage = () => {
         </div>
 
         {/* Form Content */}
-        <div className="bg-white/90 backdrop-blur-md rounded-[32px] shadow-xl border border-white/40 overflow-hidden">
-          <div className="p-8 md:p-12">
+        <div className="bg-white/90 backdrop-blur-md rounded-3xl sm:rounded-[32px] shadow-xl border border-white/40 overflow-hidden">
+          <div className="p-5 sm:p-8 md:p-12">
             <form onSubmit={(e) => e.preventDefault()}>
               <AnimatePresence mode="wait">
 

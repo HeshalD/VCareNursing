@@ -136,12 +136,12 @@ const AdminDashboard = () => {
       }
     >
       {/* Dashboard Tabs */}
-      <div className="flex space-x-1 bg-slate-200 p-1 rounded-xl mb-6 w-fit">
+      <div className="flex space-x-1 bg-slate-200 p-1 rounded-xl mb-6 w-full sm:w-fit overflow-x-auto">
         {TABS.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === tab.id
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap flex-shrink-0 ${activeTab === tab.id
                 ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-slate-500 hover:text-slate-700 hover:bg-slate-300/50'
               }`}

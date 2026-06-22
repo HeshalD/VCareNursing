@@ -234,7 +234,7 @@ const HospitalStaffingPage = () => {
 
           <div className="grid md:grid-cols-2 gap-8 max-w-5xl mx-auto">
             {/* Card 1 */}
-            <div className="bg-white p-10 rounded-[40px] shadow-sm hover:shadow-xl transition-shadow border border-slate-200">
+            <div className="bg-white p-6 sm:p-10 rounded-3xl sm:rounded-[40px] shadow-sm hover:shadow-xl transition-shadow border border-slate-200">
               <div className="flex justify-between items-start mb-8">
                 <div>
                   <h3 className="text-2xl font-bold text-slate-900">Per Diem</h3>
@@ -262,7 +262,7 @@ const HospitalStaffingPage = () => {
             </div>
 
             {/* Card 2 - Featured */}
-            <div className="bg-white p-10 rounded-[40px] shadow-2xl relative border-2 border-blue-500 overflow-hidden transform md:-translate-y-4">
+            <div className="bg-white p-6 sm:p-10 rounded-3xl sm:rounded-[40px] shadow-2xl relative border-2 border-blue-500 overflow-hidden transform md:-translate-y-4">
               <div className="absolute top-0 right-0 bg-blue-500 text-white text-xs font-bold px-6 py-2 rounded-bl-2xl">ENTERPRISE</div>
               <div className="flex justify-between items-start mb-8">
                 <div>

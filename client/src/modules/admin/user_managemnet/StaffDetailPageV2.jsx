@@ -727,10 +727,10 @@ const StaffDetailPageV2 = () => {
   // ── tab panels ────────────────────────────────────────────────────────────
   const renderOverview = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 16, alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, alignItems: 'start' }}>
         <Card>
           <CardTitle>Staff information</CardTitle>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 15 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 15 }}>
             <Field label="Full name" value={profile.full_name} />
             <Field label="Designation" value={profile.designation} />
             <Field label="Email" value={profile.email} />
@@ -783,7 +783,7 @@ const StaffDetailPageV2 = () => {
         </Card>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 16, alignItems: 'start' }}>
         <Card>
           <CardTitle>Current assignment</CardTitle>
           {currentAssignment ? (
@@ -797,7 +797,7 @@ const StaffDetailPageV2 = () => {
                   </div>
                 </div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 13 }}>
                 <Field label="Booking code" value={currentAssignment.booking_id} mono />
                 <Field label="Client" value={currentAssignment.client_name} />
                 <Field label="Daily rate" value={formatMoney(currentAssignment.daily_rate || currentAssignment.booking_daily_rate)} />
@@ -837,7 +837,7 @@ const StaffDetailPageV2 = () => {
 
   const renderEarnings = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14 }}>
         <MiniCard label="Current earnings" value={formatMoney(currentEarnings)} color="#2F8A5B" onClick={() => navigate(`/admin/staff/${staffProfileId}/current-earnings`)} />
         <MiniCard label="Total earned" value={formatMoney(totalEarned)} onClick={() => navigate(`/admin/staff/${staffProfileId}/total-earnings`)} />
         <MiniCard label="Paid out" value={formatMoney(totalPaidOut)} />
@@ -878,7 +878,7 @@ const StaffDetailPageV2 = () => {
   const renderCurrentBooking = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {currentAssignment && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14 }}>
           <MiniCard label="Assignment status" value={currentAssignment.status || '-'} />
           <MiniCard label="Service type" value={currentAssignment.service_type || '-'} />
           <MiniCard label="Client" value={currentAssignment.client_name || '-'} />
@@ -890,7 +890,7 @@ const StaffDetailPageV2 = () => {
         {sectionErrors.currentBooking ? (
           <Empty title="Failed to load current booking" subtitle={sectionErrors.currentBooking} />
         ) : currentAssignment ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 16 }}>
             <Field label="Assignment ID" value={currentAssignment.assignment_id} mono />
             <Field label="Booking ID" value={currentAssignment.booking_id} mono />
             <Field label="Client name" value={currentAssignment.client_name} />
@@ -921,7 +921,7 @@ const StaffDetailPageV2 = () => {
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14 }}>
           <MiniCard label="Total bookings" value={rows.length} />
           <MiniCard label="Days worked" value={totalDays} />
           <MiniCard label="Active booking" value={currentAssignment?.client_name || '—'} color="#3F77B5" />
@@ -969,13 +969,13 @@ const StaffDetailPageV2 = () => {
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14 }}>
           <MiniCard label="Average rating" value={averageRating ? `${averageRating.toFixed(1)} ★` : '-'} color="#C98A2E" />
           <MiniCard label="Total reviews" value={totalReviews || 0} />
           <MiniCard label="5-star reviews" value={fiveStarCount} />
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 16, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, alignItems: 'start' }}>
           <Card>
             <CardTitle>Rating distribution</CardTitle>
             {distribution.length === 0 ? (
@@ -1048,13 +1048,13 @@ const StaffDetailPageV2 = () => {
 
   const renderPayouts = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14 }}>
         <MiniCard label="All-time paid" value={formatMoney(payoutsSummary?.all_time_paid ?? overviewPayoutSummary.total_payouts ?? 0)} />
         <MiniCard label="Paid this month" value={formatMoney(payoutsSummary?.paid_this_month ?? 0)} color="#2F8A5B" />
         <MiniCard label="Outstanding" value={formatMoney(payoutsSummary?.outstanding ?? currentEarnings)} color="#BC4338" />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.55fr 1fr', gap: 16, alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, alignItems: 'start' }}>
         <Card>
           <CardTitle>Payout history</CardTitle>
           {sectionErrors.payouts ? (
@@ -1152,7 +1152,7 @@ const StaffDetailPageV2 = () => {
     const totalDeducted = deductions.reduce((s, d) => s + parseFloat(d.amount || 0), 0);
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 14 }}>
           <MiniCard label="Total deducted" value={formatMoney(totalDeducted)} color="#BC4338" />
           <MiniCard label="Total entries" value={deductions.length} />
         </div>
@@ -1242,7 +1242,7 @@ const StaffDetailPageV2 = () => {
       ) : safeArray(bankAccounts).length === 0 ? (
         <Empty title="No bank accounts saved" subtitle="Use the Add Account button to add a bank account for this staff member." />
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14 }}>
           {bankAccounts.map((account, i) => (
             <div key={account.staff_bank_account_id || i} style={{ background: '#fff', border: '1px solid #ECE7DF', borderRadius: 16, padding: 18 }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 14 }}>
@@ -1294,7 +1294,7 @@ const StaffDetailPageV2 = () => {
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14 }}>
           <MiniCard label="Total requests" value={changeRequests.length} />
           <MiniCard label="Pending" value={pendingCount} color="#C98A2E" />
           <MiniCard label="Approved" value={approvedCount} color="#2F8A5B" />
@@ -1586,7 +1586,7 @@ const StaffDetailPageV2 = () => {
           </div>
 
           {/* STAT CARDS */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 18 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14, marginBottom: 18 }}>
             <div
               style={{ background: '#fff', border: '1px solid #ECE7DF', borderRadius: 16, padding: '17px 18px', cursor: 'pointer' }}
               onClick={() => navigate(`/admin/staff/${staffProfileId}/current-earnings`)}
@@ -1618,7 +1618,7 @@ const StaffDetailPageV2 = () => {
           </div>
 
           {/* LEAVE SUMMARY */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 14, marginBottom: 18 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 18 }}>
             <div style={{ background: '#fff', border: '1px solid #ECE7DF', borderRadius: 16, padding: '17px 18px' }}>
               <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#9A9488' }}>Total leaves taken</div>
               <div style={{ fontSize: 25, fontWeight: 800, letterSpacing: '-.02em', marginTop: 7 }}>{leaveSummary.total_leave_days} day{leaveSummary.total_leave_days === 1 ? '' : 's'}</div>

@@ -171,13 +171,13 @@ const VerifyStaffOTP = () => {
           </div>
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="px-8 py-6 space-y-6">
+          <form onSubmit={handleSubmit} className="px-4 sm:px-8 py-6 space-y-6">
             {/* OTP inputs */}
             <div>
               <label className="text-sm font-semibold text-slate-600 block mb-3">
                 Enter 6-digit code
               </label>
-              <div className="flex justify-between gap-2" onPaste={handlePaste}>
+              <div className="flex justify-between gap-1.5 sm:gap-2" onPaste={handlePaste}>
                 {otp.map((digit, index) => (
                   <input
                     key={index}
@@ -185,7 +185,7 @@ const VerifyStaffOTP = () => {
                     type="text"
                     inputMode="numeric"
                     maxLength="1"
-                    className={`w-12 h-14 text-center text-xl font-bold rounded-xl border-2 outline-none transition-all ${
+                    className={`w-10 h-12 sm:w-12 sm:h-14 text-center text-xl font-bold rounded-xl border-2 outline-none transition-all ${
                       digit
                         ? 'border-indigo-500 bg-indigo-50 text-indigo-900'
                         : 'border-slate-200 bg-slate-50 text-slate-900'

@@ -1599,6 +1599,60 @@ async function runMigration() {
   `);
 
   // =========================================================
+  // STAFF DEVICE BINDING (admin dashboard login restriction)
+  // =========================================================
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS staff_devices (
+      id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id           UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+      device_id         TEXT UNIQUE,
+      activation_code   VARCHAR(20) UNIQUE,
+      label             VARCHAR(255) NOT NULL,
+      status            VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'ACTIVE', 'REVOKED')),
+      assigned_by       UUID REFERENCES users(user_id),
+      assigned_at       TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      activated_at      TIMESTAMP WITH TIME ZONE,
+      revoked_at        TIMESTAMP WITH TIME ZONE
+    );
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_staff_devices_user
+    ON staff_devices (user_id);
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS staff_sessions (
+      id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id       UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+      device_id     TEXT,
+      jti           TEXT NOT NULL UNIQUE,
+      ip_address    VARCHAR(64),
+      user_agent    TEXT,
+      login_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      logout_at     TIMESTAMP WITH TIME ZONE,
+      is_active     BOOLEAN NOT NULL DEFAULT TRUE
+    );
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_staff_sessions_user
+    ON staff_sessions (user_id);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_staff_sessions_device
+    ON staff_sessions (device_id);
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_staff_sessions_active
+    ON staff_sessions (is_active);
+  `);
+
+  // =========================================================
   // SEED DEFAULT PRESET ITEMS
   // =========================================================
 

@@ -1,9 +1,23 @@
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 const db = require('../config/db');
 const jwt = require('jsonwebtoken');
 const sendEmail = require('../utils/email');
 const { sendWhatsAppOtp } = require('../utils/whatsapp');
 const { sendSmsOtp } = require('../utils/sms');
+
+// Roles that may only log into the admin dashboard from a device the SUPER_ADMIN has assigned them.
+const DEVICE_RESTRICTED_ROLES = new Set(['COORDINATOR', 'ACCOUNTS']);
+
+function parseRoles(rawRole) {
+  if (Array.isArray(rawRole)) {
+    return rawRole.map(r => (typeof r === 'string' ? r.replace(/\{|\}/g, '').trim() : String(r)));
+  }
+  if (typeof rawRole === 'string') {
+    return rawRole.replace(/\{|\}/g, '').split(',').map(r => r.trim()).filter(Boolean);
+  }
+  return [];
+}
 
 exports.registerClient = async (req, res, next) => {
   const { mobile_number, password, full_name, client_type, terms_accepted, email, gender, primary_address } = req.body;
@@ -231,7 +245,7 @@ exports.verifyOtp = async (req, res) => {
 };
 
 exports.login = async (req, res) => {
-  const { mobile_number, password } = req.body;
+  const { mobile_number, password, device_id } = req.body;
 
   try {
     // 1. Find User by Mobile Number
@@ -259,6 +273,28 @@ exports.login = async (req, res) => {
     const isTempPassword = /^[a-z0-9]{8}$/.test(password) &&
                            !/[A-Z]/.test(password) &&
                            !/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password);
+
+    // 2b. Device binding for admin-dashboard roles (SUPER_ADMIN is exempt)
+    const roles = parseRoles(user.role);
+    const isDeviceRestricted = roles.some(r => DEVICE_RESTRICTED_ROLES.has(r));
+    let boundDeviceId = null;
+
+    if (isDeviceRestricted) {
+      if (!device_id) {
+        return res.status(403).json({ code: 'DEVICE_REQUIRED', message: 'This account requires a registered device to log in.' });
+      }
+
+      const deviceResult = await db.query(
+        `SELECT id FROM staff_devices WHERE user_id = $1 AND device_id = $2 AND status = 'ACTIVE'`,
+        [user.user_id, device_id]
+      );
+
+      if (!deviceResult.rows.length) {
+        return res.status(403).json({ code: 'DEVICE_NOT_AUTHORIZED', message: 'This device is not authorized for this account. Contact your SUPER_ADMIN for an activation code.' });
+      }
+
+      boundDeviceId = device_id;
+    }
 
     // Update last_login timestamp
     await db.query(
@@ -296,22 +332,33 @@ exports.login = async (req, res) => {
       fullName = internalStaffRes.rows[0]?.full_name || null;
     }
     
-    const tokenPayload = { 
-      id: user.user_id, 
+    const jti = boundDeviceId ? crypto.randomUUID() : undefined;
+
+    const tokenPayload = {
+      id: user.user_id,
       role: user.role,
       full_name: fullName,
       mobile_number: mobile_number,
       gender: clientProfile?.gender || null,
-      primary_address: clientProfile?.primary_address || null
+      primary_address: clientProfile?.primary_address || null,
+      ...(boundDeviceId ? { device_id: boundDeviceId, jti } : {})
     };
-    
+
     console.log('JWT Payload:', tokenPayload); // Debug log
-    
+
     const token = jwt.sign(
       tokenPayload,
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN }
     );
+
+    if (boundDeviceId) {
+      await db.query(
+        `INSERT INTO staff_sessions (user_id, device_id, jti, ip_address, user_agent)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [user.user_id, boundDeviceId, jti, req.ip, req.headers['user-agent'] || null]
+      );
+    }
 
     // 5. Send Response
     // The Frontend uses 'roles' to decide which screen to show next.

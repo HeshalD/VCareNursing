@@ -272,7 +272,7 @@ const Bookings = () => {
                 Showing <span className="font-semibold text-slate-700">{filteredBookings.length}</span> of <span className="font-semibold text-slate-700">{bookings.length}</span> bookings
               </p>
             </div>
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto hidden md:block">
               <table className="w-full">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
@@ -361,6 +361,52 @@ const Bookings = () => {
                   })}
                 </tbody>
               </table>
+            </div>
+
+            {/* Mobile card list */}
+            <div className="md:hidden p-3 space-y-3">
+              {filteredBookings.map((b) => {
+                const ServiceIcon = getServiceIcon(b.service_type);
+                const details = bookingDetails[b.booking_id];
+                return (
+                  <div
+                    key={b.booking_id || b.id}
+                    onClick={() => navigate(`/admin/bookings/${b.booking_id}/detail`)}
+                    className={`rounded-xl border p-4 space-y-3 active:bg-slate-50 transition-colors ${b.is_expiring_soon ? 'border-orange-300 bg-orange-50/40' : 'border-slate-200 bg-white'}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono text-sm font-semibold text-slate-700">{b.booking_code || `#${b.booking_id}`}</span>
+                      {getStatusBadge(b.status)}
+                    </div>
+                    <div className="flex items-center gap-2.5">
+                      <div className="bg-gradient-to-br from-blue-100 to-blue-50 rounded-full w-8 h-8 flex items-center justify-center shrink-0">
+                        <User className="w-4 h-4 text-blue-600" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-slate-900 truncate">{details?.client_name || `Client #${b.client_id}`}</p>
+                        <p className="text-xs text-slate-500 truncate">{details?.patient_name || `Care profile #${b.patient_id}`}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="inline-flex items-center gap-1.5 text-slate-600 capitalize">
+                        <ServiceIcon className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                        {b.service_type?.replace(/_/g, ' ').replace(/[{}]/g, '') || '—'}
+                      </span>
+                      <span className="text-slate-500 shrink-0">
+                        {b.start_date ? new Date(b.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                      </span>
+                    </div>
+                    {b.is_expiring_soon && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-50 text-orange-700 ring-1 ring-orange-400/30">
+                        <AlertTriangle className="w-3 h-3" />
+                        {b.balance_days_remaining !== null && b.balance_days_remaining <= 0
+                          ? 'Balance exhausted'
+                          : `~${b.balance_days_remaining}d left`}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </>
         )}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Pencil, Trash2, X, Users2, Loader2, ShieldCheck } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, Users2, Loader2, ShieldCheck, Smartphone, Copy } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 
@@ -26,6 +26,12 @@ const statusColor = (s) => {
 
 const isSalesRole = (role) => (role || '').toLowerCase().includes('sales');
 
+const deviceStatusColor = (s) => {
+  if (s === 'ACTIVE') return 'bg-green-100 text-green-700';
+  if (s === 'REVOKED') return 'bg-red-100 text-red-700';
+  return 'bg-amber-100 text-amber-700'; // PENDING
+};
+
 const money = (value) =>
   `LKR ${parseFloat(value || 0).toLocaleString('en-LK', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
@@ -42,6 +48,12 @@ const InternalStaffPage = () => {
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [toast, setToast] = useState(null);
+  const [devicesFor, setDevicesFor] = useState(null); // staff member whose devices modal is open
+  const [devices, setDevices] = useState([]);
+  const [loadingDevices, setLoadingDevices] = useState(false);
+  const [newDeviceLabel, setNewDeviceLabel] = useState('');
+  const [assigningDevice, setAssigningDevice] = useState(false);
+  const [revokingDeviceId, setRevokingDeviceId] = useState(null);
 
   useEffect(() => { loadStaff(); }, []);
 
@@ -143,6 +155,60 @@ const InternalStaffPage = () => {
     } finally {
       setSaving(false);
     }
+  };
+
+  const openDevices = async (member) => {
+    setDevicesFor(member);
+    setNewDeviceLabel('');
+    setLoadingDevices(true);
+    try {
+      const res = await apiClient.listDevicesForUser(member.user_id);
+      setDevices(res.devices || []);
+    } catch (err) {
+      showToast(err.message || 'Failed to load devices.', 'error');
+    } finally {
+      setLoadingDevices(false);
+    }
+  };
+
+  const closeDevices = () => {
+    setDevicesFor(null);
+    setDevices([]);
+  };
+
+  const handleAssignDevice = async () => {
+    if (!newDeviceLabel.trim()) return;
+    setAssigningDevice(true);
+    try {
+      const res = await apiClient.assignDevice(devicesFor.user_id, newDeviceLabel.trim());
+      setDevices((prev) => [res.device, ...prev]);
+      setNewDeviceLabel('');
+      showToast(`Device assigned. Activation code: ${res.device.activation_code}`);
+    } catch (err) {
+      showToast(err.message || 'Failed to assign device.', 'error');
+    } finally {
+      setAssigningDevice(false);
+    }
+  };
+
+  const handleRevokeDevice = async (deviceId) => {
+    setRevokingDeviceId(deviceId);
+    try {
+      await apiClient.revokeDevice(deviceId);
+      setDevices((prev) =>
+        prev.map((d) => (d.id === deviceId ? { ...d, status: 'REVOKED', activation_code: null } : d))
+      );
+      showToast('Device revoked.');
+    } catch (err) {
+      showToast(err.message || 'Failed to revoke device.', 'error');
+    } finally {
+      setRevokingDeviceId(null);
+    }
+  };
+
+  const copyCode = (code) => {
+    navigator.clipboard.writeText(code);
+    showToast('Activation code copied.');
   };
 
   const handleDelete = async () => {
@@ -285,6 +351,15 @@ const InternalStaffPage = () => {
                           </>
                         ) : (
                           <>
+                            {member.user_id && (
+                              <button
+                                onClick={() => openDevices(member)}
+                                title="Manage Devices"
+                                className="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                              >
+                                <Smartphone className="w-4 h-4" />
+                              </button>
+                            )}
                             <button
                               onClick={() => openEdit(member)}
                               title="Edit"
@@ -472,6 +547,95 @@ const InternalStaffPage = () => {
                 {saving && <Loader2 className="w-4 h-4 animate-spin" />}
                 {saving ? 'Saving…' : modal === 'add' ? 'Add Staff' : 'Save Changes'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Devices modal */}
+      {devicesFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-slate-100">
+              <h2 className="text-lg font-bold text-slate-900">
+                Devices — {devicesFor.full_name}
+              </h2>
+              <button
+                onClick={closeDevices}
+                className="p-2 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="flex items-end gap-2">
+                <div className="flex-1">
+                  <label className="block text-xs font-semibold text-slate-600 mb-1.5">
+                    Assign New Device
+                  </label>
+                  <input
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-colors"
+                    placeholder="e.g. Dell Laptop #14"
+                    value={newDeviceLabel}
+                    onChange={(e) => setNewDeviceLabel(e.target.value)}
+                  />
+                </div>
+                <button
+                  onClick={handleAssignDevice}
+                  disabled={assigningDevice || !newDeviceLabel.trim()}
+                  className="flex items-center gap-2 px-4 py-2.5 text-sm font-semibold bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {assigningDevice && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Assign
+                </button>
+              </div>
+
+              {loadingDevices ? (
+                <div className="flex items-center justify-center gap-2 h-24 text-slate-400">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  Loading devices…
+                </div>
+              ) : devices.length === 0 ? (
+                <p className="text-center text-sm text-slate-400 py-8">
+                  No devices assigned yet.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {devices.map((d) => (
+                    <div
+                      key={d.id}
+                      className="flex items-center justify-between border border-slate-100 rounded-lg px-4 py-3"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-slate-900 text-sm">{d.label}</span>
+                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${deviceStatusColor(d.status)}`}>
+                            {d.status}
+                          </span>
+                        </div>
+                        {d.status === 'PENDING' && d.activation_code && (
+                          <button
+                            onClick={() => copyCode(d.activation_code)}
+                            className="flex items-center gap-1 mt-1 text-xs text-blue-600 hover:text-blue-700 font-mono"
+                          >
+                            <Copy className="w-3 h-3" /> {d.activation_code}
+                          </button>
+                        )}
+                      </div>
+                      {d.status !== 'REVOKED' && (
+                        <button
+                          onClick={() => handleRevokeDevice(d.id)}
+                          disabled={revokingDeviceId === d.id}
+                          className="px-3 py-1.5 text-xs font-semibold bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          {revokingDeviceId === d.id ? 'Revoking…' : 'Revoke'}
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -250,8 +250,8 @@ const Earnings = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 font-sans text-slate-900 flex">
-        <StaffSidebar staffProfileId={staffData?.staff_profile_id} />
+      <div className="min-h-screen bg-slate-50 font-sans text-slate-900 flex flex-col md:flex-row">
+        <StaffSidebar staffProfileId={staffData?.staff_profile_id} title="Earnings" />
         <main className="flex-1 flex items-center justify-center">
           <div className="text-center flex flex-col items-center gap-4">
             <div className="w-12 h-12 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
@@ -263,8 +263,8 @@ const Earnings = () => {
   }
 
   return (
-    <div className="h-screen bg-slate-50 font-sans text-slate-900 flex overflow-hidden">
-      <StaffSidebar staffProfileId={staffData?.staff_profile_id} />
+    <div className="h-screen bg-slate-50 font-sans text-slate-900 flex flex-col md:flex-row overflow-hidden">
+      <StaffSidebar staffProfileId={staffData?.staff_profile_id} title="Earnings" />
 
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-6xl mx-auto px-6 md:px-8 py-6 md:py-8 space-y-6">
