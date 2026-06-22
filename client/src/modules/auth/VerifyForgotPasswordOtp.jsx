@@ -171,7 +171,7 @@ const VerifyForgotPasswordOtp = () => {
       </div>
 
       {/* Right Side - OTP Form */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-8 bg-white">
+      <div className="w-full lg:w-1/2 flex items-center justify-center p-4 sm:p-6 lg:p-8 bg-white">
         <div className="w-full max-w-md space-y-6">
           <motion.div
             initial={{ opacity: 0, x: 20 }}
@@ -205,14 +205,15 @@ const VerifyForgotPasswordOtp = () => {
                 <label className="text-sm font-medium text-slate-700 block">
                   Enter 6-digit code
                 </label>
-                <div className="flex justify-center gap-2" onPaste={handlePaste}>
+                <div className="flex justify-center gap-1.5 sm:gap-2" onPaste={handlePaste}>
                   {otp.map((digit, index) => (
                     <input
                       key={index}
                       id={`otp-forgot-${index}`}
                       type="text"
+                      inputMode="numeric"
                       maxLength="1"
-                      className="w-12 h-12 text-center text-lg font-semibold text-black bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                      className="w-10 h-12 sm:w-12 text-center text-lg font-semibold text-black bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
                       value={digit}
                       onChange={(e) => handleOtpChange(index, e.target.value)}
                       onKeyDown={(e) => handleKeyDown(index, e)}

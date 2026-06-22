@@ -1,19 +1,51 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Users, Calendar, DollarSign, Activity,
   Settings, LogOut, Bell, Search,
   ShieldCheck, FileText, SendHorizontal, Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet, Landmark,
-  ChevronLeft, ChevronRight, ClipboardList, History, HeartPulse, ArrowLeftRight, Banknote, Star, Lock, UserCog, CalendarClock, Briefcase, Receipt, CalendarOff
+  ChevronLeft, ChevronRight, ClipboardList, History, HeartPulse, ArrowLeftRight, Banknote, Star, Lock, UserCog, CalendarClock, Briefcase, Receipt, CalendarOff, MonitorSmartphone,
+  Menu, X
 } from 'lucide-react';
 import logo from '../../../assets/Logo/VCareLogo.png';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
+import apiClient from '../../../api/api';
 
 const ROLE_LABELS = {
   SUPER_ADMIN: 'Super Admin',
   COORDINATOR: 'Coordinator',
   ACCOUNTS: 'Accounts',
 };
+
+// Single source of truth for nav items, shared by the desktop sidebar and the mobile drawer.
+const NAV_ITEMS = [
+  { icon: Activity, label: 'Overview', path: '/admin/dashboard' },
+  { icon: Users, label: 'User Management', path: '/admin/users', match: (p) => p === '/admin/users' || p === '/admin/proxy-user-management' },
+  { icon: UserCog, label: 'Internal Staff', path: '/admin/internal-staff' },
+  { icon: Briefcase, label: 'Salespersons', path: '/admin/salespersons' },
+  { icon: SendHorizontal, label: 'Service Requests', path: '/admin/service-requests' },
+  { icon: AlertTriangle, label: 'Termination Requests', path: '/admin/termination-requests' },
+  { icon: CalendarClock, label: 'Upcoming Events', path: '/admin/upcoming-events' },
+  { icon: CalendarOff, label: 'Leave Requests', path: '/admin/leave-requests' },
+  { icon: CalendarDays, label: 'Bookings', path: '/admin/bookings' },
+  { icon: FileText, label: 'Statements', path: '/admin/statements' },
+  { icon: Wallet, label: 'Advance Requests', path: '/admin/advance-requests' },
+  { icon: ShieldCheck, label: 'Worker Verification', path: '/admin/workers' },
+  { icon: DollarSign, label: 'Financials', path: '/admin/financial' },
+  { icon: ArrowLeftRight, label: 'Transactions', path: '/admin/transactions' },
+  { icon: Receipt, label: 'Client Payments', path: '/admin/client-payments' },
+  { icon: Banknote, label: 'Staff Salaries', path: '/admin/salaries' },
+  { icon: FileText, label: 'Salary Sheets', path: '/admin/salary-sheets' },
+  { icon: Landmark, label: 'Bank Accounts', path: '/admin/bank-accounts' },
+  { icon: FileText, label: 'Quotations', path: '/admin/quotations' },
+  { icon: FileText, label: 'Reports', path: '/admin/reports', match: (p) => p.startsWith('/admin/reports') },
+  { icon: HeartPulse, label: 'Care Profiles', path: '/admin/patients' },
+  { icon: ClipboardList, label: 'Change Requests', path: '/admin/change-requests' },
+  { icon: Star, label: 'Reviews', path: '/admin/reviews' },
+  { icon: Lock, label: 'Permissions', path: '/admin/permissions' },
+  { icon: MonitorSmartphone, label: 'Active Sessions', path: '/admin/active-sessions' },
+  { icon: History, label: 'Activity Log', path: '/admin/activity-log' },
+];
 
 const parseToken = (token) => {
   try {
@@ -28,6 +60,7 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
   const navigate = useNavigate();
   const { adminToken } = useAdminAuth();
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const adminInfo = useMemo(() => {
     if (!adminToken) return { name: 'Admin User', roleLabel: 'Admin' };
@@ -42,9 +75,19 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
     };
   }, [adminToken]);
 
-  const isActive = (path) => location.pathname === path;
+  const itemActive = (item) => (item.match ? item.match(location.pathname) : location.pathname === item.path);
 
-  const handleLogout = () => {
+  // Close the mobile drawer whenever the route changes.
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname]);
+
+  const handleLogout = async () => {
+    try {
+      await apiClient.deviceLogout();
+    } catch {
+      // best-effort - still log the user out locally even if this fails
+    }
     localStorage.removeItem('adminToken');
     localStorage.removeItem('adminUser');
     navigate('/admin');
@@ -52,7 +95,7 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans text-slate-900">
-      {/* Sidebar */}
+      {/* Sidebar (desktop) */}
       <aside className={`bg-slate-900 text-white hidden md:flex flex-col flex-shrink-0 transition-all duration-300 ${collapsed ? 'w-20' : 'w-64'}`}>
         <div className="p-4 border-b border-slate-800 flex items-center justify-between gap-2">
           <div className="flex items-center gap-3">
@@ -70,188 +113,16 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
         </div>
 
         <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
-          <SidebarItem
-            icon={Activity}
-            label="Overview"
-            path="/admin/dashboard"
-            active={isActive('/admin/dashboard')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={Users}
-            label="User Management"
-            path="/admin/users"
-            active={isActive('/admin/users') || isActive('/admin/proxy-user-management')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={UserCog}
-            label="Internal Staff"
-            path="/admin/internal-staff"
-            active={isActive('/admin/internal-staff')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={Briefcase}
-            label="Salespersons"
-            path="/admin/salespersons"
-            active={isActive('/admin/salespersons')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={SendHorizontal}
-            label="Service Requests"
-            path="/admin/service-requests"
-            active={isActive('/admin/service-requests')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={AlertTriangle}
-            label="Termination Requests"
-            path="/admin/termination-requests"
-            active={isActive('/admin/termination-requests')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={CalendarClock}
-            label="Upcoming Events"
-            path="/admin/upcoming-events"
-            active={isActive('/admin/upcoming-events')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={CalendarOff}
-            label="Leave Requests"
-            path="/admin/leave-requests"
-            active={isActive('/admin/leave-requests')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={CalendarDays}
-            label="Bookings"
-            path="/admin/bookings"
-            active={isActive('/admin/bookings')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={FileText}
-            label="Statements"
-            path="/admin/statements"
-            active={isActive('/admin/statements')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={Wallet}
-            label="Advance Requests"
-            path="/admin/advance-requests"
-            active={isActive('/admin/advance-requests')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={ShieldCheck}
-            label="Worker Verification"
-            path="/admin/workers"
-            active={isActive('/admin/workers')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={DollarSign}
-            label="Financials"
-            path="/admin/financial"
-            active={isActive('/admin/financial')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={ArrowLeftRight}
-            label="Transactions"
-            path="/admin/transactions"
-            active={isActive('/admin/transactions')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={Receipt}
-            label="Client Payments"
-            path="/admin/client-payments"
-            active={isActive('/admin/client-payments')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={Banknote}
-            label="Staff Salaries"
-            path="/admin/salaries"
-            active={isActive('/admin/salaries')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={FileText}
-            label="Salary Sheets"
-            path="/admin/salary-sheets"
-            active={isActive('/admin/salary-sheets')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={Landmark}
-            label="Bank Accounts"
-            path="/admin/bank-accounts"
-            active={isActive('/admin/bank-accounts')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={FileText}
-            label="Quotations"
-            path="/admin/quotations"
-            active={isActive('/admin/quotations')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={FileText}
-            label="Reports"
-            path="/admin/reports"
-            active={location.pathname.startsWith('/admin/reports')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={HeartPulse}
-            label="Care Profiles"
-            path="/admin/patients"
-            active={isActive('/admin/patients')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={ClipboardList}
-            label="Change Requests"
-            path="/admin/change-requests"
-            active={isActive('/admin/change-requests')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={Star}
-            label="Reviews"
-            path="/admin/reviews"
-            active={isActive('/admin/reviews')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={Lock}
-            label="Permissions"
-            path="/admin/permissions"
-            active={isActive('/admin/permissions')}
-            collapsed={collapsed}
-          />
-          <SidebarItem
-            icon={History}
-            label="Activity Log"
-            path="/admin/activity-log"
-            active={isActive('/admin/activity-log')}
-            collapsed={collapsed}
-          />
-          {/*
-          <SidebarItem
-            icon={Settings}
-            label="Settings"
-            path="/admin/settings"
-            active={isActive('/admin/settings')}
-          />*/}
+          {NAV_ITEMS.map((item) => (
+            <SidebarItem
+              key={item.path}
+              icon={item.icon}
+              label={item.label}
+              path={item.path}
+              active={itemActive(item)}
+              collapsed={collapsed}
+            />
+          ))}
         </nav>
 
         <div className="p-3 border-t border-slate-800">
@@ -266,18 +137,68 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
         </div>
       </aside>
 
+      {/* Mobile drawer */}
+      {mobileOpen && (
+        <div className="md:hidden fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setMobileOpen(false)} />
+          <aside className="absolute left-0 top-0 bottom-0 w-72 max-w-[85vw] bg-slate-900 text-white flex flex-col">
+            <div className="p-4 border-b border-slate-800 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-3">
+                <img src={logo} alt="VCare" className="w-9 h-9 rounded-md object-contain" />
+                <span className="text-lg font-bold tracking-tight">VCare Admin</span>
+              </div>
+              <button
+                onClick={() => setMobileOpen(false)}
+                className="p-1.5 rounded-md text-slate-300 hover:text-white hover:bg-slate-800"
+                aria-label="Close menu"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
+              {NAV_ITEMS.map((item) => (
+                <SidebarItem
+                  key={item.path}
+                  icon={item.icon}
+                  label={item.label}
+                  path={item.path}
+                  active={itemActive(item)}
+                  collapsed={false}
+                />
+              ))}
+            </nav>
+            <div className="p-3 border-t border-slate-800">
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-3 text-slate-400 hover:text-white transition-colors w-full px-3 py-2 rounded-lg hover:bg-slate-800"
+              >
+                <LogOut className="w-5 h-5" />
+                <span className="font-medium">Logout</span>
+              </button>
+            </div>
+          </aside>
+        </div>
+      )}
+
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top Header */}
-        <header className="bg-white border-b border-slate-200 h-16 flex items-center justify-between px-8 flex-shrink-0">
-          <div className="flex items-center gap-4 text-slate-500">
-            <span className="font-medium text-slate-900">Admin</span>
-            <span>/</span>
-            <span className="text-blue-600 font-medium">{title || 'Dashboard'}</span>
+        <header className="bg-white border-b border-slate-200 h-16 flex items-center justify-between px-4 sm:px-6 lg:px-8 flex-shrink-0 gap-3">
+          <div className="flex items-center gap-3 text-slate-500 min-w-0">
+            <button
+              onClick={() => setMobileOpen(true)}
+              className="md:hidden p-2 -ml-2 rounded-lg text-slate-600 hover:bg-slate-100 flex-shrink-0"
+              aria-label="Open menu"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            <span className="font-medium text-slate-900 hidden sm:inline">Admin</span>
+            <span className="hidden sm:inline">/</span>
+            <span className="text-blue-600 font-medium truncate">{title || 'Dashboard'}</span>
           </div>
 
-          <div className="flex items-center gap-6">
-            <div className="relative hidden sm:block">
+          <div className="flex items-center gap-4 sm:gap-6 flex-shrink-0">
+            <div className="relative hidden lg:block">
               <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
               <input
                 type="text"
@@ -289,12 +210,12 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
               <Bell className="w-5 h-5" />
               <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
             </button>
-            <div className="flex items-center gap-3 pl-6 border-l border-slate-200">
+            <div className="flex items-center gap-3 pl-4 sm:pl-6 border-l border-slate-200">
               <div className="text-right hidden sm:block">
                 <p className="font-bold text-sm text-slate-900">{adminInfo.name}</p>
                 <p className="text-xs text-slate-500">{adminInfo.roleLabel}</p>
               </div>
-              <div className="w-10 h-10 bg-slate-200 rounded-full overflow-hidden border-2 border-slate-100">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 bg-slate-200 rounded-full overflow-hidden border-2 border-slate-100">
                 <img
                   src={`https://ui-avatars.com/api/?name=${encodeURIComponent(adminInfo.name)}&background=0D8ABC&color=fff`}
                   alt={adminInfo.name}
@@ -306,15 +227,15 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
 
         {/* Page Content */}
         <main className="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-50">
-          <div className="max-w-7xl mx-auto space-y-8">
+          <div className="max-w-7xl mx-auto space-y-6 md:space-y-8">
             {/* Page Header */}
             {(title || actions) && (
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
-                  {title && <h1 className="text-2xl font-bold text-slate-900">{title}</h1>}
+                  {title && <h1 className="text-xl sm:text-2xl font-bold text-slate-900">{title}</h1>}
                   {subtitle && <p className="text-slate-500 text-sm mt-1">{subtitle}</p>}
                 </div>
-                {actions && <div className="flex gap-2">{actions}</div>}
+                {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
               </div>
             )}
 

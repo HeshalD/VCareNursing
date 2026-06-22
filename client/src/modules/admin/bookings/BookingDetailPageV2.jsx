@@ -678,7 +678,7 @@ const BookingDetailPageV2 = () => {
             const displayServed = simServedDays ?? servedDays;
             const overrun = plannedDays && displayServed > plannedDays;
             return (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14, marginBottom: 18 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14, marginBottom: 18 }}>
                 <div style={{ background: '#fff', border: '1px solid #ECE7DF', borderRadius: 16, padding: '17px 18px' }}>
                   <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#9A9488' }}>Total paid</div>
                   <div style={{ fontSize: 25, fontWeight: 800, letterSpacing: '-0.02em', marginTop: 7, color: '#2F8A5B' }}>{formatMoney(totalPaid)}</div>
@@ -799,11 +799,11 @@ const BookingDetailPageV2 = () => {
           ══════════════════════════════════════════════════════ */}
           {activeSection === 'overview' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 16, alignItems: 'start' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, alignItems: 'start' }}>
                 {/* Booking details */}
                 <Card>
                   <CardTitle>Booking details</CardTitle>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 15 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 15 }}>
                     <Field label="Booking code"  value={bookingSummary.booking_code  || '-'} mono />
                     <Field label="Status"        value={bookingSummary.status        || '-'} />
                     <Field label="Service type"  value={bookingSummary.service_type  || '-'} />
@@ -837,7 +837,7 @@ const BookingDetailPageV2 = () => {
                 </Card>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, alignItems: 'start' }}>
                 {/* Current assignment */}
                 <Card>
                   <CardTitle>Current assignment</CardTitle>
@@ -850,7 +850,7 @@ const BookingDetailPageV2 = () => {
                           <div style={{ fontSize: 12.5, color: '#6F6A60', marginTop: 2 }}>{normCurrentStaff.designation}</div>
                         </div>
                       </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 13 }}>
                         <Field label="Staff ID"   value={normCurrentStaff.id}     mono />
                         <Field label="Phone"       value={normCurrentStaff.mobile} />
                         <Field label="Email"       value={normCurrentStaff.email}  />
@@ -892,7 +892,7 @@ const BookingDetailPageV2 = () => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
               {/* Mini stats */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14 }}>
                 {[
                   { label: 'Total invoiced',  value: formatMoney(invoiceSummary.total_invoiced ?? 0) },
                   { label: 'Outstanding',     value: formatMoney(overdueAmount), red: overdueAmount > 0 },
@@ -907,7 +907,7 @@ const BookingDetailPageV2 = () => {
               </div>
 
               {/* Payment history + Record payment */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1.55fr 1fr', gap: 16, alignItems: 'start' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, alignItems: 'start' }}>
                 <Card>
                   <CardTitle>Payment history</CardTitle>
                   {normPayments.length === 0 ? (
@@ -996,7 +996,7 @@ const BookingDetailPageV2 = () => {
                       </div>
                     )}
                     {isCheque && (
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8 }}>
                         <div>
                           <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Cheque no.</label>
                           <input required placeholder="000000" value={paymentForm.cheque_number} onChange={e => setPaymentForm({ ...paymentForm, cheque_number: e.target.value })} style={inp} />
@@ -1038,7 +1038,7 @@ const BookingDetailPageV2 = () => {
                 </div>
                 {canPayoff && !isTerminated ? (
                   <form onSubmit={handleWalletPayoff} style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
                       {[{ label: 'Wallet balance', value: formatMoney(walletBalance), color: '#2F8A5B' }, { label: 'Overdue amount', value: formatMoney(overdueAmount), color: '#BC4338' }, { label: 'Max payable', value: formatMoney(maxPayoff), color: '#7A4A94' }].map(({ label, value, color }) => (
                         <div key={label} style={{ border: '1px solid #ECE7DF', borderRadius: 12, padding: 12 }}>
                           <div style={{ fontSize: 11.5, color: '#9A9488', marginBottom: 4 }}>{label}</div>
@@ -1094,7 +1094,7 @@ const BookingDetailPageV2 = () => {
                         <div style={{ fontSize: 12.5, color: '#6F6A60', marginTop: 2 }}>{normCurrentStaff.designation}</div>
                       </div>
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 13 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 13 }}>
                       <Field label="Staff ID"   value={normCurrentStaff.id}     mono />
                       <Field label="Phone"       value={normCurrentStaff.mobile} />
                       <Field label="Email"       value={normCurrentStaff.email}  />
@@ -1190,7 +1190,7 @@ const BookingDetailPageV2 = () => {
                         <div style={{ fontSize: 12.5, color: '#6F6A60', marginTop: 2 }}>{salesData.current.salesperson_role || 'Salesperson'}</div>
                       </div>
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 13 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 13 }}>
                       <Field label="Brought in by" value={salesData.origin?.salesperson_name || '—'} />
                       <Field label="Amount credited" value={formatMoney(salesData.origin?.credited_amount || 0)} />
                       <Field label="Assigned on" value={formatDate(salesData.current.assigned_at)} />
@@ -1283,13 +1283,13 @@ const BookingDetailPageV2 = () => {
               TAB: CLIENT & CARE
           ══════════════════════════════════════════════════════ */}
           {activeSection === 'client' && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16 }}>
               <Card>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
                   <div style={{ width: 38, height: 38, borderRadius: 10, background: '#E4F1ED', color: '#137A6B', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 800 }}>{initials(clientDetails.client_name || 'C')}</div>
                   <h3 style={{ margin: 0, fontSize: 15.5, fontWeight: 700 }}>Client</h3>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 15 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 15 }}>
                   <Field label="Name"      value={clientDetails.client_name} />
                   <Field label="Client ID" value={clientDetails.client_profile_id || bookingSummary.client_id || '-'} mono />
                   <Field label="Phone"     value={clientDetails.client_mobile || clientDetails.mobile || '-'} />
@@ -1302,7 +1302,7 @@ const BookingDetailPageV2 = () => {
                   <div style={{ width: 38, height: 38, borderRadius: 10, background: '#F2E9F4', color: '#8C5AA6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 800 }}>{initials(patientDetails.patient_name || 'P')}</div>
                   <h3 style={{ margin: 0, fontSize: 15.5, fontWeight: 700 }}>Care profile</h3>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 15 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 15 }}>
                   <Field label="Patient"      value={patientDetails.patient_name} />
                   <Field label="Age"          value={patientDetails.patient_age || '-'} />
                   <Field label="Relationship" value={patientDetails.relationship_to_client || '-'} />
@@ -1317,7 +1317,7 @@ const BookingDetailPageV2 = () => {
               TAB: SETTLEMENT
           ══════════════════════════════════════════════════════ */}
           {activeSection === 'settlement' && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr', gap: 16, alignItems: 'start' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, alignItems: 'start' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                 <Card>
                   <CardTitle>Booking snapshot</CardTitle>
@@ -1444,7 +1444,7 @@ const BookingDetailPageV2 = () => {
                         </div>
                         <Pill tone={req.status === 'APPROVED' ? 'green' : req.status === 'REJECTED' ? 'rose' : 'amber'}>{req.status || 'Pending'}</Pill>
                       </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 13, marginBottom: 10 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 13, marginBottom: 10 }}>
                         <Field label="Requested end" value={formatDT(req.requested_end_time || req.requested_end_date)} />
                         <Field label="Approved end"  value={formatDT(req.end_time || req.approved_end_time)} />
                       </div>

@@ -370,7 +370,7 @@ export default function StaffProfile() {
       <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
 
       {/* ── Topbar ── */}
-      <div style={{ background: "#fff", borderBottom: "1px solid #e9ecef", padding: "0 2rem", height: 60, display: "flex", alignItems: "center", gap: 14, position: "sticky", top: 0, zIndex: 50 }}>
+      <div style={{ background: "#fff", borderBottom: "1px solid #e9ecef", padding: "0 clamp(1rem, 4vw, 2rem)", height: 60, display: "flex", alignItems: "center", gap: 14, position: "sticky", top: 0, zIndex: 50 }}>
         <button onClick={() => navigate("/services/view-staff")} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: "#64748b", fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
           <ArrowLeft size={15} /> Our Team
         </button>
@@ -476,7 +476,7 @@ export default function StaffProfile() {
       </div>
 
       {/* ── Body ── */}
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "2.5rem 2rem", display: "grid", gridTemplateColumns: "1fr 340px", gap: "2rem", alignItems: "start" }}>
+      <div className="mx-auto max-w-[1100px] px-4 sm:px-8 py-10 grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-8 items-start">
 
         {/* ── LEFT COLUMN ── */}
         <div style={{ display: "flex", flexDirection: "column", gap: "2rem" }}>
@@ -760,7 +760,7 @@ export default function StaffProfile() {
               </Link>
             </div>
             {relatedLoading ? (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 20 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 20 }}>
                 {[...Array(4)].map((_, i) => (
                   <div key={i} style={{
                     background: "#fff", 
@@ -782,7 +782,7 @@ export default function StaffProfile() {
                 ))}
               </div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 20 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 20 }}>
                 {relatedStaff.map((member, index) => (
                   <StaffCard key={member.staff_profile_id} member={member} index={index} />
                 ))}

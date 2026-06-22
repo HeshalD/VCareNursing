@@ -390,8 +390,8 @@ const ClientServiceRequests = () => {
     /* List view */
     const items = prepareTimelineData(); // Use same processed data as timeline
     return (
-      <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 480 }}>
           <thead>
             <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
               {['Type', 'Details', 'Status', 'Date'].map(h => (
@@ -596,7 +596,7 @@ const s = {
 
   /* Stats */
   statsRow: {
-    display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
+    display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
     gap: 12, marginBottom: 16,
   },
   statCard: {
@@ -683,7 +683,7 @@ const s = {
 
   /* Detail grid */
   detailGrid: {
-    display: 'grid', gridTemplateColumns: '1fr 1fr',
+    display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
     gap: '12px 24px',
   },
   detailLabel: {

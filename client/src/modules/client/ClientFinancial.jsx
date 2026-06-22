@@ -563,7 +563,7 @@ const s = {
 
   /* Stats */
   statsRow: {
-    display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
+    display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
     gap: 12, marginBottom: 16,
   },
   statCard: {
@@ -650,6 +650,7 @@ const s = {
   table: {
     width: '100%', borderCollapse: 'collapse',
     fontFamily: "'DM Sans', sans-serif",
+    minWidth: 640,
   },
   th: {
     padding: '10px 16px',

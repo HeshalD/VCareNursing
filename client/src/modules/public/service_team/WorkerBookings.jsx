@@ -151,7 +151,7 @@ const WorkerBookings = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 font-sans flex text-slate-900">
+      <div className="min-h-screen bg-slate-50 font-sans flex flex-col md:flex-row text-slate-900">
         <StaffSidebar />
         <main className="flex-1 flex items-center justify-center">
           <Loader2 size={32} style={{ animation: 'spin 1s linear infinite', color: '#3b82f6' }} />
@@ -162,7 +162,7 @@ const WorkerBookings = () => {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-slate-50 font-sans flex text-slate-900">
+      <div className="min-h-screen bg-slate-50 font-sans flex flex-col md:flex-row text-slate-900">
         <StaffSidebar />
         <main className="flex-1 flex items-center justify-center p-8 text-center">
           <div>
@@ -191,7 +191,7 @@ const WorkerBookings = () => {
   }
 
   return (
-    <div className="h-screen bg-slate-50 font-sans flex text-slate-900 overflow-hidden">
+    <div className="h-screen bg-slate-50 font-sans flex flex-col md:flex-row text-slate-900 overflow-hidden">
       <StaffSidebar />
       <main className="flex-1 overflow-y-auto">
         <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '1.5rem' }}>

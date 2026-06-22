@@ -188,7 +188,7 @@ const WorkersTeamPage = () => {
 
             <div className="relative">
               <div className="absolute -inset-4 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-[40px] opacity-10 blur-2xl" />
-              <div className="bg-white p-10 rounded-[40px] border border-slate-200 shadow-xl relative">
+              <div className="bg-white p-6 sm:p-10 rounded-3xl sm:rounded-[40px] border border-slate-200 shadow-xl relative">
                 <h3 className="text-2xl font-bold text-slate-900 mb-8">Application Protocol</h3>
 
                 <div className="space-y-8 relative">

@@ -86,7 +86,7 @@ const BookingSuccessPage = () => {
                 <Heart className="w-6 h-6 text-amber-600" />
                 Your Selected Caregiver
               </h2>
-              <div className="flex items-center gap-6">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
                 <img
                   src={selectedStaff.image}
                   alt={selectedStaff.name}
@@ -110,7 +110,7 @@ const BookingSuccessPage = () => {
                     </span>
                   </div>
                 </div>
-                <div className="text-right">
+                <div className="sm:text-right">
                   <p className="text-2xl font-bold text-amber-600">{selectedStaff.price}</p>
                   <p className="text-sm text-slate-500">per month</p>
                 </div>

@@ -242,7 +242,7 @@ const LeaveRequests = () => {
       subtitle={`${filteredLeaves.length} request${filteredLeaves.length !== 1 ? 's' : ''} — staff time-off requests`}
     >
       {/* Summary Cards */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         {([
           ['PENDING', 'Pending', 'text-amber-600 border-amber-200'],
           ['APPROVED', 'Approved', 'text-emerald-600 border-emerald-200'],

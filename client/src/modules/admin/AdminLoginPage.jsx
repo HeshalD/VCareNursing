@@ -29,9 +29,17 @@ const AdminLoginPage = () => {
 
     try {
       setIsLoading(true);
+
+      let deviceId = localStorage.getItem('admin_device_id');
+      if (!deviceId) {
+        deviceId = crypto.randomUUID();
+        localStorage.setItem('admin_device_id', deviceId);
+      }
+
       const response = await apiClient.login({
         identifier: formData.identifier,
         password: formData.password,
+        device_id: deviceId,
       });
       
       // Check if user has admin role
@@ -67,7 +75,11 @@ const AdminLoginPage = () => {
         setError('Invalid login response');
       }
     } catch (err) {
-      setError(err.message || 'Admin login failed. Please try again.');
+      if (err.code === 'DEVICE_REQUIRED' || err.code === 'DEVICE_NOT_AUTHORIZED') {
+        setError('This device isn\'t authorized for this account. Contact your SUPER_ADMIN for an activation code.');
+      } else {
+        setError(err.message || 'Admin login failed. Please try again.');
+      }
       console.error('Admin login error:', err);
     } finally {
       setIsLoading(false);
@@ -112,7 +124,7 @@ const AdminLoginPage = () => {
       </div>
 
       {/* Right Side - Login Form */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-8 bg-white">
+      <div className="w-full lg:w-1/2 flex items-center justify-center p-4 sm:p-6 lg:p-8 bg-white">
         <div className="w-full max-w-md space-y-8">
           <motion.div
             initial={{ opacity: 0, x: 20 }}
@@ -241,6 +253,11 @@ const AdminLoginPage = () => {
               <p className="text-slate-600">
                 <Link to="/login" className="text-blue-400 hover:text-blue-300 font-medium transition-colors">
                   ← Back to User Login
+                </Link>
+              </p>
+              <p className="text-slate-500 text-sm mt-2">
+                <Link to="/admin/activate-device" className="text-blue-400 hover:text-blue-300 font-medium transition-colors">
+                  Activate a new device
                 </Link>
               </p>
             </motion.div>

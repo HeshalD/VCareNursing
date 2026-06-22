@@ -53,8 +53,8 @@ const StaffMyProfile = () => {
   }
 
   return (
-    <div className="h-screen bg-slate-50 font-sans flex text-slate-900 overflow-hidden selection:bg-slate-200 selection:text-slate-900">
-      <StaffSidebar staffProfileId={staffData?.staff_profile_id} />
+    <div className="h-screen bg-slate-50 font-sans flex flex-col md:flex-row text-slate-900 overflow-hidden selection:bg-slate-200 selection:text-slate-900">
+      <StaffSidebar staffProfileId={staffData?.staff_profile_id} title="My Profile" />
 
       {/* Main Content */}
       <main className="flex-1 p-6 md:p-8 overflow-y-auto">

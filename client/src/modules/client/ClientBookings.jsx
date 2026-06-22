@@ -310,7 +310,7 @@ const ClientBookings = () => {
             </div>
           ) : (
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 620 }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid #f1f5f9' }}>
                     {['Booking ID', 'Service', 'Start Date', 'Staff Assigned', 'Status', 'Actions'].map(h => (
@@ -835,7 +835,7 @@ const s = {
     display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 16px',
   },
   infoGrid: {
-    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 28px',
+    display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px 28px',
   },
   codeBlock: {
     background: '#0f172a', color: '#22c55e', fontSize: 11,

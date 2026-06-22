@@ -229,7 +229,7 @@ const UserManagement = () => {
             </button>
           </div>
 
-          <div className="flex gap-2 items-center">
+          <div className="flex flex-wrap gap-2 items-center">
             {/* Proxy Mode Toggle */}
             <div className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-lg">
               {isProxyMode ? (
@@ -254,14 +254,14 @@ const UserManagement = () => {
               </button>
             </div>
             
-            <div className="relative">
+            <div className="relative w-full sm:w-auto">
               <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
               <input
                 type="text"
                 placeholder="Search users..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100 transition-all w-64"
+                className="pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100 transition-all w-full sm:w-64"
               />
             </div>
             
@@ -291,8 +291,8 @@ const UserManagement = () => {
           </div>
         </div>
 
-        {/* Table */}
-        <div className="overflow-x-auto">
+        {/* Table (desktop) */}
+        <div className="overflow-x-auto hidden md:block">
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
               <tr>
@@ -578,6 +578,60 @@ const UserManagement = () => {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Card list (mobile) */}
+        <div className="md:hidden divide-y divide-slate-100">
+          {loading ? (
+            <div className="px-4 py-8 text-center text-slate-500 text-sm">Loading...</div>
+          ) : error ? (
+            <div className="px-4 py-8 text-center text-red-500 text-sm">{error}</div>
+          ) : displayData.length === 0 ? (
+            <div className="px-4 py-8 text-center text-slate-500 text-sm">No {activeTab} found</div>
+          ) : (
+            displayData.map((user) => (
+              <div
+                key={user.id}
+                onClick={() => activeTab === 'clients' ? openClientDetail(user.id) : openStaffDetail(user.id)}
+                className="p-4 space-y-3 active:bg-slate-50 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  {user.profile_picture_url ? (
+                    <img src={user.profile_picture_url} alt={user.name} className="w-10 h-10 rounded-full object-cover shrink-0" />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-500 font-bold shrink-0">
+                      {user.name.charAt(0)}
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium text-slate-900 truncate">{user.name}</p>
+                    <p className="text-xs text-slate-500 truncate">{user.type}</p>
+                  </div>
+                  {activeTab === 'clients' ? (
+                    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-bold shrink-0 ${user.is_registration_fee_paid ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
+                      {user.is_registration_fee_paid ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                      {user.is_registration_fee_paid ? 'Paid' : 'Pending'}
+                    </span>
+                  ) : (
+                    <span className={`inline-flex items-center px-2 py-1 rounded-full text-[11px] font-bold shrink-0 ${user.status === 'Active' || user.status === 'Available' ? 'bg-green-50 text-green-700' : user.status === 'Pending' ? 'bg-amber-50 text-amber-700' : user.status === 'Unavailable' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-500'}`}>
+                      {user.status}
+                    </span>
+                  )}
+                </div>
+                <div className="space-y-1 text-xs text-slate-500">
+                  <div className="flex items-center gap-2 min-w-0"><Mail className="w-3.5 h-3.5 shrink-0" /> <span className="truncate">{user.email}</span></div>
+                  <div className="flex items-center gap-2"><Phone className="w-3.5 h-3.5 shrink-0" /> {user.phone}</div>
+                  <div className="flex items-center gap-2 min-w-0"><MapPin className="w-3.5 h-3.5 shrink-0" /> <span className="truncate">{user.location}</span></div>
+                </div>
+                {activeTab === 'workers' && (
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded">{user.designation}</span>
+                    <span className="font-medium text-slate-900">Rs. {user.advance_threshold_amount?.toLocaleString('en-IN') || '0'}</span>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
         </div>
 
         {/* Pagination placeholder */}

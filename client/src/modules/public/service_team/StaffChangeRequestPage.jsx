@@ -375,8 +375,8 @@ const StaffChangeRequestPage = () => {
   const selectedBankAccount = bankAccounts.find(a => a.staff_bank_account_id === selectedBankAccountId);
 
   return (
-    <div className="h-screen bg-slate-50 font-sans flex text-slate-900 overflow-hidden">
-      <StaffSidebar staffProfileId={staffData?.staff_profile_id} />
+    <div className="h-screen bg-slate-50 font-sans flex flex-col md:flex-row text-slate-900 overflow-hidden">
+      <StaffSidebar staffProfileId={staffData?.staff_profile_id} title="Request Change" />
 
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-4xl mx-auto px-6 md:px-8 py-6 md:py-8 space-y-6">

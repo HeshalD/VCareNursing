@@ -193,7 +193,7 @@ const HomeNursingPage = () => {
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid lg:grid-cols-2 gap-24">
             <div className="sticky top-32 h-fit">
-              <h2 className="text-5xl font-bold mb-6 text-slate-900">Not an Agency. <br />A Medical Partner.</h2>
+              <h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold mb-6 text-slate-900">Not an Agency. <br />A Medical Partner.</h2>
               <p className="text-xl text-slate-600 leading-relaxed mb-8">
                 Most agencies just send a person. We send a managed care protocol.
                 Every nurse is connected to our Command OS, ensuring vitals are recorded,

@@ -118,8 +118,8 @@ const StaffLeaveRequestPage = () => {
   }
 
   return (
-    <div className="flex h-screen bg-slate-50">
-      <StaffSidebar staffProfileId={staffData?.staff_profile_id} />
+    <div className="flex flex-col md:flex-row h-screen bg-slate-50">
+      <StaffSidebar staffProfileId={staffData?.staff_profile_id} title="Request Leave" />
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-4xl mx-auto px-6 md:px-8 py-6 md:py-8 space-y-6">
           {/* Header */}

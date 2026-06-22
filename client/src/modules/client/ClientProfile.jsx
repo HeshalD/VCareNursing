@@ -431,7 +431,7 @@ const styles = {
 
   /* Stats */
   statsRow: {
-    display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12,
+    display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12,
     marginBottom: 20,
   },
   statCard: {
@@ -455,7 +455,7 @@ const styles = {
   },
 
   /* Fields */
-  fieldGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px 28px' },
+  fieldGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px 28px' },
   fieldWrap: {},
   fieldLabel: {
     display: 'block', fontSize: 11, fontWeight: 600,
@@ -480,7 +480,7 @@ const styles = {
   },
 
   /* Meta */
-  metaGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px 28px' },
+  metaGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px 28px' },
   metaItem: { borderBottom: '1px solid #f1f5f9', paddingBottom: 14 },
   metaLabel: { fontSize: 11, color: '#94a3b8', fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', margin: '0 0 4px' },
   metaValue: { fontSize: 14, color: '#1e293b', fontWeight: 500, margin: 0 },

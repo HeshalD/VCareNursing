@@ -55,6 +55,10 @@ exports.requirePermission = (permissionKey) => async (req, res, next) => {
   }
 };
 
+// Sessions for device-bound logins are checked on every request so a revoked
+// device or a force-logout takes effect immediately, not just at next login.
+const LAST_SEEN_THROTTLE_MS = 60 * 1000;
+
 // LAYER 1: Is the user logged in?
 exports.protect = async (req, res, next) => {
   try {
@@ -72,13 +76,31 @@ exports.protect = async (req, res, next) => {
 
     // Check if user still exists
     const user = await db.query('SELECT user_id, role FROM users WHERE user_id = $1', [decoded.id]);
-    
+
     if (user.rows.length === 0) {
       return res.status(401).json({ message: 'The user belonging to this token no longer exists.' });
     }
 
+    if (decoded.jti) {
+      const session = await db.query(
+        'SELECT is_active, last_seen_at FROM staff_sessions WHERE jti = $1',
+        [decoded.jti]
+      );
+
+      if (!session.rows.length || !session.rows[0].is_active) {
+        return res.status(401).json({ message: 'This session has been ended. Please log in again.' });
+      }
+
+      const staleFor = Date.now() - new Date(session.rows[0].last_seen_at).getTime();
+      if (staleFor > LAST_SEEN_THROTTLE_MS) {
+        db.query('UPDATE staff_sessions SET last_seen_at = NOW() WHERE jti = $1', [decoded.jti])
+          .catch(err => console.error('staff_sessions last_seen_at update failed:', err));
+      }
+    }
+
     // Grant access to the protected route
     req.user = user.rows[0];
+    if (decoded.jti) req.user.jti = decoded.jti;
     next();
   } catch (error) {
     res.status(401).json({ message: 'Invalid token. Please log in again.' });

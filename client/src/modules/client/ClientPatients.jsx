@@ -245,14 +245,14 @@ const PatientFormModal = ({ mode, formData, onChange, onSubmit, onClose, saving 
         {/* Modal body */}
         <div style={s.modalBody}>
           {field('Full Name', 'full_name', { required: true })}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px 20px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '16px 20px' }}>
             {field('Age', 'age', { type: 'number', required: true })}
             {field('Gender', 'gender', { select: true })}
           </div>
           {field('Relationship to Client', 'relationship_to_client', { required: true })}
           {field('Medical Condition', 'medical_condition', { textarea: true, required: true })}
           {field('Residential Address', 'residential_address', { required: true })}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px 20px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '16px 20px' }}>
             {field('Emergency Contact Name', 'emergency_contact_name', { required: true })}
             {field('Emergency Contact Number', 'emergency_contact_number', { type: 'tel', required: true })}
           </div>
@@ -796,7 +796,7 @@ const s = {
     letterSpacing: '0.08em', textTransform: 'uppercase',
     margin: '0 0 8px',
   },
-  metaGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 16px' },
+  metaGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '6px 16px' },
   metaItem: {},
   metaLabel: { fontSize: 10, color: '#94a3b8', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', margin: '0 0 1px' },
   metaValue: { fontSize: 12, color: '#1e293b', fontWeight: 500, margin: 0 },
