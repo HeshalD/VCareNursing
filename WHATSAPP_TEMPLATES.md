@@ -1038,10 +1038,8 @@ Thank you for your hard work and dedication.
 
 **Header:** Document (PDF) — *Dynamic URL* (the Independent Contractor Agreement PDF)
 
-**Body:**
+**Body:** _(static — no variables)_
 ```
-Hi {{1}},
-
 Welcome aboard! As part of joining the VCare Nursing team, please review the attached Independent Contractor Agreement, which outlines the terms and conditions of your engagement.
 
 Kindly read it carefully. If you have any questions, reach out to the VCare office before signing.
@@ -1053,9 +1051,9 @@ Thank you for choosing to work with VCare Nursing.
 
 **At send time, pass:**
 - Header: `{ type: 'document', document: { link: <agreement PDF URL>, filename: 'VCare_Independent_Contractor_Agreement.pdf' } }`
-- `{{1}}` = applicant `full_name`
+- Body: no parameters (the approved template has no `{{1}}`)
 
-**Sample values:** `{{1}}` = `Sarah`
+**Sample values:** _none_
 
 > **Note:** Triggered manually by admin/internal staff from the Worker Verification details page **after** an application is approved (status `ACCEPTED`). The PDF URL is a constant defined in `backend/utils/metaWhatsapp.js` (`STAFF_AGREEMENT_PDF_URL`) and is sent as a real PDF document attachment, not a text link. Endpoint: `POST /staff/applications/:applicationId/send-agreement`.
 

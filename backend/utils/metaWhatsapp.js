@@ -43,10 +43,14 @@ const sendTemplate = async (to, templateName, languageCode, bodyParams, headerPa
     if (headerParams) {
       components.push({ type: 'header', parameters: headerParams });
     }
-    components.push({
-      type: 'body',
-      parameters: bodyParams.map((text) => ({ type: 'text', text }))
-    });
+    // Only emit a body component when the template actually has body variables.
+    // Meta rejects a body component carrying params a 0-variable template doesn't expect.
+    if (bodyParams && bodyParams.length) {
+      components.push({
+        type: 'body',
+        parameters: bodyParams.map((text) => ({ type: 'text', text }))
+      });
+    }
     if (buttonComponents) {
       for (const btn of buttonComponents) components.push(btn);
     }
@@ -263,24 +267,24 @@ const sendStaffSalarySheet = (mobileNumber, fullName, monthLabel, netPayable, am
 // Hosted on Cloudinary; sent as a real PDF document attachment (not a text link).
 const STAFF_AGREEMENT_PDF_URL = 'https://res.cloudinary.com/dohaktkth/image/upload/v1780652809/INDEPENDENT_CONTRACTOR_AGREEMENT_knloa6.pdf';
 
-// Sent to an approved applicant — header: agreement PDF, {{1}} = staff name
+// Sent to an approved applicant — header: agreement PDF. No body variables: the
+// approved Meta template has a static body (no {{1}}), so we pass no body params.
 // META TEMPLATE SPEC — vcare_staff_agreement (UTILITY, en)
 // Header: DOCUMENT
-// Body:
-//   Hi {{1}},
-//
+// Body (static, no variables):
 //   Welcome aboard! As part of joining the VCare Nursing team, please review the attached
 //   Independent Contractor Agreement, which outlines the terms and conditions of your engagement.
 //
 //   Kindly read it carefully. If you have any questions, reach out to the VCare office before signing.
 //
 //   Thank you for choosing to work with VCare Nursing.
+// eslint-disable-next-line no-unused-vars -- fullName kept for call-site compatibility
 const sendStaffAgreement = (mobileNumber, fullName) =>
   sendTemplate(
     formatNumber(mobileNumber),
     'vcare_staff_agreement',
     'en',
-    [fullName],
+    [],
     [{ type: 'document', document: { link: STAFF_AGREEMENT_PDF_URL, filename: 'VCare_Independent_Contractor_Agreement.pdf' } }]
   );
 
