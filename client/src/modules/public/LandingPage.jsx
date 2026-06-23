@@ -45,7 +45,10 @@ const HeroSection = () => {
           </p>
 
           <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
-            <button className="w-full sm:w-auto px-6 py-3.5 bg-blue-500 text-white rounded-lg font-semibold text-lg hover:bg-blue-600 transition-colors flex items-center justify-center gap-2">
+            <button
+              onClick={() => document.getElementById('services')?.scrollIntoView({ behavior: 'smooth' })}
+              className="w-full sm:w-auto px-6 py-3.5 bg-blue-500 text-white rounded-lg font-semibold text-lg hover:bg-blue-600 transition-colors flex items-center justify-center gap-2"
+            >
               Find care now <ArrowRight className="w-5 h-5" />
             </button>
             <button
