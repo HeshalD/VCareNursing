@@ -1,5 +1,20 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Wallet, Receipt } from 'lucide-react';
+import { Wallet, Receipt, X } from 'lucide-react';
+
+// Matches Tailwind's `sm` breakpoint (640px). Mobile = below it.
+const useIsMobile = (query = '(max-width: 639px)') => {
+  const [match, setMatch] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia(query).matches
+  );
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mql = window.matchMedia(query);
+    const onChange = (e) => setMatch(e.matches);
+    mql.addEventListener?.('change', onChange);
+    return () => mql.removeEventListener?.('change', onChange);
+  }, [query]);
+  return match;
+};
 
 const NURSE_COLORS = [
   { tint: '#FAEEE7', solid: '#C2603F', border: '#E6C8B9' },
@@ -57,6 +72,7 @@ const CareTimeline = ({
   const [weekOffset,    setWeekOffset]    = useState(null);
   const [hoveredDay,    setHoveredDay]    = useState(null);
   const [showSimPicker, setShowSimPicker] = useState(false);
+  const isMobile = useIsMobile();
 
   // ── Core date references ──────────────────────────────────────────────────
 
@@ -245,6 +261,18 @@ const CareTimeline = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [curOffset, displayDays, plannedDays, paidDays, servedDays, start, nurseColorMap, attendanceByDate, invoiceByDate, manualSalaryDay, manualInvoiceDay]);
 
+  // On mobile we surface the day's details in a panel below the grid (instead of
+  // the hover tooltip, which would overflow the tiny cells). This finds the
+  // currently-tapped cell among the visible weeks.
+  const activeCell = useMemo(() => {
+    if (hoveredDay == null) return null;
+    for (const w of weeks) {
+      const c = w.days.find((d) => d.filled && d.dayNum === hoveredDay);
+      if (c) return c;
+    }
+    return null;
+  }, [hoveredDay, weeks]);
+
   const legendNurses = useMemo(() => {
     const seen = new Set();
     return [...staffAssignments]
@@ -276,16 +304,19 @@ const CareTimeline = ({
   const lastVisibleDay  = Math.min((curOffset + 4) * 7, displayDays);
 
   return (
-    <div className="bg-white border border-[#ECE7DF] rounded-2xl p-6">
+    <div className="bg-white border border-[#ECE7DF] rounded-2xl p-4 sm:p-6">
 
       {/* ── Header ── */}
-      <div className="flex items-start justify-between gap-4 flex-wrap mb-5">
+      <div className="flex items-start justify-between gap-3 sm:gap-4 flex-wrap mb-4 sm:mb-5">
         <div>
           <div className="flex items-center gap-3">
-            <h2 className="text-lg font-bold text-[#2A2722] tracking-tight">Care timeline</h2>
+            <h2 className="text-base sm:text-lg font-bold text-[#2A2722] tracking-tight">Care timeline</h2>
             <span className="text-xs font-semibold text-[#9A9488] hidden sm:inline">Hover a day to see who was on duty</span>
           </div>
-          <p className="text-sm text-[#6F6A60] mt-1">Each block is one day of care. Colour shows the assigned nurse; the bar below shows payment.</p>
+          <p className="text-[13px] sm:text-sm text-[#6F6A60] mt-1">
+            Each block is one day of care. Colour shows the assigned nurse; the bar below shows payment.
+            <span className="sm:hidden"> Tap a day for details.</span>
+          </p>
         </div>
 
         <div className="flex items-center gap-2 flex-shrink-0">
@@ -407,9 +438,9 @@ const CareTimeline = ({
       <div className="flex flex-col gap-3">
         {weeks.map((week) => (
           <div key={week.label} className="flex items-stretch gap-4">
-            <div className="w-20 sm:w-24 flex-shrink-0 pt-1.5">
+            <div className="hidden sm:block sm:w-24 flex-shrink-0 pt-1.5">
               <div className="text-sm font-bold text-[#3A362F]">{week.label}</div>
-              <div className="text-xs text-[#A39D91] mt-0.5 hidden sm:block">{week.range}</div>
+              <div className="text-xs text-[#A39D91] mt-0.5">{week.range}</div>
             </div>
             <div className="flex-1 grid grid-cols-7 gap-1.5 sm:gap-2" style={{ overflow: 'visible' }}>
               {week.days.map((cell) => {
@@ -439,7 +470,7 @@ const CareTimeline = ({
                 return (
                   <div
                     key={cell.dayNum}
-                    className={`relative flex flex-col justify-between rounded-xl p-1.5 sm:p-2 select-none ${isClickable ? 'cursor-pointer' : 'cursor-default'}`}
+                    className={`relative flex flex-col justify-between rounded-xl p-1.5 sm:p-2 select-none ${(isMobile || isClickable) ? 'cursor-pointer' : 'cursor-default'}`}
                     style={{
                       aspectRatio: '1/1',
                       background: cell.delivered && nurse ? nurse.color.tint : '#FCFBF8',
@@ -453,22 +484,27 @@ const CareTimeline = ({
                       transition: 'transform .15s ease, box-shadow .15s ease',
                       zIndex: isHovered ? 30 : 'auto',
                     }}
-                    onMouseEnter={() => setHoveredDay(cell.dayNum)}
-                    onMouseLeave={() => setHoveredDay(null)}
-                    onClick={isClickable ? () => onDayClick(cell.dateISO, cell.dayNum) : undefined}
+                    onMouseEnter={() => { if (!isMobile) setHoveredDay(cell.dayNum); }}
+                    onMouseLeave={() => { if (!isMobile) setHoveredDay(null); }}
+                    onClick={() => {
+                      if (isMobile) setHoveredDay((d) => (d === cell.dayNum ? null : cell.dayNum));
+                      else if (isClickable) onDayClick(cell.dateISO, cell.dayNum);
+                    }}
                   >
-                    {/* Day number + status icons + nurse dot */}
+                    {/* Day number (desktop only) + status icons + nurse dot */}
                     <div className="flex items-center justify-between">
-                      <span
-                        className="text-[11px] font-bold leading-none"
-                        style={{
-                          fontFamily: 'monospace',
-                          color: cell.isToday ? '#0C5C50' : cell.delivered ? '#5A554B' : '#B4AEA3',
-                        }}
-                      >
-                        {cell.dayNum}
-                      </span>
-                      <div className="flex items-center gap-0.5 flex-shrink-0">
+                      {!isMobile && (
+                        <span
+                          className="text-[11px] font-bold leading-none"
+                          style={{
+                            fontFamily: 'monospace',
+                            color: cell.isToday ? '#0C5C50' : cell.delivered ? '#5A554B' : '#B4AEA3',
+                          }}
+                        >
+                          {cell.dayNum}
+                        </span>
+                      )}
+                      <div className="flex items-center gap-0.5 flex-shrink-0 ml-auto">
                         {cell.salaryMeta && (
                           <Wallet style={{ width: 8, height: 8, color: META_COLOR[cell.salaryMeta.status] }} />
                         )}
@@ -484,17 +520,19 @@ const CareTimeline = ({
                       </div>
                     </div>
 
-                    {/* Date label + payment bar */}
+                    {/* Date label (desktop only) + payment bar */}
                     <div>
-                      <div
-                        className="text-[9px] sm:text-[10px] leading-tight truncate"
-                        style={{
-                          fontWeight: cell.isToday ? 700 : 500,
-                          color: cell.isToday ? '#137A6B' : cell.delivered ? '#8B857A' : '#B4AEA3',
-                        }}
-                      >
-                        {cell.dateLabel}
-                      </div>
+                      {!isMobile && (
+                        <div
+                          className="text-[9px] sm:text-[10px] leading-tight truncate"
+                          style={{
+                            fontWeight: cell.isToday ? 700 : 500,
+                            color: cell.isToday ? '#137A6B' : cell.delivered ? '#8B857A' : '#B4AEA3',
+                          }}
+                        >
+                          {cell.dateLabel}
+                        </div>
+                      )}
                       <div
                         className="rounded-full w-full mt-1"
                         style={{
@@ -505,8 +543,8 @@ const CareTimeline = ({
                       />
                     </div>
 
-                    {/* Hover tooltip */}
-                    {isHovered && (
+                    {/* Hover tooltip (desktop only) */}
+                    {!isMobile && isHovered && (
                       <div
                         className="absolute pointer-events-none"
                         style={{
@@ -615,6 +653,111 @@ const CareTimeline = ({
           </div>
         ))}
       </div>
+
+      {/* ── Mobile detail panel (replaces the hover tooltip on touch) ── */}
+      {isMobile && activeCell && (() => {
+        const cell  = activeCell;
+        const nurse = cell.nurse;
+        const pill  = PILL[cell.status];
+        const isClickable = Boolean(onDayClick) && cell.delivered;
+        return (
+          <div className="mt-4 rounded-xl border border-[#E7E1D6] bg-[#FBF9F4] p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="text-sm font-bold text-[#2A2722]">{cell.tipDate}</div>
+              <button
+                onClick={() => setHoveredDay(null)}
+                aria-label="Close"
+                className="p-1 -m-1 rounded-lg text-[#9A9488] hover:bg-[#EFEAE0] transition flex-shrink-0"
+              >
+                <X style={{ width: 16, height: 16 }} />
+              </button>
+            </div>
+
+            {cell.isOverrun && (
+              <div
+                className="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-full mt-1.5"
+                style={{ background: 'rgba(194,72,60,.16)', color: '#C2483C' }}
+              >
+                Beyond booking end
+              </div>
+            )}
+
+            {nurse && (
+              <div className="mt-2.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: nurse.color.solid }} />
+                  <span className="text-sm font-semibold text-[#3A362F] truncate">{nurse.name}</span>
+                </div>
+                {nurse.designation && (
+                  <div className="text-xs text-[#9A9488] ml-4">{nurse.designation}</div>
+                )}
+              </div>
+            )}
+
+            <div className="h-px my-3" style={{ background: '#EFEAE0' }} />
+
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-[#6F6A60]">Billed</span>
+              <span className="text-sm font-bold text-[#2A2722]">
+                Rs {Number(dailyRate || 0).toLocaleString('en-US')}
+              </span>
+            </div>
+            <div className="mt-2">
+              <span
+                className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full"
+                style={{ background: pill.bg, color: pill.color }}
+              >
+                {pill.label}
+              </span>
+            </div>
+
+            {(cell.salaryMeta || cell.invoiceMeta) && (
+              <>
+                <div className="h-px my-3" style={{ background: '#EFEAE0' }} />
+                {cell.salaryMeta && (
+                  <div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-[#6F6A60] flex items-center gap-1.5">
+                        <Wallet style={{ width: 12, height: 12 }} /> Salary
+                      </span>
+                      <span className="text-xs font-bold" style={{ color: META_COLOR[cell.salaryMeta.status] }}>
+                        {metaLabel(cell.salaryMeta, 'Paid')}
+                      </span>
+                    </div>
+                    {cell.salaryMeta.decidedBy && (
+                      <div className="text-[10px] text-[#9A9488] ml-5">by {cell.salaryMeta.decidedBy}</div>
+                    )}
+                  </div>
+                )}
+                {cell.invoiceMeta && (
+                  <div className="mt-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-[#6F6A60] flex items-center gap-1.5">
+                        <Receipt style={{ width: 12, height: 12 }} /> Invoice
+                      </span>
+                      <span className="text-xs font-bold" style={{ color: META_COLOR[cell.invoiceMeta.status] }}>
+                        {metaLabel(cell.invoiceMeta, 'Charged')}
+                      </span>
+                    </div>
+                    {cell.invoiceMeta.decidedBy && (
+                      <div className="text-[10px] text-[#9A9488] ml-5">by {cell.invoiceMeta.decidedBy}</div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+
+            {isClickable && (
+              <button
+                onClick={() => { onDayClick(cell.dateISO, cell.dayNum); setHoveredDay(null); }}
+                className="mt-3 w-full rounded-lg bg-[#137A6B] text-white text-xs font-bold py-2.5 transition active:opacity-80"
+              >
+                Log attendance / invoicing
+              </button>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── Legend ── */}
       <div className="flex items-center gap-4 flex-wrap mt-5 pt-4 border-t border-[#EFEAE0]">
