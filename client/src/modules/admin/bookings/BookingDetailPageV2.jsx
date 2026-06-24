@@ -9,6 +9,7 @@ import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import CareTimeline from './CareTimeline';
+import vcareLogo from '../../../assets/Logo/VCareLogo.png';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -26,6 +27,35 @@ const toDTLocal    = (value = new Date()) => { const d = value instanceof Date ?
 const toDateInput  = (value = new Date()) => { const d = value instanceof Date ? value : new Date(value); return isNaN(d) ? '' : d.toISOString().slice(0, 10); };
 const addDays      = (date, n) => { const d = new Date(date); d.setDate(d.getDate() + n); return d; };
 const initials     = (name) => (name || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
+
+// Matches Tailwind's `sm` breakpoint (640px). Mobile = below it.
+const useIsMobile = (query = '(max-width: 639px)') => {
+  const [match, setMatch] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia(query).matches
+  );
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mql = window.matchMedia(query);
+    const onChange = (e) => setMatch(e.matches);
+    mql.addEventListener?.('change', onChange);
+    return () => mql.removeEventListener?.('change', onChange);
+  }, [query]);
+  return match;
+};
+
+// On mobile the stat cards are only ~120px wide, so long currency strings
+// (e.g. "LKR 12,345,678.00") overflow at the base 25px size. Scale the font
+// down as the rendered string gets longer. Desktop keeps the full 25px.
+const bigStatSize = (text, isMobile) => {
+  if (!isMobile) return 25;
+  const len = String(text ?? '').length;
+  if (len <= 10) return 21;
+  if (len <= 12) return 18;
+  if (len <= 14) return 16;
+  if (len <= 16) return 14;
+  if (len <= 18) return 12.5;
+  return 11;
+};
 
 const NURSE_PALETTE = [
   { tint: '#FAEEE7', solid: '#C2603F', border: '#E6C8B9' },
@@ -79,6 +109,7 @@ const BookingDetailPageV2 = () => {
   const navigate = useNavigate();
   const { bookingId } = useParams();
   const [searchParams] = useSearchParams();
+  const isMobile = useIsMobile();
 
   // data
   const [detail, setDetail]           = useState(null);
@@ -594,8 +625,8 @@ const BookingDetailPageV2 = () => {
 
   return (
     <AdminLayout>
-      {/* Full-bleed warm background */}
-      <div style={{ margin: '-32px -32px -32px -32px', background: '#F6F3EC', minHeight: '100vh', padding: '26px 24px 60px', fontFamily: "'Hanken Grotesk',system-ui,sans-serif" }}>
+      {/* Full-bleed warm background — negative margin matches AdminLayout's main padding (p-4 / md:p-8) */}
+      <div className="-m-4 md:-m-8 px-3 sm:px-6 pt-6 pb-14" style={{ background: '#F6F3EC', minHeight: '100vh', fontFamily: "'Hanken Grotesk',system-ui,sans-serif" }}>
         <div style={{ maxWidth: 1180, margin: '0 auto' }}>
 
           {/* ── Error banner ── */}
@@ -617,10 +648,7 @@ const BookingDetailPageV2 = () => {
               >
                 <ArrowLeft style={{ width: 14, height: 14 }} /> Back to bookings
               </button>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 34, height: 34, borderRadius: 9, background: '#137A6B', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 20, fontWeight: 700, lineHeight: 1 }}>+</div>
-                <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: '-0.01em', color: '#2A2722' }}>VCare</div>
-              </div>
+              <img src={vcareLogo} alt="VCare Nursing" style={{ height: isMobile ? 36 : 46, width: 'auto', objectFit: 'contain' }} />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12.5, color: '#8A8478', background: '#fff', border: '1px solid #E7E1D6', borderRadius: 8, padding: '7px 11px' }}>
@@ -681,7 +709,7 @@ const BookingDetailPageV2 = () => {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14, marginBottom: 18 }}>
                 <div style={{ background: '#fff', border: '1px solid #ECE7DF', borderRadius: 16, padding: '17px 18px' }}>
                   <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#9A9488' }}>Total paid</div>
-                  <div style={{ fontSize: 25, fontWeight: 800, letterSpacing: '-0.02em', marginTop: 7, color: '#2F8A5B' }}>{formatMoney(totalPaid)}</div>
+                  <div style={{ fontSize: bigStatSize(formatMoney(totalPaid), isMobile), fontWeight: 800, letterSpacing: '-0.02em', marginTop: 7, color: '#2F8A5B', wordBreak: 'break-word' }}>{formatMoney(totalPaid)}</div>
                   <div style={{ fontSize: 12.5, color: '#2F8A5B', fontWeight: 600, marginTop: 4 }}>{paidDays} days covered</div>
                 </div>
                 <div style={{ background: simDate ? '#FEF9C3' : '#fff', border: simDate ? '1px solid #FDE047' : '1px solid #ECE7DF', borderRadius: 16, padding: '17px 18px' }}>
@@ -689,7 +717,7 @@ const BookingDetailPageV2 = () => {
                     <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#9A9488' }}>Outstanding</span>
                     {simDate && <span style={{ fontSize: 10, fontWeight: 700, background: '#FDE047', color: '#854D0E', borderRadius: 999, padding: '1px 6px' }}>SIM</span>}
                   </div>
-                  <div style={{ fontSize: 25, fontWeight: 800, letterSpacing: '-0.02em', marginTop: 7, color: displayOutstanding > 0 ? '#BC4338' : '#2A2722' }}>{formatMoney(displayOutstanding)}</div>
+                  <div style={{ fontSize: bigStatSize(formatMoney(displayOutstanding), isMobile), fontWeight: 800, letterSpacing: '-0.02em', marginTop: 7, color: displayOutstanding > 0 ? '#BC4338' : '#2A2722', wordBreak: 'break-word' }}>{formatMoney(displayOutstanding)}</div>
                   <div style={{ fontSize: 12.5, fontWeight: 600, marginTop: 4, color: displayOutstanding > 0 ? '#BC4338' : '#9A9488' }}>{displayOutstanding > 0 ? `${Math.max(0, (simServedDays ?? servedDays) - paidDays)} days overdue` : 'All clear'}</div>
                 </div>
                 <div style={{ background: simDate ? '#FEF9C3' : '#fff', border: simDate ? '1px solid #FDE047' : '1px solid #ECE7DF', borderRadius: 16, padding: '17px 18px' }}>
@@ -697,8 +725,8 @@ const BookingDetailPageV2 = () => {
                     <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#9A9488' }}>Days served</span>
                     {simDate && <span style={{ fontSize: 10, fontWeight: 700, background: '#FDE047', color: '#854D0E', borderRadius: 999, padding: '1px 6px' }}>SIM</span>}
                   </div>
-                  <div style={{ fontSize: 25, fontWeight: 800, letterSpacing: '-0.02em', marginTop: 7, color: '#2A2722' }}>
-                    {displayServed} <span style={{ fontSize: 16, fontWeight: 600, color: overrun ? '#C2483C' : '#9A9488' }}>/ {plannedDays || '—'}</span>
+                  <div style={{ fontSize: isMobile ? 21 : 25, fontWeight: 800, letterSpacing: '-0.02em', marginTop: 7, color: '#2A2722' }}>
+                    {displayServed} <span style={{ fontSize: isMobile ? 14 : 16, fontWeight: 600, color: overrun ? '#C2483C' : '#9A9488' }}>/ {plannedDays || '—'}</span>
                   </div>
                   <div style={{ fontSize: 12.5, fontWeight: 600, marginTop: 4, color: overrun ? '#C2483C' : '#6F6A60' }}>
                     {overrun ? `+${displayServed - plannedDays} overrun` : `of ${plannedDays || '—'} planned`}
@@ -706,7 +734,7 @@ const BookingDetailPageV2 = () => {
                 </div>
                 <div style={{ background: '#fff', border: '1px solid #ECE7DF', borderRadius: 16, padding: '17px 18px' }}>
                   <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#9A9488' }}>Daily rate</div>
-                  <div style={{ fontSize: 25, fontWeight: 800, letterSpacing: '-0.02em', marginTop: 7, color: '#2A2722' }}>{formatMoney(dailyRate)}</div>
+                  <div style={{ fontSize: bigStatSize(formatMoney(dailyRate), isMobile), fontWeight: 800, letterSpacing: '-0.02em', marginTop: 7, color: '#2A2722', wordBreak: 'break-word' }}>{formatMoney(dailyRate)}</div>
                   <div style={{ fontSize: 12.5, color: '#6F6A60', fontWeight: 600, marginTop: 4 }}>{bookingSummary.service_model || '—'}</div>
                 </div>
               </div>
@@ -837,7 +865,7 @@ const BookingDetailPageV2 = () => {
                 </Card>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, alignItems: 'start' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16, alignItems: 'start' }}>
                 {/* Current assignment */}
                 <Card>
                   <CardTitle>Current assignment</CardTitle>
@@ -914,6 +942,8 @@ const BookingDetailPageV2 = () => {
                     <Empty icon={DollarSign} text="No payment records for this booking." />
                   ) : (
                     <>
+                     <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                      <div style={{ minWidth: 480 }}>
                       <div style={{ display: 'grid', gridTemplateColumns: '0.95fr 0.9fr 0.8fr 0.75fr 1.25fr', gap: 10, paddingBottom: 9, fontSize: 11, fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase', color: '#A39D91', borderBottom: '1px solid #EFEAE0' }}>
                         <span>Date</span><span>Amount</span><span>Method</span><span>Reference</span><span>Receipt</span>
                       </div>
@@ -961,6 +991,8 @@ const BookingDetailPageV2 = () => {
                         </div>
                         );
                       })}
+                      </div>
+                     </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 12, marginTop: 2, borderTop: '1px solid #EFEAE0' }}>
                         <span style={{ fontSize: 13, color: '#6F6A60' }}>{normPayments.length} payment{normPayments.length !== 1 ? 's' : ''}</span>
                         <span style={{ fontSize: 13, fontWeight: 800, color: '#2A2722' }}>{formatMoney(totalPaid)}</span>
