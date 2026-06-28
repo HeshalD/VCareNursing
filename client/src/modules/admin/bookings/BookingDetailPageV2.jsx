@@ -150,6 +150,20 @@ const BookingDetailPageV2 = () => {
   const [swapModalError, setSwapModalError]           = useState('');
   const [swapModalPage, setSwapModalPage]             = useState(1);
   const [swapModalDesignation, setSwapModalDesignation] = useState('');
+  const [swapModalSlotId, setSwapModalSlotId]         = useState(null); // set => modal targets a shift slot, not the whole booking
+  const [swapModalIsAssign, setSwapModalIsAssign]     = useState(false); // true => slot has no current staff (assign, not reassign)
+
+  // shift patterns + per-shift assignment (SHIFT_BASED only)
+  const [shiftPattern, setShiftPattern]               = useState(null); // { active, scheduled }
+  const [shiftSlots, setShiftSlots]                   = useState([]);
+  const [patternHistory, setPatternHistory]           = useState([]);
+  const [showPatternModal, setShowPatternModal]       = useState(false);
+  const [patternModalShiftCount, setPatternModalShiftCount] = useState(2);
+  const [patternModalSlots, setPatternModalSlots]     = useState([]); // [{shift_number, start_time, duration_hours, label}]
+  const [patternModalEffectiveDate, setPatternModalEffectiveDate] = useState(toDateInput(new Date()));
+  const [patternModalSubmitting, setPatternModalSubmitting] = useState(false);
+  const [patternModalError, setPatternModalError]     = useState('');
+  const [showPatternHistory, setShowPatternHistory]   = useState(false);
 
   // salesperson
   const [salesData, setSalesData]                 = useState(null); // { current, origin, history }
@@ -184,6 +198,7 @@ const BookingDetailPageV2 = () => {
   const [dayModalBusy, setDayModalBusy]              = useState('');
   const [attendanceInputs, setAttendanceInputs]      = useState({}); // assignment_id -> { in_time, out_time }
   const [invoiceAmountInput, setInvoiceAmountInput]  = useState('');
+  const [invoiceAmountInputsBySlot, setInvoiceAmountInputsBySlot] = useState({}); // shift_slot_id -> amount string
   const [invoicingModeSaving, setInvoicingModeSaving] = useState(false);
 
   // ── derived ──────────────────────────────────────────────────────────────
@@ -198,6 +213,7 @@ const BookingDetailPageV2 = () => {
   const staffHistory    = Array.isArray(detail?.staff_assignment_history) ? detail.staff_assignment_history : [];
   const swapHistory     = Array.isArray(detail?.swap_history)            ? detail.swap_history            : [];
   const terminationReqs = Array.isArray(detail?.termination_requests)    ? detail.termination_requests    : [];
+  const isShiftBased    = bookingSummary.service_model === 'SHIFT_BASED';
 
   const activeStaffRow = staffHistory.find(r => (r.status || '').toLowerCase() === 'active') || staffHistory[0] || null;
 
@@ -319,6 +335,34 @@ const BookingDetailPageV2 = () => {
     apiClient.setToken(adminToken);
     apiClient.getSalespersons().then(r => setSalespersonsList(r?.data || [])).catch(() => {});
   }, [adminToken, activeSection]);
+  useEffect(() => {
+    if (!adminToken || activeSection !== 'staff' || !isShiftBased) return;
+    fetchShiftData();
+  }, [adminToken, activeSection, isShiftBased]);
+
+  const fetchShiftData = async () => {
+    try {
+      apiClient.setToken(adminToken);
+      const [patternRes, slotsRes] = await Promise.all([
+        apiClient.getShiftPattern(bookingId),
+        apiClient.getShiftSlots(bookingId),
+      ]);
+      setShiftPattern(patternRes?.data || null);
+      setShiftSlots(Array.isArray(slotsRes?.data) ? slotsRes.data : []);
+    } catch {
+      // non-fatal — the staff tab still renders the rest of the booking
+    }
+  };
+
+  const fetchPatternHistory = async () => {
+    try {
+      apiClient.setToken(adminToken);
+      const res = await apiClient.getShiftPatternHistory(bookingId);
+      setPatternHistory(Array.isArray(res?.data) ? res.data : []);
+    } catch {
+      setPatternHistory([]);
+    }
+  };
 
   // ── actions ──────────────────────────────────────────────────────────────
 
@@ -415,15 +459,21 @@ const BookingDetailPageV2 = () => {
   const openDayModal = (dateISO, dayNum) => {
     const assignments = getAssignmentsForDate(dateISO);
     const inputs = {};
-    assignments.forEach(a => { inputs[a.assignment_id] = { in_time: '', out_time: '' }; });
+    const invoiceInputs = {};
+    assignments.forEach(a => {
+      inputs[a.assignment_id] = { in_time: '', out_time: '' };
+      if (a.shift_slot_id) invoiceInputs[a.shift_slot_id] = String(a.daily_rate || dailyRate || '');
+    });
     setAttendanceInputs(inputs);
+    setInvoiceAmountInputsBySlot(invoiceInputs);
     setInvoiceAmountInput(String(dailyRate || ''));
     setDayModalError('');
     setDayModal({ dateISO, dayNum, assignments });
   };
-  const closeDayModal = () => { setDayModal(null); setDayModalError(''); setAttendanceInputs({}); setInvoiceAmountInput(''); };
+  const closeDayModal = () => { setDayModal(null); setDayModalError(''); setAttendanceInputs({}); setInvoiceAmountInput(''); setInvoiceAmountInputsBySlot({}); };
 
-  const saveAttendanceTimes = async (assignmentId) => {
+  const saveAttendanceTimes = async (assignment) => {
+    const assignmentId = assignment.assignment_id;
     const inputs = attendanceInputs[assignmentId] || {};
     if (!inputs.in_time || !inputs.out_time) { setDayModalError('Both in-time and out-time are required'); return; }
     try {
@@ -434,6 +484,7 @@ const BookingDetailPageV2 = () => {
         service_date: dayModal.dateISO,
         in_time: new Date(inputs.in_time).toISOString(),
         out_time: new Date(inputs.out_time).toISOString(),
+        shift_slot_id: assignment.shift_slot_id || undefined,
       });
       await fetchDailyRecords();
     } catch (err) { setDayModalError(err?.message || 'Failed to save attendance times'); }
@@ -450,14 +501,16 @@ const BookingDetailPageV2 = () => {
     finally { setDayModalBusy(''); }
   };
 
-  const decideInvoice = async (approve) => {
+  const decideInvoice = async (approve, shiftSlotId) => {
+    const busyKey = shiftSlotId ? `invoice-${shiftSlotId}` : 'invoice';
     try {
-      setDayModalBusy('invoice'); setDayModalError('');
+      setDayModalBusy(busyKey); setDayModalError('');
       apiClient.setToken(adminToken);
       await apiClient.confirmBookingDailyInvoice(bookingId, {
         service_date: dayModal.dateISO,
         approve,
-        amount: approve ? parseFloat(invoiceAmountInput) : undefined,
+        amount: approve ? parseFloat(shiftSlotId ? invoiceAmountInputsBySlot[shiftSlotId] : invoiceAmountInput) : undefined,
+        shift_slot_id: shiftSlotId || undefined,
       });
       await Promise.all([fetchDailyRecords(), fetchDetail()]);
     } catch (err) { setDayModalError(err?.message || 'Failed to confirm invoice decision'); }
@@ -508,21 +561,70 @@ const BookingDetailPageV2 = () => {
     finally { setPaymentSubmitting(false); }
   };
 
-  const closeSwapModal = () => { setShowSwapModal(false); setSwapModalStep(1); setSwapModalSearch(''); setSwapModalSelectedStaff(null); setSwapModalReason(''); setSwapModalError(''); setSwapModalPage(1); setSwapModalDesignation(''); setSwapModalStartDate(toDateInput(new Date())); };
+  const closeSwapModal = () => { setShowSwapModal(false); setSwapModalStep(1); setSwapModalSearch(''); setSwapModalSelectedStaff(null); setSwapModalReason(''); setSwapModalError(''); setSwapModalPage(1); setSwapModalDesignation(''); setSwapModalStartDate(toDateInput(new Date())); setSwapModalSlotId(null); setSwapModalIsAssign(false); };
   const selectSwapStaff = (s) => { setSwapModalSelectedStaff(s); setSwapModalStep(2); };
+  const openSlotAssignModal = (slot) => { setSwapModalSlotId(slot.shift_slot_id); setSwapModalIsAssign(!slot.assignment); setShowSwapModal(true); };
   const confirmSwap = async () => {
-    if (!swapModalSelectedStaff || !swapModalReason.trim()) return;
+    if (!swapModalSelectedStaff || (!swapModalSlotId && !swapModalReason.trim())) return;
     try {
       setSwapModalSubmitting(true); setSwapModalError('');
       apiClient.setToken(adminToken);
-      const response = await apiClient.swapBookingStaff(bookingId, { new_staff_id: swapModalSelectedStaff.staff_profile_id, swap_reason: swapModalReason.trim(), new_staff_start_date: swapModalStartDate });
-      closeSwapModal(); await fetchDetail();
-      if (response?.scheduled) {
-        window.alert(response.message || 'Staff swap scheduled for the future date.');
+      let response;
+      if (swapModalSlotId) {
+        response = swapModalIsAssign
+          ? await apiClient.assignStaffToShiftSlot(bookingId, swapModalSlotId, { staff_profile_id: swapModalSelectedStaff.staff_profile_id, service_start_date: swapModalStartDate, notes: swapModalReason.trim() || null })
+          : await apiClient.reassignShiftSlotStaff(bookingId, swapModalSlotId, { new_staff_id: swapModalSelectedStaff.staff_profile_id, effective_date: swapModalStartDate, reason: swapModalReason.trim() || null });
+      } else {
+        response = await apiClient.swapBookingStaff(bookingId, { new_staff_id: swapModalSelectedStaff.staff_profile_id, swap_reason: swapModalReason.trim(), new_staff_start_date: swapModalStartDate });
       }
-    } catch (err) { setSwapModalError(err?.message || 'Failed to swap staff'); }
+      closeSwapModal(); await fetchDetail(); if (isShiftBased) await fetchShiftData();
+      if (response?.scheduled) {
+        window.alert(response.message || 'Change scheduled for the future date.');
+      }
+    } catch (err) { setSwapModalError(err?.message || 'Failed to update staff assignment'); }
     finally { setSwapModalSubmitting(false); }
   };
+
+  const buildDefaultSlots = (count) => Array.from({ length: count }, (_, i) => ({
+    shift_number: i + 1, start_time: '08:00', duration_hours: (24 / count).toFixed(1), label: `Shift ${i + 1}`,
+  }));
+  const openPatternModal = () => {
+    const existing = shiftPattern?.active?.slots;
+    const count = shiftPattern?.active?.shift_count || 2;
+    setPatternModalShiftCount(count);
+    setPatternModalSlots(existing?.length ? existing.map(s => ({ shift_number: s.shift_number, start_time: (s.start_time || '08:00').slice(0, 5), duration_hours: String(s.duration_hours), label: s.label || `Shift ${s.shift_number}` })) : buildDefaultSlots(count));
+    setPatternModalEffectiveDate(toDateInput(new Date()));
+    setPatternModalError('');
+    setShowPatternModal(true);
+  };
+  const closePatternModal = () => { setShowPatternModal(false); setPatternModalError(''); };
+  const handlePatternShiftCountChange = (count) => {
+    setPatternModalShiftCount(count);
+    setPatternModalSlots(prev => {
+      const next = buildDefaultSlots(count);
+      for (let i = 0; i < Math.min(prev.length, count); i++) next[i] = prev[i];
+      return next;
+    });
+  };
+  const updatePatternSlot = (idx, field, value) => {
+    setPatternModalSlots(prev => prev.map((s, i) => i === idx ? { ...s, [field]: value } : s));
+  };
+  const submitPatternChange = async () => {
+    try {
+      setPatternModalSubmitting(true); setPatternModalError('');
+      apiClient.setToken(adminToken);
+      const response = await apiClient.createShiftPattern(bookingId, {
+        shift_count: patternModalShiftCount,
+        slots: patternModalSlots.map(s => ({ shift_number: s.shift_number, start_time: `${s.start_time}:00`, duration_hours: parseFloat(s.duration_hours), label: s.label || null })),
+        effective_from_date: patternModalEffectiveDate,
+      });
+      closePatternModal(); await fetchShiftData();
+      if (response?.scheduled) window.alert(response.message || 'Shift pattern change scheduled for the future date.');
+      if (response?.warnings?.length) window.alert(`Note: ${response.warnings.join(' ')}`);
+    } catch (err) { setPatternModalError(err?.message || 'Failed to save shift pattern'); }
+    finally { setPatternModalSubmitting(false); }
+  };
+  const togglePatternHistory = () => { if (!showPatternHistory) fetchPatternHistory(); setShowPatternHistory(v => !v); };
 
   const handleWalletPayoff = async (e) => {
     e.preventDefault();
@@ -1105,36 +1207,107 @@ const BookingDetailPageV2 = () => {
           ══════════════════════════════════════════════════════ */}
           {activeSection === 'staff' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {/* Current staff */}
-              <Card>
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 16 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase', color: '#A39D91' }}>Currently on duty</div>
-                  {!isTerminated && (
-                    <button onClick={() => setShowSwapModal(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#8C5AA6', border: 'none', borderRadius: 10, padding: '9px 14px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', cursor: 'pointer', flexShrink: 0 }}>
-                      <Repeat2 style={{ width: 14, height: 14 }} /> Initiate Swap
+              {isShiftBased ? (
+                <>
+                  {/* Shift pattern */}
+                  <Card>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 16 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase', color: '#A39D91' }}>Shift pattern</div>
+                      {!isTerminated && (
+                        <button onClick={openPatternModal} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#8C5AA6', border: 'none', borderRadius: 10, padding: '9px 14px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', cursor: 'pointer', flexShrink: 0 }}>
+                          Change Pattern
+                        </button>
+                      )}
+                    </div>
+                    {shiftPattern?.active ? (
+                      <>
+                        <div style={{ fontSize: 13, color: '#5A554B', marginBottom: 10 }}>{shiftPattern.active.shift_count} shifts/day · effective {formatDate(shiftPattern.active.effective_from_date)}</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                          {(shiftPattern.active.slots || []).map(s => (
+                            <span key={s.shift_slot_id} style={{ fontSize: 12, fontWeight: 600, color: '#5A554B', background: '#FBF9F4', border: '1px solid #EFEAE0', borderRadius: 999, padding: '5px 11px' }}>
+                              {s.label || `Shift ${s.shift_number}`} · {(s.start_time || '').slice(0, 5)} ({s.duration_hours}h)
+                            </span>
+                          ))}
+                        </div>
+                        {shiftPattern.scheduled && (
+                          <div style={{ marginTop: 12, fontSize: 12.5, color: '#B07A1E', background: '#FBF1DD', border: '1px solid #F3E3BC', borderRadius: 10, padding: '9px 12px' }}>
+                            A new {shiftPattern.scheduled.shift_count}-shift pattern takes effect on {formatDate(shiftPattern.scheduled.effective_from_date)}.
+                          </div>
+                        )}
+                      </>
+                    ) : <Empty icon={Users} text="No shift pattern defined yet." />}
+                    <button onClick={togglePatternHistory} style={{ marginTop: 12, fontSize: 12.5, fontWeight: 600, color: '#8C5AA6', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                      {showPatternHistory ? 'Hide history' : 'View pattern history'}
                     </button>
-                  )}
-                </div>
-                {normCurrentStaff ? (
-                  <>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 13, marginBottom: 16 }}>
-                      <div style={{ width: 44, height: 44, borderRadius: 12, background: '#E7F0F8', color: '#3F77B5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 800, flexShrink: 0 }}>
-                        {initials(normCurrentStaff.name)}
+                    {showPatternHistory && (
+                      <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {patternHistory.length === 0 ? <div style={{ fontSize: 12, color: '#A39D91' }}>No history.</div> : patternHistory.map(p => (
+                          <div key={p.pattern_id} style={{ fontSize: 12, color: '#6F6A60', background: '#FBF9F4', border: '1px solid #EFEAE0', borderRadius: 8, padding: '7px 10px' }}>
+                            {p.shift_count} shifts · {formatDate(p.effective_from_date)} → {p.effective_to_date ? formatDate(p.effective_to_date) : 'ongoing'} · <Pill tone={p.status === 'ACTIVE' ? 'green' : p.status === 'SCHEDULED' ? 'amber' : 'slate'}>{p.status}</Pill>
+                          </div>
+                        ))}
                       </div>
-                      <div>
-                        <div style={{ fontSize: 15, fontWeight: 700, color: '#2A2722' }}>{normCurrentStaff.name}</div>
-                        <div style={{ fontSize: 12.5, color: '#6F6A60', marginTop: 2 }}>{normCurrentStaff.designation}</div>
+                    )}
+                  </Card>
+
+                  {/* Per-shift staff */}
+                  <Card>
+                    <CardTitle>Per-shift staff</CardTitle>
+                    {shiftSlots.length === 0 ? <Empty icon={Users} text="Define a shift pattern to assign staff." /> : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {shiftSlots.map(slot => (
+                          <div key={slot.shift_slot_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, border: '1px solid #EFEAE0', borderRadius: 12, padding: '12px 14px', background: '#FBF9F4' }}>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>{slot.label || `Shift ${slot.shift_number}`} <span style={{ fontWeight: 500, color: '#A39D91' }}>· {(slot.start_time || '').slice(0, 5)} ({slot.duration_hours}h)</span></div>
+                              {slot.assignment ? (
+                                <div style={{ fontSize: 12.5, color: '#6F6A60', marginTop: 2 }}>{slot.assignment.staff_name} · {formatMoney(slot.assignment.daily_rate)}/shift</div>
+                              ) : (
+                                <div style={{ fontSize: 12.5, color: '#A39D91', marginTop: 2 }}>Unassigned</div>
+                              )}
+                            </div>
+                            {!isTerminated && (
+                              <button onClick={() => openSlotAssignModal(slot)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: slot.assignment ? '#8C5AA6' : '#3F77B5', border: 'none', borderRadius: 9, padding: '8px 12px', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', cursor: 'pointer', flexShrink: 0 }}>
+                                {slot.assignment ? <><Repeat2 style={{ width: 13, height: 13 }} /> Reassign</> : 'Assign'}
+                              </button>
+                            )}
+                          </div>
+                        ))}
                       </div>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 13 }}>
-                      <Field label="Staff ID"   value={normCurrentStaff.id}     mono />
-                      <Field label="Phone"       value={normCurrentStaff.mobile} />
-                      <Field label="Email"       value={normCurrentStaff.email}  />
-                      <Field label="Daily rate"  value={formatMoney(dailyRate)}  />
-                    </div>
-                  </>
-                ) : <Empty icon={Users} text="No staff is currently assigned to this booking." />}
-              </Card>
+                    )}
+                  </Card>
+                </>
+              ) : (
+                /* Current staff */
+                <Card>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 16 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase', color: '#A39D91' }}>Currently on duty</div>
+                    {!isTerminated && (
+                      <button onClick={() => setShowSwapModal(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#8C5AA6', border: 'none', borderRadius: 10, padding: '9px 14px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', cursor: 'pointer', flexShrink: 0 }}>
+                        <Repeat2 style={{ width: 14, height: 14 }} /> Initiate Swap
+                      </button>
+                    )}
+                  </div>
+                  {normCurrentStaff ? (
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 13, marginBottom: 16 }}>
+                        <div style={{ width: 44, height: 44, borderRadius: 12, background: '#E7F0F8', color: '#3F77B5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 800, flexShrink: 0 }}>
+                          {initials(normCurrentStaff.name)}
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 15, fontWeight: 700, color: '#2A2722' }}>{normCurrentStaff.name}</div>
+                          <div style={{ fontSize: 12.5, color: '#6F6A60', marginTop: 2 }}>{normCurrentStaff.designation}</div>
+                        </div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 13 }}>
+                        <Field label="Staff ID"   value={normCurrentStaff.id}     mono />
+                        <Field label="Phone"       value={normCurrentStaff.mobile} />
+                        <Field label="Email"       value={normCurrentStaff.email}  />
+                        <Field label="Daily rate"  value={formatMoney(dailyRate)}  />
+                      </div>
+                    </>
+                  ) : <Empty icon={Users} text="No staff is currently assigned to this booking." />}
+                </Card>
+              )}
 
               {/* Allocation history */}
               <Card>
@@ -1634,9 +1807,15 @@ const BookingDetailPageV2 = () => {
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col">
             <div className="flex items-start justify-between p-6 border-b border-slate-200 shrink-0">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Swap Staff Member</h2>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  {swapModalSlotId ? (() => { const slot = shiftSlots.find(s => s.shift_slot_id === swapModalSlotId); return `${swapModalIsAssign ? 'Assign Staff' : 'Reassign Staff'} — ${slot?.label || (slot?.shift_number ? `Shift ${slot.shift_number}` : 'Shift')}`; })() : 'Swap Staff Member'}
+                </h2>
                 <p className="text-sm text-slate-500 mt-0.5">
-                  {swapModalStep === 1 ? 'Select a replacement from available staff' : `Confirm: ${normCurrentStaff?.name || 'Current staff'} → ${swapModalSelectedStaff?.full_name}`}
+                  {swapModalStep === 1
+                    ? 'Select a replacement from available staff'
+                    : swapModalSlotId
+                      ? (swapModalIsAssign ? `Assign ${swapModalSelectedStaff?.full_name} to this shift` : `Confirm: current staff → ${swapModalSelectedStaff?.full_name}`)
+                      : `Confirm: ${normCurrentStaff?.name || 'Current staff'} → ${swapModalSelectedStaff?.full_name}`}
                 </p>
               </div>
               <button onClick={closeSwapModal} className="p-1.5 rounded-lg hover:bg-slate-100 transition shrink-0 ml-4"><XCircle className="h-5 w-5 text-slate-400" /></button>
@@ -1702,13 +1881,17 @@ const BookingDetailPageV2 = () => {
             {swapModalStep === 2 && swapModalSelectedStaff && (
               <>
                 <div className="flex-1 overflow-y-auto p-6 space-y-5">
-                  <div className="grid grid-cols-3 gap-3 items-center">
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-center">
-                      <p className="text-xs text-slate-500 mb-2 font-medium uppercase tracking-wide">Current</p>
-                      <div className="w-12 h-12 rounded-full bg-rose-100 flex items-center justify-center mx-auto mb-2"><User className="w-6 h-6 text-rose-400" /></div>
-                      <p className="text-sm font-semibold text-slate-900 truncate">{normCurrentStaff?.name || '-'}</p>
-                    </div>
-                    <div className="flex items-center justify-center"><Repeat2 className="w-7 h-7 text-slate-300" /></div>
+                  <div className={`grid ${swapModalIsAssign ? 'grid-cols-1' : 'grid-cols-3'} gap-3 items-center`}>
+                    {!swapModalIsAssign && (
+                      <>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-center">
+                          <p className="text-xs text-slate-500 mb-2 font-medium uppercase tracking-wide">Current</p>
+                          <div className="w-12 h-12 rounded-full bg-rose-100 flex items-center justify-center mx-auto mb-2"><User className="w-6 h-6 text-rose-400" /></div>
+                          <p className="text-sm font-semibold text-slate-900 truncate">{swapModalSlotId ? (shiftSlots.find(s => s.shift_slot_id === swapModalSlotId)?.assignment?.staff_name || '-') : (normCurrentStaff?.name || '-')}</p>
+                        </div>
+                        <div className="flex items-center justify-center"><Repeat2 className="w-7 h-7 text-slate-300" /></div>
+                      </>
+                    )}
                     <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-center">
                       <p className="text-xs text-emerald-600 mb-2 font-medium uppercase tracking-wide">New Staff</p>
                       <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-2 overflow-hidden">
@@ -1719,26 +1902,26 @@ const BookingDetailPageV2 = () => {
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">New staff start date <span className="text-rose-500">*</span></label>
+                    <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">{swapModalIsAssign ? 'Service start date' : 'New staff start date'} <span className="text-rose-500">*</span></label>
                     <input type="date" value={swapModalStartDate} onChange={e => setSwapModalStartDate(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
                     {swapModalStartDate > toDateInput(new Date()) && (
                       <p className="text-xs text-amber-600 mt-1.5">
-                        Future date — the swap will be scheduled. {normCurrentStaff?.name || 'Current staff'} keeps working until then; the new staff is reserved in the meantime.
+                        Future date — this will be scheduled and take effect automatically on that date.
                       </p>
                     )}
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Reason for swap <span className="text-rose-500">*</span></label>
+                    <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">{swapModalIsAssign ? 'Notes (optional)' : 'Reason for swap'} {!swapModalIsAssign && <span className="text-rose-500">*</span>}</label>
                     <textarea rows={3} value={swapModalReason} onChange={e => setSwapModalReason(e.target.value)} placeholder="e.g. Staff requested leave, client preference…" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
                   </div>
-                  <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">After confirming, WhatsApp and SMS notifications will be sent to the current staff, new staff, and the client.</div>
+                  <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">After confirming, WhatsApp and SMS notifications will be sent to the relevant staff and the client.</div>
                   {swapModalError && <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700">{swapModalError}</div>}
                 </div>
                 <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 shrink-0">
                   <button onClick={() => setSwapModalStep(1)} className="text-sm font-medium text-slate-600 hover:text-slate-900 transition">← Back</button>
-                  <button onClick={confirmSwap} disabled={swapModalSubmitting || !swapModalReason.trim() || !swapModalStartDate} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-violet-600 hover:bg-violet-700 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
+                  <button onClick={confirmSwap} disabled={swapModalSubmitting || (!swapModalIsAssign && !swapModalReason.trim()) || !swapModalStartDate} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-violet-600 hover:bg-violet-700 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
                     {swapModalSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Repeat2 className="h-4 w-4" />}
-                    {swapModalSubmitting ? 'Swapping…' : 'Confirm Swap'}
+                    {swapModalSubmitting ? 'Saving…' : swapModalIsAssign ? 'Confirm Assignment' : 'Confirm Swap'}
                   </button>
                 </div>
               </>
@@ -1748,11 +1931,69 @@ const BookingDetailPageV2 = () => {
       )}
 
       {/* ══════════════════════════════════════════════════════
+          SHIFT PATTERN MODAL
+      ══════════════════════════════════════════════════════ */}
+      {showPatternModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col">
+            <div className="flex items-start justify-between p-6 border-b border-slate-200 shrink-0">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Change Shift Pattern</h2>
+                <p className="text-sm text-slate-500 mt-0.5">Existing attendance/invoices stay pinned to the pattern active when they were recorded.</p>
+              </div>
+              <button onClick={closePatternModal} className="p-1.5 rounded-lg hover:bg-slate-100 transition shrink-0 ml-4"><XCircle className="h-5 w-5 text-slate-400" /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6 space-y-5">
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Number of shifts per day</label>
+                <input type="number" min="1" max="6" value={patternModalShiftCount} onChange={e => handlePatternShiftCountChange(Math.max(1, parseInt(e.target.value) || 1))} className="w-32 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+              </div>
+              <div className="space-y-3">
+                {patternModalSlots.map((s, idx) => (
+                  <div key={idx} className="grid grid-cols-12 gap-2 items-end">
+                    <div className="col-span-2 text-xs font-semibold text-slate-500 pb-2.5">Shift {s.shift_number}</div>
+                    <div className="col-span-4">
+                      <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Start time</label>
+                      <input type="time" value={s.start_time} onChange={e => updatePatternSlot(idx, 'start_time', e.target.value)} className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500" />
+                    </div>
+                    <div className="col-span-3">
+                      <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Duration (h)</label>
+                      <input type="number" min="0.5" step="0.5" value={s.duration_hours} onChange={e => updatePatternSlot(idx, 'duration_hours', e.target.value)} className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500" />
+                    </div>
+                    <div className="col-span-3">
+                      <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Label</label>
+                      <input type="text" value={s.label} onChange={e => updatePatternSlot(idx, 'label', e.target.value)} className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Effective from <span className="text-rose-500">*</span></label>
+                <input type="date" value={patternModalEffectiveDate} onChange={e => setPatternModalEffectiveDate(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                {patternModalEffectiveDate > toDateInput(new Date()) && (
+                  <p className="text-xs text-amber-600 mt-1.5">Future date — this pattern will be scheduled and take effect automatically on that date. The current pattern keeps running until then.</p>
+                )}
+              </div>
+              {patternModalError && <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700">{patternModalError}</div>}
+            </div>
+            <div className="flex items-center justify-end px-6 py-4 border-t border-slate-200 shrink-0">
+              <button onClick={submitPatternChange} disabled={patternModalSubmitting || !patternModalEffectiveDate} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-violet-600 hover:bg-violet-700 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
+                {patternModalSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                {patternModalSubmitting ? 'Saving…' : 'Save Pattern'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════
           DAY DETAIL MODAL — attendance + manual invoicing
       ══════════════════════════════════════════════════════ */}
       {dayModal && (() => {
         const dateRecords = attendanceRecords.filter(r => r.service_date?.slice(0, 10) === dayModal.dateISO);
-        const invoiceRecord = dailyInvoiceRecords.find(r => r.service_date?.slice(0, 10) === dayModal.dateISO);
+        const dateInvoiceRecords = dailyInvoiceRecords.filter(r => r.service_date?.slice(0, 10) === dayModal.dateISO);
+        const invoiceRecord = dateInvoiceRecords.find(r => !r.shift_slot_id) || dateInvoiceRecords[0];
+        const slotIds = [...new Set(dayModal.assignments.map(a => a.shift_slot_id).filter(Boolean))];
 
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
@@ -1779,13 +2020,14 @@ const BookingDetailPageV2 = () => {
                         {dayModal.assignments.map(a => {
                           const record = dateRecords.find(r => r.assignment_id === a.assignment_id);
                           const staffName = a.full_name || a.staff_name || 'Staff';
+                          const shiftLabel = a.shift_label || (a.shift_number ? `Shift ${a.shift_number}` : null);
                           const inputs = attendanceInputs[a.assignment_id] || { in_time: '', out_time: '' };
 
                           if (record && record.salary_status !== 'PENDING') {
                             const paid = record.salary_status === 'PAID';
                             return (
                               <div key={a.assignment_id} className={`rounded-xl border p-4 ${paid ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`}>
-                                <p className="text-sm font-semibold text-slate-900">{staffName}</p>
+                                <p className="text-sm font-semibold text-slate-900">{staffName}{shiftLabel && <span className="ml-2 text-xs font-medium text-violet-600 bg-violet-50 px-2 py-0.5 rounded-full">{shiftLabel}</span>}</p>
                                 <p className="text-xs text-slate-600 mt-1">{record.hours_served}h served · {paid ? `Paid Rs.${Number(record.salary_amount).toLocaleString()}` : 'Salary skipped'} — decided by {record.decided_by_name}</p>
                               </div>
                             );
@@ -1796,7 +2038,7 @@ const BookingDetailPageV2 = () => {
                             return (
                               <div key={a.assignment_id} className="rounded-xl border border-slate-200 p-4">
                                 <div className="flex items-center justify-between gap-3">
-                                  <p className="text-sm font-semibold text-slate-900">{staffName}</p>
+                                  <p className="text-sm font-semibold text-slate-900">{staffName}{shiftLabel && <span className="ml-2 text-xs font-medium text-violet-600 bg-violet-50 px-2 py-0.5 rounded-full">{shiftLabel}</span>}</p>
                                   <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${hours >= 12 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{hours}h served</span>
                                 </div>
                                 <p className="text-xs text-slate-500 mt-1">The 12h figure is informational only — confirming is always your call.</p>
@@ -1810,7 +2052,7 @@ const BookingDetailPageV2 = () => {
 
                           return (
                             <div key={a.assignment_id} className="rounded-xl border border-slate-200 p-4">
-                              <p className="text-sm font-semibold text-slate-900 mb-2">{staffName}</p>
+                              <p className="text-sm font-semibold text-slate-900 mb-2">{staffName}{shiftLabel && <span className="ml-2 text-xs font-medium text-violet-600 bg-violet-50 px-2 py-0.5 rounded-full">{shiftLabel}</span>}</p>
                               <div className="grid grid-cols-2 gap-2">
                                 <div>
                                   <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-1">In-time</label>
@@ -1821,7 +2063,7 @@ const BookingDetailPageV2 = () => {
                                   <input type="datetime-local" value={inputs.out_time} onChange={e => setAttendanceInputs(p => ({ ...p, [a.assignment_id]: { ...inputs, out_time: e.target.value } }))} className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500" />
                                 </div>
                               </div>
-                              <button onClick={() => saveAttendanceTimes(a.assignment_id)} disabled={dayModalBusy === `save-${a.assignment_id}`} className="mt-3 w-full px-3 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition disabled:opacity-60">Save times</button>
+                              <button onClick={() => saveAttendanceTimes(a)} disabled={dayModalBusy === `save-${a.assignment_id}`} className="mt-3 w-full px-3 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition disabled:opacity-60">Save times</button>
                             </div>
                           );
                         })}
@@ -1834,7 +2076,37 @@ const BookingDetailPageV2 = () => {
                 {manualInvoiceDay && (
                   <div>
                     <h3 className="text-sm font-semibold text-slate-900 mb-3">Client invoice</h3>
-                    {invoiceRecord && invoiceRecord.status !== 'PENDING' ? (
+                    {isShiftBased && slotIds.length > 0 ? (
+                      <div className="space-y-3">
+                        {slotIds.map(slotId => {
+                          const slotAssignment = dayModal.assignments.find(a => a.shift_slot_id === slotId);
+                          const shiftLabel = slotAssignment?.shift_label || (slotAssignment?.shift_number ? `Shift ${slotAssignment.shift_number}` : 'Shift');
+                          const slotInvoiceRecord = dateInvoiceRecords.find(r => r.shift_slot_id === slotId);
+                          const busyKey = `invoice-${slotId}`;
+                          if (slotInvoiceRecord && slotInvoiceRecord.status !== 'PENDING') {
+                            return (
+                              <div key={slotId} className={`rounded-xl border p-4 ${slotInvoiceRecord.status === 'INVOICED' ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`}>
+                                <p className="text-xs font-semibold text-violet-600 mb-1">{shiftLabel}</p>
+                                <p className="text-sm text-slate-700">
+                                  {slotInvoiceRecord.status === 'INVOICED' ? `Invoiced Rs.${Number(slotInvoiceRecord.amount).toLocaleString()}` : 'Charge skipped for this shift'} — decided by {slotInvoiceRecord.decided_by_name}
+                                </p>
+                              </div>
+                            );
+                          }
+                          return (
+                            <div key={slotId} className="rounded-xl border border-slate-200 p-4">
+                              <p className="text-xs font-semibold text-violet-600 mb-2">{shiftLabel}</p>
+                              <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Amount (Rs.)</label>
+                              <input type="number" min="0" step="0.01" value={invoiceAmountInputsBySlot[slotId] || ''} onChange={e => setInvoiceAmountInputsBySlot(p => ({ ...p, [slotId]: e.target.value }))} className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 mb-3" />
+                              <div className="flex gap-2">
+                                <button onClick={() => decideInvoice(true, slotId)} disabled={dayModalBusy === busyKey || !invoiceAmountInputsBySlot[slotId]} className="flex-1 px-3 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition disabled:opacity-60">Confirm & Invoice</button>
+                                <button onClick={() => decideInvoice(false, slotId)} disabled={dayModalBusy === busyKey} className="flex-1 px-3 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition disabled:opacity-60">Skip</button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : invoiceRecord && invoiceRecord.status !== 'PENDING' ? (
                       <div className={`rounded-xl border p-4 ${invoiceRecord.status === 'INVOICED' ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`}>
                         <p className="text-sm text-slate-700">
                           {invoiceRecord.status === 'INVOICED' ? `Invoiced Rs.${Number(invoiceRecord.amount).toLocaleString()}` : 'Charge skipped for this day'} — decided by {invoiceRecord.decided_by_name}

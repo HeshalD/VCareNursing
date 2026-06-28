@@ -18,7 +18,9 @@ const initialFormState = {
 	account_holder_name: '',
 	bank_name: '',
 	branch_name: '',
-	currency: 'LKR'
+	currency: 'LKR',
+	opening_balance: '0',
+	opening_balance_date: ''
 };
 
 const formatMoney = (value) => {
@@ -93,7 +95,9 @@ const BankAccounts = () => {
 			account_holder_name: account.account_holder_name || '',
 			bank_name: account.bank_name || '',
 			branch_name: account.branch_name || '',
-			currency: account.currency || 'LKR'
+			currency: account.currency || 'LKR',
+			opening_balance: account.opening_balance ?? '0',
+			opening_balance_date: account.opening_balance_date ? account.opening_balance_date.slice(0, 10) : ''
 		});
 		setShowForm(true);
 	};
@@ -304,6 +308,31 @@ const BankAccounts = () => {
 							/>
 						</label>
 
+						{!editingAccount && (
+							<>
+								<label className="space-y-1 text-sm">
+									<span className="font-medium text-slate-700">Opening Balance</span>
+									<input
+										type="number"
+										step="0.01"
+										value={formData.opening_balance}
+										onChange={(e) => setFormData({ ...formData, opening_balance: e.target.value })}
+										className="w-full rounded-lg border border-slate-200 px-3 py-2 outline-none focus:border-blue-500"
+									/>
+								</label>
+
+								<label className="space-y-1 text-sm">
+									<span className="font-medium text-slate-700">Opening Balance Date</span>
+									<input
+										type="date"
+										value={formData.opening_balance_date}
+										onChange={(e) => setFormData({ ...formData, opening_balance_date: e.target.value })}
+										className="w-full rounded-lg border border-slate-200 px-3 py-2 outline-none focus:border-blue-500"
+									/>
+								</label>
+							</>
+						)}
+
 						<div className="md:col-span-2 flex items-center gap-2 pt-1">
 							<button
 								type="submit"
@@ -346,6 +375,7 @@ const BankAccounts = () => {
 									<th className="px-5 py-3">Account Number</th>
 									<th className="px-5 py-3">Holder</th>
 									<th className="px-5 py-3">Currency</th>
+									<th className="px-5 py-3 text-right">Opening Balance</th>
 									<th className="px-5 py-3 text-right">Actions</th>
 								</tr>
 							</thead>
@@ -357,6 +387,7 @@ const BankAccounts = () => {
 										<td className="px-5 py-3 text-slate-700">{account.account_number}</td>
 										<td className="px-5 py-3 text-slate-700">{account.account_holder_name}</td>
 										<td className="px-5 py-3 text-slate-700">{account.currency}</td>
+										<td className="px-5 py-3 text-right text-slate-700">{formatMoney(account.opening_balance)}</td>
 										<td className="px-5 py-3">
 											<div className="flex items-center justify-end gap-2">
 												<button
@@ -508,9 +539,21 @@ const BankAccounts = () => {
 						) : (
 							<div className="space-y-3">
 								<div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+									<p className="text-xs text-slate-500">Opening Balance</p>
+									<p className="text-base font-semibold text-slate-900">
+										{formatMoney(reconciliationReport.summary?.opening_balance)}
+									</p>
+								</div>
+								<div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
 									<p className="text-xs text-slate-500">Total Deposits</p>
 									<p className="text-base font-semibold text-slate-900">
 										{formatMoney(reconciliationReport.summary?.total_deposits)}
+									</p>
+								</div>
+								<div className="rounded-xl border border-green-200 bg-green-50 p-3">
+									<p className="text-xs text-green-700">Closing Balance</p>
+									<p className="text-base font-semibold text-green-800">
+										{formatMoney(reconciliationReport.summary?.closing_balance)}
 									</p>
 								</div>
 								<div className="rounded-xl border border-slate-200 bg-slate-50 p-3">

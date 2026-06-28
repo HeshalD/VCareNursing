@@ -264,6 +264,8 @@ async function runMigration() {
       branch_name VARCHAR(100),
       is_active BOOLEAN DEFAULT true,
       currency VARCHAR(5) DEFAULT 'LKR',
+      opening_balance NUMERIC(12, 2) NOT NULL DEFAULT 0,
+      opening_balance_date DATE,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
       created_by UUID REFERENCES users(user_id)
@@ -744,7 +746,7 @@ async function runMigration() {
     CREATE TABLE IF NOT EXISTS scheduled_actions (
       action_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
       booking_id UUID NOT NULL REFERENCES bookings(booking_id) ON DELETE CASCADE,
-      action_type VARCHAR(30) NOT NULL,        -- TERMINATION | COMPLETION | STAFF_SWAP | ASSIGNMENT_START
+      action_type VARCHAR(30) NOT NULL,        -- TERMINATION | COMPLETION | STAFF_SWAP | ASSIGNMENT_START | SHIFT_PATTERN_CHANGE | SHIFT_REASSIGNMENT
       effective_date DATE NOT NULL,
       status VARCHAR(20) DEFAULT 'SCHEDULED',   -- SCHEDULED | EXECUTED | CANCELLED | FAILED
       payload JSONB NOT NULL DEFAULT '{}',      -- action-specific args
@@ -1650,6 +1652,155 @@ async function runMigration() {
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_staff_sessions_active
     ON staff_sessions (is_active);
+  `);
+
+  // =========================================================
+  // BANK ACCOUNT OPENING BALANCE
+  // =========================================================
+
+  await db.query(`ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS opening_balance NUMERIC(12, 2) NOT NULL DEFAULT 0`);
+  await db.query(`ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS opening_balance_date DATE`);
+
+  // =========================================================
+  // SHIFT-BASED BOOKING SCHEDULING
+  // A SHIFT_BASED booking can have multiple shifts per day (e.g. 2x12h or
+  // 3x8h), each independently staffed. The shift pattern (count + each
+  // shift's time window) is versioned/effective-dated rather than mutated
+  // in place, so changing the pattern mid-booking never rewrites the
+  // pattern a past day's attendance/invoices were actually recorded under.
+  // LIVE_IN and VISITING bookings never create rows here.
+  // =========================================================
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS booking_shift_patterns (
+      pattern_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      booking_id UUID NOT NULL REFERENCES bookings(booking_id) ON DELETE CASCADE,
+      shift_count INTEGER NOT NULL CHECK (shift_count > 0),
+      effective_from_date DATE NOT NULL,
+      effective_to_date DATE,
+      status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+      created_by UUID REFERENCES users(user_id),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      notes TEXT
+    );
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_booking_shift_patterns_booking_id
+    ON booking_shift_patterns(booking_id);
+  `);
+
+  // At most one ACTIVE pattern per booking, and separately at most one SCHEDULED
+  // (future-dated, not yet applied) pattern — the two statuses coexist while a
+  // pending pattern change waits for its effective date.
+  await db.query(`DROP INDEX IF EXISTS uniq_open_shift_pattern`);
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_shift_pattern
+      ON booking_shift_patterns (booking_id)
+      WHERE status = 'ACTIVE'
+  `);
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_scheduled_shift_pattern
+      ON booking_shift_patterns (booking_id)
+      WHERE status = 'SCHEDULED'
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS booking_shift_slots (
+      shift_slot_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      pattern_id UUID NOT NULL REFERENCES booking_shift_patterns(pattern_id) ON DELETE CASCADE,
+      shift_number INTEGER NOT NULL CHECK (shift_number > 0),
+      start_time TIME NOT NULL,
+      duration_hours NUMERIC(4, 2) NOT NULL CHECK (duration_hours > 0),
+      label VARCHAR(50),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (pattern_id, shift_number)
+    );
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_booking_shift_slots_pattern_id
+    ON booking_shift_slots(pattern_id);
+  `);
+
+  // Which shift slot (if any) a staff assignment covers. NULL for LIVE_IN/VISITING,
+  // where one assignment row already represents the whole booking.
+  await db.query(`
+    ALTER TABLE booking_staff_assignments
+    ADD COLUMN IF NOT EXISTS shift_slot_id UUID REFERENCES booking_shift_slots(shift_slot_id)
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_booking_staff_assignments_shift_slot_id
+    ON booking_staff_assignments(shift_slot_id);
+  `);
+
+  // At most one ACTIVE assignment can hold a given shift slot at a time.
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_slot_assignment
+      ON booking_staff_assignments (shift_slot_id)
+      WHERE status = 'ACTIVE' AND shift_slot_id IS NOT NULL
+  `);
+
+  // Which shift slot (if any) an attendance/invoice row belongs to. NULL for
+  // LIVE_IN/VISITING, preserving today's one-row-per-day behavior exactly.
+  await db.query(`
+    ALTER TABLE staff_daily_attendance
+    ADD COLUMN IF NOT EXISTS shift_slot_id UUID REFERENCES booking_shift_slots(shift_slot_id)
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_staff_daily_attendance_shift_slot_id
+    ON staff_daily_attendance(shift_slot_id);
+  `);
+
+  // Replace the old single UNIQUE(assignment_id, service_date) with two partial
+  // indexes so SHIFT_BASED bookings can have multiple attendance rows per day
+  // (one per shift slot) while LIVE_IN/VISITING keep their original one-per-day guarantee.
+  await db.query(`
+    ALTER TABLE staff_daily_attendance
+    DROP CONSTRAINT IF EXISTS staff_daily_attendance_assignment_id_service_date_key
+  `);
+
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_attendance_no_slot
+      ON staff_daily_attendance (assignment_id, service_date)
+      WHERE shift_slot_id IS NULL
+  `);
+
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_attendance_with_slot
+      ON staff_daily_attendance (assignment_id, service_date, shift_slot_id)
+      WHERE shift_slot_id IS NOT NULL
+  `);
+
+  await db.query(`
+    ALTER TABLE booking_daily_invoices
+    ADD COLUMN IF NOT EXISTS shift_slot_id UUID REFERENCES booking_shift_slots(shift_slot_id)
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_booking_daily_invoices_shift_slot_id
+    ON booking_daily_invoices(shift_slot_id);
+  `);
+
+  // Same treatment as staff_daily_attendance above: allow one invoice row per
+  // shift slot per day for SHIFT_BASED, keep the old one-per-day guarantee otherwise.
+  await db.query(`
+    ALTER TABLE booking_daily_invoices
+    DROP CONSTRAINT IF EXISTS booking_daily_invoices_booking_id_service_date_key
+  `);
+
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_daily_invoice_no_slot
+      ON booking_daily_invoices (booking_id, service_date)
+      WHERE shift_slot_id IS NULL
+  `);
+
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_daily_invoice_with_slot
+      ON booking_daily_invoices (booking_id, service_date, shift_slot_id)
+      WHERE shift_slot_id IS NOT NULL
   `);
 
   // =========================================================

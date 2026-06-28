@@ -1109,6 +1109,41 @@ class ApiClient {
     });
   }
 
+  // ── Shift patterns & per-shift staff assignment (SHIFT_BASED only) ────
+
+  async getShiftPattern(bookingId) {
+    return this.request(`/bookings/${bookingId}/shift-pattern`);
+  }
+
+  async getShiftPatternHistory(bookingId) {
+    return this.request(`/bookings/${bookingId}/shift-pattern/history`);
+  }
+
+  async createShiftPattern(bookingId, payload) {
+    return this.request(`/bookings/${bookingId}/shift-pattern`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async getShiftSlots(bookingId) {
+    return this.request(`/bookings/${bookingId}/shift-slots`);
+  }
+
+  async assignStaffToShiftSlot(bookingId, shiftSlotId, payload) {
+    return this.request(`/bookings/${bookingId}/shift-slots/${shiftSlotId}/assign-staff`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async reassignShiftSlotStaff(bookingId, shiftSlotId, payload) {
+    return this.request(`/bookings/${bookingId}/shift-slots/${shiftSlotId}/reassign-staff`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   // ── Daily attendance & manual daily invoicing ──────────────────────────
 
   async getBookingAttendance(bookingId) {
