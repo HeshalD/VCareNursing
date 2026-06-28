@@ -149,9 +149,11 @@ const sendPaymentReceipt = (mobileNumber, clientName, receiptNumber, amount, dat
     [{ type: 'document', document: { link: pdfUrl, filename: filename || `${receiptNumber}.pdf` } }]
   );
 
-// Sent when staff is assigned to a booking — {{1}} = client name, {{2}} = staff name, {{3}} = date, {{4}} = time, {{5}} = staff profile URL
-const sendBookingConfirmed = (mobileNumber, clientName, staffName, date, time, staffProfileUrl) =>
-  sendTemplate(formatNumber(mobileNumber), 'vcare_booking_confirmed', 'en', [clientName, staffName, date, time, staffProfileUrl]);
+// Sent when staff is assigned to a booking — {{1}} = client name, {{2}} = staff name, {{3}} = date, {{4}} = time.
+// NOTE: the live template has only 4 body vars (no profile-link line); the staff profile URL is
+// delivered to the client via SMS instead (see staffAssignmentController).
+const sendBookingConfirmed = (mobileNumber, clientName, staffName, date, time) =>
+  sendTemplate(formatNumber(mobileNumber), 'vcare_booking_confirmed', 'en', [clientName, staffName, date, time]);
 
 // Sent to staff when assigned to a booking — {{1}} = staff name, {{2}} = patient name, {{3}} = location, {{4}} = conditions, {{5}} = start date (with start time appended when set, e.g. "25 June 2026, 9:00 AM")
 const sendStaffNewAssignment = (mobileNumber, staffName, patientName, location, conditions, startDate) =>
@@ -288,9 +290,10 @@ const sendStaffAgreement = (mobileNumber, fullName) =>
     [{ type: 'document', document: { link: STAFF_AGREEMENT_PDF_URL, filename: 'VCare_Independent_Contractor_Agreement.pdf' } }]
   );
 
-// Sent to a client suggesting a candidate staff member — link delivered via a URL button (no photo).
+// Sent to a client suggesting a candidate staff member.
 // Body vars: {{1}} = client/payer name, {{2}} = patient name, {{3}} = candidate name, {{4}} = role/designation
-// Button: dynamic "View Profile" URL — base `https://vcarenursing.com/services/staff-profile/` + {{1}} = staffProfileId
+// NOTE: the live template's "View Profile" button is a STATIC URL — it takes no parameters,
+// so we send no button component (Meta renders the button from the approved template itself).
 //
 // META TEMPLATE SPEC — vcare_candidate_profile (UTILITY, en)
 // Header: NONE
@@ -305,15 +308,12 @@ const sendStaffAgreement = (mobileNumber, fullName) =>
 //   Tap the button below to view their full profile.
 //
 //   Let us know if you'd like to proceed with this candidate or if you'd prefer to see other options.
-// Button (URL): "View Profile" → https://vcarenursing.com/services/staff-profile/{{1}}
-const sendCandidateProfile = (mobileNumber, payerName, patientName, staffName, designation, staffProfileId) =>
+const sendCandidateProfile = (mobileNumber, payerName, patientName, staffName, designation) =>
   sendTemplate(
     formatNumber(mobileNumber),
     'vcare_candidate_profile',
     'en',
-    [payerName, patientName, staffName, designation || 'Care Professional'],
-    null,
-    [{ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: String(staffProfileId) }] }]
+    [payerName, patientName, staffName, designation || 'Care Professional']
   );
 
 // Sent to staff when their leave request is approved.

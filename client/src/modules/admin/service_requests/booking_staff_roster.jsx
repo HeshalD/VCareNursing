@@ -23,6 +23,19 @@ const statusIcon = {
 
 const fmt = (date) => date ? new Date(date).toLocaleDateString('en-LK', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 const money = (v) => v != null ? `LKR ${parseFloat(v).toLocaleString('en-LK', { minimumFractionDigits: 2 })}` : '—';
+const humanize = (v) =>
+  v == null || v === ''
+    ? v
+    : String(v).replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+
+const requestStatusStyle = {
+  NEW_LEAD: 'bg-blue-50 text-blue-700 border-blue-200',
+  PENDING: 'bg-amber-50 text-amber-700 border-amber-200',
+  CONFIRMED: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  ASSIGNED: 'bg-purple-50 text-purple-700 border-purple-200',
+  COMPLETED: 'bg-slate-100 text-slate-700 border-slate-200',
+  CANCELLED: 'bg-red-50 text-red-700 border-red-200',
+};
 
 const BookingStaffRosterPage = () => {
   const navigate = useNavigate();
@@ -33,7 +46,6 @@ const BookingStaffRosterPage = () => {
   const [request, setRequest] = useState(location.state?.request || null);
   const [quote, setQuote] = useState(location.state?.quote || null);
   const [staff, setStaff] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [detailsOpen, setDetailsOpen] = useState(true);
 
@@ -42,6 +54,13 @@ const BookingStaffRosterPage = () => {
   const [genderFilter, setGenderFilter] = useState('all');
   const [liveInFilter, setLiveInFilter] = useState('all');
   const [roleFilter, setRoleFilter] = useState('all');
+
+  const STAFF_PAGE_SIZE = 12;
+  const [staffLoading, setStaffLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState({
+    current_page: 1, total_pages: 1, total_count: 0, has_next: false, has_prev: false,
+  });
 
   const preferredStaffId =
     request?.preferred_staff_id ||
@@ -56,6 +75,25 @@ const BookingStaffRosterPage = () => {
   const [sentCandidateIds, setSentCandidateIds] = useState(new Set());
   const [sendingCandidateId, setSendingCandidateId] = useState(null);
   const [candidateNotice, setCandidateNotice] = useState(null); // { type: 'success' | 'error', text }
+
+  // SHIFT_BASED bookings need one staff member per shift — build an ordered queue here
+  // instead of the single-select flow LIVE_IN/VISITING use, then hand the whole queue
+  // to the assignment page to pre-fill shift 1, 2, 3... in order.
+  const isShiftBased = (request?.service_model || booking?.service_model) === 'SHIFT_BASED';
+  const [selectedQueue, setSelectedQueue] = useState([]);
+  const toggleQueueStaff = (member) => {
+    setSelectedQueue((prev) =>
+      prev.some((m) => m.staff_profile_id === member.staff_profile_id)
+        ? prev.filter((m) => m.staff_profile_id !== member.staff_profile_id)
+        : [...prev, member]
+    );
+  };
+  const proceedWithQueue = () => {
+    if (selectedQueue.length === 0) return;
+    navigate(`/admin/bookings/${bookingId}/staff-assignment`, {
+      state: { booking, request, quote, selectedStaffQueue: selectedQueue }
+    });
+  };
 
   useEffect(() => {
     if (!requestId) return;
@@ -87,17 +125,11 @@ const BookingStaffRosterPage = () => {
     }
   };
 
-  const fetchData = async () => {
+  const fetchBookingDetails = async () => {
+    if (booking) return;
     try {
-      setLoading(true);
       setError('');
-
-      const [staffRes, bookingRes] = await Promise.all([
-        apiClient.getAllStaff(),
-        booking ? Promise.resolve(null) : apiClient.getAdminBookingDetail(bookingId)
-      ]);
-
-      setStaff(staffRes.data || []);
+      const bookingRes = await apiClient.getAdminBookingDetail(bookingId);
 
       if (bookingRes?.data) {
         setBooking(bookingRes.data);
@@ -110,12 +142,35 @@ const BookingStaffRosterPage = () => {
       }
     } catch (err) {
       setError(err.message || 'Failed to load staff roster');
-    } finally {
-      setLoading(false);
     }
   };
 
-  useEffect(() => { fetchData(); }, [bookingId]);
+  useEffect(() => { fetchBookingDetails(); }, [bookingId]);
+
+  const fetchStaff = async (targetPage = page) => {
+    try {
+      setStaffLoading(true);
+      setError('');
+      const params = { page: targetPage, limit: STAFF_PAGE_SIZE };
+      if (statusFilter !== 'all') params.status = statusFilter;
+      if (roleFilter !== 'all') params.role = roleFilter;
+
+      const res = await apiClient.getAllStaff(params);
+      setStaff(res.data || []);
+      setPagination(res.pagination || {
+        current_page: targetPage, total_pages: 1, total_count: (res.data || []).length, has_next: false, has_prev: false,
+      });
+    } catch (err) {
+      setError(err.message || 'Failed to load staff roster');
+    } finally {
+      setStaffLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchStaff(page); }, [page, statusFilter, roleFilter]);
+
+  const changeStatusFilter = (v) => { setStatusFilter(v); setPage(1); };
+  const changeRoleFilter = (v) => { setRoleFilter(v); setPage(1); };
 
   const filteredStaff = useMemo(() => {
     return staff.filter((m) => {
@@ -123,17 +178,12 @@ const BookingStaffRosterPage = () => {
         [m.full_name, m.designation, m.home_address, m.location, m.email, m.mobile_number]
           .filter(Boolean)
           .some((v) => String(v).toLowerCase().includes(searchTerm.toLowerCase()));
-      const matchesStatus = statusFilter === 'all' || m.current_status === statusFilter;
       const matchesGender = genderFilter === 'all' || m.gender === genderFilter;
       const matchesLiveIn = liveInFilter === 'all' ||
         (liveInFilter === 'yes' ? m.willing_to_live_in === true : m.willing_to_live_in === false);
-      const roles = Array.isArray(m.role)
-        ? m.role
-        : String(m.role || '').replace(/[{}"]/g, '').split(',').filter(Boolean);
-      const matchesRole = roleFilter === 'all' || roles.includes(roleFilter);
-      return matchesSearch && matchesStatus && matchesGender && matchesLiveIn && matchesRole;
+      return matchesSearch && matchesGender && matchesLiveIn;
     });
-  }, [staff, searchTerm, statusFilter, genderFilter, liveInFilter, roleFilter]);
+  }, [staff, searchTerm, genderFilter, liveInFilter]);
 
   const selectStaff = (member) => {
     navigate(`/admin/bookings/${bookingId}/staff-assignment`, {
@@ -176,15 +226,13 @@ const BookingStaffRosterPage = () => {
 
       {/* ── Service Request Details ── */}
       {(request || booking) && (
-        <div className="mb-6 rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+        <div className="mb-6 rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
           <button
             onClick={() => setDetailsOpen((v) => !v)}
             className="flex w-full items-center justify-between px-5 py-4 text-left hover:bg-slate-50 transition-colors"
           >
             <div className="flex items-center gap-3">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50">
-                <FileText className="h-4 w-4 text-blue-600" />
-              </div>
+              <FileText className="h-4 w-4 text-slate-400" />
               <div>
                 <p className="text-sm font-semibold text-slate-900">
                   Service Request Details
@@ -213,41 +261,59 @@ const BookingStaffRosterPage = () => {
                 {/* Client / Payer */}
                 <section>
                   <SectionHeading icon={User} label="Client / Payer" />
-                  <dl className="mt-3 space-y-2">
-                    <Field label="Name" value={request?.payer_name || booking?.client_name} />
-                    <Field label="Mobile" value={request?.payer_mobile || booking?.client_mobile} />
-                    <Field label="Location" value={request?.location_address || booking?.client_address} />
+                  <dl className="mt-3 space-y-3">
+                    <DetailField label="Name" value={request?.payer_name || booking?.client_name} />
+                    <DetailField label="Mobile" value={request?.payer_mobile || booking?.client_mobile} />
+                    <DetailField label="Location" value={request?.location_address || booking?.client_address} />
                   </dl>
                 </section>
 
                 {/* Patient */}
                 <section>
                   <SectionHeading icon={Stethoscope} label="Care Profile" />
-                  <dl className="mt-3 space-y-2">
-                    <Field label="Name" value={request?.patient_name || booking?.patient_name} />
-                    <Field label="Age" value={request?.patient_age ?? booking?.patient_age} />
-                    <Field label="Relationship" value={request?.relationship_to_client || booking?.relationship_to_client} />
-                    <Field label="Condition" value={request?.patient_condition || booking?.medical_condition} multiline />
+                  <dl className="mt-3 space-y-3">
+                    <DetailField label="Name" value={request?.patient_name || booking?.patient_name} />
+                    <DetailField label="Age" value={request?.patient_age ?? booking?.patient_age} />
+                    <DetailField label="Relationship" value={request?.relationship_to_client || booking?.relationship_to_client} />
                   </dl>
                 </section>
 
                 {/* Service Requirements */}
                 <section>
                   <SectionHeading icon={BadgeCheck} label="Service Requirements" />
-                  <dl className="mt-3 space-y-2">
-                    <Field label="Service Type" value={request?.service_type || booking?.service_type} />
-                    <Field label="Service Model" value={request?.service_model || booking?.service_model} />
-                    <Field label="Preferred Gender" value={request?.preferred_gender || booking?.preferred_gender} />
-                    <Field label="Start Date" value={fmt(request?.start_date || booking?.start_date)} />
-                    <Field label="Status" value={request?.status || booking?.status} />
+                  <dl className="mt-3 space-y-3">
+                    <DetailField label="Service Type" value={request?.service_type || booking?.service_type} />
+                    <DetailField label="Service Model" value={humanize(request?.service_model || booking?.service_model)} />
+                    <DetailField label="Preferred Gender" value={humanize(request?.preferred_gender || booking?.preferred_gender)} />
+                    <DetailField label="Start Date" value={fmt(request?.start_date || booking?.start_date)} />
+                    <div>
+                      <dt className="text-xs font-medium text-slate-400">Status</dt>
+                      <dd className="mt-1">
+                        {(() => {
+                          const s = request?.status || booking?.status;
+                          return s ? (
+                            <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${requestStatusStyle[s] || 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                              {humanize(s)}
+                            </span>
+                          ) : <span className="text-sm text-slate-400">—</span>;
+                        })()}
+                      </dd>
+                    </div>
                   </dl>
                 </section>
               </div>
 
+              {(request?.patient_condition || booking?.medical_condition) && (
+                <div className="mt-4 rounded-lg border border-slate-100 bg-slate-50 px-4 py-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Condition</p>
+                  <p className="mt-1 text-sm leading-relaxed text-slate-700">{request?.patient_condition || booking?.medical_condition}</p>
+                </div>
+              )}
+
               {(request?.remarks) && (
-                <div className="mt-4 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
+                <div className="mt-4 rounded-lg border border-amber-100 bg-amber-50 px-4 py-3">
                   <p className="text-xs font-semibold uppercase tracking-wide text-amber-600">Remarks</p>
-                  <p className="mt-1 text-sm text-amber-900">{request.remarks}</p>
+                  <p className="mt-1 text-sm leading-relaxed text-amber-900">{request.remarks}</p>
                 </div>
               )}
 
@@ -266,25 +332,25 @@ const BookingStaffRosterPage = () => {
       )}
 
       {/* ── Filters ── */}
-      <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <div className="relative lg:col-span-2">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+      <div className="mb-4 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[180px] flex-1">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
             <input
               type="text"
-              placeholder="Search by name, role, location, email, phone…"
+              placeholder="Search staff…"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 py-2 pl-9 pr-4 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              className="w-full rounded-lg border border-slate-200 py-1.5 pl-8 pr-3 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
             />
           </div>
-          <FilterSelect value={statusFilter} onChange={setStatusFilter}>
+          <FilterSelect value={statusFilter} onChange={changeStatusFilter}>
             <option value="all">All Statuses</option>
             <option value="AVAILABLE">Available</option>
             <option value="ASSIGNED">Assigned</option>
             <option value="UNAVAILABLE">Unavailable</option>
           </FilterSelect>
-          <FilterSelect value={roleFilter} onChange={setRoleFilter}>
+          <FilterSelect value={roleFilter} onChange={changeRoleFilter}>
             <option value="all">All Roles</option>
             <option value="NURSE">Nurse</option>
             <option value="CARETAKER">Caregiver</option>
@@ -295,43 +361,62 @@ const BookingStaffRosterPage = () => {
             <option value="MALE">Male</option>
             <option value="FEMALE">Female</option>
           </FilterSelect>
-        </div>
-        <div className="mt-3 flex items-center justify-between">
-          <FilterSelect value={liveInFilter} onChange={setLiveInFilter} className="w-48">
-            <option value="all">Any Live-in Preference</option>
+          <FilterSelect value={liveInFilter} onChange={setLiveInFilter}>
+            <option value="all">Any Live-in</option>
             <option value="yes">Willing to Live-in</option>
             <option value="no">Not Willing</option>
           </FilterSelect>
-          <div className="flex items-center gap-3 text-sm text-slate-500">
-            {activeFilters > 0 && (
-              <button
-                onClick={() => { setStatusFilter('all'); setRoleFilter('all'); setGenderFilter('all'); setLiveInFilter('all'); setSearchTerm(''); }}
-                className="text-blue-600 hover:underline"
-              >
-                Clear filters
-              </button>
-            )}
-            <span>
-              Showing <span className="font-semibold text-slate-900">{filteredStaff.length}</span> of{' '}
-              <span className="font-semibold text-slate-900">{staff.length}</span> staff
-            </span>
-          </div>
+          {activeFilters > 0 && (
+            <button
+              onClick={() => { setStatusFilter('all'); setRoleFilter('all'); setGenderFilter('all'); setLiveInFilter('all'); setSearchTerm(''); setPage(1); }}
+              className="text-sm font-medium text-blue-600 hover:underline"
+            >
+              Clear
+            </button>
+          )}
         </div>
+        <p className="mt-2 text-xs text-slate-400">
+          Showing <span className="font-medium text-slate-600">{filteredStaff.length}</span> of{' '}
+          <span className="font-medium text-slate-600">{pagination.total_count}</span> staff
+        </p>
       </div>
 
+      {/* ── Shift staff queue (SHIFT_BASED only) ── */}
+      {isShiftBased && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-200 bg-violet-50 px-5 py-3">
+          <div className="text-sm text-violet-800">
+            {selectedQueue.length === 0 ? (
+              <span>This is a shift-based booking — add one staff member per shift, in order, then proceed.</span>
+            ) : (
+              <span>
+                <span className="font-semibold">{selectedQueue.length}</span> staff queued for shifts:{' '}
+                {selectedQueue.map((m) => m.full_name).join(' → ')}
+              </span>
+            )}
+          </div>
+          <button
+            onClick={proceedWithQueue}
+            disabled={selectedQueue.length === 0}
+            className="inline-flex items-center gap-2 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+          >
+            Proceed to shift assignment ({selectedQueue.length})
+          </button>
+        </div>
+      )}
+
       {/* ── Staff List ── */}
-      {loading ? (
-        <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 shadow-sm">
+      {staffLoading ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 shadow-sm">
           Loading staff roster…
         </div>
       ) : filteredStaff.length === 0 ? (
-        <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-500 shadow-sm">
+        <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-slate-500 shadow-sm">
           <AlertCircle className="mx-auto mb-3 h-8 w-8 text-slate-300" />
           <p className="font-medium text-slate-600">No staff match the selected filters.</p>
           <p className="mt-1 text-sm">Try adjusting the search or filter criteria above.</p>
         </div>
       ) : (
-        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
           {/* Table header */}
           <div className="hidden grid-cols-[2.5rem_1fr_10rem_8rem_8rem_7rem_10rem] items-center gap-4 border-b border-slate-100 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 lg:grid">
             <span />
@@ -407,7 +492,7 @@ const BookingStaffRosterPage = () => {
                     {roles.length > 0
                       ? roles.map((r) => (
                           <span key={r} className="rounded-md border border-slate-200 bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
-                            {r}
+                            {humanize(r)}
                           </span>
                         ))
                       : <span className="text-xs text-slate-400">—</span>}
@@ -417,7 +502,7 @@ const BookingStaffRosterPage = () => {
                   <div>
                     <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${statusColor[member.current_status] || 'bg-slate-100 text-slate-600 border-slate-200'}`}>
                       {statusIcon[member.current_status] || <AlertCircle className="w-3.5 h-3.5" />}
-                      {member.current_status || 'UNKNOWN'}
+                      {humanize(member.current_status) || 'Unknown'}
                     </span>
                   </div>
 
@@ -425,7 +510,7 @@ const BookingStaffRosterPage = () => {
                   <div className="text-sm text-slate-700">
                     <span className="flex items-center gap-1.5">
                       <User className="h-3.5 w-3.5 text-slate-400" />
-                      {member.gender || '—'}
+                      {humanize(member.gender) || '—'}
                     </span>
                   </div>
 
@@ -438,16 +523,35 @@ const BookingStaffRosterPage = () => {
 
                   {/* Action */}
                   <div className="flex flex-col items-stretch gap-2 lg:items-end">
-                    <button
-                      onClick={() => selectStaff(member)}
-                      className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-                        isPreferred
-                          ? 'bg-amber-500 text-white hover:bg-amber-600'
-                          : 'bg-blue-600 text-white hover:bg-blue-700'
-                      }`}
-                    >
-                      Select
-                    </button>
+                    {isShiftBased ? (() => {
+                      const queueIndex = selectedQueue.findIndex((m) => m.staff_profile_id === member.staff_profile_id);
+                      const queued = queueIndex !== -1;
+                      return (
+                        <button
+                          onClick={() => toggleQueueStaff(member)}
+                          className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                            queued
+                              ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                              : isPreferred
+                                ? 'bg-amber-500 text-white hover:bg-amber-600'
+                                : 'bg-blue-600 text-white hover:bg-blue-700'
+                          }`}
+                        >
+                          {queued ? `✓ Shift ${queueIndex + 1} · Remove` : 'Add to shifts'}
+                        </button>
+                      );
+                    })() : (
+                      <button
+                        onClick={() => selectStaff(member)}
+                        className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                          isPreferred
+                            ? 'bg-amber-500 text-white hover:bg-amber-600'
+                            : 'bg-blue-600 text-white hover:bg-blue-700'
+                        }`}
+                      >
+                        Select
+                      </button>
+                    )}
                     {requestId && (
                       sentCandidateIds.has(member.staff_profile_id) ? (
                         <span
@@ -477,6 +581,32 @@ const BookingStaffRosterPage = () => {
           </ul>
         </div>
       )}
+
+      {/* ── Pagination ── */}
+      {!staffLoading && pagination.total_pages > 1 && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <p className="text-sm text-slate-500">
+            Page <span className="font-semibold text-slate-900">{pagination.current_page}</span> of{' '}
+            <span className="font-semibold text-slate-900">{pagination.total_pages}</span>
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={!pagination.has_prev}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Previous
+            </button>
+            <button
+              onClick={() => setPage((p) => p + 1)}
+              disabled={!pagination.has_next}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
     </AdminLayout>
   );
 };
@@ -490,10 +620,10 @@ const SectionHeading = ({ icon: Icon, label }) => (
   </div>
 );
 
-const Field = ({ label, value, multiline = false }) => (
-  <div className={`flex gap-3 ${multiline ? 'flex-col' : 'items-start justify-between'}`}>
-    <dt className="shrink-0 text-xs text-slate-400">{label}</dt>
-    <dd className={`text-sm font-medium text-slate-800 ${multiline ? '' : 'text-right'}`}>
+const DetailField = ({ label, value }) => (
+  <div>
+    <dt className="text-xs font-medium text-slate-400">{label}</dt>
+    <dd className="mt-1 text-sm font-medium text-slate-800">
       {value != null && value !== '' ? String(value) : <span className="font-normal text-slate-400">—</span>}
     </dd>
   </div>
@@ -510,7 +640,7 @@ const FilterSelect = ({ value, onChange, children, className = '' }) => (
   <select
     value={value}
     onChange={(e) => onChange(e.target.value)}
-    className={`w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 ${className}`}
+    className={`rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-600 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 ${className}`}
   >
     {children}
   </select>

@@ -432,7 +432,7 @@ const executeStaffSwap = async (client, payload) => {
 // flips DB state.
 
 const executeAssignmentStart = async (client, payload) => {
-    const { booking_id, assignment_id, staff_profile_id, ot_rate, actor = SYSTEM_ACTOR } = payload;
+    const { booking_id, assignment_id, staff_profile_id, ot_rate, shift_slot_id = null, actor = SYSTEM_ACTOR } = payload;
 
     const upd = await client.query(
         `UPDATE booking_staff_assignments SET status = 'ACTIVE'
@@ -444,11 +444,22 @@ const executeAssignmentStart = async (client, payload) => {
         return { result: { booking_id, skipped: 'assignment no longer scheduled' }, notify: null };
     }
 
-    await client.query(
-        `UPDATE bookings SET status = 'ACTIVE', assigned_staff_id = $2, ot_rate = COALESCE($3, ot_rate)
-         WHERE booking_id = $1`,
-        [booking_id, staff_profile_id, ot_rate ?? null]
-    );
+    if (shift_slot_id) {
+        // SHIFT_BASED: one slot starting does not make the booking "ACTIVE" on its
+        // own (other slots may still be unstaffed) and assigned_staff_id is
+        // meaningless when multiple staff cover the same booking concurrently.
+        await client.query(
+            `UPDATE bookings SET status = CASE WHEN status = 'PENDING' THEN 'ACTIVE' ELSE status END
+             WHERE booking_id = $1`,
+            [booking_id]
+        );
+    } else {
+        await client.query(
+            `UPDATE bookings SET status = 'ACTIVE', assigned_staff_id = $2, ot_rate = COALESCE($3, ot_rate)
+             WHERE booking_id = $1`,
+            [booking_id, staff_profile_id, ot_rate ?? null]
+        );
+    }
 
     await client.query(
         `UPDATE staff_profiles SET current_status = 'ASSIGNED' WHERE staff_profile_id = $1`,
@@ -472,6 +483,61 @@ const executeAssignmentStart = async (client, payload) => {
     };
 
     return { result: { booking_id, assignment_id, status: 'ACTIVE' }, notify };
+};
+
+// ─── SHIFT REASSIGNMENT ────────────────────────────────────────────────────────
+// Shift-scoped sibling of executeStaffSwap: swaps staff on one shift_slot_id only,
+// leaving other slots on the same booking untouched. Does not touch
+// bookings.assigned_staff_id (meaningless for SHIFT_BASED bookings).
+
+const executeShiftReassignment = async (client, payload) => {
+    const {
+        booking_id,
+        shift_slot_id,
+        old_staff_id,
+        new_staff_id,
+        new_assignment_id,
+        effective_date,
+        reason = null,
+        actor = SYSTEM_ACTOR,
+    } = payload;
+
+    const effDateStr = toDateStr(effective_date);
+
+    await client.query(
+        `UPDATE booking_staff_assignments
+         SET service_end_date = $1, status = 'COMPLETED'
+         WHERE shift_slot_id = $2 AND status = 'ACTIVE' AND assignment_id <> $3`,
+        [effDateStr, shift_slot_id, new_assignment_id]
+    );
+
+    await client.query(
+        `UPDATE booking_staff_assignments SET status = 'ACTIVE' WHERE assignment_id = $1`,
+        [new_assignment_id]
+    );
+
+    if (old_staff_id) {
+        await client.query(`UPDATE staff_profiles SET current_status = 'AVAILABLE' WHERE staff_profile_id = $1`, [old_staff_id]);
+    }
+    await client.query(`UPDATE staff_profiles SET current_status = 'ASSIGNED' WHERE staff_profile_id = $1`, [new_staff_id]);
+
+    const notify = async () => {
+        try {
+            await logActivity({
+                actorUserId: actor.user_id,
+                actorName: actor.name,
+                actorRole: actor.role,
+                actionType: 'SHIFT_STAFF_REASSIGNED',
+                entityType: 'BOOKING',
+                entityId: String(booking_id),
+                details: { booking_id, shift_slot_id, old_staff_id, new_staff_id, reason, scheduled: true },
+            });
+        } catch (e) {
+            console.error('[executeShiftReassignment] notify error:', e.message);
+        }
+    };
+
+    return { result: { booking_id, shift_slot_id, new_staff_id }, notify };
 };
 
 // ─── Dispatch ────────────────────────────────────────────────────────────────
@@ -502,6 +568,14 @@ const dispatchScheduledAction = async (client, action, actor = SYSTEM_ACTOR) => 
             return executeStaffSwap(client, { booking_id: action.booking_id, effective_date: action.effective_date, ...payload });
         case 'ASSIGNMENT_START':
             return executeAssignmentStart(client, { booking_id: action.booking_id, ...payload });
+        case 'SHIFT_REASSIGNMENT':
+            return executeShiftReassignment(client, { booking_id: action.booking_id, effective_date: action.effective_date, ...payload });
+        case 'SHIFT_PATTERN_CHANGE': {
+            // Required here (not at module top) to avoid a circular require:
+            // shiftPatternService imports helpers from this module.
+            const { executeShiftPatternChange } = require('./shiftPatternService');
+            return executeShiftPatternChange(client, payload);
+        }
         default:
             throw new Error(`Unknown scheduled action_type: ${action.action_type}`);
     }
@@ -518,5 +592,6 @@ module.exports = {
     executeCompletion,
     executeStaffSwap,
     executeAssignmentStart,
+    executeShiftReassignment,
     dispatchScheduledAction,
 };

@@ -176,14 +176,17 @@ exports.getServiceRequestById = async (req, res) => {
     try {
         const { id } = req.params;
         const result = await db.query(
-            'SELECT * FROM service_requests WHERE request_id = $1',
+            `SELECT sr.*, cp.client_code
+             FROM service_requests sr
+             LEFT JOIN client_profiles cp ON sr.client_id = cp.client_profile_id
+             WHERE sr.request_id = $1`,
             [id]
         );
-        
+
         if (result.rows.length === 0) {
             return res.status(404).json({ message: "Service request not found" });
         }
-        
+
         res.status(200).json({ status: 'success', data: result.rows[0] });
     } catch (error) {
         console.error("Error fetching service request:", error);
@@ -727,15 +730,14 @@ exports.sendCandidateProfile = async (req, res) => {
             return res.status(409).json({ status: 'error', message: `${staff.full_name}'s profile has already been sent to this client for this request.` });
         }
 
-        // The profile link is delivered via the template's dynamic URL button — we pass only the
-        // staff_profile_id suffix; the base URL is configured on the Meta template.
+        // The live template carries a static "View Profile" button (configured on the Meta template),
+        // so we send no per-candidate link — just the body details.
         await sendCandidateProfile(
             sr.payer_mobile,
             sr.payer_name || 'there',
             sr.patient_name || 'your patient',
             staff.full_name,
-            staff.designation,
-            staff.staff_profile_id
+            staff.designation
         );
 
         // Record the send only after WhatsApp succeeds.

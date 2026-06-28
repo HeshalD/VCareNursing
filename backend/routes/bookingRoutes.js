@@ -4,6 +4,7 @@ const bookingController = require('../controllers/bookingController');
 const paymentTrackingController = require('../controllers/paymentTrackingController');
 const bookingNotesController = require('../controllers/bookingNotesController');
 const dailyAttendanceController = require('../controllers/dailyAttendanceController');
+const shiftPatternController = require('../controllers/shiftPatternController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { upload } = require('../config/cloudinaryConfig');
 
@@ -141,6 +142,14 @@ router.get('/:booking_id/swap-history', protect, restrictTo('SUPER_ADMIN', 'COOR
 router.get('/:booking_id/attendance', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), dailyAttendanceController.getBookingAttendance);
 router.post('/:booking_id/attendance', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), dailyAttendanceController.upsertAttendance);
 router.post('/attendance/:attendance_id/confirm-salary', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), dailyAttendanceController.confirmSalary);
+
+// Shift patterns + per-shift staff assignment (SHIFT_BASED only)
+router.get('/:booking_id/shift-pattern', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), shiftPatternController.getShiftPattern);
+router.get('/:booking_id/shift-pattern/history', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), shiftPatternController.getShiftPatternHistory);
+router.post('/:booking_id/shift-pattern', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), shiftPatternController.createOrChangeShiftPattern);
+router.get('/:booking_id/shift-slots', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), shiftPatternController.getShiftSlots);
+router.post('/:booking_id/shift-slots/:shift_slot_id/assign-staff', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), shiftPatternController.assignStaffToSlot);
+router.post('/:booking_id/shift-slots/:shift_slot_id/reassign-staff', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), shiftPatternController.reassignSlotStaff);
 
 // Manual daily client invoicing (SHIFT_BASED/VISITING always, LIVE_IN when invoicing_mode = MANUAL)
 router.get('/:booking_id/daily-invoices', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.getBookingDailyInvoices);

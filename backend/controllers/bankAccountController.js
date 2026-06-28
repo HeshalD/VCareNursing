@@ -22,6 +22,8 @@ const getAllBankAccounts = async (req, res) => {
         branch_name,
         is_active,
         currency,
+        opening_balance,
+        opening_balance_date,
         created_at,
         updated_at,
         created_by
@@ -72,6 +74,8 @@ const getBankAccountById = async (req, res) => {
         branch_name,
         is_active,
         currency,
+        opening_balance,
+        opening_balance_date,
         created_at,
         updated_at,
         created_by
@@ -113,7 +117,9 @@ const createBankAccount = async (req, res) => {
       account_holder_name,
       bank_name,
       branch_name,
-      currency = 'LKR'
+      currency = 'LKR',
+      opening_balance = 0,
+      opening_balance_date
     } = req.body;
 
     // Validate required fields
@@ -121,6 +127,13 @@ const createBankAccount = async (req, res) => {
       return res.status(400).json({
         status: 'error',
         message: 'Missing required fields: account_nickname, account_number, account_holder_name, bank_name'
+      });
+    }
+
+    if (opening_balance !== undefined && isNaN(parseFloat(opening_balance))) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Opening balance must be a valid number'
       });
     }
 
@@ -147,10 +160,12 @@ const createBankAccount = async (req, res) => {
         bank_name,
         branch_name,
         currency,
+        opening_balance,
+        opening_balance_date,
         created_by,
         is_active
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, true)
-      RETURNING 
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
+      RETURNING
         account_id,
         account_nickname,
         account_number,
@@ -159,9 +174,11 @@ const createBankAccount = async (req, res) => {
         branch_name,
         is_active,
         currency,
+        opening_balance,
+        opening_balance_date,
         created_at,
         created_by
-    `, [account_nickname, account_number, account_holder_name, bank_name, branch_name, currency, created_by]);
+    `, [account_nickname, account_number, account_holder_name, bank_name, branch_name, currency, parseFloat(opening_balance) || 0, opening_balance_date || null, created_by]);
 
     const created = result.rows[0];
     (async () => {
@@ -183,6 +200,7 @@ const createBankAccount = async (req, res) => {
             bank_name: created.bank_name,
             branch_name: created.branch_name,
             currency: created.currency,
+            opening_balance: created.opening_balance,
           },
         });
       } catch (e) {
@@ -570,13 +588,14 @@ const getAccountReconciliation = async (req, res) => {
 
     // Check if account exists
     const accountCheck = await db.query(`
-      SELECT 
-        account_id, 
-        account_nickname, 
-        account_number, 
+      SELECT
+        account_id,
+        account_nickname,
+        account_number,
         bank_name,
-        currency
-      FROM bank_accounts 
+        currency,
+        opening_balance
+      FROM bank_accounts
       WHERE account_id = $1
     `, [account_id]);
 
@@ -618,12 +637,16 @@ const getAccountReconciliation = async (req, res) => {
       });
     }
 
+    const opening_balance = parseFloat(accountCheck.rows[0].opening_balance) || 0;
+
     res.status(200).json({
       status: 'success',
       message: 'Bank account reconciliation report generated',
       account: accountCheck.rows[0],
       summary: {
+        opening_balance: opening_balance,
         total_deposits: total_deposits,
+        closing_balance: opening_balance + total_deposits,
         transaction_count: transactionsResult.rows.length,
         reconciliation_status: 'READY_FOR_REVIEW'
       },

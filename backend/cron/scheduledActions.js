@@ -11,7 +11,7 @@
 
 const { dispatchScheduledAction, SYSTEM_ACTOR } = require('../services/scheduledActions');
 
-const PRE_BILLING_TYPES = ['ASSIGNMENT_START', 'STAFF_SWAP'];
+const PRE_BILLING_TYPES = ['ASSIGNMENT_START', 'STAFF_SWAP', 'SHIFT_PATTERN_CHANGE', 'SHIFT_REASSIGNMENT'];
 const POST_BILLING_TYPES = ['TERMINATION', 'COMPLETION'];
 
 const runDueActions = async (client, businessDate, actionTypes) => {

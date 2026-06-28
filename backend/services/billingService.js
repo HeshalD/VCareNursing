@@ -64,6 +64,14 @@ const calculateVisitingCharge = (booking) => {
   };
 };
 
+// Per-shift client charge default for SHIFT_BASED bookings with a defined pattern —
+// the per-shift rate set at assign-staff time (no proration), same flat-rate
+// convention confirmSalary already uses for staff pay on the same booking.
+const calculateShiftSlotCharge = (slotAssignment) => ({
+  amount: parseFloat(slotAssignment.daily_rate),
+  notes: 'Shift charge'
+});
+
 const getBillingCharge = (booking) => {
   switch (booking.service_model) {
     case 'LIVE_IN':     return calculateLiveInCharge(booking);
@@ -177,6 +185,7 @@ const createServiceInvoice = async (client, { booking_id, client_id, amount, not
 module.exports = {
   calculateLiveInCharge,
   calculateShiftCharge,
+  calculateShiftSlotCharge,
   calculateVisitingCharge,
   getBillingCharge,
   generateInvoiceNumber,

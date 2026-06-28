@@ -55,6 +55,7 @@ exports.getAssignmentFormData = async (req, res) => {
       SELECT 
         b.booking_id,
         b.request_id,
+        b.service_model,
         sr.active_quote_id AS quote_id,
         b.status AS booking_status,
         b.start_date,
@@ -165,6 +166,7 @@ exports.getAssignmentFormData = async (req, res) => {
       data: {
         booking: {
           booking_id: booking.booking_id,
+          service_model: booking.service_model,
           booking_status: booking.booking_status,
           start_date: booking.start_date,
           estimate_number: booking.estimate_number,
@@ -249,9 +251,10 @@ exports.assignStaffToBooking = async (req, res) => {
 
     // Get booking with payment info
     const bookingQuery = `
-      SELECT 
+      SELECT
         b.booking_id,
         b.request_id,
+        b.service_model,
         sr.active_quote_id AS quote_id,
         b.amount_paid,
         q.total_amount,
@@ -272,6 +275,13 @@ exports.assignStaffToBooking = async (req, res) => {
     }
 
     const booking = bookingResult.rows[0];
+
+    if (booking.service_model === 'SHIFT_BASED') {
+      return res.status(400).json({
+        status: 'error',
+        message: 'SHIFT_BASED bookings are staffed per shift. Use POST /api/bookings/:booking_id/shift-slots/:shift_slot_id/assign-staff instead.'
+      });
+    }
     if (!booking.quote_id) {
       return res.status(400).json({
         status: 'error',
@@ -482,7 +492,7 @@ exports.assignStaffToBooking = async (req, res) => {
         const staffSms = `Hi ${staff.full_name}, you have been assigned to a new booking.\n\nPatient: ${patient_name || 'N/A'}\nLocation: ${location_address || 'N/A'}\nConditions: ${conditions}\nStart Date: ${formattedDate}${timeLine}\n\nLog in to the staff portal for full details. - VCare Nursing`;
 
         const results = await Promise.allSettled([
-          sendBookingConfirmed(clientMobile, clientName, staff.full_name, formattedDate, formattedTime || '9:00 AM', staffProfileUrl),
+          sendBookingConfirmed(clientMobile, clientName, staff.full_name, formattedDate, formattedTime || '9:00 AM'),
           sendSms(clientMobile, clientSms),
           ...(staffMobile ? [
             sendStaffNewAssignment(staffMobile, staff.full_name, patient_name || 'N/A', location_address || 'N/A', conditions, staffStartLabel),
@@ -703,7 +713,7 @@ exports.getBookingAssignments = async (req, res) => {
 
     // Get all assignments for booking
     const assignmentsQuery = `
-      SELECT 
+      SELECT
         bsa.assignment_id,
         bsa.booking_id,
         bsa.staff_profile_id,
@@ -716,12 +726,18 @@ exports.getBookingAssignments = async (req, res) => {
         bsa.status,
         bsa.notes,
         bsa.updated_at,
+        bsa.shift_slot_id,
+        ss.shift_number,
+        ss.start_time as shift_start_time,
+        ss.duration_hours as shift_duration_hours,
+        ss.label as shift_label,
         sp.full_name as staff_name,
         sp.designation,
         u.email as assigned_by_email
       FROM booking_staff_assignments bsa
       JOIN staff_profiles sp ON bsa.staff_profile_id = sp.staff_profile_id
       LEFT JOIN users u ON bsa.assigned_by = u.user_id
+      LEFT JOIN booking_shift_slots ss ON bsa.shift_slot_id = ss.shift_slot_id
       WHERE bsa.booking_id = $1
       ORDER BY bsa.service_start_date ASC
     `;
@@ -749,7 +765,12 @@ exports.getBookingAssignments = async (req, res) => {
           status: a.status,
           assigned_on: a.assigned_on,
           assigned_by_email: a.assigned_by_email,
-          notes: a.notes
+          notes: a.notes,
+          shift_slot_id: a.shift_slot_id,
+          shift_number: a.shift_number,
+          shift_start_time: a.shift_start_time,
+          shift_duration_hours: a.shift_duration_hours ? parseFloat(a.shift_duration_hours) : null,
+          shift_label: a.shift_label
         })),
         summary: {
           total_assignments: assignments.length,

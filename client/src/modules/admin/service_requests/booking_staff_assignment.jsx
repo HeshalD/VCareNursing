@@ -39,6 +39,19 @@ const BookingStaffAssignmentPage = () => {
   // Salesperson (internal staff) options for crediting
   const [salespersons, setSalespersons] = useState([]);
 
+  // Shift pattern + per-shift staff (SHIFT_BASED bookings only)
+  const buildDefaultShiftSlots = (count) => Array.from({ length: count }, (_, i) => ({
+    shift_number: i + 1, start_time: '08:00', duration_hours: (24 / count).toFixed(1),
+    label: `Shift ${i + 1}`, staff_profile_id: '', daily_rate: ''
+  }));
+  const [shiftSlots, setShiftSlots] = useState(() => {
+    const queue = location.state?.selectedStaffQueue;
+    if (Array.isArray(queue) && queue.length > 0) {
+      return buildDefaultShiftSlots(queue.length).map((s, i) => ({ ...s, staff_profile_id: queue[i]?.staff_profile_id || '' }));
+    }
+    return buildDefaultShiftSlots(2);
+  });
+
   // Notes state
   const [notes, setNotes] = useState([]);
   const [notesLoading, setNotesLoading] = useState(false);
@@ -56,6 +69,19 @@ const BookingStaffAssignmentPage = () => {
       || null,
     [formData, assignment.staff_profile_id, location.state]
   );
+
+  const isShiftBased = formData?.booking?.service_model === 'SHIFT_BASED';
+
+  const handleShiftCountChange = (count) => {
+    setShiftSlots((prev) => {
+      const next = buildDefaultShiftSlots(count);
+      for (let i = 0; i < Math.min(prev.length, count); i++) next[i] = prev[i];
+      return next;
+    });
+  };
+  const updateShiftSlot = (idx, field, value) => {
+    setShiftSlots((prev) => prev.map((s, i) => (i === idx ? { ...s, [field]: value } : s)));
+  };
 
   const fetchData = async () => {
     try {
@@ -104,8 +130,73 @@ const BookingStaffAssignmentPage = () => {
     }
   }, [bookingId]);
 
+  const handleSubmitShiftBased = async () => {
+    if (!assignment.service_start_date) {
+      setError('Service start date is required');
+      return;
+    }
+    const incomplete = shiftSlots.some((s) => !s.staff_profile_id || !s.start_time || !s.duration_hours);
+    if (incomplete) {
+      setError('Every shift needs a start time, duration, and assigned staff member');
+      return;
+    }
+
+    setSubmitting(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      await apiClient.createShiftPattern(bookingId, {
+        shift_count: shiftSlots.length,
+        slots: shiftSlots.map((s) => ({
+          shift_number: s.shift_number,
+          start_time: `${s.start_time}:00`,
+          duration_hours: parseFloat(s.duration_hours),
+          label: s.label || null
+        })),
+        effective_from_date: assignment.service_start_date
+      });
+
+      const slotsRes = await apiClient.getShiftSlots(bookingId);
+      const createdSlots = slotsRes?.data || [];
+
+      for (const slot of shiftSlots) {
+        const created = createdSlots.find((c) => c.shift_number === slot.shift_number);
+        if (!created) continue;
+        await apiClient.assignStaffToShiftSlot(bookingId, created.shift_slot_id, {
+          staff_profile_id: slot.staff_profile_id,
+          service_start_date: assignment.service_start_date,
+          daily_rate: slot.daily_rate ? parseFloat(slot.daily_rate) : null,
+          notes: assignment.notes || null
+        });
+      }
+
+      if (assignment.salesperson_id) {
+        try {
+          await apiClient.creditBookingSalesperson(bookingId, assignment.salesperson_id);
+        } catch {
+          // non-fatal — salesperson crediting is best-effort, same as the LIVE_IN/VISITING flow
+        }
+      }
+
+      setSuccess('Shift pattern created and staff assigned successfully.');
+      setTimeout(() => {
+        navigate('/admin/service-requests');
+      }, 1500);
+    } catch (err) {
+      setError(err.message || 'Failed to set up shifts');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
+
+    if (isShiftBased) {
+      await handleSubmitShiftBased();
+      return;
+    }
 
     try {
       setSubmitting(true);
@@ -226,24 +317,26 @@ const BookingStaffAssignmentPage = () => {
               </div>
 
               <form onSubmit={handleSubmit} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
-                <h3 className="text-lg font-semibold text-slate-900">Assignment Form</h3>
+                <h3 className="text-lg font-semibold text-slate-900">{isShiftBased ? 'Shift Pattern & Staff' : 'Assignment Form'}</h3>
 
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Staff Member</label>
-                  <select
-                    required
-                    value={assignment.staff_profile_id}
-                    onChange={(e) => setAssignment({ ...assignment, staff_profile_id: e.target.value })}
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
-                  >
-                    <option value="">Select staff member</option>
-                    {formData.available_staff.map((staff) => (
-                      <option key={staff.staff_profile_id} value={staff.staff_profile_id}>
-                        {staff.staff_name} - {staff.specialization}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {!isShiftBased && (
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">Staff Member</label>
+                    <select
+                      required
+                      value={assignment.staff_profile_id}
+                      onChange={(e) => setAssignment({ ...assignment, staff_profile_id: e.target.value })}
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                    >
+                      <option value="">Select staff member</option>
+                      {formData.available_staff.map((staff) => (
+                        <option key={staff.staff_profile_id} value={staff.staff_profile_id}>
+                          {staff.staff_name} - {staff.specialization}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div>
@@ -255,40 +348,47 @@ const BookingStaffAssignmentPage = () => {
                       onChange={(e) => setAssignment({ ...assignment, service_start_date: e.target.value })}
                       className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
                     />
+                    {isShiftBased && <p className="mt-1 text-xs text-slate-400">Used as the shift pattern's effective date and each shift's start date.</p>}
                   </div>
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-slate-700">Service Start Time</label>
-                    <input
-                      type="time"
-                      value={assignment.service_start_time}
-                      onChange={(e) => setAssignment({ ...assignment, service_start_time: e.target.value })}
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
-                    />
-                    <p className="mt-1 text-xs text-slate-400">Sent to the staff and client in their booking confirmation.</p>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-slate-700">Daily Rate assigned to Staff Member</label>
-                    <input
-                      required
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={assignment.daily_rate}
-                      onChange={(e) => setAssignment({ ...assignment, daily_rate: e.target.value })}
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-slate-700">OT Rate</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={assignment.ot_rate}
-                      onChange={(e) => setAssignment({ ...assignment, ot_rate: e.target.value })}
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
-                    />
-                  </div>
+                  {!isShiftBased && (
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-700">Service Start Time</label>
+                      <input
+                        type="time"
+                        value={assignment.service_start_time}
+                        onChange={(e) => setAssignment({ ...assignment, service_start_time: e.target.value })}
+                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                      />
+                      <p className="mt-1 text-xs text-slate-400">Sent to the staff and client in their booking confirmation.</p>
+                    </div>
+                  )}
+                  {!isShiftBased && (
+                    <>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">Daily Rate assigned to Staff Member</label>
+                        <input
+                          required
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={assignment.daily_rate}
+                          onChange={(e) => setAssignment({ ...assignment, daily_rate: e.target.value })}
+                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">OT Rate</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={assignment.ot_rate}
+                          onChange={(e) => setAssignment({ ...assignment, ot_rate: e.target.value })}
+                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                        />
+                      </div>
+                    </>
+                  )}
                   <div>
                     <label className="mb-1 block text-sm font-medium text-slate-700">Notes</label>
                     <input
@@ -298,6 +398,93 @@ const BookingStaffAssignmentPage = () => {
                     />
                   </div>
                 </div>
+
+                {isShiftBased && (
+                  <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-medium text-slate-700">Number of shifts per day</label>
+                      <select
+                        value={shiftSlots.length}
+                        onChange={(e) => handleShiftCountChange(parseInt(e.target.value, 10))}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm outline-none focus:border-blue-500"
+                      >
+                        {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
+                      </select>
+                    </div>
+
+                    {shiftSlots.map((slot, idx) => {
+                      const defaultRate = formData.booking.quote_daily_rate
+                        ? (formData.booking.quote_daily_rate / shiftSlots.length).toFixed(2)
+                        : '';
+                      return (
+                        <div key={slot.shift_number} className="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Shift {slot.shift_number}</p>
+                          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                            <div>
+                              <label className="mb-1 block text-xs text-slate-500">Start time</label>
+                              <input
+                                required
+                                type="time"
+                                value={slot.start_time}
+                                onChange={(e) => updateShiftSlot(idx, 'start_time', e.target.value)}
+                                className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs text-slate-500">Duration (hrs)</label>
+                              <input
+                                required
+                                type="number"
+                                min="0.5"
+                                step="0.5"
+                                value={slot.duration_hours}
+                                onChange={(e) => updateShiftSlot(idx, 'duration_hours', e.target.value)}
+                                className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs text-slate-500">Label</label>
+                              <input
+                                value={slot.label}
+                                onChange={(e) => updateShiftSlot(idx, 'label', e.target.value)}
+                                className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs text-slate-500">Per-shift rate</label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                placeholder={defaultRate}
+                                value={slot.daily_rate}
+                                onChange={(e) => updateShiftSlot(idx, 'daily_rate', e.target.value)}
+                                className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs text-slate-500">Staff member</label>
+                            <select
+                              required
+                              value={slot.staff_profile_id}
+                              onChange={(e) => updateShiftSlot(idx, 'staff_profile_id', e.target.value)}
+                              className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
+                            >
+                              <option value="">Select staff member</option>
+                              {formData.available_staff.map((staff) => (
+                                <option key={staff.staff_profile_id} value={staff.staff_profile_id}>
+                                  {staff.staff_name} - {staff.specialization}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <p className="text-xs text-slate-400">Per-shift rate defaults to the quote daily rate split evenly across shifts if left blank.</p>
+                  </div>
+                )}
 
                 <div>
                   <label className="mb-1 flex items-center gap-1.5 text-sm font-medium text-slate-700">
@@ -320,15 +507,33 @@ const BookingStaffAssignmentPage = () => {
                   className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                 >
                   <Users className="h-4 w-4" />
-                  {submitting ? 'Assigning...' : 'Assign Staff Member'}
+                  {submitting
+                    ? (isShiftBased ? 'Setting up shifts...' : 'Assigning...')
+                    : (isShiftBased ? 'Create Shift Pattern & Assign Staff' : 'Assign Staff Member')}
                 </button>
               </form>
             </div>
 
             <div className="space-y-6">
               <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h3 className="mb-4 text-lg font-semibold text-slate-900">Selected Staff</h3>
-                {selectedStaff ? (
+                <h3 className="mb-4 text-lg font-semibold text-slate-900">{isShiftBased ? 'Per-Shift Staff' : 'Selected Staff'}</h3>
+                {isShiftBased ? (
+                  shiftSlots.some((s) => s.staff_profile_id) ? (
+                    <div className="space-y-3 text-sm">
+                      {shiftSlots.filter((s) => s.staff_profile_id).map((s) => {
+                        const staff = formData.available_staff.find((a) => a.staff_profile_id === s.staff_profile_id);
+                        return (
+                          <div key={s.shift_number} className="border-b border-slate-100 pb-2 last:border-b-0">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{s.label || `Shift ${s.shift_number}`}</p>
+                            <p className="font-medium text-slate-900">{staff?.staff_name || '—'}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-slate-500">No staff selected for any shift yet.</p>
+                  )
+                ) : selectedStaff ? (
                   <div className="space-y-2 text-sm">
                     <Detail label="Name" value={selectedStaff.staff_name || selectedStaff.full_name} />
                     <Detail label="Role" value={selectedStaff.specialization || selectedStaff.designation} />
