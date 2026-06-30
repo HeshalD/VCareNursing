@@ -14,14 +14,14 @@ const {
 } = require('../controllers/staffLeaveController');
 
 // Staff routes
-router.get('/my-leaves', protect, restrictTo('STAFF', 'NURSE', 'CARETAKER', 'NANNY'), getMyLeaves);
-router.post('/request', protect, restrictTo('STAFF', 'NURSE', 'CARETAKER', 'NANNY'), requestLeave);
+router.get('/my-leaves', protect, restrictTo('STAFF', 'NURSE', 'CARETAKER', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'), getMyLeaves);
+router.post('/request', protect, restrictTo('STAFF', 'NURSE', 'CARETAKER', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'), requestLeave);
 
 // Admin routes
 router.get('/all', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), getAllLeaves);
 router.get('/pending', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), getPendingLeaves);
 // Admins can view any staff member's leave summary; staff can only view their own (enforced in controller).
-router.get('/summary/:staffProfileId', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'STAFF', 'NURSE', 'CARETAKER', 'NANNY'), getStaffLeaveSummary);
+router.get('/summary/:staffProfileId', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'STAFF', 'NURSE', 'CARETAKER', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'), getStaffLeaveSummary);
 router.get('/:leaveId/conflicts', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), getLeaveConflicts);
 router.get('/:leaveId/candidates', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), getReplacementCandidates);
 router.post('/approve/:leaveId', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), approveLeave);

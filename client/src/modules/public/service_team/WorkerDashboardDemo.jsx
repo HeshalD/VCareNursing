@@ -5,6 +5,7 @@ import {
   MapPin,
   DollarSign,
   CheckCircle,
+  CheckCircle2,
   Clock,
   Star,
   Briefcase,
@@ -16,6 +17,10 @@ import {
   Activity,
   AlertTriangle,
   CalendarOff,
+  FileText,
+  Eye,
+  Upload,
+  ShieldCheck,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import apiClient from '../../../api/api';
@@ -27,6 +32,15 @@ const formatDate = (dateStr) => {
   return new Date(dateStr).toLocaleDateString('en-LK', { day: 'numeric', month: 'short', year: 'numeric' });
 };
 
+const EXPERIENCE_LEVELS = [
+  { value: '1_YEAR', label: '1 Year' },
+  { value: '2_YEARS', label: '2 Years' },
+  { value: '3_YEARS', label: '3 Years' },
+  { value: '4_YEARS', label: '4 Years' },
+  { value: '5_YEARS', label: '5 Years' },
+  { value: 'MORE_THAN_5_YEARS', label: 'More than 5 Years' },
+];
+
 const WorkerDashboardDemo = () => {
   const { user, loading: authLoading } = useAuth();
   const [staffData, setStaffData] = useState(null);
@@ -35,6 +49,7 @@ const WorkerDashboardDemo = () => {
   const [completedCount, setCompletedCount] = useState(null);
   const [dataLoading, setDataLoading] = useState(true);
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [updatingExperience, setUpdatingExperience] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -123,6 +138,22 @@ const WorkerDashboardDemo = () => {
       console.error('Error updating status:', error);
     } finally {
       setUpdatingStatus(false);
+    }
+  };
+
+  const updateExperienceLevel = async (newLevel) => {
+    if (!staffData?.staff_profile_id || updatingExperience || !newLevel) return;
+    setUpdatingExperience(true);
+    try {
+      await apiClient.updateStaffExperienceLevel(staffData.staff_profile_id, newLevel);
+      const response = user?.staff_id
+        ? await apiClient.getStaffByID(user.staff_id)
+        : await apiClient.getStaffByUserID(user.id);
+      setStaffData(response.data);
+    } catch (error) {
+      console.error('Error updating experience level:', error);
+    } finally {
+      setUpdatingExperience(false);
     }
   };
 
@@ -257,6 +288,81 @@ const WorkerDashboardDemo = () => {
               </span>
             </div>
           </div>
+
+          <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-semibold text-slate-900">Experience Level</p>
+              <p className="text-sm text-slate-500">Let coordinators know how many years of relevant experience you have.</p>
+            </div>
+            <select
+              value={staffData?.experience_level || ''}
+              onChange={(e) => updateExperienceLevel(e.target.value)}
+              disabled={updatingExperience}
+              className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium text-slate-700 disabled:opacity-50"
+            >
+              <option value="" disabled>Select experience</option>
+              {EXPERIENCE_LEVELS.map(({ value, label }) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Required compliance documents */}
+          {staffData?.doc_upload_token && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="h-4 w-4 text-violet-500" />
+                  <p className="font-semibold text-slate-900 text-sm">Required Documents</p>
+                </div>
+                {staffData.grama_niladhari_url && staffData.police_report_url ? (
+                  <span className="flex items-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
+                    <CheckCircle2 className="h-3 h-3" /> Complete
+                  </span>
+                ) : (
+                  <span className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full">
+                    Action required
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-500">
+                Upload your Grama Niladhari Report and Police Report to complete your registration.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {[
+                  { label: 'Grama Niladhari Report', url: staffData.grama_niladhari_url },
+                  { label: 'Police Report', url: staffData.police_report_url },
+                ].map(({ label, url }) => (
+                  <div
+                    key={label}
+                    className={`flex items-center gap-3 rounded-xl border p-3 ${url ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}
+                  >
+                    <FileText className={`h-4 w-4 flex-shrink-0 ${url ? 'text-emerald-600' : 'text-amber-500'}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-slate-800 truncate">{label}</p>
+                      <p className={`text-xs font-medium ${url ? 'text-emerald-700' : 'text-amber-700'}`}>
+                        {url ? 'Uploaded' : 'Pending'}
+                      </p>
+                    </div>
+                    {url && (
+                      <button onClick={() => window.open(url, '_blank')} className="text-emerald-600 hover:text-emerald-700" title="View">
+                        <Eye className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {(!staffData.grama_niladhari_url || !staffData.police_report_url) && (
+                <Link
+                  to={`/staff/documents/${staffData.doc_upload_token}`}
+                  className="flex items-center justify-center gap-2 w-full rounded-xl bg-violet-600 text-white text-sm font-medium py-2.5 hover:bg-violet-500 transition-all shadow-md shadow-violet-600/20"
+                >
+                  <Upload className="h-4 w-4" />
+                  Upload Documents
+                </Link>
+              )}
+            </div>
+          )}
 
           <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {stats.map((stat) => (

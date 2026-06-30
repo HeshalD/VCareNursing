@@ -9,17 +9,59 @@ import {
 } from 'lucide-react';
 import Navbar from '../../../components/layout/Navbar';
 import Footer from '../../../components/layout/Footer';
+import ImageCropModal from '../../../components/common/ImageCropModal';
 import apiClient from '../../../api/api';
+
+// Formats raw digits typed by the user into a DD/MM/YYYY masked string
+const maskDateInput = (raw) => {
+  const digits = raw.replace(/\D/g, '').slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+};
+
+// Parses a DD/MM/YYYY string into a Date, or null if invalid
+const parseDateOfBirth = (value) => {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value || '');
+  if (!match) return null;
+  const [, day, month, year] = match;
+  const date = new Date(Number(year), Number(month) - 1, Number(day));
+  if (date.getFullYear() !== Number(year) || date.getMonth() !== Number(month) - 1 || date.getDate() !== Number(day)) {
+    return null;
+  }
+  return date;
+};
+
+// Converts a DD/MM/YYYY string into YYYY-MM-DD for the backend
+const formatDateForBackend = (value) => {
+  const date = parseDateOfBirth(value);
+  if (!date) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+};
+
+// Service-team roles applicants can apply for. `value` is the user_role_enum
+// value stored in the database; NURSE is displayed as "Professional Nurse".
+const APPLIED_ROLES = [
+  { value: 'CARETAKER', label: 'Caretaker', description: 'Provides day-to-day personal care and support for elderly or ill patients.' },
+  { value: 'NURSING_ASSISTANT', label: 'Nursing Assistant', description: 'Assists nurses with basic patient care under supervision.' },
+  { value: 'NURSE', label: 'Professional Nurse', description: 'Registered nurse providing clinical care and medication management.' },
+  { value: 'PHYSIOTHERAPIST', label: 'Physiotherapist', description: 'Delivers physical rehabilitation and mobility therapy.' },
+  { value: 'NANNY', label: 'Nanny', description: 'Cares for and supervises children in the home.' },
+  { value: 'COUNSELLOR', label: 'Counsellor', description: 'Offers emotional and psychological support to patients and families.' },
+];
+
+const APPLIED_ROLE_LABELS = APPLIED_ROLES.reduce((acc, r) => ({ ...acc, [r.value]: r.label }), {});
 
 const WorkerRegistrationPage = () => {
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuth();
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState({
-    full_name: '', email: '', mobile_number: '', applied_roles: [], 
+    full_name: '', email: '', mobile_number: '', applied_roles: [],
     qualifications: '', home_address: '', location: '', latitude: '', longitude: '',
     documents: [], profile_picture: null, gender: '', willing_to_live_in: false, date_of_birth: '',
-    nic_number: '', nic_front: null, nic_back: null
+    nic_number: '', nic_front: null, nic_back: null, experience_level: ''
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
@@ -28,6 +70,8 @@ const WorkerRegistrationPage = () => {
   const [nicFrontPreview, setNicFrontPreview] = useState('');
   const [nicBackPreview, setNicBackPreview] = useState('');
   const [isConfirmed, setIsConfirmed] = useState(false);
+  const [profilePictureToCrop, setProfilePictureToCrop] = useState(null);
+  const [mobileConflict, setMobileConflict] = useState('');
   const [fieldErrors, setFieldErrors] = useState({
     full_name: '',
     email: '',
@@ -139,7 +183,7 @@ const WorkerRegistrationPage = () => {
     setFieldErrors(prev => ({ ...prev, nic_back: 'NIC back photo is required' }));
   };
 
-  // Handle profile picture change
+  // Handle profile picture change (after cropping)
   const handleProfilePictureChange = (file) => {
     if (file) {
       setFormData(prev => ({ ...prev, profile_picture: file }));
@@ -151,6 +195,17 @@ const WorkerRegistrationPage = () => {
       };
       reader.readAsDataURL(file);
     }
+  };
+
+  // A profile picture file was just selected from disk/camera — open the
+  // crop step before it becomes the actual upload.
+  const handleProfilePictureSelect = (file) => {
+    if (file) setProfilePictureToCrop(file);
+  };
+
+  const handleProfilePictureCropComplete = (croppedFile) => {
+    setProfilePictureToCrop(null);
+    handleProfilePictureChange(croppedFile);
   };
 
   // Handle profile picture delete
@@ -259,21 +314,25 @@ const WorkerRegistrationPage = () => {
         if (!value || value.trim() === '') {
           error = 'Date of birth is required';
         } else {
-          const selectedDate = new Date(value);
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          if (selectedDate > today) {
-            error = 'Date of birth cannot be in the future';
+          const selectedDate = parseDateOfBirth(value);
+          if (!selectedDate) {
+            error = 'Enter a valid date as DD/MM/YYYY';
           } else {
-            let age = today.getFullYear() - selectedDate.getFullYear();
-            const monthDiff = today.getMonth() - selectedDate.getMonth();
-            if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < selectedDate.getDate())) {
-              age--;
-            }
-            if (age < 18) {
-              error = 'You must be at least 18 years old to apply';
-            } else if (age > 65) {
-              error = 'Age must be less than 65 years';
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            if (selectedDate > today) {
+              error = 'Date of birth cannot be in the future';
+            } else {
+              let age = today.getFullYear() - selectedDate.getFullYear();
+              const monthDiff = today.getMonth() - selectedDate.getMonth();
+              if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < selectedDate.getDate())) {
+                age--;
+              }
+              if (age < 18) {
+                error = 'You must be at least 18 years old to apply';
+              } else if (age > 65) {
+                error = 'Age must be less than 65 years';
+              }
             }
           }
         }
@@ -315,6 +374,21 @@ const WorkerRegistrationPage = () => {
     setFormData(prev => ({ ...prev, [name]: value }));
     const error = validateField(name, value);
     setFieldErrors(prev => ({ ...prev, [name]: error }));
+    if (name === 'mobile_number') setMobileConflict('');
+  };
+
+  const handleMobileBlur = async (value) => {
+    if (!value || !/^07[0-9]{8}$/.test(value.replace(/\s/g, ''))) return;
+    try {
+      const result = await apiClient.checkMobileAvailability(value);
+      if (!result.available) {
+        setMobileConflict('This phone number is already registered as a staff member.');
+      } else {
+        setMobileConflict('');
+      }
+    } catch {
+      // fail silently — server-side will catch it at submission
+    }
   };
 
   // Check if form is valid
@@ -381,8 +455,9 @@ const WorkerRegistrationPage = () => {
         longitude: formData.longitude,
         gender: formData.gender,
         willing_to_live_in: formData.willing_to_live_in,
-        date_of_birth: formData.date_of_birth,
-        nic_number: formData.nic_number
+        date_of_birth: formatDateForBackend(formData.date_of_birth),
+        nic_number: formData.nic_number,
+        experience_level: formData.experience_level || ''
       };
 
       // Prepare form data with all files
@@ -608,19 +683,20 @@ const WorkerRegistrationPage = () => {
                           <input
                             type="tel"
                             className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 placeholder:text-slate-400 ${
-                              isAuthenticated && user?.mobile_number 
-                                ? 'bg-emerald-50 border-emerald-200' 
-                                : fieldErrors.mobile_number 
-                                  ? 'bg-red-50 border-red-300' 
+                              isAuthenticated && user?.mobile_number
+                                ? 'bg-emerald-50 border-emerald-200'
+                                : (fieldErrors.mobile_number || mobileConflict)
+                                  ? 'bg-red-50 border-red-300'
                                   : 'bg-slate-50 border-slate-200'
                             }`}
                             value={formData.mobile_number}
                             onChange={e => handleInputChange('mobile_number', e.target.value)}
+                            onBlur={e => handleMobileBlur(e.target.value)}
                             placeholder="e.g. 0771234567"
                             required
                           />
-                          {fieldErrors.mobile_number && (
-                            <p className="text-xs text-red-500 mt-1">{fieldErrors.mobile_number}</p>
+                          {(fieldErrors.mobile_number || mobileConflict) && (
+                            <p className="text-xs text-red-500 mt-1">{mobileConflict || fieldErrors.mobile_number}</p>
                           )}
                         </div>
                         <div>
@@ -654,51 +730,55 @@ const WorkerRegistrationPage = () => {
                         <div>
                           <label className="text-sm font-semibold text-slate-600 block mb-1">Date of Birth</label>
                           <input
-                            type="date"
+                            type="text"
+                            inputMode="numeric"
+                            placeholder="DD/MM/YYYY"
+                            maxLength={10}
                             className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 ${
-                              fieldErrors.date_of_birth 
-                                ? 'bg-red-50 border-red-300' 
+                              fieldErrors.date_of_birth
+                                ? 'bg-red-50 border-red-300'
                                 : 'bg-slate-50 border-slate-200'
                             }`}
                             value={formData.date_of_birth}
-                            onChange={e => handleInputChange('date_of_birth', e.target.value)}
+                            onChange={e => handleInputChange('date_of_birth', maskDateInput(e.target.value))}
                             required
                           />
                           {fieldErrors.date_of_birth && (
                             <p className="text-xs text-red-500 mt-1">{fieldErrors.date_of_birth}</p>
                           )}
                         </div>
-                        <div>
+                        <div className="md:col-span-2">
                           <label className="text-sm font-semibold text-slate-600 block mb-1">Applied Roles</label>
-                          <div className="grid grid-cols-2 gap-3">
-                            {['NURSE', 'CARETAKER', 'NANNY'].map((role) => (
+                          <div className="grid grid-cols-1 gap-3">
+                            {APPLIED_ROLES.map(({ value, label, description }) => (
                               <button
-                                key={role}
+                                key={value}
                                 type="button"
                                 onClick={() => {
                                   const currentRoles = formData.applied_roles || [];
                                   let newRoles;
-                                  if (currentRoles.includes(role)) {
+                                  if (currentRoles.includes(value)) {
                                     // Remove role if already selected
-                                    newRoles = currentRoles.filter(r => r !== role);
+                                    newRoles = currentRoles.filter(r => r !== value);
                                   } else {
                                     // Add role if not selected
-                                    newRoles = [...currentRoles, role];
+                                    newRoles = [...currentRoles, value];
                                   }
-                                  setFormData({ 
-                                    ...formData, 
-                                    applied_roles: newRoles 
+                                  setFormData({
+                                    ...formData,
+                                    applied_roles: newRoles
                                   });
                                   const error = validateField('applied_roles', newRoles);
                                   setFieldErrors(prev => ({ ...prev, applied_roles: error }));
                                 }}
-                                className={`px-4 py-3 rounded-lg border-2 transition-all font-medium ${
-                                  formData.applied_roles && formData.applied_roles.includes(role)
+                                className={`text-left px-4 py-3 rounded-lg border-2 transition-all ${
+                                  formData.applied_roles && formData.applied_roles.includes(value)
                                     ? 'border-blue-500 bg-blue-50 text-blue-700'
                                     : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
                                 }`}
                               >
-                                {role.charAt(0) + role.slice(1).toLowerCase()}
+                                <span className="font-medium block">{label}</span>
+                                <span className="text-xs text-slate-500 block mt-0.5">{description}</span>
                               </button>
                             ))}
                           </div>
@@ -707,7 +787,7 @@ const WorkerRegistrationPage = () => {
                           )}
                           {formData.applied_roles && formData.applied_roles.length > 0 && (
                             <p className="text-xs text-slate-500 mt-2">
-                              Selected: {formData.applied_roles.join(', ')}
+                              Selected: {formData.applied_roles.map(r => APPLIED_ROLE_LABELS[r] || r).join(', ')}
                             </p>
                           )}
                         </div>
@@ -747,7 +827,7 @@ const WorkerRegistrationPage = () => {
                             }`}
                             value={formData.nic_number}
                             onChange={e => handleInputChange('nic_number', e.target.value)}
-                            placeholder="e.g. 123456789V"
+                            placeholder="e.g. 123456789V or 123456789012"
                             required
                           />
                           {fieldErrors.nic_number && (
@@ -995,12 +1075,33 @@ const WorkerRegistrationPage = () => {
                             }`}
                             value={formData.qualifications}
                             onChange={e => handleInputChange('qualifications', e.target.value)}
-                            placeholder="Degrees, NVQ levels, etc."
+                            placeholder="Describe your qualifications, certifications, and relevant training."
                             required
                           />
                           {fieldErrors.qualifications && (
                             <p className="text-xs text-red-500 mt-1">{fieldErrors.qualifications}</p>
                           )}
+                        </div>
+
+                        <div>
+                          <label className="text-sm font-semibold text-slate-600 block mb-1">Experience Level</label>
+                          <div className="relative">
+                            <select
+                              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none appearance-none text-slate-900"
+                              value={formData.experience_level}
+                              onChange={e => handleInputChange('experience_level', e.target.value)}
+                            >
+                              <option value="">Select experience level</option>
+                              <option value="BEGINNER">Beginner</option>
+                              <option value="1_YEAR">1 Year</option>
+                              <option value="2_YEARS">2 Years</option>
+                              <option value="3_YEARS">3 Years</option>
+                              <option value="4_YEARS">4 Years</option>
+                              <option value="5_YEARS">5 Years</option>
+                              <option value="MORE_THAN_5_YEARS">More than 5 Years</option>
+                            </select>
+                            <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                          </div>
                         </div>
 
                         <div>
@@ -1108,7 +1209,7 @@ const WorkerRegistrationPage = () => {
                                   accept="image/*"
                                   onChange={(e) => {
                                     const file = e.target.files[0];
-                                    if (file) handleProfilePictureChange(file);
+                                    if (file) handleProfilePictureSelect(file);
                                   }}
                                 />
                                 <label
@@ -1130,7 +1231,7 @@ const WorkerRegistrationPage = () => {
                                 accept="image/*"
                                 onChange={(e) => {
                                   const file = e.target.files[0];
-                                  if (file) handleProfilePictureChange(file);
+                                  if (file) handleProfilePictureSelect(file);
                                 }}
                               />
                               <label
@@ -1199,8 +1300,8 @@ const WorkerRegistrationPage = () => {
                           </div>
                           <div className="flex-1">
                             <h3 className="font-bold text-slate-900">
-                              {formData.applied_roles && formData.applied_roles.length > 0 
-                                ? formData.applied_roles.join(', ') 
+                              {formData.applied_roles && formData.applied_roles.length > 0
+                                ? formData.applied_roles.map(r => APPLIED_ROLE_LABELS[r] || r).join(', ')
                                 : "No Roles Selected"}
                             </h3>
                             <p className="text-sm text-slate-500 line-clamp-2">{formData.qualifications || "No qualifications provided"}</p>
@@ -1357,7 +1458,8 @@ const WorkerRegistrationPage = () => {
                   <button
                     type="button"
                     onClick={nextStep}
-                    className="flex items-center gap-2 px-8 py-3 bg-indigo-600 text-white rounded-xl font-bold shadow-lg shadow-indigo-500/30 hover:bg-indigo-700 transition-all"
+                    disabled={currentStep === 1 && !!mobileConflict}
+                    className="flex items-center gap-2 px-8 py-3 bg-indigo-600 text-white rounded-xl font-bold shadow-lg shadow-indigo-500/30 hover:bg-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
                   >
                     Next Step <ChevronRight className="w-5 h-5" />
                   </button>
@@ -1376,6 +1478,13 @@ const WorkerRegistrationPage = () => {
           </div>
         </div>
       </div>
+
+      <ImageCropModal
+        imageFile={profilePictureToCrop}
+        aspect={1}
+        onCancel={() => setProfilePictureToCrop(null)}
+        onCropComplete={handleProfilePictureCropComplete}
+      />
     </div>
   );
 };

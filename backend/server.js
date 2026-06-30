@@ -29,6 +29,7 @@ const deviceRoutes = require('./routes/deviceRoutes');
 const scheduledActionsRoutes = require('./routes/scheduledActionsRoutes');
 const salespersonRoutes = require('./routes/salespersonRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
+const staffDocUploadRoutes = require('./routes/staffDocUploadRoutes');
 
 const startDailyInvoicing = require('./cron/dailyInvoicing');
 
@@ -126,6 +127,7 @@ app.use('/api/devices', deviceRoutes);
 app.use('/api/scheduled-actions', scheduledActionsRoutes);
 app.use('/api/salespersons', salespersonRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/staff', staffDocUploadRoutes);
 
 // Health check endpoint for Render
 app.get('/health', (req, res) => {

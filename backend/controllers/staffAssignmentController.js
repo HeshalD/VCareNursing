@@ -133,9 +133,9 @@ exports.getAssignmentFormData = async (req, res) => {
     const totalAllocated = currentAssignments.reduce((sum, a) => sum + parseFloat(a.amount_allocated || 0), 0);
     const remainingBudget = booking.amount_paid - totalAllocated;
 
-    // Get available staff (NURSE, CARETAKER, NANNY) with their profiles
+    // Get available staff (service-team roles) with their profiles
     const staffQuery = `
-      SELECT 
+      SELECT
         sp.staff_profile_id,
         sp.full_name,
         sp.designation,
@@ -145,9 +145,9 @@ exports.getAssignmentFormData = async (req, res) => {
         sp.total_reviews
       FROM staff_profiles sp
       JOIN users u ON sp.user_id = u.user_id
-      WHERE sp.is_active = true 
-        AND sp.current_status = 'AVAILABLE' 
-        AND u.role && ARRAY['NURSE'::user_role_enum, 'CARETAKER'::user_role_enum, 'NANNY'::user_role_enum]
+      WHERE sp.is_active = true
+        AND sp.current_status = 'AVAILABLE'
+        AND u.role && ARRAY['NURSE'::user_role_enum, 'CARETAKER'::user_role_enum, 'NANNY'::user_role_enum, 'NURSING_ASSISTANT'::user_role_enum, 'PHYSIOTHERAPIST'::user_role_enum, 'COUNSELLOR'::user_role_enum]
       ORDER BY sp.full_name ASC
     `;
     const staffResult = await db.query(staffQuery);

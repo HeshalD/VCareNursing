@@ -326,6 +326,10 @@ exports.getStaffByID = async (req, res) => {
                 sp.gender,
                 sp.willing_to_live_in,
                 sp.date_of_birth,
+                sp.experience_level,
+                sp.doc_upload_token,
+                sp.grama_niladhari_url,
+                sp.police_report_url,
                 sp.created_at,
                 sp.advance_threshold_amount,
                 CAST(sp.average_rating AS FLOAT) as average_rating,
@@ -385,6 +389,10 @@ exports.getStaffByUserID = async (req, res) => {
                 sp.advance_threshold_amount,
                 sp.willing_to_live_in,
                 sp.date_of_birth,
+                sp.experience_level,
+                sp.doc_upload_token,
+                sp.grama_niladhari_url,
+                sp.police_report_url,
                 sp.location,
                 sp.nic_number,
                 sp.created_at,
@@ -1240,6 +1248,10 @@ exports.getAllStaff = async (req, res) => {
                 sp.gender,
                 sp.willing_to_live_in,
                 sp.date_of_birth,
+                sp.experience_level,
+                sp.doc_upload_token,
+                sp.grama_niladhari_url,
+                sp.police_report_url,
                 sp.created_at,
                 sp.advance_threshold_amount,
                 sp.nic_number,
@@ -1314,6 +1326,10 @@ exports.getAvailableStaff = async (req, res) => {
                 sp.gender,
                 sp.willing_to_live_in,
                 sp.date_of_birth,
+                sp.experience_level,
+                sp.doc_upload_token,
+                sp.grama_niladhari_url,
+                sp.police_report_url,
                 sp.created_at,
                 sp.advance_threshold_amount,
                 CAST(sp.average_rating AS FLOAT) as average_rating,
@@ -1413,9 +1429,66 @@ exports.updateStaffStatus = async (req, res) => {
 
     } catch (error) {
         console.error('Update Staff Status Error:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             status: 'error',
-            message: 'Server error while updating staff member status' 
+            message: 'Server error while updating staff member status'
+        });
+    }
+};
+
+const VALID_EXPERIENCE_LEVELS = ['BEGINNER', '1_YEAR', '2_YEARS', '3_YEARS', '4_YEARS', '5_YEARS', 'MORE_THAN_5_YEARS'];
+
+// Update a staff member's years of experience.
+// Admins can set this for any staff member; staff can only set their own (enforced below).
+exports.updateStaffExperienceLevel = async (req, res) => {
+    const { staff_profile_id } = req.params;
+    const { experience_level } = req.body;
+
+    if (!VALID_EXPERIENCE_LEVELS.includes(experience_level)) {
+        return res.status(400).json({
+            status: 'error',
+            message: `Invalid experience level. Must be one of: ${VALID_EXPERIENCE_LEVELS.join(', ')}`
+        });
+    }
+
+    try {
+        const actorRole = _extractActorRole(req.user.role);
+        if (!['SUPER_ADMIN', 'COORDINATOR'].includes(actorRole)) {
+            const ownProfile = await db.query(
+                'SELECT staff_profile_id FROM staff_profiles WHERE user_id = $1',
+                [req.user.user_id]
+            );
+            if (!ownProfile.rows.length || String(ownProfile.rows[0].staff_profile_id) !== String(staff_profile_id)) {
+                return res.status(403).json({ status: 'error', message: 'Not authorized to update this staff member\'s experience level' });
+            }
+        }
+
+        const result = await db.query(
+            `UPDATE staff_profiles
+             SET experience_level = $1
+             WHERE staff_profile_id = $2
+             RETURNING staff_profile_id, full_name, experience_level`,
+            [experience_level, staff_profile_id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                status: 'error',
+                message: 'Staff member not found'
+            });
+        }
+
+        res.status(200).json({
+            status: 'success',
+            message: 'Experience level updated successfully',
+            data: result.rows[0]
+        });
+
+    } catch (error) {
+        console.error('Update Staff Experience Level Error:', error);
+        res.status(500).json({
+            status: 'error',
+            message: 'Server error while updating experience level'
         });
     }
 };
@@ -2284,12 +2357,12 @@ exports.updateStaffProfile = async (req, res) => {
         // Validate and set role if provided
         if (role) {
             const userRole = role.toUpperCase();
-            const validRoles = ['NURSE', 'NANNY', 'CARETAKER', 'COORDINATOR'];
-            
+            const validRoles = ['NURSE', 'NANNY', 'CARETAKER', 'COORDINATOR', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'];
+
             if (!validRoles.includes(userRole)) {
                 return res.status(400).json({
                     status: 'error',
-                    message: 'Invalid role. Must be one of: NURSE, NANNY, CARETAKER, COORDINATOR'
+                    message: 'Invalid role. Must be one of: NURSE, NANNY, CARETAKER, COORDINATOR, NURSING_ASSISTANT, PHYSIOTHERAPIST, COUNSELLOR'
                 });
             }
 
@@ -2468,12 +2541,12 @@ exports.createStaffProfile = async (req, res) => {
 
         // Validate and set role (default to NURSE if not provided)
         const userRole = role ? [role.toUpperCase()] : ['NURSE'];
-        const validRoles = ['NURSE', 'NANNY', 'CARETAKER', 'COORDINATOR'];
-        
+        const validRoles = ['NURSE', 'NANNY', 'CARETAKER', 'COORDINATOR', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'];
+
         if (!validRoles.includes(userRole[0])) {
             return res.status(400).json({
                 status: 'error',
-                message: 'Invalid role. Must be one of: NURSE, NANNY, CARETAKER, COORDINATOR'
+                message: 'Invalid role. Must be one of: NURSE, NANNY, CARETAKER, COORDINATOR, NURSING_ASSISTANT, PHYSIOTHERAPIST, COUNSELLOR'
             });
         }
 
@@ -2941,6 +3014,10 @@ exports.getTopRatedStaff = async (req, res) => {
                 sp.gender,
                 sp.willing_to_live_in,
                 sp.date_of_birth,
+                sp.experience_level,
+                sp.doc_upload_token,
+                sp.grama_niladhari_url,
+                sp.police_report_url,
                 sp.created_at,
                 sp.advance_threshold_amount,
                 CAST(sp.average_rating AS FLOAT) as average_rating,

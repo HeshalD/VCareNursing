@@ -6,6 +6,56 @@ const { uploadApplicationFiles } = require('../middleware/uploadMiddleware');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const db = require('../config/db');
 
+// Public: Check if a mobile number is already registered as a non-CLIENT user
+router.get('/check-mobile/:mobile', async (req, res) => {
+  try {
+    const result = await db.query(
+      'SELECT role FROM users WHERE mobile_number = $1',
+      [req.params.mobile]
+    );
+    if (result.rows.length === 0) return res.json({ available: true });
+    const raw = result.rows[0].role;
+    const roles = Array.isArray(raw)
+      ? raw
+      : typeof raw === 'string'
+        ? raw.replace(/^\{|\}$/g, '').split(',').map(r => r.trim()).filter(Boolean)
+        : [];
+    const hasNonClientRole = roles.some(r => r !== 'CLIENT' && r !== '');
+    res.json({ available: !hasNonClientRole });
+  } catch (err) {
+    console.error('Check mobile error:', err.message);
+    res.status(500).json({ available: true });
+  }
+});
+
+// Admin: Check if a mobile number is already used by an existing staff profile
+router.get('/check-staff-mobile/:mobile', protect, restrictTo('SUPER_ADMIN'), async (req, res) => {
+  try {
+    const result = await db.query(
+      'SELECT 1 FROM staff_profiles WHERE mobile_number = $1',
+      [req.params.mobile]
+    );
+    res.json({ available: result.rows.length === 0 });
+  } catch (err) {
+    console.error('Check staff mobile error:', err.message);
+    res.status(500).json({ available: true });
+  }
+});
+
+// Admin: Check if a staff code is already taken
+router.get('/check-staff-code/:code', protect, restrictTo('SUPER_ADMIN'), async (req, res) => {
+  try {
+    const result = await db.query(
+      'SELECT 1 FROM staff_profiles WHERE LOWER(staff_code) = LOWER($1)',
+      [req.params.code]
+    );
+    res.json({ available: result.rows.length === 0 });
+  } catch (err) {
+    console.error('Check staff code error:', err.message);
+    res.status(500).json({ available: true });
+  }
+});
+
 // Public: Apply to join VCare
 router.post('/apply', uploadApplicationFiles, staffAppController.submitApplication);
 
@@ -15,17 +65,41 @@ router.post('/verify-otp', staffAppController.verifyStaffApplicationOtp);
 // Public: Resend phone OTP for application
 router.post('/resend-otp', staffAppController.resendStaffApplicationOtp);
 
-// Admin Only: View all applications
+// Admin Only: View all applications (includes docs_complete flag for accepted applications)
 router.get('/applications', protect, restrictTo('SUPER_ADMIN'), async (req, res) => {
-  const apps = await db.query('SELECT * FROM staff_applications ORDER BY applied_at DESC');
+  const apps = await db.query(`
+    SELECT sa.*,
+      sp.grama_niladhari_url,
+      sp.police_report_url,
+      CASE
+        WHEN sa.status = 'ACCEPTED'
+          AND (sp.grama_niladhari_url IS NULL OR sp.police_report_url IS NULL)
+        THEN false
+        ELSE true
+      END AS docs_complete,
+      COALESCE((
+        SELECT COUNT(*) > 0
+        FROM staff_bank_accounts sba
+        WHERE sba.staff_profile_id = sp.staff_profile_id
+      ), false) AS has_bank_account
+    FROM staff_applications sa
+    LEFT JOIN users u ON u.mobile_number = sa.mobile_number
+    LEFT JOIN staff_profiles sp ON sp.user_id = u.user_id
+    ORDER BY sa.applied_at DESC
+  `);
   res.status(200).json(apps.rows);
 });
 
-// Admin Only: Get single application by ID (includes staff_profile_id if accepted)
+// Admin Only: Get single application by ID (includes staff profile compliance fields when accepted)
 router.get('/applications/:applicationId', protect, restrictTo('SUPER_ADMIN'), async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT sa.*, sp.staff_profile_id
+      SELECT sa.*,
+        sp.staff_profile_id,
+        sp.doc_upload_token,
+        sp.grama_niladhari_url,
+        sp.police_report_url,
+        sp.doc_request_sent_at
       FROM staff_applications sa
       LEFT JOIN users u ON u.mobile_number = sa.mobile_number
       LEFT JOIN staff_profiles sp ON sp.user_id = u.user_id
@@ -196,7 +270,7 @@ router.get(
 router.get(
   '/:staff_profile_id/attendance-calendar',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'STAFF', 'NURSE', 'CARETAKER', 'NANNY'),
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'STAFF', 'NURSE', 'CARETAKER', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'),
   staffController.getAttendanceCalendar
 );
 
@@ -219,28 +293,28 @@ router.patch(
 router.get(
   '/:staff_profile_id/bank-accounts',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'NANNY', 'NURSE', 'CARETAKER'),
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'NANNY', 'NURSE', 'CARETAKER', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'),
   staffController.getStaffBankAccounts
 );
 
 router.post(
   '/:staff_profile_id/bank-accounts',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'NANNY', 'NURSE', 'CARETAKER'),
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'NANNY', 'NURSE', 'CARETAKER', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'),
   staffController.createStaffBankAccount
 );
 
 router.put(
   '/:staff_profile_id/bank-accounts/:staff_bank_account_id',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'NANNY', 'NURSE', 'CARETAKER'),
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'NANNY', 'NURSE', 'CARETAKER', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'),
   staffController.updateStaffBankAccount
 );
 
 router.delete(
   '/:staff_profile_id/bank-accounts/:staff_bank_account_id',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'NANNY', 'NURSE', 'CARETAKER'),
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'NANNY', 'NURSE', 'CARETAKER', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'),
   staffController.deleteStaffBankAccount
 );
 
@@ -343,6 +417,15 @@ router.put('/:staff_profile_id/unavailable', protect, staffController.updateStaf
 
 // Update staff status (general)
 router.put('/:staff_profile_id/status', protect, staffController.updateStaffStatus);
+
+// Update years of experience. Admins can set this for any staff member;
+// staff can only set their own (enforced in controller).
+router.patch(
+  '/:staff_profile_id/experience-level',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'STAFF', 'NURSE', 'CARETAKER', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'),
+  staffController.updateStaffExperienceLevel
+);
 
 // Get staff by user_id (must be before catch-all)
 router.get('/user/:user_id', protect, staffController.getStaffByUserID);

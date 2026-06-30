@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Filter, MoreHorizontal, User, Mail, Phone, MapPin, CheckCircle, XCircle, DollarSign, ChevronDown, ChevronUp, FileText, Calendar, Home, Briefcase, UserCircle, Shield, ShieldOff, Plus, Edit, Trash2, Save, X, Upload } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
+import ImageCropModal from '../../../components/common/ImageCropModal';
 import apiClient from '../../../api/api';
 
 const ProxyUserManagement = () => {
@@ -14,6 +15,7 @@ const ProxyUserManagement = () => {
   const [selectedWorker, setSelectedWorker] = useState(null);
   const [expandedRows, setExpandedRows] = useState(new Set());
   const [isProxyMode, setIsProxyMode] = useState(true);
+  const [profilePictureToCrop, setProfilePictureToCrop] = useState(null);
   
   // Filter states
   const [sortField, setSortField] = useState('name');
@@ -34,6 +36,7 @@ const ProxyUserManagement = () => {
     profile_picture: null,
     gender: '',
     role: [],
+    experience_level: '',
     willing_to_live_in: false,
     date_of_birth: '',
     nic_number: '',
@@ -48,6 +51,7 @@ const ProxyUserManagement = () => {
   const [nicFrontPreview, setNicFrontPreview] = useState('');
   const [nicBackPreview, setNicBackPreview] = useState('');
   const [formLoading, setFormLoading] = useState(false);
+  const [fieldConflicts, setFieldConflicts] = useState({ mobile_number: '', staff_code: '' });
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
   const [deletePasswordError, setDeletePasswordError] = useState('');
@@ -81,6 +85,17 @@ const ProxyUserManagement = () => {
       };
       reader.readAsDataURL(file);
     }
+  };
+
+  // A profile picture file was just selected from disk/camera — open the
+  // crop step before it becomes the actual upload.
+  const handleProfilePictureSelect = (file) => {
+    if (file) setProfilePictureToCrop(file);
+  };
+
+  const handleProfilePictureCropComplete = (croppedFile) => {
+    setProfilePictureToCrop(null);
+    handleProfilePictureChange(croppedFile);
   };
 
   const handleProfilePictureDelete = () => {
@@ -162,6 +177,7 @@ const ProxyUserManagement = () => {
       location: '',
       profile_picture: null,
       gender: '',
+      experience_level: '',
       willing_to_live_in: false,
       date_of_birth: '',
       nic_number: '',
@@ -174,6 +190,7 @@ const ProxyUserManagement = () => {
     setDocumentPreviews([]);
     setNicFrontPreview('');
     setNicBackPreview('');
+    setFieldConflicts({ mobile_number: '', staff_code: '' });
     setIsEditMode(false);
     setSelectedWorker(null);
     setShowAddForm(!showAddForm);
@@ -193,6 +210,7 @@ const ProxyUserManagement = () => {
       profile_picture: null,
       gender: worker.gender || '',
       role: worker.role && worker.role.length > 0 ? worker.role : [],
+      experience_level: worker.experience_level || '',
       willing_to_live_in: worker.willing_to_live_in || false,
       date_of_birth: worker.date_of_birth || '',
       nic_number: worker.nic_number || '',
@@ -205,6 +223,7 @@ const ProxyUserManagement = () => {
     setDocumentPreviews([]);
     setNicFrontPreview(worker.nic_front_url || '');
     setNicBackPreview(worker.nic_back_url || '');
+    setFieldConflicts({ mobile_number: '', staff_code: '' });
     setSelectedWorker(worker);
     setIsEditMode(true);
     setShowAddForm(true);
@@ -268,6 +287,7 @@ const ProxyUserManagement = () => {
       submitData.append('home_address', formData.home_address);
       submitData.append('location', formData.location);
       submitData.append('gender', formData.gender);
+      if (formData.experience_level) submitData.append('experience_level', formData.experience_level);
       submitData.append('willing_to_live_in', formData.willing_to_live_in);
       submitData.append('date_of_birth', formData.date_of_birth);
       submitData.append('nic_number', formData.nic_number);
@@ -327,6 +347,7 @@ const ProxyUserManagement = () => {
       submitData.append('home_address', formData.home_address);
       submitData.append('location', formData.location);
       submitData.append('gender', formData.gender);
+      if (formData.experience_level) submitData.append('experience_level', formData.experience_level);
       submitData.append('willing_to_live_in', formData.willing_to_live_in);
       submitData.append('date_of_birth', formData.date_of_birth);
       submitData.append('nic_number', formData.nic_number);
@@ -365,10 +386,37 @@ const ProxyUserManagement = () => {
 
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target;
+    if (name === 'mobile_number' || name === 'staff_code') {
+      setFieldConflicts(p => ({ ...p, [name]: '' }));
+    }
     setFormData(prev => ({
       ...prev,
       [name]: type === 'checkbox' ? checked : value
     }));
+  };
+
+  const handleMobileBlur = async (value) => {
+    if (!value || !value.trim()) return;
+    // In edit mode, skip if mobile hasn't changed
+    if (isEditMode && selectedWorker && value.trim() === (selectedWorker.phone || '').trim()) return;
+    try {
+      const res = await apiClient.checkStaffMobile(value.trim());
+      if (!res.available) {
+        setFieldConflicts(p => ({ ...p, mobile_number: 'This mobile number is already used by another staff member.' }));
+      }
+    } catch { /* fail silently */ }
+  };
+
+  const handleStaffCodeBlur = async (value) => {
+    if (!value || !value.trim()) return;
+    // In edit mode, skip if staff_code hasn't changed
+    if (isEditMode && selectedWorker && value.trim().toLowerCase() === (selectedWorker.staff_code || '').trim().toLowerCase()) return;
+    try {
+      const res = await apiClient.checkStaffCode(value.trim());
+      if (!res.available) {
+        setFieldConflicts(p => ({ ...p, staff_code: 'This staff code is already assigned to another staff member.' }));
+      }
+    } catch { /* fail silently */ }
   };
 
   const toggleRowExpansion = (workerId) => {
@@ -396,8 +444,12 @@ const ProxyUserManagement = () => {
     profile_picture_url: staff.profile_picture_url || null,
     gender: staff.gender || 'N/A',
     willing_to_live_in: staff.willing_to_live_in || false,
+    experience_level: staff.experience_level || '',
     date_of_birth: staff.date_of_birth || null,
     location_city: staff.location || 'N/A',
+    nic_number: staff.nic_number || '',
+    staff_code: staff.staff_code || '',
+    admin_remarks: staff.admin_remarks || '',
     user_id: staff.user_id
   });
 
@@ -645,6 +697,12 @@ const ProxyUserManagement = () => {
                               <p className="text-slate-600">{worker.gender}</p>
                             </div>
                             <div>
+                              <span className="font-medium text-slate-700">Experience Level:</span>
+                              <p className="text-slate-600">{
+                                { BEGINNER: 'Beginner', '1_YEAR': '1 Year', '2_YEARS': '2 Years', '3_YEARS': '3 Years', '4_YEARS': '4 Years', '5_YEARS': '5 Years', MORE_THAN_5_YEARS: 'More than 5 Years' }[worker.experience_level] || worker.experience_level || 'Not set'
+                              }</p>
+                            </div>
+                            <div>
                               <span className="font-medium text-slate-700">Willing to Live In:</span>
                               <p className="text-slate-600">{worker.willing_to_live_in ? 'Yes' : 'No'}</p>
                             </div>
@@ -740,9 +798,13 @@ const ProxyUserManagement = () => {
                   name="mobile_number"
                   value={formData.mobile_number}
                   onChange={handleInputChange}
+                  onBlur={e => handleMobileBlur(e.target.value)}
                   required={!isEditMode}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:border-blue-500 ${fieldConflicts.mobile_number ? 'border-red-400 bg-red-50 focus:ring-red-100' : 'border-slate-300 focus:ring-blue-500'}`}
                 />
+                {fieldConflicts.mobile_number && (
+                  <p className="text-xs text-red-600 mt-1">{fieldConflicts.mobile_number}</p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Designation *</label>
@@ -758,7 +820,7 @@ const ProxyUserManagement = () => {
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Role *</label>
                 <div className="grid grid-cols-2 gap-3">
-                  {['NURSE', 'NANNY', 'CARETAKER', 'COORDINATOR'].map((roleOption) => (
+                  {['CARETAKER', 'NURSING_ASSISTANT', 'NURSE', 'PHYSIOTHERAPIST', 'NANNY', 'COUNSELLOR'].map((roleOption) => (
                     <button
                       key={roleOption}
                       type="button"
@@ -783,13 +845,13 @@ const ProxyUserManagement = () => {
                           : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
                       }`}
                     >
-                      {roleOption}
+                      {roleOption.replace(/_/g, ' ')}
                     </button>
                   ))}
                 </div>
                 {formData.role && formData.role.length > 0 && (
                   <p className="text-xs text-slate-500 mt-2">
-                    Selected: {formData.role.join(', ')}
+                    Selected: {formData.role.map(r => r.replace(/_/g, ' ')).join(', ')}
                   </p>
                 )}
               </div>
@@ -806,6 +868,24 @@ const ProxyUserManagement = () => {
                   <option value="MALE">Male</option>
                   <option value="FEMALE">Female</option>
                   <option value="OTHER">Other</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Experience Level</label>
+                <select
+                  name="experience_level"
+                  value={formData.experience_level}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">Not specified</option>
+                  <option value="BEGINNER">Beginner</option>
+                  <option value="1_YEAR">1 Year</option>
+                  <option value="2_YEARS">2 Years</option>
+                  <option value="3_YEARS">3 Years</option>
+                  <option value="4_YEARS">4 Years</option>
+                  <option value="5_YEARS">5 Years</option>
+                  <option value="MORE_THAN_5_YEARS">More than 5 Years</option>
                 </select>
               </div>
               <div>
@@ -878,10 +958,14 @@ const ProxyUserManagement = () => {
                   name="staff_code"
                   value={formData.staff_code}
                   onChange={handleInputChange}
+                  onBlur={e => handleStaffCodeBlur(e.target.value)}
                   required={!isEditMode}
                   placeholder="e.g. VC-0042"
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:border-blue-500 ${fieldConflicts.staff_code ? 'border-red-400 bg-red-50 focus:ring-red-100' : 'border-slate-300 focus:ring-blue-500'}`}
                 />
+                {fieldConflicts.staff_code && (
+                  <p className="text-xs text-red-600 mt-1">{fieldConflicts.staff_code}</p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -1007,7 +1091,7 @@ const ProxyUserManagement = () => {
                       accept="image/*"
                       onChange={(e) => {
                         const file = e.target.files[0];
-                        if (file) handleProfilePictureChange(file);
+                        if (file) handleProfilePictureSelect(file);
                       }}
                     />
                     <label
@@ -1028,7 +1112,7 @@ const ProxyUserManagement = () => {
                     accept="image/*"
                     onChange={(e) => {
                       const file = e.target.files[0];
-                      if (file) handleProfilePictureChange(file);
+                      if (file) handleProfilePictureSelect(file);
                     }}
                   />
                   <label
@@ -1119,7 +1203,7 @@ const ProxyUserManagement = () => {
               </button>
               <button
                 type="submit"
-                disabled={formLoading}
+                disabled={formLoading || !!fieldConflicts.mobile_number || !!fieldConflicts.staff_code}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {formLoading ? (isEditMode ? 'Updating...' : 'Adding...') : (isEditMode ? 'Update Staff' : 'Add Staff')}
@@ -1188,6 +1272,13 @@ const ProxyUserManagement = () => {
           </div>
         </div>
       )}
+
+      <ImageCropModal
+        imageFile={profilePictureToCrop}
+        aspect={1}
+        onCancel={() => setProfilePictureToCrop(null)}
+        onCropComplete={handleProfilePictureCropComplete}
+      />
     </AdminLayout>
   );
 };

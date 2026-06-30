@@ -117,7 +117,7 @@ const VerifyStaffOTP = () => {
       await apiClient.resendStaffApplicationOtp(applicationId);
       setTimeLeft(300);
       setOtp(['', '', '', '', '', '']);
-      setSuccess('A new code has been sent to your WhatsApp and phone.');
+      setSuccess('A new code has been sent to your phone.');
       document.getElementById('staff-otp-0')?.focus();
     } catch (err) {
       setError(err.message || 'Failed to resend code.');
@@ -152,7 +152,7 @@ const VerifyStaffOTP = () => {
               </button>
               <h1 className="text-2xl font-bold text-white mb-2">Verify Your Phone</h1>
               <p className="text-indigo-200 text-sm">
-                We've sent a 6-digit code to your WhatsApp and SMS at{' '}
+                We've sent a 6-digit code to your SMS at{' '}
                 <span className="font-semibold text-white">{maskMobile(mobileNumber)}</span>
               </p>
             </div>
@@ -160,10 +160,6 @@ const VerifyStaffOTP = () => {
 
           {/* Channel badges */}
           <div className="flex gap-3 px-8 pt-6">
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-full">
-              <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
-              <span className="text-xs font-medium text-emerald-700">WhatsApp</span>
-            </div>
             <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 border border-indigo-200 rounded-full">
               <Phone className="w-3.5 h-3.5 text-indigo-600" />
               <span className="text-xs font-medium text-indigo-700">SMS</span>
@@ -256,7 +252,7 @@ const VerifyStaffOTP = () => {
             </button>
 
             <p className="text-xs text-center text-slate-400">
-              Didn't receive a code? Check your WhatsApp messages or SMS inbox.
+              Didn't receive a code? Check your SMS inbox.
             </p>
           </form>
         </motion.div>
