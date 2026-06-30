@@ -3,7 +3,7 @@ const router = express.Router();
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const ctrl = require('../controllers/staffChangeRequestController');
 
-const STAFF_ROLES = ['NURSE', 'CARETAKER', 'NANNY'];
+const STAFF_ROLES = ['NURSE', 'CARETAKER', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'];
 const INTERNAL_ROLES = ['SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'];
 
 // Staff-facing

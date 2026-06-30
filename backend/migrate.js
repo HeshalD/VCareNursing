@@ -48,9 +48,21 @@ async function runMigration() {
   await db.query(`
     DO $$ BEGIN
       CREATE TYPE user_role_enum AS ENUM (
-        'CLIENT', 'STAFF', 'SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR', 
-        'SALES', 'STORE_MANAGER', 'NURSE', 'CARETAKER', 'NANNY'
+        'CLIENT', 'STAFF', 'SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR',
+        'SALES', 'STORE_MANAGER', 'NURSE', 'CARETAKER', 'NANNY',
+        'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'
       );
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  // Service-team roles added alongside NURSE/CARETAKER/NANNY for existing databases
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE user_role_enum ADD VALUE IF NOT EXISTS 'NURSING_ASSISTANT';
+      ALTER TYPE user_role_enum ADD VALUE IF NOT EXISTS 'PHYSIOTHERAPIST';
+      ALTER TYPE user_role_enum ADD VALUE IF NOT EXISTS 'COUNSELLOR';
     EXCEPTION
       WHEN duplicate_object THEN null;
     END $$;
@@ -1245,6 +1257,23 @@ async function runMigration() {
   // =========================================================
   // COLUMN ADDITIONS (safe to re-run)
   // =========================================================
+
+  // Self-reported/admin-set years of experience. Stored as a fixed code
+  // (1_YEAR .. 5_YEARS, MORE_THAN_5_YEARS) rather than a free-text/number so
+  // it stays consistent with the selectable options on the worker dashboard
+  // and admin staff detail page.
+  await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS experience_level VARCHAR(20)`);
+  await db.query(`ALTER TABLE staff_applications ADD COLUMN IF NOT EXISTS experience_level VARCHAR(20)`);
+  await db.query(`ALTER TABLE staff_profiles ALTER COLUMN designation TYPE VARCHAR(200)`);
+
+  // Compliance documents — Grama Niladhari Report and Police Report uploaded by staff post-acceptance.
+  // doc_upload_token is a stable UUID used as the public upload portal key (no login required).
+  await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS doc_upload_token UUID UNIQUE DEFAULT gen_random_uuid()`);
+  await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS grama_niladhari_url TEXT`);
+  await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS police_report_url TEXT`);
+  await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS doc_request_sent_at TIMESTAMP WITH TIME ZONE`);
+  // Backfill token for profiles created before this migration
+  await db.query(`UPDATE staff_profiles SET doc_upload_token = gen_random_uuid() WHERE doc_upload_token IS NULL`);
 
   await db.query(`
     DO $$ BEGIN

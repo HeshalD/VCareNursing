@@ -69,6 +69,15 @@ const formatDateTime = (value) => {
 
 const safeArray = (value) => (Array.isArray(value) ? value : []);
 
+const EXPERIENCE_LEVELS = [
+  { value: '1_YEAR', label: '1 Year' },
+  { value: '2_YEARS', label: '2 Years' },
+  { value: '3_YEARS', label: '3 Years' },
+  { value: '4_YEARS', label: '4 Years' },
+  { value: '5_YEARS', label: '5 Years' },
+  { value: 'MORE_THAN_5_YEARS', label: 'More than 5 Years' },
+];
+
 const statusTone = (value) => {
   const normalized = String(value || '').toLowerCase();
   if (normalized === 'available' || normalized === 'active' || normalized === 'completed' || normalized === 'verified') return 'bg-emerald-100 text-emerald-700';
@@ -192,6 +201,9 @@ const StaffDetailPage = () => {
   const [deductionSuccess, setDeductionSuccess] = useState('');
   const [reviewToggles, setReviewToggles] = useState({});
   const [togglingReviewId, setTogglingReviewId] = useState(null);
+  const [experienceLevel, setExperienceLevel] = useState('');
+  const [savingExperience, setSavingExperience] = useState(false);
+  const [experienceSaved, setExperienceSaved] = useState(false);
 
   const profile = detail?.profile || {};
   const overviewEarnings = detail?.earnings || {};
@@ -347,6 +359,25 @@ const StaffDetailPage = () => {
     loadPage();
   }, [adminToken, staffProfileId]);
 
+  useEffect(() => {
+    setExperienceLevel(profile.experience_level || '');
+  }, [profile.experience_level]);
+
+  const handleSaveExperienceLevel = async () => {
+    if (!experienceLevel) return;
+    setSavingExperience(true);
+    setExperienceSaved(false);
+    try {
+      await runAdminRequest(() => apiClient.updateStaffExperienceLevel(staffProfileId, experienceLevel));
+      setExperienceSaved(true);
+      await loadPage();
+    } catch (saveError) {
+      setError(saveError?.message || 'Failed to update experience level');
+    } finally {
+      setSavingExperience(false);
+    }
+  };
+
   const handleToggleAccount = async () => {
     try {
       setStatusUpdating(true);
@@ -469,6 +500,30 @@ const StaffDetailPage = () => {
                 <InfoRow label="Member Since" value={formatDate(profile.created_at)} />
                 <InfoRow label="Average Rating" value={averageRating ? `${averageRating.toFixed(1)} / 5` : '-'} />
                 <InfoRow label="Total Reviews" value={totalReviews} />
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Experience Level</p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <select
+                      value={experienceLevel}
+                      onChange={(e) => { setExperienceLevel(e.target.value); setExperienceSaved(false); }}
+                      className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm font-medium text-slate-900 outline-none focus:border-blue-500"
+                    >
+                      <option value="">Not set</option>
+                      {EXPERIENCE_LEVELS.map(({ value, label }) => (
+                        <option key={value} value={value}>{label}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={handleSaveExperienceLevel}
+                      disabled={savingExperience || !experienceLevel || experienceLevel === (profile.experience_level || '')}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
+                    >
+                      {savingExperience ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                    </button>
+                    {experienceSaved && <Check className="h-4 w-4 text-emerald-600" />}
+                  </div>
+                </div>
               </div>
             </div>
           </div>

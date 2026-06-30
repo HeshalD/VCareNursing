@@ -16,6 +16,7 @@ import BookingSuccessPage from './modules/public/BookingSuccessPage';
 import WorkersTeamPage from './modules/public/service_team/WorkersTeamPage';
 import WorkerRegistrationPage from './modules/public/service_team/WorkerRegistrationPage';
 import WorkerRegistrationSuccessPage from './modules/public/service_team/WorkerRegistrationSuccessPage';
+import StaffDocumentUploadPage from './modules/public/service_team/StaffDocumentUploadPage';
 import VerifyStaffOTP from './modules/public/service_team/VerifyStaffOTP';
 import WorkerDashboardDemo from './modules/public/service_team/WorkerDashboardDemo';
 import ClientDashboardDemo from './modules/public/ClientDashboardDemo';
@@ -126,6 +127,7 @@ function App() {
             <Route path="/booking-success" element={<BookingSuccessPage />} />
             <Route path="/services/join-team" element={<WorkersTeamPage />} />
             <Route path="/services/apply" element={<WorkerRegistrationPage />} />
+            <Route path="/staff/documents/:token" element={<StaffDocumentUploadPage />} />
             <Route path="/verify-staff-otp" element={<VerifyStaffOTP />} />
             <Route path="/worker-registration-success" element={<WorkerRegistrationSuccessPage />} />
             <Route path="/services/provider-dashboard" element={<WorkerDashboardDemo />} />

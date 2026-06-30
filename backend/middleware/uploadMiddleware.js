@@ -13,6 +13,11 @@ const folderMap = {
   documents: 'vcare_documents',
 };
 
+const docReportFolderMap = {
+  grama_niladhari: 'vcare_compliance_docs',
+  police_report: 'vcare_compliance_docs',
+};
+
 const uploadApplicationFiles = multer({
   storage: multerS3({
     s3,
@@ -41,4 +46,27 @@ const uploadApplicationFiles = multer({
   { name: 'nic_back', maxCount: 1 },
 ]);
 
-module.exports = { uploadApplicationFiles };
+const uploadDocReportFiles = multer({
+  storage: multerS3({
+    s3,
+    bucket: BUCKET,
+    contentType: multerS3.AUTO_CONTENT_TYPE,
+    key: (req, file, cb) => {
+      const folder = docReportFolderMap[file.fieldname] || 'vcare_compliance_docs';
+      const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+      cb(null, `${folder}/${Date.now()}_${safeName}`);
+    },
+  }),
+  fileFilter: (req, file, cb) => {
+    if (docReportFolderMap[file.fieldname] !== undefined) {
+      cb(null, true);
+    } else {
+      cb(new Error('Unexpected field: ' + file.fieldname));
+    }
+  },
+}).fields([
+  { name: 'grama_niladhari', maxCount: 1 },
+  { name: 'police_report', maxCount: 1 },
+]);
+
+module.exports = { uploadApplicationFiles, uploadDocReportFiles };

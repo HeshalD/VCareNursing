@@ -334,6 +334,34 @@ const sendCandidateProfile = (mobileNumber, payerName, patientName, staffName, d
 const sendStaffLeaveApproved = (mobileNumber, staffName, startDate, endDate, days) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_leave_approved', 'en', [staffName, startDate, endDate, days]);
 
+// Sent to accepted staff asking them to upload their Grama Niladhari Report and Police Report.
+// Body vars: {{1}} = staff name only.
+// CTA button: "Upload Documents" — Visit Website (Dynamic URL).
+//   Static URL base set in Meta template: https://vcarenursing.com/staff/documents/
+//   Dynamic suffix (button parameter): doc_upload_token
+//
+// META TEMPLATE SPEC — vcare_staff_doc_upload_request (UTILITY, en)
+// Header: None
+// Body:
+//   Hi {{1}},
+//
+//   To complete your registration with VCare Nursing, please upload your Grama Niladhari
+//   Report and Police Report. Tap the button below to open your secure upload portal.
+//
+//   Please complete this at your earliest convenience. Thank you for joining VCare.
+// Button: Call to Action → Visit Website → Dynamic URL
+//   Label: Upload Documents
+//   URL:   https://vcarenursing.com/staff/documents/{{1}}
+const sendDocumentUploadRequest = (mobileNumber, staffName, docUploadToken) =>
+  sendTemplate(
+    formatNumber(mobileNumber),
+    'vcare_staff_doc_upload_request',
+    'en',
+    [staffName],
+    null,
+    [{ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: docUploadToken }] }]
+  );
+
 // Sent to staff when their leave request is rejected.
 // Body vars: {{1}} = staff name, {{2}} = start date, {{3}} = end date, {{4}} = reason
 //
@@ -350,4 +378,4 @@ const sendStaffLeaveApproved = (mobileNumber, staffName, startDate, endDate, day
 const sendStaffLeaveRejected = (mobileNumber, staffName, startDate, endDate, reason) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_leave_rejected', 'en', [staffName, startDate, endDate, reason]);
 
-module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendClientWelcomeNew, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendPaymentRecorded, sendPaymentReceipt, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected, sendClientBookingStatement, sendStaffAgreement, sendCandidateProfile, sendStaffLeaveApproved, sendStaffLeaveRejected };
+module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendClientWelcomeNew, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendPaymentRecorded, sendPaymentReceipt, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected, sendClientBookingStatement, sendStaffAgreement, sendCandidateProfile, sendStaffLeaveApproved, sendStaffLeaveRejected, sendDocumentUploadRequest };

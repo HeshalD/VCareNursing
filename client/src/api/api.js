@@ -609,6 +609,27 @@ class ApiClient {
 
   // Staff endpoints
 
+  async checkMobileAvailability(mobile) {
+    return this.request(`/staff/check-mobile/${encodeURIComponent(mobile)}`);
+  }
+
+  async checkStaffCode(code) {
+    return this.request(`/staff/check-staff-code/${encodeURIComponent(code)}`);
+  }
+
+  async checkStaffMobile(mobile) {
+    return this.request(`/staff/check-staff-mobile/${encodeURIComponent(mobile)}`);
+  }
+
+  async adminUploadComplianceDocs(applicationId, field, file) {
+    const formData = new FormData();
+    formData.append(field, file);
+    return this.request(`/staff/applications/${applicationId}/admin-upload-docs`, {
+      method: 'POST',
+      body: formData,
+    });
+  }
+
   async submitApplication(applicationData, documentFiles, profilePictureFile, nicFrontFile, nicBackFile) {
 
     const formData = new FormData();
@@ -740,6 +761,23 @@ class ApiClient {
     return this.request('/staff/next-staff-code');
   }
 
+  async sendDocumentRequest(applicationId) {
+    return this.request(`/staff/applications/${applicationId}/send-document-request`, {
+      method: 'POST',
+    });
+  }
+
+  async getDocUploadPortal(token) {
+    return this.request(`/staff/doc-upload/${token}`);
+  }
+
+  async uploadComplianceDocs(token, formData) {
+    return this.request(`/staff/doc-upload/${token}`, {
+      method: 'POST',
+      body: formData,
+    });
+  }
+
   async sendApplicationAgreement(applicationId) {
     return this.request(`/staff/applications/${applicationId}/send-agreement`, {
       method: 'POST',
@@ -851,6 +889,13 @@ class ApiClient {
     return this.request(`/staff/${staffProfileId}/status`, {
       method: 'PUT',
       body: JSON.stringify({ current_status: status })
+    });
+  }
+
+  async updateStaffExperienceLevel(staffProfileId, experienceLevel) {
+    return this.request(`/staff/${staffProfileId}/experience-level`, {
+      method: 'PATCH',
+      body: JSON.stringify({ experience_level: experienceLevel })
     });
   }
 

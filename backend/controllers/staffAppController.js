@@ -21,19 +21,20 @@ async function getActorName(userId) {
 
 exports.submitApplication = async (req, res) => {
   try {
-    const { 
-      full_name, 
-      email, 
-      mobile_number, 
-      applied_roles, 
-      qualifications, 
+    const {
+      full_name,
+      email,
+      mobile_number,
+      applied_roles,
+      qualifications,
       home_address,
-      location, 
-      latitude, 
+      location,
+      latitude,
       longitude,
       nic_number,
       gender,
-      date_of_birth
+      date_of_birth,
+      experience_level
     } = req.body;
     
    
@@ -80,27 +81,48 @@ exports.submitApplication = async (req, res) => {
       });
     }
 
+    // Block if mobile is already registered under any non-CLIENT role
+    if (mobile_number) {
+      const existingUser = await db.query(
+        'SELECT role FROM users WHERE mobile_number = $1',
+        [mobile_number]
+      );
+      if (existingUser.rows.length > 0) {
+        const raw = existingUser.rows[0].role;
+        const roles = Array.isArray(raw)
+          ? raw
+          : typeof raw === 'string'
+            ? raw.replace(/^\{|\}$/g, '').split(',').map(r => r.trim()).filter(Boolean)
+            : [];
+        const hasNonClientRole = roles.some(r => r !== 'CLIENT' && r !== '');
+        if (hasNonClientRole) {
+          return res.status(409).json({
+            message: 'This phone number is already registered as a staff member. Please contact support if you believe this is an error.'
+          });
+        }
+      }
+    }
+
     const query = `
-      INSERT INTO staff_applications 
-      (full_name, email, mobile_number, applied_roles, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, date_of_birth)
+      INSERT INTO staff_applications
+      (full_name, email, mobile_number, applied_roles, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, date_of_birth, experience_level)
       VALUES ($1, $2, $3, $4::user_role_enum[], $5, $6, $7, $8,
-        CASE WHEN $9::float IS NOT NULL AND $10::float IS NOT NULL 
-             THEN point($10::float, $9::float) 
-             ELSE NULL 
-        END, $11, $12, $13, $14, $15::gender_enum, $16)
+        CASE WHEN $9::float IS NOT NULL AND $10::float IS NOT NULL
+             THEN point($10::float, $9::float)
+             ELSE NULL
+        END, $11, $12, $13, $14, $15::gender_enum, $16, $17)
       RETURNING *;
     `;
 
-    // Note: We added $8 for location, so latitude/longitude moved to $9 and $10
     const result = await db.query(query, [
-      full_name, 
-      email, 
-      mobile_number, 
+      full_name,
+      email,
+      mobile_number,
       rolesArray,
-      qualifications, 
+      qualifications,
       document_urls,
       home_address,
-      location, 
+      location,
       (latitude && latitude !== "") ? latitude : null,
       (longitude && longitude !== "") ? longitude : null,
       profile_picture_url,
@@ -108,7 +130,8 @@ exports.submitApplication = async (req, res) => {
       nic_front_url,
       nic_back_url,
       gender,
-      date_of_birth
+      date_of_birth,
+      experience_level || null
     ]);
 
     const application = result.rows[0];
@@ -437,8 +460,8 @@ exports.acceptApplication = async (req, res) => {
         }
 
         const profileInsertQuery = `
-          INSERT INTO staff_profiles (staff_code, user_id, full_name, designation, verification_status, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, willing_to_live_in, date_of_birth, admin_remarks)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18)
+          INSERT INTO staff_profiles (staff_code, user_id, full_name, designation, verification_status, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, willing_to_live_in, date_of_birth, admin_remarks, experience_level)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18, $19)
           RETURNING staff_profile_id
         `;
         const profileResult = await client.query(profileInsertQuery, [
@@ -459,7 +482,8 @@ exports.acceptApplication = async (req, res) => {
           app.gender,
           app.willing_to_live_in || false,
           app.date_of_birth,
-          admin_remarks || null
+          admin_remarks || null,
+          app.experience_level || null
         ]);
 
         // Auto-create staff wallet on approval
@@ -695,7 +719,7 @@ exports.updateApplication = async (req, res) => {
   const { applicationId } = req.params;
   const {
     full_name, email, mobile_number, applied_roles, qualifications,
-    home_address, location, nic_number, gender, date_of_birth
+    home_address, location, nic_number, gender, date_of_birth, experience_level
   } = req.body;
 
   try {
@@ -741,11 +765,11 @@ exports.updateApplication = async (req, res) => {
            applied_roles = $4::user_role_enum[], qualifications = $5,
            home_address = $6, location = $7, nic_number = $8,
            gender = $9::gender_enum, date_of_birth = $10,
-           profile_picture_url = $11
-       WHERE application_id = $12`,
+           profile_picture_url = $11, experience_level = $12
+       WHERE application_id = $13`,
       [full_name, email, mobile_number, rolesArray, qualifications,
        home_address, location, nic_number, gender, date_of_birth,
-       profilePictureUrl, applicationId]
+       profilePictureUrl, experience_level || null, applicationId]
     );
 
     const updated = await db.query(
@@ -760,14 +784,15 @@ exports.updateApplication = async (req, res) => {
       if ((o ?? '') !== (n ?? '')) changes[field] = { from: o, to: n };
     };
 
-    diff('full_name',      current.full_name,      full_name);
-    diff('email',          current.email,           email);
-    diff('mobile_number',  current.mobile_number,   mobile_number);
-    diff('qualifications', current.qualifications,  qualifications);
-    diff('home_address',   current.home_address,    home_address);
-    diff('location',       current.location,        location);
-    diff('nic_number',     current.nic_number,      nic_number);
-    diff('gender',         current.gender,          gender);
+    diff('full_name',        current.full_name,        full_name);
+    diff('email',            current.email,             email);
+    diff('mobile_number',    current.mobile_number,     mobile_number);
+    diff('qualifications',   current.qualifications,    qualifications);
+    diff('home_address',     current.home_address,      home_address);
+    diff('location',         current.location,          location);
+    diff('nic_number',       current.nic_number,        nic_number);
+    diff('gender',           current.gender,            gender);
+    diff('experience_level', current.experience_level,  experience_level || null);
 
     if (newProfilePicture && current.profile_picture_url !== profilePictureUrl) {
       changes['profile_picture'] = { from: current.profile_picture_url, to: profilePictureUrl };
