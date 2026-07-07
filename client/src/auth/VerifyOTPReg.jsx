@@ -14,22 +14,13 @@ const VerifyOTPReg = () => {
   const [success, setSuccess] = useState('');
   const [timeLeft, setTimeLeft] = useState(300); // 5 minutes
   const [mobileNumber, setMobileNumber] = useState('');
-  const [userId, setUserId] = useState('');
 
   useEffect(() => {
-    // Get mobile number and userId from location state
-    if (location.state?.mobileNumber) {
-      setMobileNumber(location.state.mobileNumber);
-    }
-    if (location.state?.userId) {
-      setUserId(location.state.userId);
-    }
-
-    // Redirect if no mobile number provided
     if (!location.state?.mobileNumber) {
       navigate('/register');
       return;
     }
+    setMobileNumber(location.state.mobileNumber);
 
     // Timer countdown
     const timer = setInterval(() => {
@@ -101,16 +92,14 @@ const VerifyOTPReg = () => {
 
     try {
       setIsLoading(true);
-      const response = await apiClient.verifyOtp(userId, otpValue);
-      
-      console.log('OTP verification successful:', response);
-      setSuccess('Mobile number verified successfully! Redirecting to login...');
-      
-      // Redirect to login page after 2 seconds
+      await apiClient.verifyOtp(mobileNumber, otpValue);
+
+      setSuccess('Mobile number verified! Redirecting to login...');
+
       setTimeout(() => {
         navigate('/login');
       }, 2000);
-      
+
     } catch (err) {
       setError(err.message || 'Invalid OTP. Please try again.');
       console.error('OTP verification error:', err);
@@ -120,12 +109,13 @@ const VerifyOTPReg = () => {
   };
 
   const handleResendOtp = async () => {
+    setError('');
+    setSuccess('');
     try {
       setIsLoading(true);
-      // You would need to implement resendOtp in your API
-      // await apiClient.resendOtp(email);
-      setTimeLeft(300); // Reset timer
-      setSuccess('OTP resent successfully!');
+      await apiClient.resendOtp(mobileNumber);
+      setTimeLeft(300);
+      setSuccess('A new code has been sent to your mobile number.');
     } catch (err) {
       setError(err.message || 'Failed to resend OTP');
     } finally {

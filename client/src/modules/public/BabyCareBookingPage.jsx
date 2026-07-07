@@ -613,7 +613,7 @@ const BabyCareBookingPage = () => {
                         </select>
                       </div>
                       <div>
-                        <label className="text-sm font-semibold text-slate-600 block mb-1">Relationship to Baby</label>
+                        <label className="text-sm font-semibold text-slate-600 block mb-1">Relationship to Client</label>
                         <select
                           className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-slate-900"
                           value={formData.relationship}
@@ -621,9 +621,9 @@ const BabyCareBookingPage = () => {
                           onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
                           required
                         >
-                          <option value="PARENT">Parent</option>
-                          <option value="GUARDIAN">Guardian</option>
-                          <option value="GRANDPARENT">Grandparent</option>
+                          <option value="CHILD">Child</option>
+                          <option value="WARD">Ward</option>
+                          <option value="GRANDCHILD">Grandchild</option>
                           <option value="OTHER">Other</option>
                         </select>
                       </div>

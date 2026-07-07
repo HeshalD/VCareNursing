@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { User, MapPin, Phone, Mail, Edit2, Save, X, Loader2, CheckCircle, AlertCircle, Wallet, Shield } from 'lucide-react';
+import { User, MapPin, Phone, Mail, Edit2, Save, X, Loader2, CheckCircle, AlertCircle, Wallet, Shield, Building2, Upload } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import apiClient from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 
 const ClientProfile = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -140,17 +142,53 @@ const ClientProfile = () => {
           </div>
         )}
 
+        {/* Outstanding fee banner */}
+        {(profile?.reg_fee_status === 'PENDING' || profile?.reg_fee_status === 'INVOICED') && (
+          <div style={styles.feeBanner}>
+            <AlertCircle size={15} style={{ color: '#92400e', flexShrink: 0 }} />
+            <span>
+              You have an outstanding registration fee of{' '}
+              <strong>LKR {Number(profile?.reg_fee_amount || 10000).toLocaleString('en-LK', { minimumFractionDigits: 2 })}</strong>.{' '}
+              {profile?.reg_fee_status === 'PENDING'
+                ? 'Contact VCare Nursing to receive your invoice and payment instructions.'
+                : 'Please follow the instructions in the WhatsApp invoice to complete your payment.'}
+            </span>
+          </div>
+        )}
+
         {/* Identity strip */}
         <section style={styles.identityStrip}>
           <div style={styles.avatar}>{initials}</div>
-          <div>
-            <p style={styles.identityName}>{profile?.full_name || '—'}</p>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={styles.identityName}>
+              {profile?.honorific ? <span style={styles.honorificPrefix}>{profile.honorific}</span> : null}
+              {profile?.full_name || '—'}
+            </p>
+            {profile?.company_name && (
+              <p style={styles.companyBadgeRow}>
+                <Building2 size={12} style={{ flexShrink: 0 }} />
+                {profile.company_name}
+              </p>
+            )}
             <p style={styles.identityMeta}>
               Client #{profile?.client_profile_id}&nbsp;&nbsp;·&nbsp;&nbsp;
-              <span style={profile?.is_registration_fee_paid ? styles.badgeGreen : styles.badgeAmber}>
-                {profile?.is_registration_fee_paid ? 'Registered' : 'Fee Pending'}
-              </span>
+              {(() => {
+                const s = profile?.reg_fee_status;
+                if (s === 'PAID') return <span style={styles.badgeGreen}>Registered</span>;
+                if (s === 'WAIVED') return <span style={styles.badgeGreen}>Fee Waived</span>;
+                if (s === 'RECEIPT_UPLOADED') return <span style={styles.badgeViolet}>Receipt Submitted</span>;
+                return <span style={styles.badgeAmber}>Fee Pending</span>;
+              })()}
             </p>
+            {(profile?.reg_fee_status === 'INVOICED' || profile?.reg_fee_status === 'RECEIPT_UPLOADED') && profile?.reg_fee_receipt_token && (
+              <button
+                onClick={() => navigate(`/client/pay-receipt/${profile.reg_fee_receipt_token}`)}
+                style={profile?.reg_fee_status === 'RECEIPT_UPLOADED' ? styles.uploadBtnMuted : styles.uploadBtn}
+              >
+                <Upload size={12} style={{ flexShrink: 0 }} />
+                {profile?.reg_fee_status === 'RECEIPT_UPLOADED' ? 'View Receipt Portal' : 'Upload Payment Receipt'}
+              </button>
+            )}
           </div>
         </section>
 
@@ -183,6 +221,35 @@ const ClientProfile = () => {
         <section style={styles.card}>
           <h2 style={styles.cardHeading}>Personal Information</h2>
           <div style={styles.fieldGrid}>
+            {/* Title (honorific) — full width in edit, inline in display */}
+            <div style={{ gridColumn: '1 / -1' }}>
+              {isEditing ? (
+                <div style={styles.fieldWrap}>
+                  <label style={styles.fieldLabel}>Title <span style={{ textTransform: 'none', fontWeight: 400, color: '#94a3b8' }}>(optional)</span></label>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {['Mr', 'Mrs', 'Miss', 'Doc', 'Prof'].map(h => (
+                      <button
+                        key={h}
+                        type="button"
+                        onClick={() => handleInputChange('honorific', editForm.honorific === h ? '' : h)}
+                        style={editForm.honorific === h ? styles.pillActive : styles.pill}
+                      >
+                        {h}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : profile?.honorific ? (
+                <div style={styles.fieldWrap}>
+                  <label style={styles.fieldLabel}>Title</label>
+                  <div style={styles.displayField}>
+                    <User size={15} style={styles.fieldIcon} />
+                    <span style={styles.displayValue}>{profile.honorific}</span>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
             <Field
               label="Full Name"
               icon={<User size={15} style={styles.fieldIcon} />}
@@ -223,6 +290,21 @@ const ClientProfile = () => {
               placeholder="Primary address"
               textarea
             />
+
+            {/* Company Name — show in edit mode always; in view mode only if set */}
+            {(isEditing || profile?.company_name) && (
+              <div style={{ gridColumn: '1 / -1' }}>
+                <Field
+                  label="Company Name"
+                  icon={<Building2 size={15} style={styles.fieldIcon} />}
+                  editing={isEditing}
+                  value={editForm.company_name || ''}
+                  display={profile?.company_name}
+                  onChange={v => handleInputChange('company_name', v)}
+                  placeholder="Company or organisation name"
+                />
+              </div>
+            )}
           </div>
         </section>
 
@@ -416,7 +498,14 @@ const styles = {
     fontSize: 18, fontWeight: 600, letterSpacing: '0.02em',
     flexShrink: 0,
   },
-  identityName: { fontSize: 18, fontWeight: 600, color: '#0f172a', margin: '0 0 4px', letterSpacing: '-0.01em' },
+  identityName: { fontSize: 18, fontWeight: 600, color: '#0f172a', margin: '0 0 4px', letterSpacing: '-0.01em', display: 'flex', alignItems: 'baseline', gap: 6 },
+  honorificPrefix: { fontSize: 13, fontWeight: 500, color: '#64748b', letterSpacing: '0.02em' },
+  companyBadgeRow: {
+    display: 'inline-flex', alignItems: 'center', gap: 5,
+    fontSize: 12, fontWeight: 500, color: '#475569',
+    background: '#f1f5f9', border: '1px solid #e2e8f0',
+    borderRadius: 4, padding: '2px 8px', margin: '0 0 6px',
+  },
   identityMeta: { fontSize: 13, color: '#64748b', margin: 0, display: 'flex', alignItems: 'center', gap: 4 },
   badgeGreen: {
     display: 'inline-block', background: '#dcfce7', color: '#166534',
@@ -427,6 +516,34 @@ const styles = {
     display: 'inline-block', background: '#fef3c7', color: '#92400e',
     borderRadius: 4, padding: '1px 8px', fontSize: 11, fontWeight: 600,
     letterSpacing: '0.04em', textTransform: 'uppercase',
+  },
+  badgeViolet: {
+    display: 'inline-block', background: '#f3e8ff', color: '#6b21a8',
+    borderRadius: 4, padding: '1px 8px', fontSize: 11, fontWeight: 600,
+    letterSpacing: '0.04em', textTransform: 'uppercase',
+  },
+  feeBanner: {
+    display: 'flex', alignItems: 'flex-start', gap: 10,
+    background: '#fffbeb', border: '1px solid #fde68a',
+    borderRadius: 8, padding: '12px 16px',
+    fontSize: 13, color: '#78350f', marginBottom: 16,
+    lineHeight: 1.5,
+  },
+  uploadBtn: {
+    display: 'inline-flex', alignItems: 'center', gap: 5,
+    marginTop: 8,
+    background: '#1e293b', color: '#f8f7f4',
+    border: 'none', borderRadius: 6,
+    padding: '6px 14px', fontSize: 12, fontWeight: 500,
+    cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
+  },
+  uploadBtnMuted: {
+    display: 'inline-flex', alignItems: 'center', gap: 5,
+    marginTop: 8,
+    background: 'transparent', color: '#64748b',
+    border: '1px solid #cbd5e1', borderRadius: 6,
+    padding: '6px 14px', fontSize: 12, fontWeight: 500,
+    cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
   },
 
   /* Stats */
@@ -484,6 +601,18 @@ const styles = {
   metaItem: { borderBottom: '1px solid #f1f5f9', paddingBottom: 14 },
   metaLabel: { fontSize: 11, color: '#94a3b8', fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', margin: '0 0 4px' },
   metaValue: { fontSize: 14, color: '#1e293b', fontWeight: 500, margin: 0 },
+
+  /* Honorific pills */
+  pill: {
+    padding: '6px 16px', fontSize: 13, fontWeight: 500, cursor: 'pointer',
+    border: '1px solid #e2e8f0', borderRadius: 8, background: '#fff', color: '#475569',
+    fontFamily: "'DM Sans', sans-serif", transition: 'all 0.1s',
+  },
+  pillActive: {
+    padding: '6px 16px', fontSize: 13, fontWeight: 500, cursor: 'pointer',
+    border: '1px solid #1e293b', borderRadius: 8, background: '#1e293b', color: '#fff',
+    fontFamily: "'DM Sans', sans-serif",
+  },
 };
 
 export default ClientProfile;

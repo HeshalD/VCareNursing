@@ -168,13 +168,13 @@ class ApiClient {
 
 
 
-  async resendOtp(email) {
+  async resendOtp(mobileNumber) {
 
     return this.request('/auth/resend-otp', {
 
       method: 'POST',
 
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ mobile_number: mobileNumber }),
 
     });
 
@@ -182,13 +182,13 @@ class ApiClient {
 
 
 
-  async verifyOtp(userId, otp) {
+  async verifyOtp(mobileNumber, otp) {
 
     return this.request('/auth/verify-otp', {
 
       method: 'POST',
 
-      body: JSON.stringify({ user_id: userId, otp_code: otp }),
+      body: JSON.stringify({ mobile_number: mobileNumber, otp_code: otp }),
 
     });
 
@@ -273,6 +273,13 @@ class ApiClient {
 
   }
 
+  async createClientProfile(data) {
+    return this.request('/client/proxy-create', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
 
 
   async getClientProfile(clientId) {
@@ -283,6 +290,41 @@ class ApiClient {
 
   async getAdminClientDetail(clientId) {
     return this.request(`/client/${clientId}/detail`);
+  }
+
+  async updateClientBilling(clientId, { company_name, honorific }) {
+    return this.request(`/client/${clientId}/billing`, {
+      method: 'PATCH',
+      body: JSON.stringify({ company_name, honorific }),
+    });
+  }
+
+  async sendRegFeeInvoice(clientId, { amount, bank_account_id }) {
+    return this.request(`/client/${clientId}/send-reg-fee-invoice`, {
+      method: 'POST',
+      body: JSON.stringify({ amount, bank_account_id }),
+    });
+  }
+
+  async updateRegFeeStatus(clientId, status) {
+    return this.request(`/client/${clientId}/reg-fee-status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    });
+  }
+  async verifyRegFeePayment(clientId) {
+    return this.request(`/client/${clientId}/verify-reg-fee-payment`, { method: 'POST' });
+  }
+
+  async getReceiptUploadPortal(token) {
+    return this.request(`/client-receipt-upload/${token}`);
+  }
+
+  async uploadPaymentReceipt(token, formData) {
+    return this.request(`/client-receipt-upload/${token}`, {
+      method: 'POST',
+      body: formData,
+    });
   }
 
   async getAdminClientBookings(clientId) {
@@ -582,6 +624,13 @@ class ApiClient {
 
   async checkQuoteBooking(quoteId) {
     return this.request(`/quotes/${quoteId}/check-booking`);
+  }
+
+  async updateQuoteStatus(quoteId, status) {
+    return this.request(`/quotes/${quoteId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    });
   }
 
   async createQuotation(quoteData) {
@@ -1113,6 +1162,13 @@ class ApiClient {
     return this.request('/bookings');
   }
 
+  async adminDirectBooking(data) {
+    return this.request('/bookings/admin-direct', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   async getBookingById(bookingId) {
     return this.request(`/bookings/${bookingId}`);
   }
@@ -1211,6 +1267,16 @@ class ApiClient {
 
   async getBookingDailyInvoices(bookingId) {
     return this.request(`/bookings/${bookingId}/daily-invoices`);
+  }
+
+  async getClientInvoices(clientId, filters = {}) {
+    const qs = new URLSearchParams(filters).toString();
+    return this.request(qs ? `/client/${clientId}/invoices?${qs}` : `/client/${clientId}/invoices`);
+  }
+
+  async getAdminInvoices(filters = {}) {
+    const qs = new URLSearchParams(filters).toString();
+    return this.request(qs ? `/client/all-invoices?${qs}` : '/client/all-invoices');
   }
 
   // ── Payment receipts ──────────────────────────────────────────────
@@ -1704,6 +1770,10 @@ class ApiClient {
 
   async getQuoteWithLineItems(quoteId) {
     return this.request(`/quotes/${quoteId}/details`);
+  }
+
+  async generateQuotePdf(quoteId) {
+    return this.request(`/quotes/${quoteId}/generate-pdf`, { method: 'POST' });
   }
 
   async updateQuoteLineItems(quoteId, lineItemsData) {

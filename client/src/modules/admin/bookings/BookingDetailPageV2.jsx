@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, ArrowLeft, CheckCircle, Download, DollarSign,
-  Loader2, Phone, RefreshCw, Repeat2, Search, ShieldCheck,
-  Upload, User, Users, Wallet, XCircle, Briefcase, History,
+  Loader2, MessageCircle, Phone, RefreshCw, Repeat2, Search, SendHorizontal, ShieldCheck,
+  Upload, User, UserPlus, Users, Wallet, X, XCircle, Briefcase, History,
 } from 'lucide-react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
@@ -132,6 +132,8 @@ const BookingDetailPageV2 = () => {
   // payment receipts (keyed by booking_payment_id)
   const [receipts, setReceipts]               = useState([]);
   const [receiptBusy, setReceiptBusy]         = useState('');
+  const [showReceiptSendPopup, setShowReceiptSendPopup] = useState(false);
+  const [receiptSendBusy, setReceiptSendBusy] = useState(false);
 
   // wallet payoff
   const [walletPayoffAmount, setWalletPayoffAmount]       = useState('');
@@ -401,6 +403,28 @@ const BookingDetailPageV2 = () => {
     finally { setReceiptBusy(''); }
   };
 
+  const handleSendLatestReceipt = async () => {
+    setReceiptSendBusy(true);
+    try {
+      apiClient.setToken(adminToken);
+      const res = await apiClient.getBookingReceipts(bookingId);
+      const fresh = Array.isArray(res?.receipts) ? res.receipts : [];
+      setReceipts(fresh);
+      const latest = fresh[0];
+      if (latest) {
+        await apiClient.sendPaymentReceipt(latest.receipt_id);
+        const res2 = await apiClient.getBookingReceipts(bookingId);
+        setReceipts(Array.isArray(res2?.receipts) ? res2.receipts : []);
+      }
+      setShowReceiptSendPopup(false);
+    } catch (err) {
+      setError(err?.message || 'Failed to send receipt');
+      setShowReceiptSendPopup(false);
+    } finally {
+      setReceiptSendBusy(false);
+    }
+  };
+
   const fetchDailyRecords = async () => {
     try {
       apiClient.setToken(adminToken);
@@ -553,6 +577,7 @@ const BookingDetailPageV2 = () => {
         cheque_date: paymentForm.cheque_date || null, reference_number: paymentForm.reference_number || null, notes: paymentForm.notes || null,
       }, paymentSlipFile);
       setPaymentForm(initialPaymentForm); setPaymentSlipFile(null);
+      setShowReceiptSendPopup(true);
       await fetchDetail();
       // Receipt is generated asynchronously server-side; refetch shortly after.
       await fetchReceipts();
@@ -759,6 +784,14 @@ const BookingDetailPageV2 = () => {
               <button onClick={fetchDetail} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: '1px solid #E7E1D6', borderRadius: 10, padding: '9px 13px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#5A554B', cursor: 'pointer' }}>
                 <RefreshCw style={{ width: 14, height: 14 }} /> Refresh
               </button>
+              {!isTerminated && !normCurrentStaff && (
+                <button
+                  onClick={() => navigate(`/admin/bookings/${bookingId}/staff-assignment`)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#3F77B5', border: 'none', borderRadius: 10, padding: '9px 15px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', cursor: 'pointer' }}
+                >
+                  <UserPlus style={{ width: 14, height: 14 }} /> Assign Staff
+                </button>
+              )}
               {!isTerminated && (
                 <button onClick={openActionsModal} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#137A6B', border: 'none', borderRadius: 10, padding: '9px 15px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', cursor: 'pointer' }}>
                   <ShieldCheck style={{ width: 14, height: 14 }} /> Actions
@@ -988,7 +1021,18 @@ const BookingDetailPageV2 = () => {
                       </div>
                     </>
                   ) : (
-                    <Empty icon={Users} text="No staff currently assigned." />
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '28px 16px', textAlign: 'center', border: '1px dashed #E7E1D6', borderRadius: 14, background: '#FBF9F4', gap: 12 }}>
+                      <Users style={{ width: 22, height: 22, color: '#C4BFB5' }} />
+                      <p style={{ margin: 0, fontSize: 13, color: '#9A9488' }}>No staff currently assigned.</p>
+                      {!isTerminated && (
+                        <button
+                          onClick={() => navigate(`/admin/bookings/${bookingId}/staff-assignment`)}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#3F77B5', border: 'none', borderRadius: 9, padding: '8px 14px', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', cursor: 'pointer' }}
+                        >
+                          <UserPlus style={{ width: 13, height: 13 }} /> Assign Staff
+                        </button>
+                      )}
+                    </div>
                   )}
                 </Card>
 
@@ -1305,7 +1349,20 @@ const BookingDetailPageV2 = () => {
                         <Field label="Daily rate"  value={formatMoney(dailyRate)}  />
                       </div>
                     </>
-                  ) : <Empty icon={Users} text="No staff is currently assigned to this booking." />}
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '28px 16px', textAlign: 'center', border: '1px dashed #E7E1D6', borderRadius: 14, background: '#FBF9F4', gap: 12 }}>
+                      <Users style={{ width: 22, height: 22, color: '#C4BFB5' }} />
+                      <p style={{ margin: 0, fontSize: 13, color: '#9A9488' }}>No staff is currently assigned to this booking.</p>
+                      {!isTerminated && (
+                        <button
+                          onClick={() => navigate(`/admin/bookings/${bookingId}/staff-assignment`)}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#3F77B5', border: 'none', borderRadius: 9, padding: '8px 14px', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', cursor: 'pointer' }}
+                        >
+                          <UserPlus style={{ width: 13, height: 13 }} /> Assign Staff
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </Card>
               )}
 
@@ -2129,6 +2186,53 @@ const BookingDetailPageV2 = () => {
           </div>
         );
       })()}
+
+      {showReceiptSendPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-green-100">
+                  <MessageCircle className="h-4 w-4 text-green-600" />
+                </div>
+                <h3 className="text-sm font-semibold text-gray-900">Send Payment Receipt?</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowReceiptSendPopup(false)}
+                className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="px-5 py-4">
+              <p className="text-sm text-gray-600">
+                Payment recorded. Would you like to send the receipt to the client via WhatsApp?
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-gray-100 px-5 py-3">
+              <button
+                type="button"
+                onClick={() => setShowReceiptSendPopup(false)}
+                className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Skip for now
+              </button>
+              <button
+                type="button"
+                onClick={handleSendLatestReceipt}
+                disabled={receiptSendBusy}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-4 py-2 text-xs font-semibold text-white hover:bg-green-700 disabled:opacity-60"
+              >
+                {receiptSendBusy
+                  ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Sending…</>
+                  : <><SendHorizontal className="h-3.5 w-3.5" /> Yes, send now</>
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AdminLayout>
   );
 };

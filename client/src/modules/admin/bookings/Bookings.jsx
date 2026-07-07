@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Eye, XCircle, Loader2, Calendar, User, Activity, Clock, CheckCircle, AlertCircle, Search, RefreshCw, Stethoscope, Baby, Heart, AlertTriangle } from 'lucide-react';
+import { Eye, XCircle, Loader2, Calendar, User, Activity, Clock, CheckCircle, AlertCircle, Search, RefreshCw, Stethoscope, Baby, Heart, AlertTriangle, Plus } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
+import AdminDirectBookingDrawer from './AdminDirectBookingDrawer';
 
 const STATUS_FILTERS = [
   { key: 'ALL', label: 'All Bookings' },
@@ -56,6 +57,7 @@ const Bookings = () => {
   const [bookingDetails, setBookingDetails] = useState({});
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [showDirectBooking, setShowDirectBooking] = useState(false);
 
   useEffect(() => {
     if (adminToken) fetchBookings();
@@ -178,7 +180,20 @@ const Bookings = () => {
   }
 
   return (
-    <AdminLayout title="Bookings" subtitle={`${bookings.length} total bookings`}>
+    <>
+    <AdminLayout
+      title="Bookings"
+      subtitle={`${bookings.length} total bookings`}
+      actions={
+        <button
+          onClick={() => setShowDirectBooking(true)}
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
+        >
+          <Plus className="w-4 h-4" />
+          New Booking
+        </button>
+      }
+    >
       {/* Stats Row */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         {[
@@ -412,6 +427,13 @@ const Bookings = () => {
         )}
       </div>
     </AdminLayout>
+
+    <AdminDirectBookingDrawer
+      open={showDirectBooking}
+      onClose={() => setShowDirectBooking(false)}
+      onSuccess={() => fetchBookings()}
+    />
+    </>
   );
 };
 

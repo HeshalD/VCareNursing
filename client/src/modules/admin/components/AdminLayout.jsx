@@ -4,7 +4,7 @@ import {
   Settings, LogOut, Bell, Search,
   ShieldCheck, FileText, SendHorizontal, Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet, Landmark,
   ChevronLeft, ChevronRight, ClipboardList, History, HeartPulse, ArrowLeftRight, Banknote, Star, Lock, UserCog, CalendarClock, Briefcase, Receipt, CalendarOff, MonitorSmartphone,
-  Menu, X
+  Menu, X, ReceiptText
 } from 'lucide-react';
 import logo from '../../../assets/Logo/VCareLogo.png';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -20,14 +20,16 @@ const ROLE_LABELS = {
 // Single source of truth for nav items, shared by the desktop sidebar and the mobile drawer.
 const NAV_ITEMS = [
   { icon: Activity, label: 'Overview', path: '/admin/dashboard' },
-  { icon: Users, label: 'User Management', path: '/admin/users', match: (p) => p === '/admin/users' || p === '/admin/proxy-user-management' },
-  { icon: UserCog, label: 'Internal Staff', path: '/admin/internal-staff' },
+  { icon: Users, label: 'Client Management', path: '/admin/users', match: (p) => p === '/admin/users' || p.startsWith('/admin/users/') },
+  { icon: UserCog, label: 'Staff Management', path: '/admin/staff-management', match: (p) => p === '/admin/staff-management' || p === '/admin/proxy-user-management' },
+  { icon: Settings, label: 'Internal Staff', path: '/admin/internal-staff' },
   { icon: Briefcase, label: 'Salespersons', path: '/admin/salespersons' },
   { icon: SendHorizontal, label: 'Service Requests', path: '/admin/service-requests' },
   { icon: AlertTriangle, label: 'Termination Requests', path: '/admin/termination-requests' },
   { icon: CalendarClock, label: 'Upcoming Events', path: '/admin/upcoming-events' },
   { icon: CalendarOff, label: 'Leave Requests', path: '/admin/leave-requests' },
   { icon: CalendarDays, label: 'Bookings', path: '/admin/bookings' },
+  { icon: ReceiptText, label: 'Daily Invoices', path: '/admin/invoices' },
   { icon: FileText, label: 'Statements', path: '/admin/statements' },
   { icon: Wallet, label: 'Advance Requests', path: '/admin/advance-requests' },
   { icon: ShieldCheck, label: 'Worker Verification', path: '/admin/workers' },
