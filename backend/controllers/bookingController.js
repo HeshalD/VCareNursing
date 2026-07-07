@@ -416,19 +416,23 @@ const convertToBookingInternal = async (req, res) => {
         const profileCheck = await client.query('SELECT client_profile_id, is_registration_fee_paid FROM client_profiles WHERE user_id = $1', [userId]);
 
         if (profileCheck.rows.length === 0) {
+            const regFeePaid = Number(quoteData.registration_fee) > 0;
             const newProfile = await client.query(
-                `INSERT INTO client_profiles (user_id, full_name, primary_address, is_registration_fee_paid) VALUES ($1, $2, $3, $4) RETURNING client_profile_id`,
-                [userId, reqData.payer_name, reqData.location_address, Number(quoteData.registration_fee) > 0 ? true : false]
+                `INSERT INTO client_profiles (user_id, full_name, primary_address, is_registration_fee_paid, reg_fee_status)
+                 VALUES ($1, $2, $3, $4, $5) RETURNING client_profile_id`,
+                [userId, reqData.payer_name, reqData.location_address, regFeePaid, regFeePaid ? 'PAID' : 'PENDING']
             );
             clientProfileId = newProfile.rows[0].client_profile_id;
         } else {
             clientProfileId = profileCheck.rows[0].client_profile_id;
-            
-            // Check if registration fee needs to be marked as paid
+
+            // If the quote included a registration fee, mark the client profile as fully paid.
             const clientProfile = profileCheck.rows[0];
             if (!clientProfile.is_registration_fee_paid && Number(quoteData.registration_fee) > 0) {
                 await client.query(
-                    `UPDATE client_profiles SET is_registration_fee_paid = TRUE WHERE client_profile_id = $1`,
+                    `UPDATE client_profiles
+                     SET is_registration_fee_paid = TRUE, reg_fee_status = 'PAID'
+                     WHERE client_profile_id = $1`,
                     [clientProfileId]
                 );
             }
@@ -2875,5 +2879,131 @@ exports.getStaffBookings = async (req, res) => {
             status: 'error',
             message: 'Failed to fetch staff bookings'
         });
+    }
+}
+
+exports.adminDirectBooking = async (req, res) => {
+    const {
+        client_profile_id,
+        patient_id,
+        // new patient fields (used if patient_id is not provided)
+        new_patient_full_name,
+        new_patient_age,
+        new_patient_gender,
+        new_patient_relationship_to_client,
+        new_patient_medical_condition,
+        new_patient_residential_address,
+        new_patient_emergency_contact_name,
+        new_patient_emergency_contact_number,
+        // booking fields
+        service_type,
+        service_model,
+        preferred_gender,
+        start_date,
+        scheduled_end_date,
+        daily_rate,
+        admin_notes,
+    } = req.body;
+
+    if (!client_profile_id || !service_type || !service_model || !start_date) {
+        return res.status(400).json({ message: 'client_profile_id, service_type, service_model, and start_date are required.' });
+    }
+    if (!patient_id && !new_patient_full_name) {
+        return res.status(400).json({ message: 'Either patient_id or new patient details (new_patient_full_name) are required.' });
+    }
+
+    const dbClient = await db.pool.connect();
+    try {
+        await dbClient.query('BEGIN');
+
+        // Verify client exists
+        const clientCheck = await dbClient.query(
+            'SELECT client_profile_id FROM client_profiles WHERE client_profile_id = $1',
+            [client_profile_id]
+        );
+        if (clientCheck.rows.length === 0) {
+            await dbClient.query('ROLLBACK');
+            return res.status(404).json({ message: 'Client not found.' });
+        }
+
+        let finalPatientId = patient_id;
+
+        // If no existing patient, create one
+        if (!patient_id) {
+            const patientRes = await dbClient.query(
+                `INSERT INTO patient_profiles (client_id, full_name, age, gender, relationship_to_client, medical_condition, residential_address, emergency_contact_name, emergency_contact_number)
+                 VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8, $9) RETURNING patient_id`,
+                [
+                    client_profile_id,
+                    new_patient_full_name,
+                    new_patient_age ? parseInt(new_patient_age) : null,
+                    new_patient_gender || null,
+                    new_patient_relationship_to_client || null,
+                    new_patient_medical_condition || null,
+                    new_patient_residential_address || null,
+                    new_patient_emergency_contact_name || null,
+                    new_patient_emergency_contact_number || null,
+                ]
+            );
+            finalPatientId = patientRes.rows[0].patient_id;
+        } else {
+            // Verify patient belongs to this client
+            const patientCheck = await dbClient.query(
+                'SELECT patient_id FROM patient_profiles WHERE patient_id = $1 AND client_id = $2',
+                [patient_id, client_profile_id]
+            );
+            if (patientCheck.rows.length === 0) {
+                await dbClient.query('ROLLBACK');
+                return res.status(400).json({ message: 'Patient does not belong to this client.' });
+            }
+        }
+
+        const scheduledEndTime = scheduled_end_date ? new Date(scheduled_end_date) : null;
+        const parsedDailyRate = daily_rate ? parseFloat(daily_rate) : 0;
+
+        const bookingRes = await dbClient.query(
+            `INSERT INTO bookings (client_id, patient_id, service_type, service_model, start_date, assigned_staff_id, status, preferred_gender, request_id, service_mode, scheduled_end_time, ot_rate, daily_rate, amount_quotated, amount_paid)
+             VALUES ($1, $2, $3, $4::service_model_enum, $5, NULL, 'PENDING', $6::gender_preference_enum, NULL, NULL, $7, 500.00, $8, 0, 0)
+             RETURNING booking_id, booking_code`,
+            [
+                client_profile_id, finalPatientId, service_type,
+                service_model, start_date,
+                preferred_gender || 'ANY',
+                scheduledEndTime,
+                parsedDailyRate,
+            ]
+        );
+        const { booking_id, booking_code } = bookingRes.rows[0];
+
+        await dbClient.query('COMMIT');
+
+        try {
+            const actorNameResult = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+            const actorName = actorNameResult.rows[0]?.full_name || 'Admin';
+            const actorRole = extractActorRole(req.user.role);
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole,
+                actionType: 'BOOKING_CREATED',
+                entityType: 'BOOKING',
+                entityId: String(booking_id),
+                details: { booking_id, booking_code, client_profile_id, patient_id: finalPatientId, admin_notes, source: 'ADMIN_DIRECT' },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (adminDirectBooking):', logErr.message);
+        }
+
+        res.status(201).json({
+            status: 'success',
+            message: 'Booking created successfully.',
+            data: { booking_id, booking_code },
+        });
+    } catch (error) {
+        await dbClient.query('ROLLBACK');
+        console.error('adminDirectBooking error:', error);
+        res.status(500).json({ message: 'Failed to create booking.' });
+    } finally {
+        dbClient.release();
     }
 };

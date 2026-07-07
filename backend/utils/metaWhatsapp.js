@@ -362,6 +362,53 @@ const sendDocumentUploadRequest = (mobileNumber, staffName, docUploadToken) =>
     [{ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: docUploadToken }] }]
   );
 
+// Sent to client as a first-touch notice that their registration fee is outstanding.
+// Body vars: {{1}} = client name
+//
+// META TEMPLATE SPEC — vcare_reg_fee_notice (UTILITY, en)
+// Header: NONE
+// Body:
+//   Hi {{1}}, This is a reminder that your VCare Nursing registration fee is still outstanding.
+//   An invoice will be sent to you shortly as well as bank account details to complete your payment.
+//   Thank you for choosing VCare Nursing.
+const sendRegFeeNotice = (mobileNumber, clientName) =>
+  sendTemplate(formatNumber(mobileNumber), 'vcare_reg_fee_notice', 'en', [clientName]);
+
+// Sent to client as the invoice PDF with bank details in the body and a CTA button to upload their receipt.
+// Header: Document (dynamic PDF URL — the generated invoice PDF)
+// Body vars: {{1}}=clientName, {{2}}=amount, {{3}}=bankName,
+//            {{4}}=accountHolderName, {{5}}=accountNumber, {{6}}=branchName
+// Button: Call to Action → Visit Website → Dynamic URL
+//   Label: Upload Receipt
+//   URL:   https://vcarenursing.com/client/pay-receipt/{{1}}
+//
+// META TEMPLATE SPEC — vcare_reg_fee_invoice (UTILITY, en)
+// Header: DOCUMENT → Variable (dynamic URL, filename set in the API call)
+// Body:
+//   Hi {{1}}, please find your registration fee invoice attached.
+//
+//   💰 *Amount Due:* LKR {{2}}
+//
+//   Please make your bank transfer to:
+//   🏦 *Bank:* {{3}}
+//   👤 *Account Name:* {{4}}
+//   🔢 *Account No:* {{5}}
+//   🏢 *Branch:* {{6}}
+//
+//   Once paid, tap the button below to upload your payment receipt. Thank you for choosing VCare Nursing.
+// Button: Call to Action → Visit Website → Dynamic URL
+//   Label: Upload Receipt
+//   URL:   https://vcarenursing.com/client/pay-receipt/{{1}}
+const sendRegFeeInvoice = (mobileNumber, clientName, amount, bankName, accountHolderName, accountNumber, branchName, invoicePdfUrl, receiptToken) =>
+  sendTemplate(
+    formatNumber(mobileNumber),
+    'vcare_reg_fee_invoice',
+    'en',
+    [clientName, amount, bankName, accountHolderName, accountNumber, branchName],
+    [{ type: 'document', document: { link: invoicePdfUrl, filename: 'VCare_Registration_Fee_Invoice.pdf' } }],
+    [{ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: receiptToken }] }]
+  );
+
 // Sent to staff when their leave request is rejected.
 // Body vars: {{1}} = staff name, {{2}} = start date, {{3}} = end date, {{4}} = reason
 //
@@ -378,4 +425,4 @@ const sendDocumentUploadRequest = (mobileNumber, staffName, docUploadToken) =>
 const sendStaffLeaveRejected = (mobileNumber, staffName, startDate, endDate, reason) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_leave_rejected', 'en', [staffName, startDate, endDate, reason]);
 
-module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendClientWelcomeNew, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendPaymentRecorded, sendPaymentReceipt, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected, sendClientBookingStatement, sendStaffAgreement, sendCandidateProfile, sendStaffLeaveApproved, sendStaffLeaveRejected, sendDocumentUploadRequest };
+module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendClientWelcomeNew, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendPaymentRecorded, sendPaymentReceipt, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected, sendClientBookingStatement, sendStaffAgreement, sendCandidateProfile, sendStaffLeaveApproved, sendStaffLeaveRejected, sendDocumentUploadRequest, sendRegFeeNotice, sendRegFeeInvoice };

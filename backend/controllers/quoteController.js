@@ -242,6 +242,31 @@ exports.generateAndSendPDF = async (req, res) => {
     }
 };
 
+exports.generatePdfOnly = async (req, res) => {
+    const { quote_id } = req.params;
+    try {
+        const result = await db.query(
+            `SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type
+             FROM quotations q
+             JOIN service_requests s ON q.request_id = s.request_id
+             WHERE q.quote_id = $1`,
+            [quote_id]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: 'Quote not found' });
+        }
+        const data = result.rows[0];
+        const html = estimateTemplate(data);
+        const pdfBuffer = await html_to_pdf.generatePdf({ content: html }, { format: 'A4' });
+        const pdfKey = `estimates/Estimate_${data.estimate_number}_${Date.now()}.pdf`;
+        const pdfUrl = await uploadBufferToS3(pdfBuffer, pdfKey, 'application/pdf');
+        res.status(200).json({ status: 'success', pdf_url: pdfUrl });
+    } catch (error) {
+        console.error('generatePdfOnly error:', error);
+        res.status(500).json({ message: 'Failed to generate PDF', error: error.message });
+    }
+};
+
 // ==================== PRESET ITEMS MANAGEMENT ====================
 
 exports.getPresetItems = async (req, res) => {
@@ -586,6 +611,33 @@ exports.updateQuoteLineItems = async (req, res) => {
         await db.query('ROLLBACK');
         console.error('Update Quote Error:', error);
         res.status(500).json({ message: 'Failed to update quote', error: error.message });
+    }
+};
+
+exports.updateQuoteStatus = async (req, res) => {
+    const { quote_id } = req.params;
+    const { status } = req.body;
+
+    const allowed = ['ACCEPTED', 'REJECTED', 'SENT'];
+    if (!allowed.includes(status)) {
+        return res.status(400).json({ message: `Invalid status. Must be one of: ${allowed.join(', ')}` });
+    }
+
+    try {
+        const result = await db.query(
+            `UPDATE quotations SET status = $1 WHERE quote_id = $2
+             RETURNING quote_id, estimate_number, status`,
+            [status, quote_id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: 'Quote not found' });
+        }
+
+        res.json({ status: 'success', data: result.rows[0] });
+    } catch (error) {
+        console.error('Update Quote Status Error:', error);
+        res.status(500).json({ message: 'Failed to update quote status' });
     }
 };
 

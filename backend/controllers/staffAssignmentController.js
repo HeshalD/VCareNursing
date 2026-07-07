@@ -49,32 +49,33 @@ exports.getAssignmentFormData = async (req, res) => {
       });
     }
 
-    // Get booking with quotation details using the real schema:
-    // bookings -> service_requests -> quotations
+    // Get booking with quotation details. For admin-direct bookings request_id is NULL
+    // so we JOIN directly on client_profiles/patient_profiles for those fields too.
     const bookingQuery = `
-      SELECT 
+      SELECT
         b.booking_id,
         b.request_id,
         b.service_model,
+        b.service_type,
+        b.daily_rate AS booking_daily_rate,
         sr.active_quote_id AS quote_id,
         b.status AS booking_status,
         b.start_date,
         b.amount_quotated,
         b.amount_paid,
         q.estimate_number,
-        q.daily_rate AS quote_daily_rate,
+        COALESCE(q.daily_rate, b.daily_rate) AS quote_daily_rate,
         q.qty_days,
-        sr.client_id,
         q.total_amount,
-        COALESCE(c.full_name, sr.payer_name) AS client_name,
-        sr.patient_name,
-        sr.service_type,
+        COALESCE(cp.full_name, sr.payer_name) AS client_name,
+        COALESCE(pp.full_name, sr.patient_name) AS patient_name,
         sr.payer_mobile,
         sr.location_address
       FROM bookings b
       LEFT JOIN service_requests sr ON b.request_id = sr.request_id
       LEFT JOIN quotations q ON sr.active_quote_id = q.quote_id
-      LEFT JOIN client_profiles c ON sr.client_id = c.client_profile_id
+      LEFT JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+      LEFT JOIN patient_profiles pp ON b.patient_id = pp.patient_id
       WHERE b.booking_id = $1
     `;
     const bookingResult = await db.query(bookingQuery, [booking_id]);
@@ -89,24 +90,20 @@ exports.getAssignmentFormData = async (req, res) => {
     const booking = bookingResult.rows[0];
     const quote_id = booking.quote_id;
 
-    if (!quote_id) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'No quotation is linked to this booking'
-      });
+    // Get payment summary (only applicable when a quotation exists)
+    let paymentInfo = { total_verified: 0, payment_count: 0, last_payment_date: null };
+    if (quote_id) {
+      const paymentQuery = `
+        SELECT
+          COALESCE(SUM(CASE WHEN status = 'VERIFIED' THEN amount_received ELSE 0 END), 0) as total_verified,
+          COUNT(*) as payment_count,
+          MAX(payment_date) as last_payment_date
+        FROM payment_tracking
+        WHERE quote_id = $1
+      `;
+      const paymentResult = await db.query(paymentQuery, [quote_id]);
+      paymentInfo = paymentResult.rows[0];
     }
-
-    // Get payment summary
-    const paymentQuery = `
-      SELECT 
-        COALESCE(SUM(CASE WHEN status = 'VERIFIED' THEN amount_received ELSE 0 END), 0) as total_verified,
-        COUNT(*) as payment_count,
-        MAX(payment_date) as last_payment_date
-      FROM payment_tracking
-      WHERE quote_id = $1
-    `;
-    const paymentResult = await db.query(paymentQuery, [quote_id]);
-    const paymentInfo = paymentResult.rows[0];
 
     // Get current staff assignments for this booking
     const assignmentsQuery = `
@@ -255,10 +252,11 @@ exports.assignStaffToBooking = async (req, res) => {
         b.booking_id,
         b.request_id,
         b.service_model,
+        b.daily_rate AS booking_daily_rate,
         sr.active_quote_id AS quote_id,
         b.amount_paid,
         q.total_amount,
-        q.daily_rate AS quote_daily_rate,
+        COALESCE(q.daily_rate, b.daily_rate) AS quote_daily_rate,
         b.ot_rate AS booking_ot_rate
       FROM bookings b
       LEFT JOIN service_requests sr ON b.request_id = sr.request_id
@@ -275,6 +273,7 @@ exports.assignStaffToBooking = async (req, res) => {
     }
 
     const booking = bookingResult.rows[0];
+    const isDirectBooking = booking.request_id === null;
 
     if (booking.service_model === 'SHIFT_BASED') {
       return res.status(400).json({
@@ -282,16 +281,12 @@ exports.assignStaffToBooking = async (req, res) => {
         message: 'SHIFT_BASED bookings are staffed per shift. Use POST /api/bookings/:booking_id/shift-slots/:shift_slot_id/assign-staff instead.'
       });
     }
-    if (!booking.quote_id) {
-      return res.status(400).json({
-        status: 'error',
-        message: 'No quotation is linked to this booking'
-      });
-    }
+
     const amount_paid = parseFloat(booking.amount_paid);
 
-    // Validate: Must have payment to assign staff
-    if (amount_paid <= 0) {
+    // For normal bookings (with a quotation), require payment before assigning staff.
+    // Admin-direct bookings are deferred-payment arrangements, so skip this check.
+    if (!isDirectBooking && amount_paid <= 0) {
       return res.status(400).json({
         status: 'error',
         message: 'Cannot assign staff without payment. Record payment first.'

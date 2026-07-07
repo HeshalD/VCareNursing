@@ -30,6 +30,7 @@ const scheduledActionsRoutes = require('./routes/scheduledActionsRoutes');
 const salespersonRoutes = require('./routes/salespersonRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const staffDocUploadRoutes = require('./routes/staffDocUploadRoutes');
+const clientReceiptUploadRoutes = require('./routes/clientReceiptUploadRoutes');
 
 const startDailyInvoicing = require('./cron/dailyInvoicing');
 
@@ -128,6 +129,7 @@ app.use('/api/scheduled-actions', scheduledActionsRoutes);
 app.use('/api/salespersons', salespersonRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/staff', staffDocUploadRoutes);
+app.use('/api/client-receipt-upload', clientReceiptUploadRoutes);
 
 // Health check endpoint for Render
 app.get('/health', (req, res) => {

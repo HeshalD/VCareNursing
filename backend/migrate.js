@@ -1832,6 +1832,42 @@ async function runMigration() {
       WHERE shift_slot_id IS NOT NULL
   `);
 
+  await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS company_name VARCHAR(150)`);
+  await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS honorific VARCHAR(10)`);
+
+  // Registration fee invoicing — standalone fee sent directly without a booking.
+  // reg_fee_receipt_token is the public upload portal key (like doc_upload_token for staff).
+  await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_status VARCHAR(20) NOT NULL DEFAULT 'PENDING'`);
+  await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_amount NUMERIC(10,2) NOT NULL DEFAULT 10000.00`);
+  await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_invoiced_at TIMESTAMPTZ`);
+  await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_receipt_token VARCHAR(64)`);
+  await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_receipt_token_expires_at TIMESTAMPTZ`);
+  await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_receipt_url TEXT`);
+
+  // Temporary staging table for registrations awaiting OTP verification.
+  // Rows are promoted to users + client_profiles on successful OTP verify, then deleted.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS pending_registrations (
+      pending_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      mobile_number VARCHAR(20)  NOT NULL UNIQUE,
+      password_hash TEXT         NOT NULL,
+      email         VARCHAR(255),
+      full_name     VARCHAR(100) NOT NULL,
+      client_type   VARCHAR(30)  NOT NULL DEFAULT 'INDIVIDUAL',
+      gender        VARCHAR(20),
+      primary_address TEXT,
+      company_name  VARCHAR(150),
+      honorific     VARCHAR(10),
+      otp_code      VARCHAR(10)  NOT NULL,
+      expires_at    TIMESTAMPTZ  NOT NULL,
+      created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  // Widen emergency contact columns to support pipe-separated multiple contacts
+  await db.query(`ALTER TABLE patient_profiles ALTER COLUMN emergency_contact_name TYPE TEXT`);
+  await db.query(`ALTER TABLE patient_profiles ALTER COLUMN emergency_contact_number TYPE TEXT`);
+
   // =========================================================
   // SEED DEFAULT PRESET ITEMS
   // =========================================================

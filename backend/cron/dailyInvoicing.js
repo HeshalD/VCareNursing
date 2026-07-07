@@ -235,6 +235,54 @@ const startDailyInvoicing = () => {
         }
       }
 
+      // ===== SEED PENDING INVOICES (SHIFT_BASED, VISITING, LIVE_IN MANUAL) =====
+      // Creates a PENDING row for every non-AUTO booking so admins have a queue
+      // to approve/reject the next morning. ON CONFLICT DO NOTHING ensures:
+      //   - rows already decided (INVOICED/SKIPPED) are never overwritten
+      //   - running the cron twice doesn't create duplicates
+      let pendingSeededCount = 0;
+
+      // SHIFT_BASED: one PENDING row per shift slot (each assignment has its own slot)
+      for (const assignment of activeAssignments) {
+        const bookingData = bookingMap.get(assignment.booking_id);
+        if (!bookingData || bookingData.service_model !== 'SHIFT_BASED') continue;
+        if (!assignment.shift_slot_id) continue;
+
+        try {
+          await client.query(
+            `INSERT INTO booking_daily_invoices (booking_id, service_date, entry_mode, status, amount, shift_slot_id)
+             VALUES ($1, $2, 'MANUAL', 'PENDING', $3, $4)
+             ON CONFLICT (booking_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL DO NOTHING`,
+            [assignment.booking_id, today, parseFloat(assignment.daily_rate), assignment.shift_slot_id]
+          );
+          pendingSeededCount++;
+        } catch (seedErr) {
+          console.error(`❌ Pending seed failed (SHIFT_BASED) booking ${assignment.booking_id}:`, seedErr);
+        }
+      }
+
+      // VISITING and LIVE_IN MANUAL: one PENDING row per booking per day
+      for (const [bookingId, bookingData] of bookingMap.entries()) {
+        const isManualType =
+          bookingData.service_model === 'VISITING' ||
+          (bookingData.service_model === 'LIVE_IN' && bookingData.invoicing_mode === 'MANUAL');
+        if (!isManualType) continue;
+
+        try {
+          await client.query(
+            `INSERT INTO booking_daily_invoices (booking_id, service_date, entry_mode, status, amount)
+             VALUES ($1, $2, 'MANUAL', 'PENDING', $3)
+             ON CONFLICT (booking_id, service_date) WHERE shift_slot_id IS NULL DO NOTHING`,
+            [bookingId, today, bookingData.total_daily_rate || bookingData.daily_rate]
+          );
+          pendingSeededCount++;
+        } catch (seedErr) {
+          console.error(`❌ Pending seed failed (VISITING/LIVE_IN MANUAL) booking ${bookingId}:`, seedErr);
+        }
+      }
+
+      console.log(`✅ Pending seeding: ${pendingSeededCount} row(s) pre-created for manual review.`);
+
       await client.query('COMMIT');
       console.log(`✅ Daily Invoicing Complete: ${staffEarningsCount} staff earnings processed, ${clientInvoiceCount} client invoices created.`);
 
