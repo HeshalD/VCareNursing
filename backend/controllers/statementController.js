@@ -98,7 +98,7 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
     });
 
     const clientRes = await db.query(
-        `SELECT cp.full_name, u.mobile_number
+        `SELECT cp.full_name, cp.company_name, u.mobile_number
          FROM client_profiles cp
          JOIN users u ON cp.user_id = u.user_id
          WHERE cp.client_profile_id = $1`,
@@ -110,10 +110,11 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
     }
 
     const clientRow = clientRes.rows[0];
+    const billingName = clientRow.company_name || clientRow.full_name;
     const currentBalance = runningBalance;
 
     const pdfData = {
-        clientName: clientRow.full_name,
+        clientName: billingName,
         periodStart: new Date(start_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
         periodEnd: new Date(end_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
         summary: {
@@ -136,7 +137,7 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
     };
 
     return {
-        clientName: clientRow.full_name,
+        clientName: billingName,
         clientMobile: clientRow.mobile_number,
         openingBalance,
         totalInvoiced,

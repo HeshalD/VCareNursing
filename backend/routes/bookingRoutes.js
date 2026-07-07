@@ -8,13 +8,20 @@ const shiftPatternController = require('../controllers/shiftPatternController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const { upload } = require('../config/cloudinaryConfig');
 
+router.post(
+    '/admin-direct',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+    bookingController.adminDirectBooking
+);
+
 /**
  * @route   POST /api/bookings/convert
  * @desc    Phase 3: Verify payment and convert Lead to permanent Client/Patient/Booking
  * @access  Private (Admin/Coordinator)
  */
 router.post(
-    '/convert', 
+    '/convert',
     protect, 
     restrictTo('SUPER_ADMIN', 'COORDINATOR'), 
     bookingController.uploadPaymentSlip,

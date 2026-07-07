@@ -109,6 +109,18 @@ router.post(
 );
 
 /**
+ * @route   POST /api/quotes/:quote_id/generate-pdf
+ * @desc    Generate quote PDF and return the URL (no WhatsApp send)
+ * @access  Private (Admin/Coordinator/Accounts)
+ */
+router.post(
+    '/:quote_id/generate-pdf',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    quoteController.generatePdfOnly
+);
+
+/**
  * @route   GET /api/quotes/:quote_id/details
  * @desc    Get quote with all line items
  * @access  Private
@@ -165,6 +177,18 @@ router.get(
     protect,
     restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'),
     paymentTrackingController.getPaymentProgress
+);
+
+/**
+ * @route   PATCH /api/quotes/:quote_id/status
+ * @desc    Manually update the status of a quotation (ACCEPTED, REJECTED, SENT)
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ */
+router.patch(
+    '/:quote_id/status',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    quoteController.updateQuoteStatus
 );
 
 /**

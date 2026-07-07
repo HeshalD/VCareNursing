@@ -69,4 +69,23 @@ const uploadDocReportFiles = multer({
   { name: 'police_report', maxCount: 1 },
 ]);
 
-module.exports = { uploadApplicationFiles, uploadDocReportFiles };
+const uploadPaymentReceipt = multer({
+  storage: multerS3({
+    s3,
+    bucket: BUCKET,
+    contentType: multerS3.AUTO_CONTENT_TYPE,
+    key: (req, file, cb) => {
+      const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+      cb(null, `vcare_payment_receipts/${Date.now()}_${safeName}`);
+    },
+  }),
+  fileFilter: (req, file, cb) => {
+    if (file.fieldname === 'receipt') {
+      cb(null, true);
+    } else {
+      cb(new Error('Unexpected field: ' + file.fieldname));
+    }
+  },
+}).single('receipt');
+
+module.exports = { uploadApplicationFiles, uploadDocReportFiles, uploadPaymentReceipt };

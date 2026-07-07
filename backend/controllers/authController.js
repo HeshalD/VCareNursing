@@ -20,195 +20,114 @@ function parseRoles(rawRole) {
 }
 
 exports.registerClient = async (req, res, next) => {
-  const { mobile_number, password, full_name, client_type, terms_accepted, email, gender, primary_address } = req.body;
-  const client = await db.pool.connect(); // Get a client for Transaction
+  const { mobile_number, password, full_name, client_type, terms_accepted, email, gender, primary_address, company_name, honorific } = req.body;
 
   try {
-    // 1. Basic Validation
     if (!terms_accepted) {
       return res.status(400).json({ message: "You must accept the Terms & Conditions." });
     }
-
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res.status(400).json({ message: "Valid email address is required." });
     }
 
-    // START TRANSACTION
-    await client.query('BEGIN');
-
-    // 2. Check if Mobile Number already exists in 'users'
-    const userCheck = await client.query(
+    // Block mobile numbers already registered in users table
+    const userCheck = await db.query(
       'SELECT user_id FROM users WHERE mobile_number = $1',
       [mobile_number]
     );
-
-    let userId;
-
     if (userCheck.rows.length > 0) {
-      // SCENARIO A: User exists (Maybe a Staff member registering as Client)
-      userId = userCheck.rows[0].user_id;
-
-      // Update user's email if not already set
-      await client.query(
-        'UPDATE users SET email = $1 WHERE user_id = $2 AND email IS NULL',
-        [email, userId]
-      );
-
-      // Check if they ALREADY have a client profile
-      const profileCheck = await client.query(
-        'SELECT client_profile_id FROM client_profiles WHERE user_id = $1',
-        [userId]
-      );
-
-      if (profileCheck.rows.length > 0) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ message: "Account already exists for this number." });
-      }
-
-    } else {
-      // SCENARIO B: New User (Create Identity Layer)
-      const salt = await bcrypt.genSalt(10);
-      const hashedPassword = await bcrypt.hash(password, salt);
-
-      const newUser = await client.query(
-        `INSERT INTO users (mobile_number, password_hash, email) 
-         VALUES ($1, $2, $3) RETURNING user_id`,
-        [mobile_number, hashedPassword, email]
-      );
-      userId = newUser.rows[0].user_id;
+      return res.status(400).json({ message: "An account with this mobile number already exists." });
     }
 
-    // 3. Generate OTP and create Client Profile (Data Layer)
-    const otp = Math.floor(100000 + Math.random() * 900000).toString(); // Generate 6-digit OTP
-    const expiresAt = new Date(Date.now() + 10 * 60000); // 10 minutes from now
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Create Client Profile
-    // Note: wallet_balance defaults to 0.00 in DB schema
-    // Note: is_registration_fee_paid defaults to FALSE in DB schema
-    const newProfile = await client.query(
-      `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address) 
-       VALUES ($1, $2, $3, $4::gender_enum, $5) RETURNING client_profile_id`,
-      [userId, full_name, client_type || 'INDIVIDUAL', gender, primary_address]
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60000);
+
+    // Upsert into pending_registrations — overwrite any previous attempt from the same number
+    await db.query(
+      `INSERT INTO pending_registrations
+         (mobile_number, password_hash, email, full_name, client_type, gender, primary_address, company_name, honorific, otp_code, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       ON CONFLICT (mobile_number) DO UPDATE
+         SET password_hash   = EXCLUDED.password_hash,
+             email           = EXCLUDED.email,
+             full_name       = EXCLUDED.full_name,
+             client_type     = EXCLUDED.client_type,
+             gender          = EXCLUDED.gender,
+             primary_address = EXCLUDED.primary_address,
+             company_name    = EXCLUDED.company_name,
+             honorific       = EXCLUDED.honorific,
+             otp_code        = EXCLUDED.otp_code,
+             expires_at      = EXCLUDED.expires_at,
+             created_at      = NOW()`,
+      [
+        mobile_number, hashedPassword, email, full_name,
+        client_type || 'INDIVIDUAL', gender, primary_address,
+        company_name || null, honorific || null, otp, expiresAt,
+      ]
     );
-
-    // Store OTP in database
-    await client.query(
-      'INSERT INTO otp_verifications (user_id, otp_code, expires_at) VALUES ($1, $2, $3)',
-      [userId, otp, expiresAt]
-    );
-
-    // COMMIT TRANSACTION
-    await client.query('COMMIT');
-
-    // Send OTP via WhatsApp and SMS (email temporarily disabled)
-    let emailSent = false;
-    let whatsappSent = false;
-    let smsSent = false;
 
     const [whatsappResult, smsResult] = await Promise.allSettled([
       sendWhatsAppOtp(mobile_number, otp),
       sendSmsOtp(mobile_number, otp)
     ]);
 
-    whatsappSent = whatsappResult.status === 'fulfilled';
-    smsSent = smsResult.status === 'fulfilled';
+    if (whatsappResult.status === 'rejected') console.error("WhatsApp OTP failed:", whatsappResult.reason?.message);
+    if (smsResult.status === 'rejected') console.error("SMS OTP failed:", smsResult.reason?.message);
 
-    if (!whatsappSent) console.error("WhatsApp OTP failed:", whatsappResult.reason?.message);
-    if (!smsSent) console.error("SMS OTP failed:", smsResult.reason?.message);
-    if (!whatsappSent && !smsSent) console.error("Both WhatsApp and SMS failed to send OTP");
-
-    res.status(201).json({
+    res.status(200).json({
       status: 'success',
-      message: 'Registration successful. Please verify the OTP sent to your WhatsApp and phone number.',
-      data: {
-        userId: userId,
-        profileId: newProfile.rows[0].client_profile_id,
-        payment_required: true,
-        amount_due: 10000.00,
-        email_sent: emailSent,
-        whatsapp_sent: whatsappSent,
-        sms_sent: smsSent
-      }
+      message: 'OTP sent. Please verify your mobile number to complete registration.',
+      data: { mobile_number },
     });
 
   } catch (error) {
-    await client.query('ROLLBACK'); // Undo everything if any step fails
-    console.error(error);
+    console.error('registerClient error:', error);
     res.status(500).json({ message: "Registration failed." });
-  } finally {
-    client.release(); // Release connection back to pool
   }
 };
 
 exports.resendOtp = async (req, res) => {
-  const { user_id } = req.body;
+  const { mobile_number } = req.body;
 
   try {
-    // 1. Fetch user details
-    const userResult = await db.query(
-      'SELECT email, mobile_number, is_email_verified FROM users WHERE user_id = $1',
-      [user_id]
+    const pendingRes = await db.query(
+      'SELECT created_at FROM pending_registrations WHERE mobile_number = $1',
+      [mobile_number]
     );
 
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({ message: "User not found." });
+    if (pendingRes.rows.length === 0) {
+      return res.status(404).json({ message: "No pending registration found for this number." });
     }
 
-    const user = userResult.rows[0];
-
-    // 2. Security Check: If already verified, don't send anything
-    if (user.is_email_verified) {
-      return res.status(400).json({ message: "This account is already verified." });
+    const lastSentTime = new Date(pendingRes.rows[0].created_at);
+    const secondsAgo = (new Date() - lastSentTime) / 1000;
+    if (secondsAgo < 60) {
+      return res.status(429).json({
+        message: `Please wait ${Math.round(60 - secondsAgo)} seconds before requesting a new code.`
+      });
     }
 
-    // 3. Rate Limiting (Cooldown Check)
-    // Check if an OTP was sent in the last 60 seconds
-    const lastOtp = await db.query(
-      'SELECT created_at FROM otp_verifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1',
-      [user_id]
-    );
-
-    if (lastOtp.rows.length > 0) {
-      const lastSentTime = new Date(lastOtp.rows[0].created_at);
-      const secondsAgo = (new Date() - lastSentTime) / 1000;
-
-      if (secondsAgo < 60) {
-        return res.status(429).json({
-          message: `Please wait ${Math.round(60 - secondsAgo)} seconds before requesting a new code.`
-        });
-      }
-    }
-
-    // 4. Generate & Refresh OTP
     const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 10 * 60000); // 10 mins
+    const expiresAt = new Date(Date.now() + 10 * 60000);
 
-    // Clear old codes and insert new one
-    await db.query('DELETE FROM otp_verifications WHERE user_id = $1', [user_id]);
     await db.query(
-      'INSERT INTO otp_verifications (user_id, otp_code, expires_at) VALUES ($1, $2, $3)',
-      [user_id, newOtp, expiresAt]
+      'UPDATE pending_registrations SET otp_code = $1, expires_at = $2, created_at = NOW() WHERE mobile_number = $3',
+      [newOtp, expiresAt, mobile_number]
     );
 
-    // 5. Trigger Multi-Channel Send
-    // Use Promise.allSettled so that if one fails, the other can still succeed
     await Promise.allSettled([
-      // email sending temporarily disabled
-      /* sendEmail({
-        email: user.email,
-        subject: 'Your New VCare Verification Code',
-        message: `Your new verification code is: ${newOtp}. It expires in 10 minutes.`
-      }), */
-      sendWhatsAppOtp(user.mobile_number, newOtp),
-      sendSmsOtp(user.mobile_number, newOtp)
+      sendWhatsAppOtp(mobile_number, newOtp),
+      sendSmsOtp(mobile_number, newOtp)
     ]);
 
-    // Log to terminal for easy testing without checking phone
-    console.log(`[DEV ONLY] New OTP for User ${user_id}: ${newOtp}`);
+    console.log(`[DEV ONLY] Resend OTP for ${mobile_number}: ${newOtp}`);
 
     res.status(200).json({
       status: 'success',
-      message: 'A new verification code has been sent to your email and WhatsApp.'
+      message: 'A new verification code has been sent to your mobile number.'
     });
 
   } catch (error) {
@@ -218,29 +137,61 @@ exports.resendOtp = async (req, res) => {
 };
 
 exports.verifyOtp = async (req, res) => {
-  const { user_id, otp_code } = req.body;
+  const { mobile_number, otp_code } = req.body;
+  const dbClient = await db.pool.connect();
 
   try {
-    const result = await db.query(
-      `SELECT * FROM otp_verifications 
-       WHERE user_id = $1 AND otp_code = $2 AND expires_at > NOW()`,
-      [user_id, otp_code]
+    const pendingRes = await dbClient.query(
+      `SELECT * FROM pending_registrations
+       WHERE mobile_number = $1 AND otp_code = $2 AND expires_at > NOW()`,
+      [mobile_number, otp_code]
     );
 
-    if (result.rows.length === 0) {
+    if (pendingRes.rows.length === 0) {
       return res.status(400).json({ message: "Invalid or expired OTP." });
     }
 
-    // Mark email as verified
-    await db.query('UPDATE users SET is_email_verified = TRUE WHERE user_id = $1', [user_id]);
+    const pending = pendingRes.rows[0];
 
-    // Delete the OTP so it can't be used again
-    await db.query('DELETE FROM otp_verifications WHERE user_id = $1', [user_id]);
+    await dbClient.query('BEGIN');
 
-    res.status(200).json({ status: 'success', message: "Email verified successfully." });
+    const newUser = await dbClient.query(
+      `INSERT INTO users (mobile_number, password_hash, email, is_email_verified)
+       VALUES ($1, $2, $3, TRUE) RETURNING user_id`,
+      [pending.mobile_number, pending.password_hash, pending.email]
+    );
+    const userId = newUser.rows[0].user_id;
+
+    const newProfile = await dbClient.query(
+      `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address, company_name, honorific)
+       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7) RETURNING client_profile_id`,
+      [
+        userId, pending.full_name, pending.client_type,
+        pending.gender, pending.primary_address,
+        pending.company_name, pending.honorific,
+      ]
+    );
+    const profileId = newProfile.rows[0].client_profile_id;
+
+    await dbClient.query(
+      'DELETE FROM pending_registrations WHERE mobile_number = $1',
+      [pending.mobile_number]
+    );
+
+    await dbClient.query('COMMIT');
+
+    res.status(200).json({
+      status: 'success',
+      message: "Mobile number verified. Registration complete.",
+      data: { userId, profileId, payment_required: true, amount_due: 10000.00 },
+    });
 
   } catch (error) {
+    await dbClient.query('ROLLBACK');
+    console.error('verifyOtp error:', error);
     res.status(500).json({ message: "Verification failed." });
+  } finally {
+    dbClient.release();
   }
 };
 

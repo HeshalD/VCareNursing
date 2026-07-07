@@ -26,6 +26,11 @@ router.get('/:client_id/detail', restrictTo('SUPER_ADMIN'), clientController.get
 router.get('/:client_id/detail', restrictTo('SUPER_ADMIN'), clientController.getAdminClientDetail);
 router.patch('/:client_id/deactivate', protect, restrictTo('SUPER_ADMIN'), clientController.deactivateClientProfile);
 router.patch('/:client_id/reactivate', protect, restrictTo('SUPER_ADMIN'), clientController.reactivateClientProfile);
+router.patch('/:client_id/billing', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.updateClientCompanyName);
+router.post('/:client_id/send-reg-fee-invoice', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.sendRegFeeInvoice);
+router.patch('/:client_id/reg-fee-status', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.updateRegFeeStatus);
+router.post('/:client_id/verify-reg-fee-payment', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.verifyRegFeePayment);
+router.get('/:client_id/invoices', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.getClientInvoices);
 
 // Payment and financial endpoints
 router.get('/payment-history/:client_id', clientController.getClientPaymentHistory);
@@ -34,6 +39,12 @@ router.get('/wallet-balance/:client_id', clientController.getClientWalletBalance
 router.get('/wallet-balance', clientController.getClientWalletBalance);
 router.get('/overdue-payments/:client_id', clientController.getOverduePayments);
 router.get('/overdue-payments', clientController.getOverduePayments);
+
+// Admin proxy-create client (bypasses OTP)
+router.post('/proxy-create', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), clientController.proxyCreateClient);
+
+// Global admin invoices list (must be before /:client_id catch-all)
+router.get('/all-invoices', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.getAdminInvoices);
 
 // Generic client profile route - MUST come after specific routes
 router.get('/:client_id', clientController.getClientProfile);
