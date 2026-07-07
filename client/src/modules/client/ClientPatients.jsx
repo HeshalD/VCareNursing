@@ -45,10 +45,27 @@ const RegBadge = ({ paid }) => (
   </span>
 );
 
+const RELATIONSHIP_OPTIONS = [
+  'Parent', 'Child', 'Sibling', 'Spouse / Partner',
+  'Guardian', 'Caregiver', 'Friend', 'Neighbor', 'Other',
+];
+
 const FORM_EMPTY = {
   full_name: '', age: '', gender: '', relationship_to_client: '',
   medical_condition: '', residential_address: '',
-  emergency_contact_name: '', emergency_contact_number: '',
+  emergency_contacts: [{ name: '', number: '' }],
+};
+
+const serializeEmergencyContacts = (contacts) => ({
+  emergency_contact_name: contacts.map(c => c.name).join(' | '),
+  emergency_contact_number: contacts.map(c => c.number).join(' | '),
+});
+
+const deserializeEmergencyContacts = (name, number) => {
+  if (!name) return [{ name: '', number: '' }];
+  const names = name.split(' | ');
+  const numbers = (number || '').split(' | ');
+  return names.map((n, i) => ({ name: n.trim(), number: (numbers[i] || '').trim() }));
 };
 
 // ─── PatientCard ──────────────────────────────────────────────────────────────
@@ -93,10 +110,16 @@ const PatientCard = ({ patient, onEdit, onDelete, expanded, onToggle }) => {
               {patient.residential_address || '—'}
             </span>
           </div>
-          <div style={s.infoRow}>
-            <Phone size={12} style={s.infoIcon} />
-            <span>{patient.emergency_contact_name}: {patient.emergency_contact_number}</span>
-          </div>
+          {(() => {
+            const ecNames = (patient.emergency_contact_name || '').split(' | ');
+            const ecNumbers = (patient.emergency_contact_number || '').split(' | ');
+            return ecNames.filter(Boolean).map((name, i) => (
+              <div key={i} style={s.infoRow}>
+                <Phone size={12} style={s.infoIcon} />
+                <span>{name}: {ecNumbers[i] || '—'}</span>
+              </div>
+            ));
+          })()}
           <div style={s.infoRow}>
             <FileText size={12} style={s.infoIcon} />
             <span style={{ color: '#475569' }}>{patient.medical_condition}</span>
@@ -213,9 +236,14 @@ const PatientFormModal = ({ mode, formData, onChange, onSubmit, onClose, saving 
           style={s.input}
         >
           <option value="">— Select —</option>
-          <option value="MALE">Male</option>
-          <option value="FEMALE">Female</option>
-          <option value="OTHER">Other</option>
+          {opts.options
+            ? opts.options.map(opt => <option key={opt} value={opt}>{opt}</option>)
+            : <>
+                <option value="MALE">Male</option>
+                <option value="FEMALE">Female</option>
+                <option value="OTHER">Other</option>
+              </>
+          }
         </select>
       ) : (
         <input
@@ -244,17 +272,62 @@ const PatientFormModal = ({ mode, formData, onChange, onSubmit, onClose, saving 
 
         {/* Modal body */}
         <div style={s.modalBody}>
-          {field('Full Name', 'full_name', { required: true })}
+          {field('Full Name', 'full_name', { required: true, placeholder: 'e.g. Saman Kumara' })}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '16px 20px' }}>
             {field('Age', 'age', { type: 'number', required: true })}
             {field('Gender', 'gender', { select: true })}
           </div>
-          {field('Relationship to Client', 'relationship_to_client', { required: true })}
+          {field('Relationship with Client', 'relationship_to_client', { select: true, required: true, options: RELATIONSHIP_OPTIONS })}
           {field('Medical Condition', 'medical_condition', { textarea: true, required: true })}
-          {field('Residential Address', 'residential_address', { required: true })}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '16px 20px' }}>
-            {field('Emergency Contact Name', 'emergency_contact_name', { required: true })}
-            {field('Emergency Contact Number', 'emergency_contact_number', { type: 'tel', required: true })}
+          {field('Residential Address', 'residential_address', { required: true, placeholder: 'e.g. 45/A, Galle Road, Dehiwala, Colombo' })}
+
+          {/* Emergency contacts — dynamic list */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <label style={s.fieldLabel}>Emergency Contacts</label>
+              <button
+                type="button"
+                onClick={() => onChange('emergency_contacts', [...formData.emergency_contacts, { name: '', number: '' }])}
+                style={{ fontSize: 11, fontWeight: 600, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: "'DM Sans', sans-serif" }}
+              >
+                + Add Contact
+              </button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {formData.emergency_contacts.map((contact, idx) => (
+                <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8, alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    value={contact.name}
+                    onChange={e => {
+                      const updated = formData.emergency_contacts.map((c, i) => i === idx ? { ...c, name: e.target.value } : c);
+                      onChange('emergency_contacts', updated);
+                    }}
+                    placeholder="e.g. Nimal Perera"
+                    style={{ ...s.input }}
+                  />
+                  <input
+                    type="tel"
+                    value={contact.number}
+                    onChange={e => {
+                      const updated = formData.emergency_contacts.map((c, i) => i === idx ? { ...c, number: e.target.value } : c);
+                      onChange('emergency_contacts', updated);
+                    }}
+                    placeholder="e.g. 077 123 4567"
+                    style={{ ...s.input }}
+                  />
+                  {formData.emergency_contacts.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => onChange('emergency_contacts', formData.emergency_contacts.filter((_, i) => i !== idx))}
+                      style={{ width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, cursor: 'pointer', color: '#ef4444', flexShrink: 0 }}
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -384,10 +457,12 @@ const ClientPatients = () => {
   const handleAddPatient = async () => {
     try {
       setSaving(true);
+      const { emergency_contacts, ...rest } = formData;
+      const serialized = serializeEmergencyContacts(emergency_contacts);
       const res = await fetch('/api/patients/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
-        body: JSON.stringify({ client_id: clientProfile.client_profile_id, ...formData, age: parseInt(formData.age) }),
+        body: JSON.stringify({ client_id: clientProfile.client_profile_id, ...rest, ...serialized, age: parseInt(rest.age) }),
       });
       if (!res.ok) throw new Error('Failed to add care profile');
       setShowAddModal(false);
@@ -404,10 +479,12 @@ const ClientPatients = () => {
   const handleUpdatePatient = async () => {
     try {
       setSaving(true);
+      const { emergency_contacts, ...rest } = formData;
+      const serialized = serializeEmergencyContacts(emergency_contacts);
       const res = await fetch(`/api/patients/${selectedPatient.patient_id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
-        body: JSON.stringify({ ...formData, age: parseInt(formData.age) }),
+        body: JSON.stringify({ ...rest, ...serialized, age: parseInt(rest.age) }),
       });
       if (!res.ok) throw new Error('Failed to update care profile');
       setShowEditModal(false);
@@ -444,8 +521,7 @@ const ClientPatients = () => {
       relationship_to_client: patient.relationship_to_client,
       medical_condition: patient.medical_condition,
       residential_address: patient.residential_address,
-      emergency_contact_name: patient.emergency_contact_name,
-      emergency_contact_number: patient.emergency_contact_number,
+      emergency_contacts: deserializeEmergencyContacts(patient.emergency_contact_name, patient.emergency_contact_number),
     });
     setShowEditModal(true);
   };

@@ -255,9 +255,21 @@ const QuoteBuilder = () => {
   }
 
   const totals = calculateTotals();
-  // A client who isn't in the database yet (no client profile) has, by definition,
-  // not paid the registration fee — treat a missing profile as "pending".
-  const registrationFeePaid = Boolean(clientProfile?.is_registration_fee_paid);
+  // Use the full reg_fee_status enum when available; fall back to the boolean for
+  // legacy profiles that pre-date the status column.
+  const regFeeStatus = clientProfile
+    ? (clientProfile.reg_fee_status || (clientProfile.is_registration_fee_paid ? 'PAID' : 'PENDING'))
+    : 'PENDING';
+  const registrationFeePaid = regFeeStatus === 'PAID' || regFeeStatus === 'WAIVED';
+
+  const REG_FEE_BADGE = {
+    PENDING:          { label: 'Reg. Fee Pending',          cls: 'bg-amber-500/20  text-amber-100  border-amber-400/30'  },
+    INVOICED:         { label: 'Reg. Fee Invoiced',         cls: 'bg-blue-500/20   text-blue-100   border-blue-400/30'   },
+    RECEIPT_UPLOADED: { label: 'Receipt Submitted',         cls: 'bg-violet-500/20 text-violet-100 border-violet-400/30' },
+    PAID:             { label: '✓ Reg. Fee Paid',           cls: 'bg-green-500/20  text-green-100  border-green-400/30'  },
+    WAIVED:           { label: '✓ Reg. Fee Waived',         cls: 'bg-slate-500/20  text-slate-200  border-slate-400/30'  },
+  };
+  const feeBadge = REG_FEE_BADGE[regFeeStatus] || REG_FEE_BADGE.PENDING;
 
   return (
     <AdminLayout
@@ -295,12 +307,8 @@ const QuoteBuilder = () => {
               <span className="bg-white/15 text-white text-xs font-medium px-3 py-1.5 rounded-full border border-white/20">
                 {serviceRequest.service_model?.replace('_', ' ') || 'Standard'}
               </span>
-              <span className={`text-xs font-medium px-3 py-1.5 rounded-full border ${
-                registrationFeePaid
-                  ? 'bg-green-500/20 text-green-100 border-green-400/30'
-                  : 'bg-amber-500/20 text-amber-100 border-amber-400/30'
-              }`}>
-                {registrationFeePaid ? '✓ Reg. Fee Paid' : '⚠ Reg. Fee Pending'}
+              <span className={`text-xs font-medium px-3 py-1.5 rounded-full border ${feeBadge.cls}`}>
+                {feeBadge.label}
               </span>
             </div>
           </div>
@@ -390,22 +398,28 @@ const QuoteBuilder = () => {
                       </div>
                       <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Client Status</span>
                     </div>
-                    {registrationFeePaid ? (
-                      <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 px-3 py-2.5 rounded-lg border border-green-100 ml-8">
-                        <CheckCircle className="w-4 h-4 flex-shrink-0" />
-                        <span className="font-medium">Registration fee paid</span>
-                      </div>
-                    ) : (
-                      <div className="ml-8 space-y-1">
-                        <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 px-3 py-2.5 rounded-lg border border-amber-100">
-                          <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                          <span className="font-medium">Registration fee pending</span>
+                    {(() => {
+                      const SIDEBAR_CFG = {
+                        PENDING:          { icon: AlertCircle,  text: 'text-amber-700',  bg: 'bg-amber-50',  border: 'border-amber-100',  label: 'Registration fee pending'   },
+                        INVOICED:         { icon: AlertCircle,  text: 'text-blue-700',   bg: 'bg-blue-50',   border: 'border-blue-100',   label: 'Invoice sent — awaiting payment' },
+                        RECEIPT_UPLOADED: { icon: AlertCircle,  text: 'text-violet-700', bg: 'bg-violet-50', border: 'border-violet-100', label: 'Receipt submitted — pending verification' },
+                        PAID:             { icon: CheckCircle,  text: 'text-green-700',  bg: 'bg-green-50',  border: 'border-green-100',  label: 'Registration fee paid'      },
+                        WAIVED:           { icon: CheckCircle,  text: 'text-slate-600',  bg: 'bg-slate-50',  border: 'border-slate-200',  label: 'Registration fee waived'    },
+                      };
+                      const cfg = SIDEBAR_CFG[regFeeStatus] || SIDEBAR_CFG.PENDING;
+                      const Icon = cfg.icon;
+                      return (
+                        <div className="ml-8 space-y-1">
+                          <div className={`flex items-center gap-2 text-sm ${cfg.text} ${cfg.bg} px-3 py-2.5 rounded-lg border ${cfg.border}`}>
+                            <Icon className="w-4 h-4 flex-shrink-0" />
+                            <span className="font-medium">{cfg.label}</span>
+                          </div>
+                          {!clientProfile && (
+                            <p className="text-xs text-slate-400 px-1">Client not yet registered in the system.</p>
+                          )}
                         </div>
-                        {!clientProfile && (
-                          <p className="text-xs text-slate-400 px-1">Client not yet registered in the system.</p>
-                        )}
-                      </div>
-                    )}
+                      );
+                    })()}
                   </div>
                 </>
               </div>

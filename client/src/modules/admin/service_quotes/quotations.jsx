@@ -9,7 +9,10 @@ import {
   CheckCircle,
   XCircle,
   AlertCircle,
-  ExternalLink
+  ExternalLink,
+  Download,
+  Loader2,
+  Check,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
@@ -77,6 +80,8 @@ const QuotationsPage = () => {
   const [paymentsLoading, setPaymentsLoading] = useState(false);
   const [payments, setPayments] = useState([]);
   const [actingPaymentId, setActingPaymentId] = useState(null);
+  const [quoteStatusBusy, setQuoteStatusBusy] = useState('');
+  const [quotePdfBusy, setQuotePdfBusy] = useState(false);
 
   const requiresBankAccount = ['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(paymentForm.payment_method);
   const isCheque = paymentForm.payment_method === 'CHEQUE';
@@ -257,6 +262,43 @@ const QuotationsPage = () => {
     }
   };
 
+  const handleQuoteStatusUpdate = async (quoteId, status) => {
+    setQuoteStatusBusy(quoteId);
+    try {
+      setError(''); setSuccessMessage('');
+      await apiClient.updateQuoteStatus(quoteId, status);
+      setSuccessMessage(`Quotation marked as ${status}.`);
+      await fetchQuotations();
+    } catch (err) {
+      setError(err.message || 'Failed to update quotation status');
+    } finally {
+      setQuoteStatusBusy('');
+    }
+  };
+
+  const handleDownloadPdf = async (quoteId, estimateNumber) => {
+    setQuotePdfBusy(true);
+    try {
+      setError('');
+      const res = await apiClient.generateQuotePdf(quoteId);
+      const url = res?.pdf_url || res?.data?.pdf_url;
+      if (url) {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${estimateNumber || 'Quotation'}.pdf`;
+        link.target = '_blank';
+        link.rel = 'noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to generate PDF');
+    } finally {
+      setQuotePdfBusy(false);
+    }
+  };
+
   const rejectPayment = async (paymentId) => {
     const reason = window.prompt('Enter rejection reason');
     if (!reason) return;
@@ -394,32 +436,96 @@ const QuotationsPage = () => {
           ) : (
             <>
               <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="mb-3 flex items-start justify-between gap-2">
-                  <div>
-                    <h3 className="text-base font-semibold text-slate-900">{selectedQuote.estimate_number}</h3>
-                    <p className="text-sm text-slate-500">{selectedQuote.payer_name}</p>
-                  </div>
-                  <button
-                    onClick={() => navigate(`/admin/quotations/${selectedQuote.quote_id}`)}
-                    className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" /> View Details
-                  </button>
-                </div>
+                {(() => {
+                  const hasPaid = Number(selectedQuote.total_paid || 0) > 0;
+                  const effectiveStatus = hasPaid ? 'ACCEPTED' : (selectedQuote.quote_status || 'SENT');
+                  const isBusy = quoteStatusBusy === selectedQuote.quote_id;
+                  const canAction = !hasPaid && !['ACCEPTED', 'REJECTED'].includes(selectedQuote.quote_status);
+                  return (
+                    <>
+                      <div className="mb-3 flex items-start justify-between gap-2">
+                        <div>
+                          <h3 className="text-base font-semibold text-slate-900">{selectedQuote.estimate_number}</h3>
+                          <p className="text-sm text-slate-500">{selectedQuote.payer_name}</p>
+                        </div>
+                        <button
+                          onClick={() => navigate(`/admin/quotations/${selectedQuote.quote_id}`)}
+                          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" /> View Details
+                        </button>
+                      </div>
 
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between"><span className="text-slate-500">Total</span><span>{money(selectedQuote.total_amount)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Paid</span><span className="text-green-700">{money(selectedQuote.total_paid)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Remaining</span><span className="text-amber-700">{money(selectedQuote.remaining_amount)}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Progress</span><span>{selectedQuote.percent_paid}%</span></div>
-                  <div className="flex justify-between items-center"><span className="text-slate-500">Status</span><span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${paymentStatusStyles[getPaymentStatus(selectedQuote)]}`}>{getPaymentStatus(selectedQuote).replace('_', ' ')}</span></div>
-                </div>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between"><span className="text-slate-500">Total</span><span>{money(selectedQuote.total_amount)}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Paid</span><span className="text-green-700">{money(selectedQuote.total_paid)}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Remaining</span><span className="text-amber-700">{money(selectedQuote.remaining_amount)}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">Progress</span><span>{selectedQuote.percent_paid}%</span></div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-500">Status</span>
+                          <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${
+                            effectiveStatus === 'ACCEPTED' ? 'bg-green-100 text-green-700 border-green-200' :
+                            effectiveStatus === 'REJECTED' ? 'bg-red-100 text-red-700 border-red-200' :
+                            'bg-slate-100 text-slate-700 border-slate-200'
+                          }`}>{effectiveStatus}</span>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          onClick={() => handleDownloadPdf(selectedQuote.quote_id, selectedQuote.estimate_number)}
+                          disabled={quotePdfBusy}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                        >
+                          {quotePdfBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                          {quotePdfBusy ? 'Generating…' : 'Download PDF'}
+                        </button>
+                      </div>
+
+                      {canAction && (
+                        <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
+                          <span className="w-full text-xs text-slate-500">No payment recorded —</span>
+                          <button
+                            onClick={() => handleQuoteStatusUpdate(selectedQuote.quote_id, 'ACCEPTED')}
+                            disabled={isBusy}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
+                          >
+                            {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                            Mark Accepted
+                          </button>
+                          <button
+                            onClick={() => handleQuoteStatusUpdate(selectedQuote.quote_id, 'REJECTED')}
+                            disabled={isBusy}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-100 disabled:opacity-60"
+                          >
+                            {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
+                            Mark Rejected
+                          </button>
+                        </div>
+                      )}
+
+                      {!canAction && selectedQuote.quote_status === 'REJECTED' && (
+                        <div className="mt-3 border-t border-slate-100 pt-3">
+                          <button
+                            onClick={() => handleQuoteStatusUpdate(selectedQuote.quote_id, 'SENT')}
+                            disabled={isBusy}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+                          >
+                            {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                            Reset to Pending
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
 
                 {getPaymentStatus(selectedQuote) === 'OVERPAID' && (
                   <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700">
                     Overpaid detected: paid exceeds quotation amount. Recording more payments is blocked.
                   </div>
                 )}
+
 
                 <button
                   onClick={() => setShowPaymentForm((v) => !v)}

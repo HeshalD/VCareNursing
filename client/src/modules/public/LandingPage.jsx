@@ -1,10 +1,10 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { motion, useScroll, useTransform } from 'framer-motion';
+import { motion, useScroll, useTransform, AnimatePresence } from 'framer-motion';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   Heart, Baby, Home, ArrowRight, ShieldCheck,
   Activity, Star, Globe, Clock, CheckCircle2,
-  Stethoscope, Smile, TrendingUp, ChevronRight, DollarSign
+  Stethoscope, Smile, TrendingUp, ChevronRight, DollarSign, X, AlertCircle
 } from 'lucide-react';
 import Navbar from '../../components/layout/Navbar';
 import Footer from '../../components/layout/Footer';
@@ -18,6 +18,74 @@ import babyCareImg from '../../assets/images/baby_care.webp';
 import homeNursingImg from '../../assets/images/home_nursing.webp';
 import logoUrl from '../../assets/Logo/VCareLogo.png';
 import patternBg from '../../assets/images/abstract-seamless-geometric-shape-lines-pattern-design-background_84443-23990.png';
+
+const REG_FEE_AUTO_CLOSE_MS = 5000;
+
+const RegFeeBanner = ({ status, onClose }) => {
+  const navigate = useNavigate();
+  const [progress, setProgress] = useState(100);
+
+  useEffect(() => {
+    const start = Date.now();
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - start;
+      const remaining = Math.max(0, 100 - (elapsed / REG_FEE_AUTO_CLOSE_MS) * 100);
+      setProgress(remaining);
+      if (remaining === 0) {
+        clearInterval(interval);
+        onClose();
+      }
+    }, 50);
+    return () => clearInterval(interval);
+  }, [onClose]);
+
+  const isInvoiced = status === 'INVOICED';
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0, y: -48 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -48 }}
+        transition={{ type: 'spring', stiffness: 300, damping: 28 }}
+        className="fixed top-0 left-0 right-0 z-[100]"
+      >
+        <div className="bg-amber-500 text-white shadow-lg">
+          <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center gap-3">
+            <AlertCircle className="h-4 w-4 flex-shrink-0 opacity-90" />
+            <p className="flex-1 text-sm font-medium leading-snug">
+              {isInvoiced
+                ? 'Your registration fee invoice has been sent. Please complete payment and upload your receipt to activate your account.'
+                : 'Your VCare registration fee is outstanding. An invoice will be sent to you shortly.'}
+            </p>
+            {isInvoiced && (
+              <button
+                onClick={() => navigate('/client/profile')}
+                className="flex-shrink-0 text-xs font-semibold bg-white/20 hover:bg-white/30 text-white rounded-lg px-3 py-1.5 transition-colors"
+              >
+                Upload receipt
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="flex-shrink-0 ml-1 p-1 rounded-md hover:bg-white/20 transition-colors"
+              aria-label="Dismiss"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          {/* Progress bar */}
+          <div className="h-0.5 bg-amber-600/40">
+            <div
+              className="h-full bg-white/60 transition-none"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+        </div>
+      </motion.div>
+    </AnimatePresence>
+  );
+};
 
 const HeroSection = () => {
   const navigate = useNavigate();
@@ -395,19 +463,33 @@ const LandingPage = () => {
   const navigate = useNavigate();
   const [showWelcome, setShowWelcome] = useState(false);
   const [welcomeName, setWelcomeName] = useState('');
+  const [regFeeBannerStatus, setRegFeeBannerStatus] = useState(null);
 
-  // Show a welcome popup right after a successful login
+  // Show post-login banners / popups
   useEffect(() => {
     if (location.state?.showWelcome) {
       setWelcomeName(location.state.userName || '');
       setShowWelcome(true);
-      // Clear the navigation state so the popup doesn't reappear on refresh/back
+
+      const feeStatus = location.state.regFeeStatus;
+      if (feeStatus === 'PENDING' || feeStatus === 'INVOICED') {
+        setRegFeeBannerStatus(feeStatus);
+      }
+
+      // Clear state so banners don't reappear on refresh/back
       navigate(location.pathname, { replace: true, state: {} });
     }
   }, [location, navigate]);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 selection:bg-blue-100">
+      {regFeeBannerStatus && (
+        <RegFeeBanner
+          status={regFeeBannerStatus}
+          onClose={() => setRegFeeBannerStatus(null)}
+        />
+      )}
+
       <Navbar />
       <HeroSection />
       <ServiceGrid />

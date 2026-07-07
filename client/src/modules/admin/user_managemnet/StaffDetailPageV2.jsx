@@ -44,85 +44,100 @@ const getInitials = (name) => (name || '?').trim().split(/\s+/).map(w => w[0]).s
 
 // ── design tokens ─────────────────────────────────────────────────────────────
 const STATUS_META = {
-  available:    { bg: '#E3F1E8', col: '#2F7A53', dot: '#2F8A5B' },
-  active:       { bg: '#E3F1E8', col: '#2F7A53', dot: '#2F8A5B' },
-  verified:     { bg: '#E3F1E8', col: '#2F7A53', dot: '#2F8A5B' },
-  completed:    { bg: '#E3F1E8', col: '#2F7A53', dot: '#2F8A5B' },
-  assigned:     { bg: '#E8F1F9', col: '#3F77B5', dot: '#3F77B5' },
-  pending:      { bg: '#FBF1DD', col: '#B07A1E', dot: '#C98A2E' },
-  pending_termination: { bg: '#FBF1DD', col: '#B07A1E', dot: '#C98A2E' },
-  under_review: { bg: '#FBF1DD', col: '#B07A1E', dot: '#C98A2E' },
-  unavailable:  { bg: '#F7E6E3', col: '#BC4338', dot: '#C2483C' },
-  inactive:     { bg: '#F7E6E3', col: '#BC4338', dot: '#C2483C' },
-  terminated:   { bg: '#F7E6E3', col: '#BC4338', dot: '#C2483C' },
-  cancelled:    { bg: '#F7E6E3', col: '#BC4338', dot: '#C2483C' },
-  suspended:    { bg: '#F7E6E3', col: '#BC4338', dot: '#C2483C' },
+  available:           { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500' },
+  active:              { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500' },
+  verified:            { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500' },
+  completed:           { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500' },
+  assigned:            { bg: 'bg-blue-50',    text: 'text-blue-700',    dot: 'bg-blue-500'    },
+  pending:             { bg: 'bg-amber-50',   text: 'text-amber-700',   dot: 'bg-amber-400'   },
+  pending_termination: { bg: 'bg-amber-50',   text: 'text-amber-700',   dot: 'bg-amber-400'   },
+  under_review:        { bg: 'bg-amber-50',   text: 'text-amber-700',   dot: 'bg-amber-400'   },
+  unavailable:         { bg: 'bg-red-50',     text: 'text-red-600',     dot: 'bg-red-500'     },
+  inactive:            { bg: 'bg-red-50',     text: 'text-red-600',     dot: 'bg-red-500'     },
+  terminated:          { bg: 'bg-red-50',     text: 'text-red-600',     dot: 'bg-red-500'     },
+  cancelled:           { bg: 'bg-red-50',     text: 'text-red-600',     dot: 'bg-red-500'     },
+  suspended:           { bg: 'bg-red-50',     text: 'text-red-600',     dot: 'bg-red-500'     },
 };
-const getSM = (v) => STATUS_META[String(v || '').toLowerCase()] || { bg: '#F0EDE6', col: '#7A756A', dot: '#9A9488' };
+const getSM = (v) => STATUS_META[String(v || '').toLowerCase()] || { bg: 'bg-slate-100', text: 'text-slate-500', dot: 'bg-slate-400' };
 
-const inp = {
-  width: '100%', border: '1px solid #E2DCD0', borderRadius: 10, padding: '10px 12px',
-  fontFamily: 'inherit', fontSize: 14, color: '#2A2722', outline: 'none', background: '#FCFBF8',
-};
+const inputCls = 'w-full px-3 py-2 text-sm border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white transition-colors';
 
 // ── atoms ─────────────────────────────────────────────────────────────────────
-const LBL = ({ children }) => (
-  <div style={{ fontSize: 11, fontWeight: 600, color: '#9A9488', textTransform: 'uppercase', letterSpacing: '.04em' }}>
-    {children}
+const Field = ({ label, value, color, mono }) => (
+  <div>
+    <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-0.5">{label}</div>
+    <div
+      className={`text-sm font-semibold ${mono ? 'font-mono text-xs' : ''}`}
+      style={{ color: color || '#0f172a' }}
+    >
+      {value ?? '—'}
+    </div>
   </div>
 );
-const VAL = ({ children, color, mono }) => (
-  <div style={{ fontSize: 14, fontWeight: 600, marginTop: 3, color: color || '#2A2722', fontFamily: mono ? "'JetBrains Mono',monospace" : 'inherit' }}>
-    {children ?? '-'}
-  </div>
-);
-const Field = ({ label, value, color, mono }) => <div><LBL>{label}</LBL><VAL color={color} mono={mono}>{value ?? '-'}</VAL></div>;
 
-const Card = ({ children, style }) => (
-  <div style={{ background: '#fff', border: '1px solid #ECE7DF', borderRadius: 16, padding: 20, ...style }}>
+const Card = ({ children, className = '' }) => (
+  <div className={`bg-white border border-slate-200 rounded-lg overflow-hidden ${className}`}>
     {children}
   </div>
 );
-const CardTitle = ({ children, sub }) => (
-  <div style={{ marginBottom: 15 }}>
-    <h3 style={{ margin: 0, fontSize: 15.5, fontWeight: 700, color: '#2A2722' }}>{children}</h3>
-    {sub && <p style={{ margin: '2px 0 0', fontSize: 12.5, color: '#9A9488' }}>{sub}</p>}
+
+const CardHead = ({ title, sub, action }) => (
+  <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100">
+    <div>
+      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{title}</p>
+      {sub && <p className="text-xs text-slate-400 mt-0.5 normal-case font-normal">{sub}</p>}
+    </div>
+    {action}
   </div>
 );
+
+const CardBody = ({ children, className = '' }) => (
+  <div className={`p-5 ${className}`}>{children}</div>
+);
+
 const Empty = ({ title, subtitle }) => (
-  <div style={{ border: '1.5px dashed #E0D9CF', borderRadius: 12, padding: '32px 24px', textAlign: 'center' }}>
-    <p style={{ margin: 0, fontWeight: 600, color: '#7A756A' }}>{title}</p>
-    {subtitle && <p style={{ margin: '4px 0 0', fontSize: 13, color: '#9A9488' }}>{subtitle}</p>}
+  <div className="border border-dashed border-slate-200 rounded-lg px-6 py-8 text-center">
+    <p className="text-sm font-semibold text-slate-600">{title}</p>
+    {subtitle && <p className="text-xs text-slate-400 mt-1">{subtitle}</p>}
   </div>
 );
+
 const MiniCard = ({ label, value, color, onClick }) => (
   <div
-    style={{ background: '#fff', border: '1px solid #ECE7DF', borderRadius: 14, padding: '15px 16px', cursor: onClick ? 'pointer' : undefined }}
+    className={`bg-white border border-slate-200 rounded-lg p-4 ${onClick ? 'cursor-pointer hover:bg-slate-50 transition-colors' : ''}`}
     onClick={onClick}
     title={onClick ? 'Click to see breakdown' : undefined}
   >
-    <div style={{ fontSize: 11.5, fontWeight: 600, color: '#9A9488', textTransform: 'uppercase', letterSpacing: '.04em' }}>{label}</div>
-    <div style={{ fontSize: 18, fontWeight: 800, marginTop: 5, color: color || '#2A2722' }}>{value}</div>
-    {onClick && <div style={{ fontSize: 11.5, color: '#137A6B', fontWeight: 600, marginTop: 3 }}>View breakdown →</div>}
+    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</p>
+    <p className="text-xl font-bold mt-1.5" style={{ color: color || '#0f172a' }}>{value}</p>
+    {onClick && <p className="text-xs text-blue-600 font-semibold mt-1">View breakdown →</p>}
   </div>
 );
+
 const StatusPill = ({ value }) => {
   const s = getSM(value);
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: s.bg, color: s.col, borderRadius: 999, padding: '4px 10px', fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}>
-      <span style={{ width: 6, height: 6, borderRadius: '50%', background: s.dot, flexShrink: 0 }} />
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full ${s.bg} ${s.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${s.dot}`} />
       {value || '-'}
     </span>
   );
 };
 
 const TableHead = ({ cols, children }) => (
-  <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 10, paddingBottom: 9, fontSize: 11, fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase', color: '#A39D91', borderBottom: '1px solid #EFEAE0' }}>
+  <div
+    style={{ display: 'grid', gridTemplateColumns: cols }}
+    className="gap-3 pb-2.5 text-xs font-semibold tracking-wide uppercase text-slate-400 border-b border-slate-200"
+  >
     {children}
   </div>
 );
+
 const TableRow = ({ cols, children }) => (
-  <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 10, padding: '13px 0', borderBottom: '1px solid #F2EEE6', alignItems: 'center' }}>
+  <div
+    style={{ display: 'grid', gridTemplateColumns: cols }}
+    className="gap-3 py-3 border-b border-slate-100 last:border-0 items-center"
+  >
     {children}
   </div>
 );
@@ -135,7 +150,6 @@ const AdminNotesCarousel = ({ notes, loading, busy, onAdd, onEdit, onDelete }) =
 
   const count = notes.length;
 
-  // Keep the active slide within bounds when notes are added/removed.
   useEffect(() => {
     setIndex((i) => (count === 0 ? 0 : Math.min(i, count - 1)));
   }, [count]);
@@ -154,7 +168,7 @@ const AdminNotesCarousel = ({ notes, loading, busy, onAdd, onEdit, onDelete }) =
     if (!text) return;
     if (editor.mode === 'add') {
       await onAdd(text);
-      setIndex(0); // newest note shows first
+      setIndex(0);
     } else {
       await onEdit(editor.noteId, text);
     }
@@ -167,32 +181,25 @@ const AdminNotesCarousel = ({ notes, loading, busy, onAdd, onEdit, onDelete }) =
     return isNaN(d) ? '' : d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
   };
 
-  const headerBtn = {
-    display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px solid #E2DCD0',
-    background: '#FCFBF8', borderRadius: 9, padding: '6px 10px', fontFamily: 'inherit',
-    fontSize: 12.5, fontWeight: 600, color: '#5A554B', cursor: 'pointer',
-  };
-  const arrowBtn = (disabled) => ({
-    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    width: 30, height: 30, borderRadius: 8, border: '1px solid #E7E1D6',
-    background: '#fff', color: disabled ? '#CFC8BC' : '#5A554B',
-    cursor: disabled ? 'default' : 'pointer', flexShrink: 0,
-  });
-
   return (
-    <div style={{ background: '#fff', border: '1px solid #ECE7DF', borderRadius: 16, padding: 18, display: 'flex', flexDirection: 'column' }}>
+    <div className="bg-white border border-slate-200 rounded-lg p-4 flex flex-col">
       {/* header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <StickyNote style={{ width: 16, height: 16, color: '#B07A1E' }} />
-          <span style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>Admin Notes</span>
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <div className="flex items-center gap-2">
+          <StickyNote className="w-4 h-4 text-amber-500" />
+          <span className="text-sm font-semibold text-slate-900">Admin Notes</span>
           {count > 0 && !editor.open && (
-            <span style={{ fontSize: 11.5, fontWeight: 600, color: '#9A9488' }}>{index + 1} / {count}</span>
+            <span className="text-xs font-medium text-slate-400">{index + 1} / {count}</span>
           )}
         </div>
         {!editor.open && (
-          <button type="button" style={headerBtn} onClick={openAdd} disabled={busy}>
-            <Plus style={{ width: 13, height: 13 }} /> Add
+          <button
+            type="button"
+            onClick={openAdd}
+            disabled={busy}
+            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50"
+          >
+            <Plus className="w-3 h-3" /> Add
           </button>
         )}
       </div>
@@ -206,73 +213,98 @@ const AdminNotesCarousel = ({ notes, loading, busy, onAdd, onEdit, onDelete }) =
             placeholder="Write an internal note about this staff member..."
             autoFocus
             rows={4}
-            style={{ ...inp, resize: 'vertical', minHeight: 92 }}
+            className={`${inputCls} resize-y min-h-[92px]`}
           />
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
-            <button type="button" style={headerBtn} onClick={closeEditor} disabled={busy}>
-              <X style={{ width: 13, height: 13 }} /> Cancel
+          <div className="flex justify-end gap-2 mt-2.5">
+            <button
+              type="button"
+              onClick={closeEditor}
+              disabled={busy}
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50"
+            >
+              <X className="w-3 h-3" /> Cancel
             </button>
             <button
               type="button"
               onClick={saveEditor}
               disabled={busy || !editor.text.trim()}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: 'none', background: '#137A6B', color: '#fff', borderRadius: 9, padding: '7px 13px', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', opacity: busy || !editor.text.trim() ? 0.6 : 1 }}
+              className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold bg-blue-600 text-white rounded-lg hover:bg-blue-500 transition-colors disabled:opacity-50"
             >
-              {busy ? <Loader2 style={{ width: 13, height: 13, animation: 'spin 1s linear infinite' }} /> : <Save style={{ width: 13, height: 13 }} />}
+              {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
               {editor.mode === 'add' ? 'Add note' : 'Save'}
             </button>
           </div>
         </div>
       ) : loading ? (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 96, color: '#9A9488' }}>
-          <Loader2 style={{ width: 18, height: 18, animation: 'spin 1s linear infinite' }} />
+        <div className="flex items-center justify-center min-h-[96px] text-slate-400">
+          <Loader2 className="w-5 h-5 animate-spin" />
         </div>
       ) : count === 0 ? (
-        <div style={{ border: '1.5px dashed #E0D9CF', borderRadius: 12, padding: '24px 18px', textAlign: 'center' }}>
-          <p style={{ margin: 0, fontWeight: 600, color: '#7A756A', fontSize: 13 }}>No admin notes yet</p>
-          <p style={{ margin: '3px 0 0', fontSize: 12.5, color: '#9A9488' }}>Add an internal note to keep track of this staff member.</p>
+        <div className="border border-dashed border-slate-200 rounded-lg px-4 py-6 text-center">
+          <p className="text-sm font-semibold text-slate-500">No admin notes yet</p>
+          <p className="text-xs text-slate-400 mt-1">Add an internal note to keep track of this staff member.</p>
         </div>
       ) : (
-        <div style={{ display: 'flex', alignItems: 'stretch', gap: 10 }}>
-          <button type="button" style={arrowBtn(index === 0)} onClick={() => go(-1)} disabled={index === 0} title="Previous">
-            <ChevronLeft style={{ width: 17, height: 17 }} />
+        <div className="flex items-stretch gap-2.5">
+          <button
+            type="button"
+            onClick={() => go(-1)}
+            disabled={index === 0}
+            className="inline-flex items-center justify-center w-8 h-8 flex-shrink-0 rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 transition-colors disabled:opacity-30 disabled:cursor-default self-center"
+            title="Previous"
+          >
+            <ChevronLeft className="w-4 h-4" />
           </button>
 
-          {/* sliding window */}
-          <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
-            <div style={{ display: 'flex', transform: `translateX(-${index * 100}%)`, transition: 'transform .32s cubic-bezier(.4,0,.2,1)' }}>
+          <div className="flex-1 overflow-hidden min-w-0">
+            <div
+              className="flex transition-transform duration-300"
+              style={{ transform: `translateX(-${index * 100}%)` }}
+            >
               {notes.map((n) => (
-                <div key={n.note_id} style={{ minWidth: '100%', boxSizing: 'border-box', padding: '2px 2px' }}>
-                  <div style={{ background: '#FBF8F1', border: '1px solid #EFE7D6', borderRadius: 12, padding: '13px 14px', minHeight: 96, display: 'flex', flexDirection: 'column' }}>
-                    <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: '#3A362F', whiteSpace: 'pre-wrap', wordBreak: 'break-word', flex: 1 }}>
-                      {n.note}
-                    </p>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 11, paddingTop: 9, borderTop: '1px solid #EFE7D6' }}>
-                      <span style={{ fontSize: 11.5, color: '#9A9488' }}>
+                <div key={n.note_id} className="min-w-full box-border px-0.5">
+                  <div className="bg-amber-50 border border-amber-100 rounded-lg p-3.5 min-h-[96px] flex flex-col">
+                    <p className="text-sm leading-relaxed text-slate-800 whitespace-pre-wrap break-words flex-1">{n.note}</p>
+                    <div className="flex items-center justify-between gap-2 mt-3 pt-2.5 border-t border-amber-100">
+                      <span className="text-xs text-slate-400">
                         {n.author_name ? `${n.author_name} · ` : ''}{fmt(n.created_at)}
                         {n.updated_at && n.updated_at !== n.created_at ? ' (edited)' : ''}
                       </span>
                       {confirmDeleteId === n.note_id ? (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ fontSize: 11.5, color: '#BC4338', fontWeight: 600 }}>Delete?</span>
-                          <button type="button" onClick={() => { onDelete(n.note_id); setConfirmDeleteId(null); }} disabled={busy}
-                            style={{ border: 'none', background: '#BC4338', color: '#fff', borderRadius: 7, padding: '4px 9px', fontFamily: 'inherit', fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}>
-                            Yes
-                          </button>
-                          <button type="button" onClick={() => setConfirmDeleteId(null)} disabled={busy}
-                            style={{ border: '1px solid #E2DCD0', background: '#fff', color: '#5A554B', borderRadius: 7, padding: '4px 9px', fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>
-                            No
-                          </button>
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="text-xs font-semibold text-red-600">Delete?</span>
+                          <button
+                            type="button"
+                            onClick={() => { onDelete(n.note_id); setConfirmDeleteId(null); }}
+                            disabled={busy}
+                            className="px-2 py-0.5 text-xs font-bold bg-red-600 text-white rounded disabled:opacity-50"
+                          >Yes</button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(null)}
+                            disabled={busy}
+                            className="px-2 py-0.5 text-xs font-semibold border border-slate-200 bg-white rounded disabled:opacity-50"
+                          >No</button>
                         </span>
                       ) : (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                          <button type="button" onClick={() => openEdit(n)} disabled={busy} title="Edit"
-                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 7, border: '1px solid #E7E1D6', background: '#fff', color: '#5A554B', cursor: 'pointer' }}>
-                            <Pencil style={{ width: 13, height: 13 }} />
+                        <span className="inline-flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => openEdit(n)}
+                            disabled={busy}
+                            title="Edit"
+                            className="inline-flex items-center justify-center w-6 h-6 rounded border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 transition-colors disabled:opacity-50"
+                          >
+                            <Pencil className="w-3 h-3" />
                           </button>
-                          <button type="button" onClick={() => setConfirmDeleteId(n.note_id)} disabled={busy} title="Delete"
-                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 7, border: '1px solid #F0DAD6', background: '#fff', color: '#BC4338', cursor: 'pointer' }}>
-                            <Trash2 style={{ width: 13, height: 13 }} />
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(n.note_id)}
+                            disabled={busy}
+                            title="Delete"
+                            className="inline-flex items-center justify-center w-6 h-6 rounded border border-red-100 bg-white text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
+                          >
+                            <Trash2 className="w-3 h-3" />
                           </button>
                         </span>
                       )}
@@ -283,8 +315,14 @@ const AdminNotesCarousel = ({ notes, loading, busy, onAdd, onEdit, onDelete }) =
             </div>
           </div>
 
-          <button type="button" style={arrowBtn(index >= count - 1)} onClick={() => go(1)} disabled={index >= count - 1} title="Next">
-            <ChevronRight style={{ width: 17, height: 17 }} />
+          <button
+            type="button"
+            onClick={() => go(1)}
+            disabled={index >= count - 1}
+            className="inline-flex items-center justify-center w-8 h-8 flex-shrink-0 rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 transition-colors disabled:opacity-30 disabled:cursor-default self-center"
+            title="Next"
+          >
+            <ChevronRight className="w-4 h-4" />
           </button>
         </div>
       )}
@@ -669,34 +707,35 @@ const StaffDetailPageV2 = () => {
   // ── change history helpers ────────────────────────────────────────────────
   const requestTypeMeta = (type) => {
     const map = {
-      PROFILE_UPDATE:    { bg: '#E8F1F9', col: '#3F77B5', label: 'Profile Update' },
-      BANK_ACCOUNT_ADD:  { bg: '#E3F1E8', col: '#2F7A53', label: 'Bank Add' },
-      BANK_ACCOUNT_EDIT: { bg: '#FBF1DD', col: '#B07A1E', label: 'Bank Edit' },
-      BANK_ACCOUNT_REMOVE: { bg: '#F7E6E3', col: '#BC4338', label: 'Bank Remove' },
+      PROFILE_UPDATE:      { cls: 'bg-blue-50 text-blue-700',    label: 'Profile Update' },
+      BANK_ACCOUNT_ADD:    { cls: 'bg-emerald-50 text-emerald-700', label: 'Bank Add' },
+      BANK_ACCOUNT_EDIT:   { cls: 'bg-amber-50 text-amber-700',  label: 'Bank Edit' },
+      BANK_ACCOUNT_REMOVE: { cls: 'bg-red-50 text-red-700',      label: 'Bank Remove' },
     };
-    return map[type] || { bg: '#F0EDE6', col: '#7A756A', label: type };
+    return map[type] || { cls: 'bg-slate-100 text-slate-600', label: type };
   };
+
   const auditActionMeta = (action) => {
     const map = {
-      SUBMITTED: { dot: '#9A9488', bg: '#F0EDE6', col: '#7A756A' },
-      CLAIMED:   { dot: '#3F77B5', bg: '#E8F1F9', col: '#3F77B5' },
-      APPROVED:  { dot: '#2F8A5B', bg: '#E3F1E8', col: '#2F7A53' },
-      REJECTED:  { dot: '#BC4338', bg: '#F7E6E3', col: '#BC4338' },
+      SUBMITTED: { dot: 'bg-slate-400',    cls: 'bg-slate-100 text-slate-600' },
+      CLAIMED:   { dot: 'bg-blue-500',     cls: 'bg-blue-50 text-blue-700' },
+      APPROVED:  { dot: 'bg-emerald-500',  cls: 'bg-emerald-50 text-emerald-700' },
+      REJECTED:  { dot: 'bg-red-500',      cls: 'bg-red-50 text-red-700' },
     };
-    return map[action] || { dot: '#9A9488', bg: '#F0EDE6', col: '#7A756A' };
+    return map[action] || { dot: 'bg-slate-400', cls: 'bg-slate-100 text-slate-600' };
   };
 
   const renderChangeDiff = (requestType, requestedChanges) => {
-    if (!requestedChanges) return <p style={{ fontSize: 13, color: '#9A9488', margin: 0 }}>No change data available.</p>;
+    if (!requestedChanges) return <p className="text-sm text-slate-400 m-0">No change data available.</p>;
     if (requestType === 'PROFILE_UPDATE' || requestType === 'BANK_ACCOUNT_EDIT') {
       return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+        <div className="flex flex-col gap-2">
           {Object.entries(requestedChanges).map(([field, change]) => (
-            <div key={field} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, background: '#FBF9F4', border: '1px solid #EFEAE0', borderRadius: 10, padding: '10px 12px', fontSize: 13 }}>
-              <span style={{ minWidth: 140, fontWeight: 600, color: '#5A554B', textTransform: 'capitalize' }}>{field.replace(/_/g, ' ')}</span>
-              <span style={{ color: '#BC4338', textDecoration: 'line-through' }}>{String(change?.old_value ?? '—')}</span>
-              <span style={{ color: '#A39D91' }}>→</span>
-              <span style={{ fontWeight: 600, color: '#2F7A53' }}>{String(change?.new_value ?? '—')}</span>
+            <div key={field} className="flex flex-wrap items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-sm">
+              <span className="min-w-[140px] font-semibold text-slate-700 capitalize">{field.replace(/_/g, ' ')}</span>
+              <span className="text-red-500 line-through">{String(change?.old_value ?? '—')}</span>
+              <span className="text-slate-400">→</span>
+              <span className="font-semibold text-emerald-700">{String(change?.new_value ?? '—')}</span>
             </div>
           ))}
         </div>
@@ -704,11 +743,11 @@ const StaffDetailPageV2 = () => {
     }
     if (requestType === 'BANK_ACCOUNT_ADD') {
       return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+        <div className="flex flex-col gap-2">
           {Object.entries(requestedChanges).map(([field, value]) => (
-            <div key={field} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#FBF9F4', border: '1px solid #EFEAE0', borderRadius: 10, padding: '10px 12px', fontSize: 13 }}>
-              <span style={{ minWidth: 140, fontWeight: 600, color: '#5A554B', textTransform: 'capitalize' }}>{field.replace(/_/g, ' ')}</span>
-              <span style={{ fontWeight: 600, color: '#2F7A53' }}>{String(value ?? '—')}</span>
+            <div key={field} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-sm">
+              <span className="min-w-[140px] font-semibold text-slate-700 capitalize">{field.replace(/_/g, ' ')}</span>
+              <span className="font-semibold text-emerald-700">{String(value ?? '—')}</span>
             </div>
           ))}
         </div>
@@ -716,169 +755,164 @@ const StaffDetailPageV2 = () => {
     }
     if (requestType === 'BANK_ACCOUNT_REMOVE') {
       return (
-        <div style={{ background: '#F7E6E3', border: '1px solid #E3B5AF', borderRadius: 10, padding: '10px 12px', fontSize: 13, color: '#BC4338' }}>
-          Remove bank account ID: <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 600 }}>{requestedChanges.staff_bank_account_id}</span>
+        <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-sm text-red-700">
+          Remove bank account ID: <span className="font-mono font-semibold">{requestedChanges.staff_bank_account_id}</span>
         </div>
       );
     }
-    return <pre style={{ overflowX: 'auto', background: '#F4F1EA', borderRadius: 10, padding: 12, fontSize: 12 }}>{JSON.stringify(requestedChanges, null, 2)}</pre>;
+    return <pre className="overflow-x-auto bg-slate-50 rounded-lg p-3 text-xs">{JSON.stringify(requestedChanges, null, 2)}</pre>;
   };
 
   // ── tab panels ────────────────────────────────────────────────────────────
   const renderOverview = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, alignItems: 'start' }}>
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
         <Card>
-          <CardTitle>Staff information</CardTitle>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 15 }}>
-            <Field label="Full name" value={profile.full_name} />
-            <Field label="Designation" value={profile.designation} />
-            <Field label="Email" value={profile.email} />
-            <Field label="Phone" value={profile.mobile_number} />
-            <Field label="Location" value={profile.location || profile.home_address} />
-            <Field
-              label="Verification"
-              value={profile.verification_status}
-              color={String(profile.verification_status || '').toLowerCase() === 'verified' ? '#2F7A53' : undefined}
-            />
-            <Field label="Willing to live in" value={profile.willing_to_live_in ? 'Yes' : 'No'} />
-            <Field label="Member since" value={formatDate(profile.created_at)} />
-            <Field label="Average rating" value={averageRating ? `${averageRating.toFixed(1)} / 5` : '-'} />
-            <Field label="Total reviews" value={totalReviews || '-'} />
-          </div>
+          <CardHead title="Staff information" />
+          <CardBody>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field label="Full name" value={profile.full_name} />
+              <Field label="Designation" value={profile.designation} />
+              <Field label="Email" value={profile.email} />
+              <Field label="Phone" value={profile.mobile_number} />
+              <Field label="Location" value={profile.location || profile.home_address} />
+              <Field
+                label="Verification"
+                value={profile.verification_status}
+                color={String(profile.verification_status || '').toLowerCase() === 'verified' ? '#059669' : undefined}
+              />
+              <Field label="Willing to live in" value={profile.willing_to_live_in ? 'Yes' : 'No'} />
+              <Field label="Member since" value={formatDate(profile.created_at)} />
+              <Field label="Average rating" value={averageRating ? `${averageRating.toFixed(1)} / 5` : '-'} />
+              <Field label="Total reviews" value={totalReviews || '-'} />
+            </div>
+          </CardBody>
         </Card>
 
         <Card>
-          <CardTitle sub="Deactivate or reactivate this staff account.">Account control</CardTitle>
-          <div style={{
-            background: isActive ? '#F1F8F1' : '#FEF2F2',
-            border: `1px solid ${isActive ? '#DCEEDD' : '#FECACA'}`,
-            borderRadius: 13, padding: '14px 15px', marginBottom: 14,
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ width: 9, height: 9, borderRadius: '50%', background: isActive ? '#2F8A5B' : '#DC2626', flexShrink: 0 }} />
+          <CardHead title="Account control" sub="Deactivate or reactivate this staff account." />
+          <CardBody>
+            <div className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border mb-4 ${isActive ? 'bg-emerald-50 border-emerald-100' : 'bg-red-50 border-red-100'}`}>
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isActive ? 'bg-emerald-500' : 'bg-red-500'}`} />
               <div>
-                <div style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>{isActive ? 'Account enabled' : 'Account disabled'}</div>
-                <div style={{ fontSize: 12, color: '#6F6A60', marginTop: 1 }}>
+                <div className="text-sm font-semibold text-slate-900">{isActive ? 'Account enabled' : 'Account disabled'}</div>
+                <div className="text-xs text-slate-500 mt-0.5">
                   {isActive ? 'This staff member can sign in and accept bookings.' : 'This staff member cannot sign in.'}
                 </div>
               </div>
             </div>
-          </div>
-          <button
-            type="button"
-            onClick={handleToggleAccount}
-            disabled={statusUpdating}
-            style={{
-              width: '100%', background: '#fff', border: `1px solid ${isActive ? '#E3B5AF' : '#A3D9B1'}`,
-              borderRadius: 10, padding: 11, fontFamily: 'inherit', fontSize: 13.5, fontWeight: 700,
-              color: isActive ? '#BC4338' : '#2F7A53', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
-              opacity: statusUpdating ? 0.6 : 1,
-            }}
-          >
-            {statusUpdating && <Loader2 style={{ width: 14, height: 14, animation: 'spin 1s linear infinite' }} />}
-            {isActive ? 'Deactivate account' : 'Reactivate account'}
-          </button>
+            <button
+              type="button"
+              onClick={handleToggleAccount}
+              disabled={statusUpdating}
+              className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg border text-sm font-semibold transition-colors disabled:opacity-60 ${isActive ? 'border-red-200 text-red-600 hover:bg-red-50' : 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'}`}
+            >
+              {statusUpdating && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              {isActive ? 'Deactivate account' : 'Reactivate account'}
+            </button>
+          </CardBody>
         </Card>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 16, alignItems: 'start' }}>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
         <Card>
-          <CardTitle>Current assignment</CardTitle>
-          {currentAssignment ? (
-            <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 13, marginBottom: 16 }}>
-                <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#3F77B5', flexShrink: 0 }} />
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 700 }}>{currentAssignment.patient_name || 'Patient'}</div>
-                  <div style={{ fontSize: 12.5, color: '#6F6A60' }}>
-                    {currentAssignment.service_type || '-'} · since {formatDate(currentAssignment.service_start_date || currentAssignment.start_date)}
+          <CardHead title="Current assignment" />
+          <CardBody>
+            {currentAssignment ? (
+              <>
+                <div className="flex items-center gap-3 mb-4">
+                  <span className="w-2.5 h-2.5 rounded-full bg-blue-500 flex-shrink-0" />
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900">{currentAssignment.patient_name || 'Patient'}</div>
+                    <div className="text-xs text-slate-500 mt-0.5">
+                      {currentAssignment.service_type || '-'} · since {formatDate(currentAssignment.service_start_date || currentAssignment.start_date)}
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 13 }}>
-                <Field label="Booking code" value={currentAssignment.booking_id} mono />
-                <Field label="Client" value={currentAssignment.client_name} />
-                <Field label="Daily rate" value={formatMoney(currentAssignment.daily_rate || currentAssignment.booking_daily_rate)} />
-                <Field label="Status" value={currentAssignment.status} />
-              </div>
-            </>
-          ) : (
-            <Empty title="No active booking" subtitle="This staff member is not currently assigned to a booking." />
-          )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <Field label="Booking code" value={currentAssignment.booking_id} mono />
+                  <Field label="Client" value={currentAssignment.client_name} />
+                  <Field label="Daily rate" value={formatMoney(currentAssignment.daily_rate || currentAssignment.booking_daily_rate)} />
+                  <Field label="Status" value={currentAssignment.status} />
+                </div>
+              </>
+            ) : (
+              <Empty title="No active booking" subtitle="This staff member is not currently assigned to a booking." />
+            )}
+          </CardBody>
         </Card>
 
         <Card>
-          <CardTitle>Recent activity</CardTitle>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-            {safeArray(overviewBookingHistory).slice(0, 3).length === 0 ? (
-              <Empty title="No recent bookings" />
-            ) : safeArray(overviewBookingHistory).slice(0, 3).map((row, i) => (
-              <div key={row.assignment_id || i} style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-                background: '#FBF9F4', border: '1px solid #EFEAE0', borderRadius: 11, padding: '11px 13px',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-                  <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#6F6A60', flexShrink: 0 }} />
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 600 }}>{row.client_name || 'Client'}</div>
-                    <div style={{ fontSize: 11.5, color: '#A39D91' }}>{row.patient_name || '-'} · {row.status || '-'}</div>
+          <CardHead title="Recent activity" />
+          <CardBody>
+            <div className="flex flex-col gap-2.5">
+              {safeArray(overviewBookingHistory).slice(0, 3).length === 0 ? (
+                <Empty title="No recent bookings" />
+              ) : safeArray(overviewBookingHistory).slice(0, 3).map((row, i) => (
+                <div key={row.assignment_id || i} className="flex items-center justify-between gap-3 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5">
+                  <div className="flex items-center gap-2.5">
+                    <span className="w-2 h-2 rounded-full bg-slate-400 flex-shrink-0" />
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">{row.client_name || 'Client'}</div>
+                      <div className="text-xs text-slate-400">{row.patient_name || '-'} · {row.status || '-'}</div>
+                    </div>
                   </div>
+                  <span className="text-sm font-bold text-slate-700">{formatMoney(row.amount_allocated || row.daily_rate)}</span>
                 </div>
-                <span style={{ fontSize: 13, fontWeight: 700, color: '#5A554B' }}>{formatMoney(row.amount_allocated || row.daily_rate)}</span>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          </CardBody>
         </Card>
       </div>
     </div>
   );
 
   const renderEarnings = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14 }}>
-        <MiniCard label="Current earnings" value={formatMoney(currentEarnings)} color="#2F8A5B" onClick={() => navigate(`/admin/staff/${staffProfileId}/current-earnings`)} />
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <MiniCard label="Current earnings" value={formatMoney(currentEarnings)} color="#059669" onClick={() => navigate(`/admin/staff/${staffProfileId}/current-earnings`)} />
         <MiniCard label="Total earned" value={formatMoney(totalEarned)} onClick={() => navigate(`/admin/staff/${staffProfileId}/total-earnings`)} />
         <MiniCard label="Paid out" value={formatMoney(totalPaidOut)} />
-        <MiniCard label="Outstanding" value={formatMoney(outstandingPayable)} color="#BC4338" />
+        <MiniCard label="Outstanding" value={formatMoney(outstandingPayable)} color="#dc2626" />
       </div>
 
       <Card>
-        <CardTitle>Earnings transactions</CardTitle>
-        {sectionErrors.earningsTransactions ? (
-          <Empty title="Failed to load earnings transactions" subtitle={sectionErrors.earningsTransactions} />
-        ) : safeArray(earningsTransactions).length === 0 ? (
-          <Empty title="No earnings transactions" subtitle="Salary accrual and payout rows will appear here." />
-        ) : (
-          <div>
-            <TableHead cols="1fr 1fr 1.1fr 0.9fr 1fr 0.9fr">
-              <span>Transaction</span><span>Date</span><span>Category</span><span>Type</span><span>Reference</span>
-              <span style={{ textAlign: 'right' }}>Amount</span>
-            </TableHead>
-            {earningsTransactions.map((tx, i) => {
-              const isDebit = tx.transaction_type === 'DEBIT';
-              return (
-                <TableRow key={tx.transaction_id || i} cols="1fr 1fr 1.1fr 0.9fr 1fr 0.9fr">
-                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, color: '#5A554B' }}>{tx.transaction_id || '-'}</div>
-                  <div style={{ fontSize: 12.5, color: '#5A554B' }}>{formatDateTime(tx.created_at)}</div>
-                  <div><span style={{ display: 'inline-block', fontSize: 11.5, fontWeight: 600, color: '#5A554B', background: '#F4F1EA', borderRadius: 7, padding: '3px 9px' }}>{tx.category || '-'}</span></div>
-                  <div><span style={{ display: 'inline-block', fontSize: 11.5, fontWeight: 600, borderRadius: 7, padding: '3px 9px', background: isDebit ? '#F7E6E3' : '#E3F1E8', color: isDebit ? '#BC4338' : '#2F7A53' }}>{tx.transaction_type || '-'}</span></div>
-                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11.5, color: '#6F6A60' }}>{tx.reference_number || tx.payment_method || '-'}</div>
-                  <div style={{ textAlign: 'right', fontSize: 13.5, fontWeight: 700, color: isDebit ? '#BC4338' : '#2F8A5B' }}>{formatMoney(tx.amount)}</div>
-                </TableRow>
-              );
-            })}
-          </div>
-        )}
+        <CardHead title="Earnings transactions" />
+        <CardBody className="p-0">
+          {sectionErrors.earningsTransactions ? (
+            <div className="p-5"><Empty title="Failed to load earnings transactions" subtitle={sectionErrors.earningsTransactions} /></div>
+          ) : safeArray(earningsTransactions).length === 0 ? (
+            <div className="p-5"><Empty title="No earnings transactions" subtitle="Salary accrual and payout rows will appear here." /></div>
+          ) : (
+            <div className="px-5 pb-5 pt-4">
+              <TableHead cols="1fr 1fr 1.1fr 0.9fr 1fr 0.9fr">
+                <span>Transaction</span><span>Date</span><span>Category</span><span>Type</span><span>Reference</span>
+                <span className="text-right">Amount</span>
+              </TableHead>
+              {earningsTransactions.map((tx, i) => {
+                const isDebit = tx.transaction_type === 'DEBIT';
+                return (
+                  <TableRow key={tx.transaction_id || i} cols="1fr 1fr 1.1fr 0.9fr 1fr 0.9fr">
+                    <div className="font-mono text-xs text-slate-500">{tx.transaction_id || '-'}</div>
+                    <div className="text-xs text-slate-500">{formatDateTime(tx.created_at)}</div>
+                    <div><span className="inline-block text-xs font-semibold text-slate-600 bg-slate-100 rounded px-2 py-0.5">{tx.category || '-'}</span></div>
+                    <div><span className={`inline-block text-xs font-semibold rounded px-2 py-0.5 ${isDebit ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{tx.transaction_type || '-'}</span></div>
+                    <div className="font-mono text-xs text-slate-500">{tx.reference_number || tx.payment_method || '-'}</div>
+                    <div className={`text-right text-sm font-bold ${isDebit ? 'text-red-600' : 'text-emerald-600'}`}>{formatMoney(tx.amount)}</div>
+                  </TableRow>
+                );
+              })}
+            </div>
+          )}
+        </CardBody>
       </Card>
     </div>
   );
 
   const renderCurrentBooking = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div className="flex flex-col gap-4">
       {currentAssignment && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14 }}>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <MiniCard label="Assignment status" value={currentAssignment.status || '-'} />
           <MiniCard label="Service type" value={currentAssignment.service_type || '-'} />
           <MiniCard label="Client" value={currentAssignment.client_name || '-'} />
@@ -886,23 +920,25 @@ const StaffDetailPageV2 = () => {
         </div>
       )}
       <Card>
-        <CardTitle sub="Live booking assignment loaded from the current-booking route">Current assignment</CardTitle>
-        {sectionErrors.currentBooking ? (
-          <Empty title="Failed to load current booking" subtitle={sectionErrors.currentBooking} />
-        ) : currentAssignment ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 16 }}>
-            <Field label="Assignment ID" value={currentAssignment.assignment_id} mono />
-            <Field label="Booking ID" value={currentAssignment.booking_id} mono />
-            <Field label="Client name" value={currentAssignment.client_name} />
-            <Field label="Patient name" value={currentAssignment.patient_name} />
-            <Field label="Service start" value={formatDate(currentAssignment.service_start_date || currentAssignment.start_date)} />
-            <Field label="Service end" value={formatDate(currentAssignment.service_end_date)} />
-            <Field label="Daily rate" value={formatMoney(currentAssignment.daily_rate || currentAssignment.booking_daily_rate)} />
-            <Field label="Assigned on" value={formatDateTime(currentAssignment.assigned_on)} />
-          </div>
-        ) : (
-          <Empty title="No active booking" subtitle="This staff member is not currently assigned to a booking." />
-        )}
+        <CardHead title="Current assignment" sub="Live booking assignment loaded from the current-booking route" />
+        <CardBody>
+          {sectionErrors.currentBooking ? (
+            <Empty title="Failed to load current booking" subtitle={sectionErrors.currentBooking} />
+          ) : currentAssignment ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <Field label="Assignment ID" value={currentAssignment.assignment_id} mono />
+              <Field label="Booking ID" value={currentAssignment.booking_id} mono />
+              <Field label="Client name" value={currentAssignment.client_name} />
+              <Field label="Patient name" value={currentAssignment.patient_name} />
+              <Field label="Service start" value={formatDate(currentAssignment.service_start_date || currentAssignment.start_date)} />
+              <Field label="Service end" value={formatDate(currentAssignment.service_end_date)} />
+              <Field label="Daily rate" value={formatMoney(currentAssignment.daily_rate || currentAssignment.booking_daily_rate)} />
+              <Field label="Assigned on" value={formatDateTime(currentAssignment.assigned_on)} />
+            </div>
+          ) : (
+            <Empty title="No active booking" subtitle="This staff member is not currently assigned to a booking." />
+          )}
+        </CardBody>
       </Card>
     </div>
   );
@@ -920,43 +956,45 @@ const StaffDetailPageV2 = () => {
       : 0;
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14 }}>
+      <div className="flex flex-col gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <MiniCard label="Total bookings" value={rows.length} />
           <MiniCard label="Days worked" value={totalDays} />
-          <MiniCard label="Active booking" value={currentAssignment?.client_name || '—'} color="#3F77B5" />
+          <MiniCard label="Active booking" value={currentAssignment?.client_name || '—'} color="#1d4ed8" />
           <MiniCard label="Avg per booking" value={rows.length ? formatMoney(avgSalary) : '—'} />
         </div>
         <Card>
-          <CardTitle>Booking history</CardTitle>
-          {sectionErrors.bookingHistory ? (
-            <Empty title="Failed to load booking history" subtitle={sectionErrors.bookingHistory} />
-          ) : rows.length === 0 ? (
-            <Empty title="No booking history" subtitle="Previous booking assignments will appear here." />
-          ) : (
-            <div>
-              <TableHead cols="1fr 1.2fr 1.2fr 0.9fr 1fr 0.8fr 1fr">
-                <span>Booking</span><span>Client</span><span>Care profile</span><span>Status</span>
-                <span>Dates</span><span style={{ textAlign: 'right' }}>Days</span><span style={{ textAlign: 'right' }}>Salary</span>
-              </TableHead>
-              {rows.map((row, i) => {
-                const start = row.service_start_date ? new Date(row.service_start_date) : null;
-                const end = row.service_end_date ? new Date(row.service_end_date) : new Date();
-                const days = start ? Math.max(1, Math.ceil((end - start) / 86400000)) : null;
-                return (
-                  <TableRow key={row.assignment_id || i} cols="1fr 1.2fr 1.2fr 0.9fr 1fr 0.8fr 1fr">
-                    <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, color: '#5A554B' }}>{row.booking_id || row.assignment_id || '-'}</div>
-                    <div style={{ fontSize: 13.5, fontWeight: 600, color: '#2A2722' }}>{row.client_name || '-'}</div>
-                    <div style={{ fontSize: 13, color: '#5A554B' }}>{row.patient_name || '-'}</div>
-                    <div><StatusPill value={row.status} /></div>
-                    <div style={{ fontSize: 12.5, color: '#5A554B' }}>{start ? formatDate(row.service_start_date) : '-'}</div>
-                    <div style={{ textAlign: 'right', fontSize: 13, color: '#5A554B' }}>{days ? `${days}d` : '-'}</div>
-                    <div style={{ textAlign: 'right', fontSize: 13.5, fontWeight: 700, color: '#2F8A5B' }}>{formatMoney(row.total_salary_paid || row.total_salary)}</div>
-                  </TableRow>
-                );
-              })}
-            </div>
-          )}
+          <CardHead title="Booking history" />
+          <CardBody className="p-0">
+            {sectionErrors.bookingHistory ? (
+              <div className="p-5"><Empty title="Failed to load booking history" subtitle={sectionErrors.bookingHistory} /></div>
+            ) : rows.length === 0 ? (
+              <div className="p-5"><Empty title="No booking history" subtitle="Previous booking assignments will appear here." /></div>
+            ) : (
+              <div className="px-5 pb-5 pt-4">
+                <TableHead cols="1fr 1.2fr 1.2fr 0.9fr 1fr 0.8fr 1fr">
+                  <span>Booking</span><span>Client</span><span>Care profile</span><span>Status</span>
+                  <span>Dates</span><span className="text-right">Days</span><span className="text-right">Salary</span>
+                </TableHead>
+                {rows.map((row, i) => {
+                  const start = row.service_start_date ? new Date(row.service_start_date) : null;
+                  const end = row.service_end_date ? new Date(row.service_end_date) : new Date();
+                  const days = start ? Math.max(1, Math.ceil((end - start) / 86400000)) : null;
+                  return (
+                    <TableRow key={row.assignment_id || i} cols="1fr 1.2fr 1.2fr 0.9fr 1fr 0.8fr 1fr">
+                      <div className="font-mono text-xs text-slate-500">{row.booking_id || row.assignment_id || '-'}</div>
+                      <div className="text-sm font-semibold text-slate-900">{row.client_name || '-'}</div>
+                      <div className="text-sm text-slate-600">{row.patient_name || '-'}</div>
+                      <div><StatusPill value={row.status} /></div>
+                      <div className="text-xs text-slate-500">{start ? formatDate(row.service_start_date) : '-'}</div>
+                      <div className="text-right text-sm text-slate-600">{days ? `${days}d` : '-'}</div>
+                      <div className="text-right text-sm font-bold text-emerald-600">{formatMoney(row.total_salary_paid || row.total_salary)}</div>
+                    </TableRow>
+                  );
+                })}
+              </div>
+            )}
+          </CardBody>
         </Card>
       </div>
     );
@@ -968,78 +1006,83 @@ const StaffDetailPageV2 = () => {
     const fiveStarCount = distribution.find(d => d.rating === 5)?.count || 0;
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14 }}>
-          <MiniCard label="Average rating" value={averageRating ? `${averageRating.toFixed(1)} ★` : '-'} color="#C98A2E" />
+      <div className="flex flex-col gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+          <MiniCard label="Average rating" value={averageRating ? `${averageRating.toFixed(1)} ★` : '-'} color="#b45309" />
           <MiniCard label="Total reviews" value={totalReviews || 0} />
           <MiniCard label="5-star reviews" value={fiveStarCount} />
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, alignItems: 'start' }}>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
           <Card>
-            <CardTitle>Rating distribution</CardTitle>
-            {distribution.length === 0 ? (
-              <Empty title="No ratings yet" />
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
-                {distribution.map(item => (
-                  <div key={item.rating} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{ width: 46, fontSize: 12.5, fontWeight: 600, color: '#5A554B' }}>{item.rating} star</div>
-                    <div style={{ flex: 1, height: 9, borderRadius: 5, background: '#EFEAE0', overflow: 'hidden' }}>
-                      <div style={{ height: 9, borderRadius: 5, background: '#C98A2E', width: `${Math.min(100, Number(item.count || 0) * 15)}%` }} />
+            <CardHead title="Rating distribution" />
+            <CardBody>
+              {distribution.length === 0 ? (
+                <Empty title="No ratings yet" />
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {distribution.map(item => (
+                    <div key={item.rating} className="flex items-center gap-3">
+                      <div className="w-12 text-xs font-semibold text-slate-600">{item.rating} star</div>
+                      <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+                        <div
+                          className="h-2 rounded-full bg-amber-400"
+                          style={{ width: `${Math.min(100, Number(item.count || 0) * 15)}%` }}
+                        />
+                      </div>
+                      <div className="w-6 text-right text-xs font-bold text-slate-700">{item.count}</div>
                     </div>
-                    <div style={{ width: 28, textAlign: 'right', fontSize: 12.5, fontWeight: 700 }}>{item.count}</div>
-                  </div>
-                ))}
-              </div>
-            )}
+                  ))}
+                </div>
+              )}
+            </CardBody>
           </Card>
 
           <Card>
-            <CardTitle>Recent reviews</CardTitle>
-            {recentReviews.length === 0 ? (
-              <Empty title="No reviews available" />
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {recentReviews.map((review, i) => {
-                  const isVisible = reviewToggles[review.review_id] ?? review.is_visible ?? true;
-                  return (
-                    <div key={review.review_id || i} style={{ background: '#FBF9F4', border: '1px solid #EFEAE0', borderRadius: 13, padding: '14px 16px', opacity: isVisible ? 1 : 0.6 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                        <div>
-                          <div style={{ fontSize: 13.5, fontWeight: 700 }}>{review.client_name || 'Client'}</div>
-                          <div style={{ fontSize: 11.5, color: '#A39D91' }}>{formatDateTime(review.created_at)}</div>
+            <CardHead title="Recent reviews" />
+            <CardBody>
+              {recentReviews.length === 0 ? (
+                <Empty title="No reviews available" />
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {recentReviews.map((review, i) => {
+                    const isVisible = reviewToggles[review.review_id] ?? review.is_visible ?? true;
+                    return (
+                      <div key={review.review_id || i} className={`bg-slate-50 border border-slate-200 rounded-lg p-3.5 transition-opacity ${isVisible ? '' : 'opacity-60'}`}>
+                        <div className="flex items-start justify-between gap-3 flex-wrap">
+                          <div>
+                            <div className="text-sm font-semibold text-slate-900">{review.client_name || 'Client'}</div>
+                            <div className="text-xs text-slate-400 mt-0.5">{formatDateTime(review.created_at)}</div>
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-700 rounded-full px-2.5 py-0.5 text-xs font-bold">
+                              ★ {review.rating || '-'}
+                            </span>
+                            <span className={`text-xs font-semibold rounded-full px-2.5 py-0.5 ${isVisible ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                              {isVisible ? '● Active' : '○ Hidden'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleReview(review.review_id, isVisible)}
+                              disabled={togglingReviewId === review.review_id}
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border transition-colors disabled:opacity-50 ${
+                                isVisible
+                                  ? 'bg-red-50 border-red-200 text-red-600 hover:bg-red-100'
+                                  : 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
+                              }`}
+                            >
+                              {togglingReviewId === review.review_id && <Loader2 className="w-3 h-3 animate-spin" />}
+                              {isVisible ? 'Deactivate' : 'Activate'}
+                            </button>
+                          </div>
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#FBF1DD', color: '#C98A2E', borderRadius: 999, padding: '3px 10px', fontSize: 12, fontWeight: 700 }}>
-                            ★ {review.rating || '-'}
-                          </span>
-                          <span style={{ fontSize: 11.5, fontWeight: 600, borderRadius: 999, padding: '3px 10px', background: isVisible ? '#E3F1E8' : '#F0EDE6', color: isVisible ? '#2F7A53' : '#9A9488' }}>
-                            {isVisible ? '● Active' : '○ Hidden'}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleToggleReview(review.review_id, isVisible)}
-                            disabled={togglingReviewId === review.review_id}
-                            style={{
-                              display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 11px', borderRadius: 8,
-                              fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-                              background: isVisible ? '#F7E6E3' : '#E3F1E8', color: isVisible ? '#BC4338' : '#2F7A53',
-                              border: `1px solid ${isVisible ? '#E3B5AF' : '#BBDDC8'}`,
-                              opacity: togglingReviewId === review.review_id ? 0.5 : 1,
-                            }}
-                          >
-                            {togglingReviewId === review.review_id && <Loader2 style={{ width: 11, height: 11, animation: 'spin 1s linear infinite' }} />}
-                            {isVisible ? 'Deactivate' : 'Activate'}
-                          </button>
-                        </div>
+                        <p className="mt-2.5 text-sm text-slate-600 leading-relaxed">{review.review_text || '-'}</p>
                       </div>
-                      <p style={{ margin: '9px 0 0', fontSize: 13, color: '#5A554B', lineHeight: 1.5 }}>{review.review_text || '-'}</p>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+                    );
+                  })}
+                </div>
+              )}
+            </CardBody>
           </Card>
         </div>
       </div>
@@ -1047,102 +1090,105 @@ const StaffDetailPageV2 = () => {
   };
 
   const renderPayouts = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14 }}>
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
         <MiniCard label="All-time paid" value={formatMoney(payoutsSummary?.all_time_paid ?? overviewPayoutSummary.total_payouts ?? 0)} />
-        <MiniCard label="Paid this month" value={formatMoney(payoutsSummary?.paid_this_month ?? 0)} color="#2F8A5B" />
-        <MiniCard label="Outstanding" value={formatMoney(payoutsSummary?.outstanding ?? currentEarnings)} color="#BC4338" />
+        <MiniCard label="Paid this month" value={formatMoney(payoutsSummary?.paid_this_month ?? 0)} color="#059669" />
+        <MiniCard label="Outstanding" value={formatMoney(payoutsSummary?.outstanding ?? currentEarnings)} color="#dc2626" />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, alignItems: 'start' }}>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
         <Card>
-          <CardTitle>Payout history</CardTitle>
-          {sectionErrors.payouts ? (
-            <Empty title="Failed to load payouts" subtitle={sectionErrors.payouts} />
-          ) : safeArray(payouts).length === 0 ? (
-            <Empty title="No payouts recorded" />
-          ) : (
-            <div>
-              <TableHead cols="1fr 1.1fr 1fr 0.9fr 1fr">
-                <span>Payout</span><span>Date</span><span>Method</span><span>Status</span><span style={{ textAlign: 'right' }}>Amount</span>
-              </TableHead>
-              {payouts.map((payout, i) => (
-                <TableRow key={payout.staff_payment_id || i} cols="1fr 1.1fr 1fr 0.9fr 1fr">
-                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12, color: '#5A554B' }}>{payout.staff_payment_id || '-'}</div>
-                  <div style={{ fontSize: 12.5, color: '#5A554B' }}>{formatDateTime(payout.paid_at)}</div>
-                  <div><span style={{ display: 'inline-block', fontSize: 11.5, fontWeight: 600, color: '#5A554B', background: '#F4F1EA', borderRadius: 7, padding: '3px 9px' }}>{payout.payment_method || '-'}</span></div>
-                  <div><StatusPill value={payout.status} /></div>
-                  <div style={{ textAlign: 'right', fontSize: 13.5, fontWeight: 700 }}>{formatMoney(payout.amount_paid)}</div>
-                </TableRow>
-              ))}
-            </div>
-          )}
+          <CardHead title="Payout history" />
+          <CardBody className="p-0">
+            {sectionErrors.payouts ? (
+              <div className="p-5"><Empty title="Failed to load payouts" subtitle={sectionErrors.payouts} /></div>
+            ) : safeArray(payouts).length === 0 ? (
+              <div className="p-5"><Empty title="No payouts recorded" /></div>
+            ) : (
+              <div className="px-5 pb-5 pt-4">
+                <TableHead cols="1fr 1.1fr 1fr 0.9fr 1fr">
+                  <span>Payout</span><span>Date</span><span>Method</span><span>Status</span><span className="text-right">Amount</span>
+                </TableHead>
+                {payouts.map((payout, i) => (
+                  <TableRow key={payout.staff_payment_id || i} cols="1fr 1.1fr 1fr 0.9fr 1fr">
+                    <div className="font-mono text-xs text-slate-500">{payout.staff_payment_id || '-'}</div>
+                    <div className="text-xs text-slate-500">{formatDateTime(payout.paid_at)}</div>
+                    <div><span className="inline-block text-xs font-semibold text-slate-600 bg-slate-100 rounded px-2 py-0.5">{payout.payment_method || '-'}</span></div>
+                    <div><StatusPill value={payout.status} /></div>
+                    <div className="text-right text-sm font-bold text-slate-900">{formatMoney(payout.amount_paid)}</div>
+                  </TableRow>
+                ))}
+              </div>
+            )}
+          </CardBody>
         </Card>
 
         <Card>
-          <CardTitle sub="Writes to the payroll ledger.">Record a payout</CardTitle>
-          <form onSubmit={submitPayout} style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
-            <div>
-              <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Amount</label>
-              <input type="number" min="0" step="0.01" value={payoutForm.amount} onChange={handlePayoutFieldChange('amount')} placeholder="0.00" style={inp} required />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Company bank account</label>
-              <select value={payoutForm.company_bank_account_id} onChange={handlePayoutFieldChange('company_bank_account_id')} style={{ ...inp, cursor: 'pointer' }}>
-                <option value="">Select company bank account</option>
-                {companyBankAccounts.map(acc => (
-                  <option key={acc.account_id} value={acc.account_id}>
-                    {acc.account_nickname || acc.account_holder_name || acc.bank_name || 'Company Bank Account'}
-                    {acc.account_number ? ` - ${acc.account_number}` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Staff bank account</label>
-              <select value={payoutForm.staff_bank_account_id} onChange={handlePayoutFieldChange('staff_bank_account_id')} style={{ ...inp, cursor: 'pointer' }}>
-                <option value="">Select staff bank account</option>
-                {bankAccounts.map(acc => (
-                  <option key={acc.staff_bank_account_id} value={acc.staff_bank_account_id}>
-                    {acc.account_holder_name || acc.bank_name || 'Bank Account'}
-                    {acc.account_number ? ` - ${acc.account_number}` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Reference (optional)</label>
-              <input type="text" value={payoutForm.reference_number} onChange={handlePayoutFieldChange('reference_number')} placeholder="TRF / receipt no." style={inp} />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Notes (optional)</label>
-              <input type="text" value={payoutForm.notes} onChange={handlePayoutFieldChange('notes')} placeholder="Optional notes" style={inp} />
-            </div>
-            {payoutSubmitError && (
-              <div style={{ background: '#F7E6E3', border: '1px solid #E3B5AF', borderRadius: 10, padding: '10px 12px', fontSize: 13, color: '#BC4338' }}>{payoutSubmitError}</div>
-            )}
-            {payoutSubmitSuccess && (
-              <div style={{ background: '#E3F1E8', border: '1px solid #BBDDC8', borderRadius: 10, padding: '10px 12px', fontSize: 13, color: '#2F7A53' }}>{payoutSubmitSuccess}</div>
-            )}
-            <div style={{ display: 'flex', gap: 8, marginTop: 3 }}>
-              <button type="submit" disabled={payoutSubmitting} style={{
-                flex: 1, background: '#137A6B', border: 'none', borderRadius: 10, padding: 12,
-                fontFamily: 'inherit', fontSize: 14, fontWeight: 700, color: '#fff', cursor: 'pointer',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
-                opacity: payoutSubmitting ? 0.6 : 1,
-              }}>
-                {payoutSubmitting && <Loader2 style={{ width: 14, height: 14, animation: 'spin 1s linear infinite' }} />}
-                Record payout
-              </button>
-              <button
-                type="button"
-                onClick={() => setPayoutForm({ amount: '', company_bank_account_id: '', staff_bank_account_id: '', payment_method: 'BANK_TRANSFER', reference_number: '', notes: '' })}
-                style={{ background: '#FCFBF8', border: '1px solid #E7E1D6', borderRadius: 10, padding: '12px 16px', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: '#5A554B', cursor: 'pointer' }}
-              >
-                Reset
-              </button>
-            </div>
-          </form>
+          <CardHead title="Record a payout" sub="Writes to the payroll ledger." />
+          <CardBody>
+            <form onSubmit={submitPayout} className="flex flex-col gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1">Amount</label>
+                <input type="number" min="0" step="0.01" value={payoutForm.amount} onChange={handlePayoutFieldChange('amount')} placeholder="0.00" className={inputCls} required />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1">Company bank account</label>
+                <select value={payoutForm.company_bank_account_id} onChange={handlePayoutFieldChange('company_bank_account_id')} className={`${inputCls} cursor-pointer`}>
+                  <option value="">Select company bank account</option>
+                  {companyBankAccounts.map(acc => (
+                    <option key={acc.account_id} value={acc.account_id}>
+                      {acc.account_nickname || acc.account_holder_name || acc.bank_name || 'Company Bank Account'}
+                      {acc.account_number ? ` - ${acc.account_number}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1">Staff bank account</label>
+                <select value={payoutForm.staff_bank_account_id} onChange={handlePayoutFieldChange('staff_bank_account_id')} className={`${inputCls} cursor-pointer`}>
+                  <option value="">Select staff bank account</option>
+                  {bankAccounts.map(acc => (
+                    <option key={acc.staff_bank_account_id} value={acc.staff_bank_account_id}>
+                      {acc.account_holder_name || acc.bank_name || 'Bank Account'}
+                      {acc.account_number ? ` - ${acc.account_number}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1">Reference (optional)</label>
+                <input type="text" value={payoutForm.reference_number} onChange={handlePayoutFieldChange('reference_number')} placeholder="TRF / receipt no." className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1">Notes (optional)</label>
+                <input type="text" value={payoutForm.notes} onChange={handlePayoutFieldChange('notes')} placeholder="Optional notes" className={inputCls} />
+              </div>
+              {payoutSubmitError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-sm text-red-700">{payoutSubmitError}</div>
+              )}
+              {payoutSubmitSuccess && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2.5 text-sm text-emerald-700">{payoutSubmitSuccess}</div>
+              )}
+              <div className="flex gap-2 mt-1">
+                <button
+                  type="submit"
+                  disabled={payoutSubmitting}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-500 transition-colors disabled:opacity-60"
+                >
+                  {payoutSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  Record payout
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPayoutForm({ amount: '', company_bank_account_id: '', staff_bank_account_id: '', payment_method: 'BANK_TRANSFER', reference_number: '', notes: '' })}
+                  className="px-4 py-2.5 border border-slate-200 text-sm font-semibold text-slate-600 rounded-lg hover:bg-slate-50 transition-colors"
+                >
+                  Reset
+                </button>
+              </div>
+            </form>
+          </CardBody>
         </Card>
       </div>
     </div>
@@ -1151,87 +1197,88 @@ const StaffDetailPageV2 = () => {
   const renderDeductions = () => {
     const totalDeducted = deductions.reduce((s, d) => s + parseFloat(d.amount || 0), 0);
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 14 }}>
-          <MiniCard label="Total deducted" value={formatMoney(totalDeducted)} color="#BC4338" />
+      <div className="flex flex-col gap-4">
+        <div className="grid grid-cols-2 gap-3">
+          <MiniCard label="Total deducted" value={formatMoney(totalDeducted)} color="#dc2626" />
           <MiniCard label="Total entries" value={deductions.length} />
         </div>
 
         <Card>
-          <CardTitle sub="Deducts from earnings. A WhatsApp message and SMS are sent automatically.">Apply deduction</CardTitle>
-          <form onSubmit={submitDeduction}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr auto', gap: 11, alignItems: 'end' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Amount (LKR)</label>
-                <input
-                  type="number" min="0.01" step="0.01" value={deductionForm.amount}
-                  onChange={e => { setDeductionForm(f => ({ ...f, amount: e.target.value })); setDeductionError(''); setDeductionSuccess(''); }}
-                  placeholder="0.00" style={inp} required
-                />
+          <CardHead title="Apply deduction" sub="Deducts from earnings. A WhatsApp message and SMS are sent automatically." />
+          <CardBody>
+            <form onSubmit={submitDeduction}>
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_1.5fr_auto] gap-3 items-end">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">Amount (LKR)</label>
+                  <input
+                    type="number" min="0.01" step="0.01" value={deductionForm.amount}
+                    onChange={e => { setDeductionForm(f => ({ ...f, amount: e.target.value })); setDeductionError(''); setDeductionSuccess(''); }}
+                    placeholder="0.00" className={inputCls} required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">Reason</label>
+                  <input
+                    type="text" value={deductionForm.reason}
+                    onChange={e => { setDeductionForm(f => ({ ...f, reason: e.target.value })); setDeductionError(''); setDeductionSuccess(''); }}
+                    placeholder="e.g. Uniform deposit, advance repayment" className={inputCls} required
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={deductionSubmitting}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-500 transition-colors whitespace-nowrap disabled:opacity-60"
+                >
+                  {deductionSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  Apply deduction
+                </button>
               </div>
-              <div>
-                <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Reason</label>
-                <input
-                  type="text" value={deductionForm.reason}
-                  onChange={e => { setDeductionForm(f => ({ ...f, reason: e.target.value })); setDeductionError(''); setDeductionSuccess(''); }}
-                  placeholder="e.g. Uniform deposit, advance repayment" style={inp} required
-                />
-              </div>
-              <button
-                type="submit" disabled={deductionSubmitting}
-                style={{
-                  background: '#BC4338', border: 'none', borderRadius: 10, padding: '11px 18px',
-                  fontFamily: 'inherit', fontSize: 14, fontWeight: 700, color: '#fff', cursor: 'pointer',
-                  whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6,
-                  opacity: deductionSubmitting ? 0.6 : 1,
-                }}
-              >
-                {deductionSubmitting && <Loader2 style={{ width: 14, height: 14, animation: 'spin 1s linear infinite' }} />}
-                Apply deduction
-              </button>
-            </div>
-            {deductionError && <div style={{ marginTop: 10, background: '#F7E6E3', border: '1px solid #E3B5AF', borderRadius: 10, padding: '10px 12px', fontSize: 13, color: '#BC4338' }}>{deductionError}</div>}
-            {deductionSuccess && <div style={{ marginTop: 10, background: '#E3F1E8', border: '1px solid #BBDDC8', borderRadius: 10, padding: '10px 12px', fontSize: 13, color: '#2F7A53' }}>{deductionSuccess}</div>}
-          </form>
+              {deductionError && <div className="mt-3 bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-sm text-red-700">{deductionError}</div>}
+              {deductionSuccess && <div className="mt-3 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2.5 text-sm text-emerald-700">{deductionSuccess}</div>}
+            </form>
+          </CardBody>
         </Card>
 
         <Card>
-          <CardTitle>Deduction history</CardTitle>
-          {sectionErrors.deductions ? (
-            <Empty title="Failed to load deductions" subtitle={sectionErrors.deductions} />
-          ) : deductions.length === 0 ? (
-            <Empty title="No deductions recorded" />
-          ) : (
-            <div>
-              <TableHead cols="1fr 1.6fr 1fr 0.9fr 1fr">
-                <span>Date</span><span>Reason</span><span>Recorded by</span><span>Status</span><span style={{ textAlign: 'right' }}>Amount</span>
-              </TableHead>
-              {deductions.map((d, i) => (
-                <TableRow key={d.transaction_id || i} cols="1fr 1.6fr 1fr 0.9fr 1fr">
-                  <div style={{ fontSize: 12.5, color: '#5A554B' }}>{formatDateTime(d.created_at)}</div>
-                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>{d.reason || '-'}</div>
-                  <div style={{ fontSize: 13, color: '#5A554B' }}>{d.recorded_by || 'Admin'}</div>
-                  <div><StatusPill value={d.status} /></div>
-                  <div style={{ textAlign: 'right', fontSize: 13.5, fontWeight: 700, color: '#BC4338' }}>{formatMoney(d.amount)}</div>
-                </TableRow>
-              ))}
-            </div>
-          )}
+          <CardHead title="Deduction history" />
+          <CardBody className="p-0">
+            {sectionErrors.deductions ? (
+              <div className="p-5"><Empty title="Failed to load deductions" subtitle={sectionErrors.deductions} /></div>
+            ) : deductions.length === 0 ? (
+              <div className="p-5"><Empty title="No deductions recorded" /></div>
+            ) : (
+              <div className="px-5 pb-5 pt-4">
+                <TableHead cols="1fr 1.6fr 1fr 0.9fr 1fr">
+                  <span>Date</span><span>Reason</span><span>Recorded by</span><span>Status</span><span className="text-right">Amount</span>
+                </TableHead>
+                {deductions.map((d, i) => (
+                  <TableRow key={d.transaction_id || i} cols="1fr 1.6fr 1fr 0.9fr 1fr">
+                    <div className="text-xs text-slate-500">{formatDateTime(d.created_at)}</div>
+                    <div className="text-sm font-semibold text-slate-900">{d.reason || '-'}</div>
+                    <div className="text-sm text-slate-600">{d.recorded_by || 'Admin'}</div>
+                    <div><StatusPill value={d.status} /></div>
+                    <div className="text-right text-sm font-bold text-red-600">{formatMoney(d.amount)}</div>
+                  </TableRow>
+                ))}
+              </div>
+            )}
+          </CardBody>
         </Card>
       </div>
     );
   };
 
   const renderBankAccounts = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h3 style={{ margin: 0, fontSize: 15.5, fontWeight: 700, color: '#2A2722' }}>Staff bank accounts</h3>
-          <p style={{ margin: '3px 0 0', fontSize: 12.5, color: '#9A9488' }}>Personal bank account records for this staff member.</p>
+          <h3 className="text-base font-bold text-slate-900">Staff bank accounts</h3>
+          <p className="text-xs text-slate-400 mt-0.5">Personal bank account records for this staff member.</p>
         </div>
         <button
-          type="button" onClick={openAddBankModal}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#137A6B', border: 'none', borderRadius: 10, padding: '10px 15px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', cursor: 'pointer' }}
+          type="button"
+          onClick={openAddBankModal}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-500 transition-colors"
         >
           + Add account
         </button>
@@ -1242,40 +1289,41 @@ const StaffDetailPageV2 = () => {
       ) : safeArray(bankAccounts).length === 0 ? (
         <Empty title="No bank accounts saved" subtitle="Use the Add Account button to add a bank account for this staff member." />
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14 }}>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {bankAccounts.map((account, i) => (
-            <div key={account.staff_bank_account_id || i} style={{ background: '#fff', border: '1px solid #ECE7DF', borderRadius: 16, padding: 18 }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 14 }}>
+            <div key={account.staff_bank_account_id || i} className="bg-white border border-slate-200 rounded-lg p-4">
+              <div className="flex items-start justify-between gap-2 mb-3.5">
                 <div>
-                  <div style={{ fontSize: 14.5, fontWeight: 700 }}>{account.account_holder_name || account.bank_name || 'Bank Account'}</div>
-                  <div style={{ fontSize: 12.5, color: '#6F6A60', marginTop: 2 }}>{account.bank_name || '-'}{account.branch_name ? ` · ${account.branch_name}` : ''}</div>
+                  <div className="text-sm font-bold text-slate-900">{account.account_holder_name || account.bank_name || 'Bank Account'}</div>
+                  <div className="text-xs text-slate-500 mt-0.5">{account.bank_name || '-'}{account.branch_name ? ` · ${account.branch_name}` : ''}</div>
                 </div>
-                <span style={{ fontSize: 11.5, fontWeight: 600, padding: '3px 9px', borderRadius: 999, background: account.is_active ? '#E3F1E8' : '#F7E6E3', color: account.is_active ? '#2F7A53' : '#BC4338' }}>
+                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${account.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
                   {account.is_active ? 'Active' : 'Inactive'}
                 </span>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 7, fontSize: 12.5, color: '#5A554B', marginBottom: 14 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
-                  <span style={{ color: '#9A9488' }}>Account no.</span>
-                  <span style={{ fontFamily: "'JetBrains Mono',monospace" }}>{account.account_number || '-'}</span>
+              <div className="flex flex-col gap-1.5 text-xs text-slate-600 mb-3.5">
+                <div className="flex justify-between gap-2">
+                  <span className="text-slate-400">Account no.</span>
+                  <span className="font-mono">{account.account_number || '-'}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
-                  <span style={{ color: '#9A9488' }}>Branch</span><span>{account.branch_name || '-'}</span>
+                <div className="flex justify-between gap-2">
+                  <span className="text-slate-400">Branch</span><span>{account.branch_name || '-'}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
-                  <span style={{ color: '#9A9488' }}>Currency</span><span>{account.currency || 'LKR'}</span>
+                <div className="flex justify-between gap-2">
+                  <span className="text-slate-400">Currency</span><span>{account.currency || 'LKR'}</span>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: 8, borderTop: '1px solid #F2EEE6', paddingTop: 12 }}>
+              <div className="flex gap-2 border-t border-slate-100 pt-3">
                 <button
-                  type="button" onClick={() => openEditBankModal(account)}
-                  style={{ flex: 1, background: '#FCFBF8', border: '1px solid #E7E1D6', borderRadius: 9, padding: 8, fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#5A554B', cursor: 'pointer' }}
+                  type="button"
+                  onClick={() => openEditBankModal(account)}
+                  className="flex-1 text-xs font-semibold border border-slate-200 rounded-lg py-1.5 text-slate-600 hover:bg-slate-50 transition-colors"
                 >Edit</button>
                 <button
                   type="button"
                   onClick={() => handleDeleteBankAccount(account.staff_bank_account_id)}
                   disabled={deletingBankId === account.staff_bank_account_id}
-                  style={{ flex: 1, background: '#fff', border: '1px solid #E3B5AF', borderRadius: 9, padding: 8, fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#BC4338', cursor: 'pointer', opacity: deletingBankId === account.staff_bank_account_id ? 0.5 : 1 }}
+                  className="flex-1 text-xs font-semibold border border-red-100 rounded-lg py-1.5 text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
                 >
                   {deletingBankId === account.staff_bank_account_id ? '...' : 'Remove'}
                 </button>
@@ -1293,91 +1341,95 @@ const StaffDetailPageV2 = () => {
     const pendingCount = changeRequests.filter(r => r.status === 'PENDING' || r.status === 'UNDER_REVIEW').length;
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14 }}>
+      <div className="flex flex-col gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <MiniCard label="Total requests" value={changeRequests.length} />
-          <MiniCard label="Pending" value={pendingCount} color="#C98A2E" />
-          <MiniCard label="Approved" value={approvedCount} color="#2F8A5B" />
-          <MiniCard label="Rejected" value={rejectedCount} color="#BC4338" />
+          <MiniCard label="Pending" value={pendingCount} color="#b45309" />
+          <MiniCard label="Approved" value={approvedCount} color="#059669" />
+          <MiniCard label="Rejected" value={rejectedCount} color="#dc2626" />
         </div>
 
         <Card>
-          <CardTitle>Change request history</CardTitle>
-          {sectionErrors.changeRequests ? (
-            <Empty title="Failed to load change requests" subtitle={sectionErrors.changeRequests} />
-          ) : changeRequests.length === 0 ? (
-            <Empty title="No change requests" subtitle="This staff member has not submitted any change requests yet." />
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
-              {changeRequests.map(req => {
-                const isExpanded = expandedRequestId === req.request_id;
-                const logs = requestLogs[req.request_id] || [];
-                const isLoadingLog = loadingLogs[req.request_id];
-                const tm = requestTypeMeta(req.request_type);
+          <CardHead title="Change request history" />
+          <CardBody>
+            {sectionErrors.changeRequests ? (
+              <Empty title="Failed to load change requests" subtitle={sectionErrors.changeRequests} />
+            ) : changeRequests.length === 0 ? (
+              <Empty title="No change requests" subtitle="This staff member has not submitted any change requests yet." />
+            ) : (
+              <div className="flex flex-col gap-3">
+                {changeRequests.map(req => {
+                  const isExpanded = expandedRequestId === req.request_id;
+                  const logs = requestLogs[req.request_id] || [];
+                  const isLoadingLog = loadingLogs[req.request_id];
+                  const tm = requestTypeMeta(req.request_type);
 
-                return (
-                  <div key={req.request_id} style={{ border: '1px solid #ECE7DF', borderRadius: 13, overflow: 'hidden' }}>
-                    <button
-                      type="button"
-                      onClick={() => handleExpandRequest(req.request_id)}
-                      style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 16px', cursor: 'pointer', background: '#FCFBF8', border: 'none', fontFamily: 'inherit', textAlign: 'left' }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: 11.5, fontWeight: 700, padding: '3px 9px', borderRadius: 7, background: tm.bg, color: tm.col }}>{tm.label}</span>
-                        <StatusPill value={req.status?.replace(/_/g, ' ')} />
-                        <span style={{ fontSize: 12.5, color: '#8A8478' }}>Submitted {formatDateTime(req.created_at)}</span>
-                        {req.reviewer_name && (
-                          <span style={{ fontSize: 12.5, color: '#8A8478' }}>· Reviewer: <strong style={{ color: '#2A2722' }}>{req.reviewer_name}</strong></span>
-                        )}
-                      </div>
-                      <span style={{ fontSize: 14, color: '#A39D91' }}>{isExpanded ? '▲' : '▼'}</span>
-                    </button>
+                  return (
+                    <div key={req.request_id} className="border border-slate-200 rounded-lg overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => handleExpandRequest(req.request_id)}
+                        className="w-full flex items-center justify-between gap-3 px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors text-left"
+                      >
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                          <span className={`text-xs font-bold px-2 py-0.5 rounded ${tm.cls}`}>{tm.label}</span>
+                          <StatusPill value={req.status?.replace(/_/g, ' ')} />
+                          <span className="text-xs text-slate-400">Submitted {formatDateTime(req.created_at)}</span>
+                          {req.reviewer_name && (
+                            <span className="text-xs text-slate-400">· Reviewer: <strong className="text-slate-700">{req.reviewer_name}</strong></span>
+                          )}
+                        </div>
+                        <span className="text-slate-400 flex-shrink-0">
+                          {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                        </span>
+                      </button>
 
-                    {isExpanded && (
-                      <div style={{ borderTop: '1px solid #EFEAE0', padding: '15px 16px', background: '#fff' }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase', color: '#A39D91', marginBottom: 9 }}>Requested changes</div>
-                        {renderChangeDiff(req.request_type, req.requested_changes)}
+                      {isExpanded && (
+                        <div className="border-t border-slate-100 p-4 bg-white">
+                          <div className="text-xs font-bold tracking-wide uppercase text-slate-400 mb-2.5">Requested changes</div>
+                          {renderChangeDiff(req.request_type, req.requested_changes)}
 
-                        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase', color: '#A39D91', margin: '16px 0 11px' }}>Audit trail</div>
-                        {isLoadingLog ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#9A9488' }}>
-                            <Loader2 style={{ width: 14, height: 14, animation: 'spin 1s linear infinite' }} /> Loading logs...
-                          </div>
-                        ) : logs.length === 0 ? (
-                          <p style={{ fontSize: 13, color: '#9A9488', margin: 0 }}>No audit log entries found.</p>
-                        ) : (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingLeft: 6 }}>
-                            {logs.map((log, idx) => {
-                              const am = auditActionMeta(log.action);
-                              return (
-                                <div key={log.log_id || idx} style={{ display: 'flex', alignItems: 'flex-start', gap: 11 }}>
-                                  <span style={{ width: 9, height: 9, borderRadius: '50%', background: am.dot, marginTop: 4, flexShrink: 0 }} />
-                                  <div>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                                      <span style={{ fontSize: 11.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: am.bg, color: am.col }}>{log.action}</span>
-                                      <span style={{ fontSize: 13, fontWeight: 600 }}>{log.performed_by_name || 'Unknown'}</span>
-                                      <span style={{ fontSize: 11.5, color: '#A39D91' }}>{formatDateTime(log.created_at)}</span>
+                          <div className="text-xs font-bold tracking-wide uppercase text-slate-400 mt-4 mb-3">Audit trail</div>
+                          {isLoadingLog ? (
+                            <div className="flex items-center gap-2 text-sm text-slate-400">
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading logs...
+                            </div>
+                          ) : logs.length === 0 ? (
+                            <p className="text-sm text-slate-400">No audit log entries found.</p>
+                          ) : (
+                            <div className="flex flex-col gap-3 pl-1.5">
+                              {logs.map((log, idx) => {
+                                const am = auditActionMeta(log.action);
+                                return (
+                                  <div key={log.log_id || idx} className="flex items-start gap-3">
+                                    <span className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${am.dot}`} />
+                                    <div>
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className={`text-xs font-bold px-2 py-0.5 rounded ${am.cls}`}>{log.action}</span>
+                                        <span className="text-sm font-semibold text-slate-800">{log.performed_by_name || 'Unknown'}</span>
+                                        <span className="text-xs text-slate-400">{formatDateTime(log.created_at)}</span>
+                                      </div>
+                                      {log.notes && <div className="text-xs text-slate-500 italic mt-1">"{log.notes}"</div>}
                                     </div>
-                                    {log.notes && <div style={{ fontSize: 12.5, color: '#6F6A60', fontStyle: 'italic', marginTop: 3 }}>"{log.notes}"</div>}
                                   </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardBody>
         </Card>
       </div>
     );
   };
 
-  // ── bank modal (Tailwind, identical to original) ───────────────────────────
+  // ── bank modal ─────────────────────────────────────────────────────────────
   const renderBankModal = () => !bankModal.isOpen ? null : (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
@@ -1465,9 +1517,9 @@ const StaffDetailPageV2 = () => {
   if (loading || authLoading) {
     return (
       <AdminLayout>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '45vh' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#6F6A60', fontSize: 14 }}>
-            <Loader2 style={{ width: 18, height: 18, animation: 'spin 1s linear infinite' }} />
+        <div className="flex items-center justify-center h-64">
+          <div className="flex items-center gap-2.5 text-slate-500 text-sm">
+            <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
             Loading staff detail...
           </div>
         </div>
@@ -1478,12 +1530,12 @@ const StaffDetailPageV2 = () => {
   if (error) {
     return (
       <AdminLayout>
-        <div style={{ background: '#F7E6E3', border: '1px solid #E3B5AF', borderRadius: 16, padding: 24, color: '#BC4338' }}>
-          <p style={{ fontWeight: 600, margin: '0 0 16px' }}>{error}</p>
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+          <p className="font-semibold text-red-700 mb-4">{error}</p>
           <button
             type="button"
-            onClick={() => navigate('/admin/users')}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#BC4338', border: 'none', borderRadius: 10, padding: '10px 16px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', cursor: 'pointer' }}
+            onClick={() => navigate('/admin/staff-management')}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-500 transition-colors"
           >
             ← Back to staff roster
           </button>
@@ -1498,183 +1550,159 @@ const StaffDetailPageV2 = () => {
   return (
     <AdminLayout>
       {renderBankModal()}
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
 
-      <div style={{
-        margin: '-32px -32px -32px -32px',
-        background: '#F6F3EC',
-        minHeight: '100vh',
-        padding: '26px 24px 60px',
-        fontFamily: "'Hanken Grotesk',system-ui,sans-serif",
-        color: '#2A2722',
-        WebkitFontSmoothing: 'antialiased',
-      }}>
-        <div style={{ maxWidth: 1180, margin: '0 auto' }}>
-
-          {/* HEADER */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 22 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-              <button
-                type="button"
-                onClick={() => navigate('/admin/users')}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: '1px solid #E7E1D6', borderRadius: 10, padding: '9px 13px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#5A554B', cursor: 'pointer' }}
-              >
-                ← Back to roster
-              </button>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 34, height: 34, borderRadius: 9, background: '#137A6B', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 20, fontWeight: 700, lineHeight: 1 }}>+</div>
-                <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: '-.01em' }}>VCare</div>
-              </div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12.5, color: '#8A8478', background: '#fff', border: '1px solid #E7E1D6', borderRadius: 8, padding: '7px 11px' }}>
-                {profile.staff_code || staffProfileId}
-              </span>
-              <button
-                type="button"
-                onClick={refreshData}
-                disabled={refreshing}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: '1px solid #E7E1D6', borderRadius: 10, padding: '9px 13px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#5A554B', cursor: 'pointer', opacity: refreshing ? 0.6 : 1 }}
-              >
-                {refreshing ? <Loader2 style={{ width: 14, height: 14, animation: 'spin 1s linear infinite' }} /> : '↻'} Refresh
-              </button>
-            </div>
-          </div>
-
-          {/* HERO */}
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 18, flexWrap: 'wrap', marginBottom: 20 }}>
-            <div style={{ width: 62, height: 62, borderRadius: 16, background: '#E4F1ED', color: '#137A6B', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontWeight: 800, flexShrink: 0, overflow: 'hidden' }}>
-              {profile.profile_picture_url
-                ? <img src={profile.profile_picture_url} alt={profile.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                : getInitials(profile.full_name)}
-            </div>
-            <div style={{ flex: 1, minWidth: 260 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 6 }}>
-                <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, letterSpacing: '-.02em', lineHeight: 1.15 }}>
-                  {profile.full_name || 'Staff profile'}
-                </h1>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: heroStatus.bg, color: heroStatus.col, borderRadius: 999, padding: '5px 12px', fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap' }}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: heroStatus.dot }} />
-                  {profile.current_status || 'Unknown'}
-                </span>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: isActive ? '#E3F1E8' : '#F7E6E3', color: isActive ? '#2F7A53' : '#BC4338', borderRadius: 999, padding: '5px 12px', fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap' }}>
-                  {isActive ? '✓ Active account' : '✗ Deactivated'}
-                </span>
-              </div>
-              <div style={{ fontSize: 15, fontWeight: 600, color: '#3A362F', marginBottom: 6 }}>
-                {profile.designation || 'Staff member'}
-              </div>
-              <p style={{ margin: 0, fontSize: 14, color: '#6F6A60' }}>
-                {profile.staff_code || staffProfileId}
-                {profile.mobile_number ? ` · ${profile.mobile_number}` : ''}
-                {profile.created_at ? ` · Joined ${formatDate(profile.created_at)}` : ''}
-                {currentAssignment?.client_name ? ` · Currently on ${currentAssignment.client_name} booking` : ''}
-              </p>
-            </div>
-
-            {/* ADMIN NOTES */}
-            <div style={{ flex: '1 1 320px', minWidth: 280, maxWidth: 440 }}>
-              <AdminNotesCarousel
-                notes={adminNotes}
-                loading={adminNotesLoading}
-                busy={adminNotesBusy}
-                onAdd={handleAddNote}
-                onEdit={handleEditNote}
-                onDelete={handleDeleteNote}
-              />
-            </div>
-          </div>
-
-          {/* STAT CARDS */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14, marginBottom: 18 }}>
-            <div
-              style={{ background: '#fff', border: '1px solid #ECE7DF', borderRadius: 16, padding: '17px 18px', cursor: 'pointer' }}
-              onClick={() => navigate(`/admin/staff/${staffProfileId}/current-earnings`)}
-              title="Click to see current earnings breakdown"
-            >
-              <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#9A9488' }}>Current earnings</div>
-              <div style={{ fontSize: 25, fontWeight: 800, letterSpacing: '-.02em', marginTop: 7, color: '#2F8A5B' }}>{formatMoney(currentEarnings)}</div>
-              <div style={{ fontSize: 12.5, color: '#2F8A5B', fontWeight: 600, marginTop: 4 }}>View breakdown →</div>
-            </div>
-            <div
-              style={{ background: '#fff', border: '1px solid #ECE7DF', borderRadius: 16, padding: '17px 18px', cursor: 'pointer' }}
-              onClick={() => navigate(`/admin/staff/${staffProfileId}/total-earnings`)}
-              title="Click to see total earnings breakdown"
-            >
-              <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#9A9488' }}>Total earned</div>
-              <div style={{ fontSize: 25, fontWeight: 800, letterSpacing: '-.02em', marginTop: 7 }}>{formatMoney(totalEarned)}</div>
-              <div style={{ fontSize: 12.5, color: '#6F6A60', fontWeight: 600, marginTop: 4 }}>across {totalBookings} bookings</div>
-            </div>
-            <div style={{ background: '#fff', border: '1px solid #ECE7DF', borderRadius: 16, padding: '17px 18px' }}>
-              <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#9A9488' }}>Paid out</div>
-              <div style={{ fontSize: 25, fontWeight: 800, letterSpacing: '-.02em', marginTop: 7 }}>{formatMoney(totalPaidOut)}</div>
-              <div style={{ fontSize: 12.5, color: '#6F6A60', fontWeight: 600, marginTop: 4 }}>total disbursed</div>
-            </div>
-            <div style={{ background: '#fff', border: '1px solid #ECE7DF', borderRadius: 16, padding: '17px 18px' }}>
-              <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#9A9488' }}>Outstanding payable</div>
-              <div style={{ fontSize: 25, fontWeight: 800, letterSpacing: '-.02em', marginTop: 7, color: '#BC4338' }}>{formatMoney(outstandingPayable)}</div>
-              <div style={{ fontSize: 12.5, color: '#BC4338', fontWeight: 600, marginTop: 4 }}>awaiting payout</div>
-            </div>
-          </div>
-
-          {/* LEAVE SUMMARY */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginBottom: 18 }}>
-            <div style={{ background: '#fff', border: '1px solid #ECE7DF', borderRadius: 16, padding: '17px 18px' }}>
-              <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#9A9488' }}>Total leaves taken</div>
-              <div style={{ fontSize: 25, fontWeight: 800, letterSpacing: '-.02em', marginTop: 7 }}>{leaveSummary.total_leave_days} day{leaveSummary.total_leave_days === 1 ? '' : 's'}</div>
-              <div style={{ fontSize: 12.5, color: '#6F6A60', fontWeight: 600, marginTop: 4 }}>approved leave, all time</div>
-            </div>
-            <div style={{ background: '#fff', border: '1px solid #ECE7DF', borderRadius: 16, padding: '17px 18px' }}>
-              <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#9A9488' }}>Leaves this month</div>
-              <div style={{ fontSize: 25, fontWeight: 800, letterSpacing: '-.02em', marginTop: 7, color: '#8C5AA6' }}>{leaveSummary.month_leave_days} day{leaveSummary.month_leave_days === 1 ? '' : 's'}</div>
-              <div style={{ fontSize: 12.5, color: '#6F6A60', fontWeight: 600, marginTop: 4 }}>current calendar month</div>
-            </div>
-          </div>
-
-          {/* WORK & PAY CALENDAR */}
-          {(attendanceCalendar.assignments.length > 0 || leaveSummary.approved_leaves.length > 0) && (
-            <div style={{ marginBottom: 18 }}>
-              <StaffCareTimeline
-                assignments={attendanceCalendar.assignments}
-                attendanceRecords={attendanceCalendar.attendance}
-                leaveDays={leaveSummary.approved_leaves}
-              />
-            </div>
-          )}
-
-          {/* TABS */}
-          <div style={{ display: 'flex', gap: 7, marginBottom: 16, background: '#EEE9E0', padding: 5, borderRadius: 13, width: 'fit-content', maxWidth: '100%', flexWrap: 'wrap' }}>
-            {sectionConfig.map(tab => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveSection(tab.id)}
-                style={{
-                  border: 'none', borderRadius: 9, padding: '9px 15px', fontFamily: 'inherit',
-                  fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
-                  background: activeSection === tab.id ? '#fff' : 'transparent',
-                  color: activeSection === tab.id ? '#2A2722' : '#7A756A',
-                  boxShadow: activeSection === tab.id ? '0 1px 3px rgba(40,33,22,.12)' : 'none',
-                }}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          {/* TAB PANEL */}
-          {activeSection === 'overview'        && renderOverview()}
-          {activeSection === 'earnings'        && renderEarnings()}
-          {activeSection === 'current-booking' && renderCurrentBooking()}
-          {activeSection === 'booking-history' && renderBookingHistory()}
-          {activeSection === 'reviews'         && renderReviews()}
-          {activeSection === 'payouts'         && renderPayouts()}
-          {activeSection === 'deductions'      && renderDeductions()}
-          {activeSection === 'bank-accounts'   && renderBankAccounts()}
-          {activeSection === 'change-history'  && renderChangeHistory()}
-
+      {/* HEADER ROW */}
+      <div className="flex items-center justify-between gap-4 flex-wrap mb-5 -mt-2">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => navigate('/admin/staff-management')}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 text-slate-600 text-sm font-semibold rounded-lg hover:bg-slate-100 transition-colors"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to roster
+          </button>
+        </div>
+        <div className="flex items-center gap-2.5">
+          <span className="font-mono text-xs text-slate-400 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
+            {profile.staff_code || staffProfileId}
+          </span>
+          <button
+            type="button"
+            onClick={refreshData}
+            disabled={refreshing}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 text-slate-600 text-sm font-semibold rounded-lg hover:bg-slate-100 transition-colors disabled:opacity-60"
+          >
+            {refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : '↻'} Refresh
+          </button>
         </div>
       </div>
+
+      {/* HERO */}
+      <div className="flex items-start gap-4 flex-wrap mb-5">
+        <div className="w-14 h-14 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center text-xl font-bold flex-shrink-0 overflow-hidden">
+          {profile.profile_picture_url
+            ? <img src={profile.profile_picture_url} alt={profile.full_name} className="w-full h-full object-cover" />
+            : getInitials(profile.full_name)}
+        </div>
+        <div className="flex-1 min-w-[220px]">
+          <div className="flex items-center gap-2.5 flex-wrap mb-1.5">
+            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">{profile.full_name || 'Staff profile'}</h1>
+            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${heroStatus.bg} ${heroStatus.text}`}>
+              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${heroStatus.dot}`} />
+              {profile.current_status || 'Unknown'}
+            </span>
+            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+              {isActive ? '✓ Active account' : '✗ Deactivated'}
+            </span>
+          </div>
+          <div className="text-sm font-semibold text-slate-700 mb-1.5">{profile.designation || 'Staff member'}</div>
+          <p className="text-sm text-slate-500">
+            {profile.staff_code || staffProfileId}
+            {profile.mobile_number ? ` · ${profile.mobile_number}` : ''}
+            {profile.created_at ? ` · Joined ${formatDate(profile.created_at)}` : ''}
+            {currentAssignment?.client_name ? ` · Currently on ${currentAssignment.client_name} booking` : ''}
+          </p>
+        </div>
+
+        {/* ADMIN NOTES */}
+        <div className="flex-1 min-w-[280px] max-w-[440px]">
+          <AdminNotesCarousel
+            notes={adminNotes}
+            loading={adminNotesLoading}
+            busy={adminNotesBusy}
+            onAdd={handleAddNote}
+            onEdit={handleEditNote}
+            onDelete={handleDeleteNote}
+          />
+        </div>
+      </div>
+
+      {/* STAT CARDS */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+        <div
+          className="bg-white border border-slate-200 rounded-lg p-4 cursor-pointer hover:bg-slate-50 transition-colors"
+          onClick={() => navigate(`/admin/staff/${staffProfileId}/current-earnings`)}
+          title="Click to see current earnings breakdown"
+        >
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Current earnings</p>
+          <p className="text-xl font-bold mt-1.5 text-emerald-600">{formatMoney(currentEarnings)}</p>
+          <p className="text-xs text-blue-600 font-semibold mt-1">View breakdown →</p>
+        </div>
+        <div
+          className="bg-white border border-slate-200 rounded-lg p-4 cursor-pointer hover:bg-slate-50 transition-colors"
+          onClick={() => navigate(`/admin/staff/${staffProfileId}/total-earnings`)}
+          title="Click to see total earnings breakdown"
+        >
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Total earned</p>
+          <p className="text-xl font-bold mt-1.5 text-slate-900">{formatMoney(totalEarned)}</p>
+          <p className="text-xs text-slate-400 font-semibold mt-1">across {totalBookings} bookings</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-lg p-4">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Paid out</p>
+          <p className="text-xl font-bold mt-1.5 text-slate-900">{formatMoney(totalPaidOut)}</p>
+          <p className="text-xs text-slate-400 font-semibold mt-1">total disbursed</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-lg p-4">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Outstanding payable</p>
+          <p className="text-xl font-bold mt-1.5 text-red-600">{formatMoney(outstandingPayable)}</p>
+          <p className="text-xs text-red-500 font-semibold mt-1">awaiting payout</p>
+        </div>
+      </div>
+
+      {/* LEAVE SUMMARY */}
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        <div className="bg-white border border-slate-200 rounded-lg p-4">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Total leaves taken</p>
+          <p className="text-xl font-bold mt-1.5 text-slate-900">{leaveSummary.total_leave_days} day{leaveSummary.total_leave_days === 1 ? '' : 's'}</p>
+          <p className="text-xs text-slate-400 font-semibold mt-1">approved leave, all time</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-lg p-4">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Leaves this month</p>
+          <p className="text-xl font-bold mt-1.5 text-purple-600">{leaveSummary.month_leave_days} day{leaveSummary.month_leave_days === 1 ? '' : 's'}</p>
+          <p className="text-xs text-slate-400 font-semibold mt-1">current calendar month</p>
+        </div>
+      </div>
+
+      {/* WORK & PAY CALENDAR */}
+      {(attendanceCalendar.assignments.length > 0 || leaveSummary.approved_leaves.length > 0) && (
+        <div className="mb-4">
+          <StaffCareTimeline
+            assignments={attendanceCalendar.assignments}
+            attendanceRecords={attendanceCalendar.attendance}
+            leaveDays={leaveSummary.approved_leaves}
+          />
+        </div>
+      )}
+
+      {/* TABS */}
+      <div className="flex gap-1 mb-4 bg-slate-100 p-1 rounded-lg w-fit max-w-full flex-wrap">
+        {sectionConfig.map(tab => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setActiveSection(tab.id)}
+            className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all whitespace-nowrap ${
+              activeSection === tab.id
+                ? 'bg-white text-slate-900 shadow-sm'
+                : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* TAB PANEL */}
+      {activeSection === 'overview'        && renderOverview()}
+      {activeSection === 'earnings'        && renderEarnings()}
+      {activeSection === 'current-booking' && renderCurrentBooking()}
+      {activeSection === 'booking-history' && renderBookingHistory()}
+      {activeSection === 'reviews'         && renderReviews()}
+      {activeSection === 'payouts'         && renderPayouts()}
+      {activeSection === 'deductions'      && renderDeductions()}
+      {activeSection === 'bank-accounts'   && renderBankAccounts()}
+      {activeSection === 'change-history'  && renderChangeHistory()}
+
     </AdminLayout>
   );
 };

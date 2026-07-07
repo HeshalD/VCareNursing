@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { User, Lock, Eye, EyeOff, Mail, Phone, MapPin } from 'lucide-react';
+import { User, Lock, Eye, EyeOff, Mail, Phone, MapPin, Building2 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import loginBg from '../../assets/images/Gemini_Generated_Image_5nmpua5nmpua5nmp.png';
 import apiClient from '../../api/api';
@@ -12,6 +12,7 @@ const RegisterPage = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [formData, setFormData] = useState({
+    honorific: '',
     fullName: '',
     email: '',
     phone: '',
@@ -19,7 +20,8 @@ const RegisterPage = () => {
     client_type: 'INDIVIDUAL',
     terms_accepted: false,
     gender: '',
-    primary_address: ''
+    primary_address: '',
+    company_name: ''
   });
 
   const [fieldErrors, setFieldErrors] = useState({
@@ -143,7 +145,7 @@ const RegisterPage = () => {
 
     // Validate all fields
     Object.keys(formData).forEach(key => {
-      if (key !== 'client_type' && key !== 'terms_accepted') {
+      if (key !== 'client_type' && key !== 'terms_accepted' && key !== 'honorific' && key !== 'company_name') {
         const error = validateField(key, formData[key]);
         if (error) errors[key] = error;
       }
@@ -176,6 +178,7 @@ const RegisterPage = () => {
     try {
       setIsLoading(true);
       const response = await apiClient.registerClient({
+        honorific: formData.honorific || undefined,
         full_name: formData.fullName,
         email: formData.email,
         mobile_number: formData.phone,
@@ -183,16 +186,16 @@ const RegisterPage = () => {
         client_type: formData.client_type,
         terms_accepted: formData.terms_accepted,
         gender: formData.gender,
-        primary_address: formData.primary_address
+        primary_address: formData.primary_address,
+        company_name: formData.client_type === 'CORPORATE_PROXY' ? (formData.company_name || undefined) : undefined,
       });
 
       // Registration successful
       console.log('Registration successful:', response);
-      setSuccess('Registration successful! Please check your mobile for OTP verification.');
+      setSuccess('OTP sent! Please check your mobile to complete verification.');
 
-      // Redirect to OTP verification page after 2 seconds
       setTimeout(() => {
-        navigate('/verify-otp-reg', { state: { email: formData.email, mobileNumber: formData.phone, userId: response.data?.userId } });
+        navigate('/verify-otp-reg', { state: { mobileNumber: formData.phone } });
       }, 2000);
 
     } catch (err) {
@@ -259,6 +262,75 @@ const RegisterPage = () => {
               transition={{ delay: 0.1 }}
               className="space-y-4"
             >
+              {/* Account Type */}
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-700 block">Account Type</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleInputChange('client_type', 'INDIVIDUAL')}
+                    className={`px-4 py-3 rounded-lg border-2 transition-all font-medium text-sm ${
+                      formData.client_type === 'INDIVIDUAL'
+                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    Individual
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleInputChange('client_type', 'CORPORATE_PROXY')}
+                    className={`px-4 py-3 rounded-lg border-2 transition-all font-medium text-sm ${
+                      formData.client_type === 'CORPORATE_PROXY'
+                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    As Company
+                  </button>
+                </div>
+              </div>
+
+              {/* Company Name — only for corporate */}
+              {formData.client_type === 'CORPORATE_PROXY' && (
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-700 block">Company Name <span className="text-slate-400 font-normal">(used on receipts &amp; statements)</span></label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                      placeholder="e.g. Acme Holdings Ltd."
+                      value={formData.company_name}
+                      onChange={(e) => handleInputChange('company_name', e.target.value)}
+                    />
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">
+                      <Building2 className="w-5 h-5" />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Honorific */}
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-700 block">Title <span className="text-slate-400 font-normal">(optional)</span></label>
+                <div className="flex flex-wrap gap-2">
+                  {['Mr', 'Mrs', 'Miss', 'Doc', 'Prof'].map(h => (
+                    <button
+                      key={h}
+                      type="button"
+                      onClick={() => handleInputChange('honorific', formData.honorific === h ? '' : h)}
+                      className={`px-4 py-2 rounded-lg border-2 text-sm font-medium transition-all ${
+                        formData.honorific === h
+                          ? 'border-blue-500 bg-blue-50 text-blue-700'
+                          : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                      }`}
+                    >
+                      {h}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* Full Name Input */}
               <div className="space-y-1">
                 <label className="text-sm font-medium text-slate-700 block">Full Name</label>

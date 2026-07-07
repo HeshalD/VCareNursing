@@ -87,7 +87,8 @@ const LoginPage = () => {
         } else {
           // Client or other user - redirect to home page with a welcome popup
           const userName = response.data.full_name || response.data.first_name || '';
-          navigate('/', { state: { showWelcome: true, userName } });
+          const regFeeStatus = response.data?.reg_fee_status || null;
+          navigate('/', { state: { showWelcome: true, userName, regFeeStatus } });
         }
       }
     } catch (err) {

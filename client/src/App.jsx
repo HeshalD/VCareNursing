@@ -17,17 +17,19 @@ import WorkersTeamPage from './modules/public/service_team/WorkersTeamPage';
 import WorkerRegistrationPage from './modules/public/service_team/WorkerRegistrationPage';
 import WorkerRegistrationSuccessPage from './modules/public/service_team/WorkerRegistrationSuccessPage';
 import StaffDocumentUploadPage from './modules/public/service_team/StaffDocumentUploadPage';
+import ClientPaymentReceiptPage from './modules/public/ClientPaymentReceiptPage';
 import VerifyStaffOTP from './modules/public/service_team/VerifyStaffOTP';
 import WorkerDashboardDemo from './modules/public/service_team/WorkerDashboardDemo';
 import ClientDashboardDemo from './modules/public/ClientDashboardDemo';
 import ClientProfileDemo from './modules/public/ClientProfileDemo';
 import AdminDashboard from './modules/admin/admin_dashboard_main/AdminDashboard';
 import UserManagement from './modules/admin/user_managemnet/user_managemnet';
+import StaffManagement from './modules/admin/user_managemnet/staff_management';
 import ClientDetailPage from './modules/admin/user_managemnet/client_detail_page';
 import ProxyUserManagement from './modules/admin/user_managemnet/proxy_user_management';
 import ServiceRequests from './modules/admin/service_requests/service_requests';
 import ProxyServiceRequest from './modules/admin/service_requests/proxy_service_request';
-import QuoteBuilder from './modules/admin/service_requests/quote_builder';
+import ModularQuoteBuilder from './modules/admin/service_requests/ModularQuoteBuilder';
 import WorkerVerification from './modules/admin/worker_verifications/worker_verifications';
 import WorkerVerificationDetailsPage from './modules/admin/worker_verifications/WorkerVerificationDetailsPage';
 import Financials from './modules/admin/financial/financial';
@@ -91,6 +93,7 @@ import StaffPermissionsPage from './modules/admin/permissions/StaffPermissionsPa
 import InternalStaffPage from './modules/admin/internal_staff/InternalStaffPage';
 import ActiveSessionsPage from './modules/admin/active_sessions/ActiveSessionsPage';
 import SalespersonsPage from './modules/admin/salespersons/SalespersonsPage';
+import AdminInvoicesPage from './modules/admin/invoices/AdminInvoicesPage';
 import SalespersonDetailPage from './modules/admin/salespersons/SalespersonDetailPage';
 
 function App() {
@@ -128,6 +131,7 @@ function App() {
             <Route path="/services/join-team" element={<WorkersTeamPage />} />
             <Route path="/services/apply" element={<WorkerRegistrationPage />} />
             <Route path="/staff/documents/:token" element={<StaffDocumentUploadPage />} />
+            <Route path="/client/pay-receipt/:token" element={<ClientPaymentReceiptPage />} />
             <Route path="/verify-staff-otp" element={<VerifyStaffOTP />} />
             <Route path="/worker-registration-success" element={<WorkerRegistrationSuccessPage />} />
             <Route path="/services/provider-dashboard" element={<WorkerDashboardDemo />} />
@@ -152,6 +156,11 @@ function App() {
             <Route path="/admin/users" element={
               <AdminAuthProvider>
                 <UserManagement />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/staff-management" element={
+              <AdminAuthProvider>
+                <StaffManagement />
               </AdminAuthProvider>
             } />
             <Route path="/admin/users/:clientId/detail" element={
@@ -191,7 +200,12 @@ function App() {
             } />
             <Route path="/admin/quote-builder/:requestId?" element={
               <AdminAuthProvider>
-                <QuoteBuilder />
+                <ModularQuoteBuilder />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/modular-quote-builder/:requestId?" element={
+              <AdminAuthProvider>
+                <ModularQuoteBuilder />
               </AdminAuthProvider>
             } />
             <Route path="/admin/staff-roster" element={
@@ -290,6 +304,11 @@ function App() {
             <Route path="/admin/statements" element={
               <AdminAuthProvider>
                 <Statements />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/invoices" element={
+              <AdminAuthProvider>
+                <AdminInvoicesPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/advance-requests" element={
