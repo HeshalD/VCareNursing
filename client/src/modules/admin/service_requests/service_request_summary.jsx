@@ -3,116 +3,168 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, RefreshCw, FileText, CircleDollarSign, ArrowRight,
   Upload, ExternalLink, Pencil, X, Save, User, Stethoscope,
-  BadgeCheck, MapPin, CheckCircle2, Plus
+  BadgeCheck, MapPin, CheckCircle2, Plus, Phone, Calendar,
+  Heart, Loader2, AlertCircle, Download, ThumbsUp, ThumbsDown, Send,
+  MessageCircle, SendHorizontal,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 
-/* ── Helpers ── */
+// ─── constants ────────────────────────────────────────────────────────────────
+
+const SERVICE_TYPE_OPTIONS = [
+  { value: 'CARETAKER',         label: 'Caretaker' },
+  { value: 'NURSING_ASSISTANT', label: 'Nursing Assistant' },
+  { value: 'NURSE',             label: 'Professional Nurse' },
+  { value: 'PHYSIOTHERAPIST',   label: 'Physiotherapist' },
+  { value: 'NANNY',             label: 'Nanny' },
+  { value: 'COUNSELLOR',        label: 'Counsellor' },
+];
+
+const RELATIONSHIP_OPTIONS = [
+  'Parent', 'Child', 'Sibling', 'Spouse / Partner',
+  'Guardian', 'Caregiver', 'Friend', 'Neighbor', 'Other',
+];
+
+const SERVICE_MODEL_OPTIONS = ['LIVE_IN', 'SHIFT_BASED', 'VISITING'];
+const GENDER_OPTIONS        = ['ANY', 'MALE', 'FEMALE'];
+
+const REQUEST_STATUS_CONFIG = {
+  NEW_LEAD:  { dot: 'bg-purple-400', text: 'text-purple-700', bg: 'bg-purple-50', border: 'border-purple-200', label: 'New Lead' },
+  PENDING:   { dot: 'bg-amber-400',  text: 'text-amber-700',  bg: 'bg-amber-50',  border: 'border-amber-200',  label: 'Pending' },
+  CONTACTED: { dot: 'bg-blue-400',   text: 'text-blue-700',   bg: 'bg-blue-50',   border: 'border-blue-200',   label: 'Contacted' },
+  CONFIRMED: { dot: 'bg-emerald-500',text: 'text-emerald-700',bg: 'bg-emerald-50',border: 'border-emerald-200',label: 'Confirmed' },
+  ASSIGNED:  { dot: 'bg-indigo-400', text: 'text-indigo-700', bg: 'bg-indigo-50', border: 'border-indigo-200', label: 'Assigned' },
+  COMPLETED: { dot: 'bg-slate-400',  text: 'text-slate-600',  bg: 'bg-slate-100', border: 'border-slate-200',  label: 'Completed' },
+  CANCELLED: { dot: 'bg-red-400',    text: 'text-red-700',    bg: 'bg-red-50',    border: 'border-red-200',    label: 'Cancelled' },
+};
+
+const REQUEST_STATUS_OPTIONS = ['NEW_LEAD', 'PENDING', 'CONTACTED', 'CONFIRMED', 'ASSIGNED', 'COMPLETED', 'CANCELLED'];
+
+const QUOTE_STATUS_CONFIG = {
+  FULLY_PAID:     { dot: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-emerald-50', border: 'border-emerald-200', label: 'Fully Paid' },
+  PARTIALLY_PAID: { dot: 'bg-amber-400',   text: 'text-amber-700',   bg: 'bg-amber-50',   border: 'border-amber-200',   label: 'Partially Paid' },
+  UNPAID:         { dot: 'bg-slate-400',   text: 'text-slate-500',   bg: 'bg-slate-100',  border: 'border-slate-200',   label: 'Unpaid' },
+  OVERPAID:       { dot: 'bg-red-400',     text: 'text-red-700',     bg: 'bg-red-50',     border: 'border-red-200',     label: 'Overpaid' },
+};
+
+const QUOTE_APPROVAL_CONFIG = {
+  DRAFT:    { dot: 'bg-slate-300',   text: 'text-slate-500',   bg: 'bg-slate-50',   border: 'border-slate-200',   label: 'Draft' },
+  SENT:     { dot: 'bg-blue-400',    text: 'text-blue-700',    bg: 'bg-blue-50',    border: 'border-blue-200',    label: 'Sent to Client' },
+  ACCEPTED: { dot: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-emerald-50', border: 'border-emerald-200', label: 'Accepted' },
+  REJECTED: { dot: 'bg-red-400',     text: 'text-red-700',     bg: 'bg-red-50',     border: 'border-red-200',     label: 'Rejected' },
+};
+
+const TABS = [
+  { key: 'details',    label: 'Details' },
+  { key: 'quotations', label: 'Quotations' },
+  { key: 'payment',    label: 'Payment' },
+];
+
+const initialPaymentForm = {
+  amount_received: '', payment_method: 'BANK_TRANSFER',
+  bank_account_id: '', cheque_number: '', cheque_date: '',
+  reference_number: '', notes: '',
+};
+
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
 const money = (v) =>
   `LKR ${parseFloat(v || 0).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const fmt = (date) =>
   date ? new Date(date).toLocaleDateString('en-LK', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
-const humanize = (v) =>
-  v == null || v === ''
-    ? v
-    : String(v).replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
-
 const getQuoteStatus = (q) => {
   const total = parseFloat(q?.total_amount || 0);
-  const paid = parseFloat(q?.total_paid || 0);
+  const paid  = parseFloat(q?.total_paid   || 0);
   if (paid > total) return 'OVERPAID';
-  if (paid === 0) return 'UNPAID';
+  if (paid === 0)   return 'UNPAID';
   if (paid === total) return 'FULLY_PAID';
   return 'PARTIALLY_PAID';
 };
 
-const quoteStatusStyle = {
-  FULLY_PAID: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  PARTIALLY_PAID: 'bg-amber-50 text-amber-700 border-amber-200',
-  UNPAID: 'bg-slate-100 text-slate-600 border-slate-200',
-  OVERPAID: 'bg-red-50 text-red-700 border-red-200',
+const serviceLabel = (v) =>
+  SERVICE_TYPE_OPTIONS.find(o => o.value === v)?.label ?? v ?? '—';
+
+const modelLabel = (v) =>
+  v?.replace(/_/g, ' ') ?? '—';
+
+// ─── sub-components ───────────────────────────────────────────────────────────
+
+const StatusDot = ({ status, config }) => {
+  const cfg = config[status] || { dot: 'bg-slate-400', text: 'text-slate-600', label: status?.replace(/_/g, ' ') ?? '—' };
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${cfg.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
+      {cfg.label}
+    </span>
+  );
 };
 
-const requestStatusStyle = {
-  NEW_LEAD: 'bg-blue-50 text-blue-700 border-blue-200',
-  PENDING: 'bg-amber-50 text-amber-700 border-amber-200',
-  CONFIRMED: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  ASSIGNED: 'bg-purple-50 text-purple-700 border-purple-200',
-  COMPLETED: 'bg-slate-100 text-slate-700 border-slate-200',
-  CANCELLED: 'bg-red-50 text-red-700 border-red-200',
-};
+const InfoRow = ({ label, value }) => (
+  <div>
+    <p className="text-xs text-slate-400 mb-0.5">{label}</p>
+    <p className="text-sm font-medium text-slate-900">{value ?? '—'}</p>
+  </div>
+);
 
-const requestStatusOptions = ['NEW_LEAD', 'PENDING', 'CONFIRMED', 'ASSIGNED', 'COMPLETED', 'CANCELLED'];
-const serviceModelOptions = ['LIVE_IN', 'SHIFT_BASED', 'VISITING'];
-const genderOptions = ['ANY', 'MALE', 'FEMALE'];
+const inputCls  = 'w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 bg-white placeholder:text-slate-400';
+const labelCls  = 'block text-xs font-medium text-slate-500 mb-1.5';
 
-const initialPaymentForm = {
-  amount_received: '',
-  payment_method: 'BANK_TRANSFER',
-  bank_account_id: '',
-  cheque_number: '',
-  cheque_date: '',
-  reference_number: '',
-  notes: '',
-};
+// ─── page ─────────────────────────────────────────────────────────────────────
 
-const TABS = [
-  { key: 'details', label: 'Details' },
-  { key: 'quotations', label: 'Quotations' },
-  { key: 'payment', label: 'Payment' },
-];
-
-/* ══════════════════════════════════════════════════════ */
 const ServiceRequestSummaryPage = () => {
   const { requestId } = useParams();
   const navigate = useNavigate();
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [request, setRequest] = useState(null);
-  const [quotes, setQuotes] = useState([]);
+  const [loading, setLoading]           = useState(true);
+  const [error, setError]               = useState('');
+  const [request, setRequest]           = useState(null);
+  const [quotes, setQuotes]             = useState([]);
   const [selectedQuoteId, setSelectedQuoteId] = useState('');
   const [bankAccounts, setBankAccounts] = useState([]);
   const [paymentSlipFile, setPaymentSlipFile] = useState(null);
-  const [paymentForm, setPaymentForm] = useState(initialPaymentForm);
-  const [submitting, setSubmitting] = useState(false);
-  const [proceeding, setProceeding] = useState(false);
-
-  const [activeTab, setActiveTab] = useState('details');
-  const [editMode, setEditMode] = useState(false);
-  const [editForm, setEditForm] = useState({});
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState('');
+  const [paymentForm, setPaymentForm]   = useState(initialPaymentForm);
+  const [submitting, setSubmitting]     = useState(false);
+  const [proceeding, setProceeding]     = useState(false);
+  const [activeTab, setActiveTab]       = useState('details');
+  const [editMode, setEditMode]         = useState(false);
+  const [editForm, setEditForm]         = useState({});
+  const [saving, setSaving]             = useState(false);
+  const [saveError, setSaveError]       = useState('');
+  const [quoteActionLoading, setQuoteActionLoading] = useState({});
+  const [paymentHistory, setPaymentHistory]         = useState([]);
+  const [paymentHistoryLoading, setPaymentHistoryLoading] = useState(false);
+  const [paymentSuccess, setPaymentSuccess]         = useState('');
+  const [showReceiptPopup, setShowReceiptPopup]     = useState(false);
+  const [receiptSendBusy, setReceiptSendBusy]       = useState(false);
 
   const selectedQuote = useMemo(
-    () => quotes.find((q) => q.quote_id === selectedQuoteId) || quotes[0] || null,
+    () => quotes.find(q => q.quote_id === selectedQuoteId) || quotes[0] || null,
     [quotes, selectedQuoteId]
   );
-
-  const requiresBankAccount = ['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(paymentForm.payment_method);
-  const isCheque = paymentForm.payment_method === 'CHEQUE';
   const selectedQuoteStatus = selectedQuote ? getQuoteStatus(selectedQuote) : 'UNPAID';
+  const requiresBankAccount = ['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(paymentForm.payment_method);
+  const isCheque            = paymentForm.payment_method === 'CHEQUE';
 
   const fetchData = async () => {
     try {
       setLoading(true);
       setError('');
-      const [requestRes, quoteRes, bankRes] = await Promise.all([
+      const [reqRes, quoteRes, bankRes] = await Promise.all([
         apiClient.getServiceRequestById(requestId),
         apiClient.getServiceRequestQuoteList(requestId),
         apiClient.getBankAccounts(),
       ]);
-      setRequest(requestRes.data || null);
+      setRequest(reqRes.data || null);
       setQuotes(
-        (quoteRes.data || []).map((q) => ({
+        (quoteRes.data || []).map(q => ({
           ...q,
-          total_paid: parseFloat(q.total_paid || 0),
-          total_amount: parseFloat(q.total_amount || 0),
+          total_paid:       parseFloat(q.total_paid   || 0),
+          total_amount:     parseFloat(q.total_amount || 0),
           remaining_amount: Math.max(parseFloat(q.total_amount || 0) - parseFloat(q.total_paid || 0), 0),
-          payment_count: parseInt(q.payment_count || 0, 10),
+          payment_count:    parseInt(q.payment_count  || 0, 10),
         }))
       );
       setBankAccounts(bankRes.data || []);
@@ -128,26 +180,45 @@ const ServiceRequestSummaryPage = () => {
   useEffect(() => {
     if (quotes.length > 0 && !selectedQuoteId) {
       setSelectedQuoteId(
-        quotes.find((q) => q.quote_id === request?.active_quote_id)?.quote_id || quotes[0].quote_id
+        quotes.find(q => q.quote_id === request?.active_quote_id)?.quote_id || quotes[0].quote_id
       );
     }
   }, [quotes, request, selectedQuoteId]);
 
+  const fetchPaymentHistory = async (quoteId) => {
+    if (!quoteId) return;
+    try {
+      setPaymentHistoryLoading(true);
+      const res = await apiClient.getQuotePayments(quoteId);
+      setPaymentHistory(res.payments || []);
+    } catch {
+      setPaymentHistory([]);
+    } finally {
+      setPaymentHistoryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'payment' && selectedQuote?.quote_id) {
+      fetchPaymentHistory(selectedQuote.quote_id);
+    }
+  }, [activeTab, selectedQuote?.quote_id]);
+
   const openEdit = () => {
     setEditForm({
-      payer_name: request.payer_name || '',
-      payer_mobile: request.payer_mobile || '',
-      patient_name: request.patient_name || '',
-      patient_age: request.patient_age || '',
+      payer_name:             request.payer_name || '',
+      payer_mobile:           request.payer_mobile || '',
+      patient_name:           request.patient_name || '',
+      patient_age:            request.patient_age || '',
       relationship_to_client: request.relationship_to_client || '',
-      patient_condition: request.patient_condition || '',
-      service_type: request.service_type || '',
-      service_model: request.service_model || 'SHIFT_BASED',
-      location_address: request.location_address || '',
-      start_date: request.start_date ? request.start_date.slice(0, 10) : '',
-      remarks: request.remarks || '',
-      preferred_gender: request.preferred_gender || 'ANY',
-      status: request.status || 'NEW_LEAD',
+      patient_condition:      request.patient_condition || '',
+      service_type:           request.service_type || '',
+      service_model:          request.service_model || 'SHIFT_BASED',
+      location_address:       request.location_address || '',
+      start_date:             request.start_date ? request.start_date.slice(0, 10) : '',
+      remarks:                request.remarks || '',
+      preferred_gender:       request.preferred_gender || 'ANY',
+      status:                 request.status || 'NEW_LEAD',
     });
     setSaveError('');
     setEditMode(true);
@@ -173,27 +244,26 @@ const ServiceRequestSummaryPage = () => {
     try {
       setSubmitting(true);
       setError('');
+      setPaymentSuccess('');
       await apiClient.recordQuotePayment(
         selectedQuote.quote_id,
         {
-          amount_received: parseFloat(paymentForm.amount_received),
-          payment_method: paymentForm.payment_method,
-          bank_account_id: paymentForm.bank_account_id || null,
-          cheque_number: paymentForm.cheque_number || null,
-          cheque_date: paymentForm.cheque_date || null,
+          amount_received:  parseFloat(paymentForm.amount_received),
+          payment_method:   paymentForm.payment_method,
+          bank_account_id:  paymentForm.bank_account_id || null,
+          cheque_number:    paymentForm.cheque_number   || null,
+          cheque_date:      paymentForm.cheque_date     || null,
           reference_number: paymentForm.reference_number || null,
-          notes: paymentForm.notes || null,
+          notes:            paymentForm.notes || null,
         },
         paymentSlipFile
       );
-      const bookingResult = await apiClient.convertToBooking(
-        { request_id: request.request_id, quote_id: selectedQuote.quote_id },
-        paymentSlipFile
-      );
-      const bookingId = bookingResult?.data?.booking_id;
-      navigate(`/admin/bookings/${bookingId}/staff-roster`, {
-        state: { request, quote: selectedQuote, bookingId },
-      });
+      setPaymentForm(initialPaymentForm);
+      setPaymentSlipFile(null);
+      setPaymentSuccess('Payment recorded successfully.');
+      await fetchData();
+      await fetchPaymentHistory(selectedQuote.quote_id);
+      setShowReceiptPopup(true);
     } catch (err) {
       setError(err.message || 'Failed to record payment');
     } finally {
@@ -201,29 +271,47 @@ const ServiceRequestSummaryPage = () => {
     }
   };
 
-  const handleProceed = async () => {
-    if (!selectedQuote || !request) return;
+  const handleSendLatestReceipt = async () => {
+    if (!request?.client_id) { setShowReceiptPopup(false); return; }
+    try {
+      setReceiptSendBusy(true);
+      const res = await apiClient.getClientReceipts(request.client_id);
+      const receipts = Array.isArray(res?.receipts) ? res.receipts : [];
+      const latest = receipts[0];
+      if (latest?.receipt_id) {
+        await apiClient.sendPaymentReceipt(latest.receipt_id);
+      }
+    } catch { /* non-critical */ }
+    finally {
+      setReceiptSendBusy(false);
+      setShowReceiptPopup(false);
+    }
+  };
+
+  const handleProceed = async (quote = selectedQuote) => {
+    if (!quote || !request) return;
     try {
       setProceeding(true);
       setError('');
-      const check = await apiClient.checkQuoteBooking(selectedQuote.quote_id);
+      const check = await apiClient.checkQuoteBooking(quote.quote_id);
       const { has_booking, booking_id: existingBookingId } = check?.data || {};
       if (has_booking && existingBookingId) {
+        // Fetch the full booking so the roster panel has complete data immediately
+        const existingRes = await apiClient.getAdminBookingDetail(existingBookingId);
         navigate(`/admin/bookings/${existingBookingId}/staff-roster`, {
-          state: { request, quote: selectedQuote, bookingId: existingBookingId },
+          state: { request, quote, booking: existingRes?.data || null },
         });
         return;
       }
-      if (!window.confirm(`Create booking for ${selectedQuote.estimate_number} and proceed to staff selection?`)) {
-        return;
-      }
+      if (!window.confirm(`Create a booking for ${quote.estimate_number} and proceed to staff selection?`)) return;
       const bookingResult = await apiClient.convertToBooking({
         request_id: request.request_id,
-        quote_id: selectedQuote.quote_id,
+        quote_id: quote.quote_id,
       });
-      const bookingId = bookingResult?.data?.booking_id;
-      navigate(`/admin/bookings/${bookingId}/staff-roster`, {
-        state: { request, quote: selectedQuote, bookingId },
+      // Pass the booking object returned by convertToBooking so the roster
+      // never needs to cold-fetch it — fetchBookingDetails short-circuits when booking is set
+      navigate(`/admin/bookings/${bookingResult?.data?.booking_id}/staff-roster`, {
+        state: { request, quote, booking: bookingResult?.data || null },
       });
     } catch (err) {
       setError(err.message || 'Failed to proceed');
@@ -232,362 +320,747 @@ const ServiceRequestSummaryPage = () => {
     }
   };
 
-  const set = (field) => (v) => setEditForm((f) => ({ ...f, [field]: v }));
+  const setQuoteAction = (quoteId, busy) =>
+    setQuoteActionLoading(prev => ({ ...prev, [quoteId]: busy }));
+
+  const updateQuoteInState = (quoteId, patch) =>
+    setQuotes(prev => prev.map(q => q.quote_id === quoteId ? { ...q, ...patch } : q));
+
+  const handleAcceptQuote = async (quoteId) => {
+    setQuoteAction(quoteId, 'accepting');
+    setError('');
+    try {
+      await apiClient.updateQuoteStatus(quoteId, 'ACCEPTED');
+      updateQuoteInState(quoteId, { status: 'ACCEPTED' });
+    } catch (err) {
+      setError(err.message || 'Failed to accept quotation');
+    } finally {
+      setQuoteAction(quoteId, null);
+    }
+  };
+
+  const handleRejectQuote = async (quoteId, estimateNumber) => {
+    if (!window.confirm(`Reject quotation ${estimateNumber}? This cannot be undone.`)) return;
+    setQuoteAction(quoteId, 'rejecting');
+    setError('');
+    try {
+      await apiClient.updateQuoteStatus(quoteId, 'REJECTED');
+      updateQuoteInState(quoteId, { status: 'REJECTED' });
+    } catch (err) {
+      setError(err.message || 'Failed to reject quotation');
+    } finally {
+      setQuoteAction(quoteId, null);
+    }
+  };
+
+  const handleSendQuotePdf = async (quoteId) => {
+    setQuoteAction(quoteId, 'sending');
+    setError('');
+    try {
+      await apiClient.sendQuotePDF(quoteId);
+      updateQuoteInState(quoteId, { status: 'SENT' });
+    } catch (err) {
+      setError(err.message || 'Failed to send quotation PDF');
+    } finally {
+      setQuoteAction(quoteId, null);
+    }
+  };
+
+  const handleDownloadQuotePdf = async (quoteId) => {
+    setQuoteAction(quoteId, 'downloading');
+    setError('');
+    try {
+      const res = await apiClient.generateQuotePdf(quoteId);
+      const url = res?.pdf_url || res?.data?.pdf_url;
+      if (url) window.open(url, '_blank', 'noopener,noreferrer');
+      else setError('PDF URL not returned by server.');
+    } catch (err) {
+      setError(err.message || 'Failed to generate PDF');
+    } finally {
+      setQuoteAction(quoteId, null);
+    }
+  };
+
+  const set = (field) => (v) => setEditForm(f => ({ ...f, [field]: v }));
+
+  // ── loading / error states ────────────────────────────────────────────────
+
+  if (loading) {
+    return (
+      <AdminLayout title="Service Request" subtitle="Loading…">
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+        </div>
+      </AdminLayout>
+    );
+  }
+
+  if (!request) {
+    return (
+      <AdminLayout title="Service Request">
+        <div className="bg-white border border-slate-200 rounded-xl p-12 text-center">
+          <FileText className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+          <p className="text-sm text-slate-500">Service request not found.</p>
+          <button onClick={() => navigate('/admin/service-requests')} className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-blue-600 hover:text-blue-700 font-medium">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to list
+          </button>
+        </div>
+      </AdminLayout>
+    );
+  }
+
+  const reqStatus = editMode ? editForm.status : request.status;
+  const reqStatusCfg = REQUEST_STATUS_CONFIG[reqStatus] || REQUEST_STATUS_CONFIG.PENDING;
+
+  // ── main render ───────────────────────────────────────────────────────────
 
   return (
     <AdminLayout
       title="Service Request"
-      subtitle="Review request details, manage quotations, and register payments."
+      subtitle={request.service_request_code || `#${requestId}`}
       actions={
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           <button
             onClick={() => navigate('/admin/service-requests')}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
           >
-            <ArrowLeft className="h-4 w-4" /> Back
+            <ArrowLeft className="h-3.5 w-3.5" /> Back
           </button>
           <button
             onClick={fetchData}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
           >
-            <RefreshCw className="h-4 w-4" /> Refresh
+            <RefreshCw className="h-3.5 w-3.5" /> Refresh
           </button>
         </div>
       }
     >
+
       {error && (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>
+        <div className="mb-4 flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <AlertCircle className="h-4 w-4 flex-shrink-0" />
+          {error}
+        </div>
       )}
 
-      {loading ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 shadow-sm">
-          Loading service request…
-        </div>
-      ) : !request ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 shadow-sm">
-          Service request not found.
-        </div>
-      ) : (
-        <div className="space-y-5">
+      <div className="space-y-4">
 
-          {/* ── Record header + tab strip ── */}
-          <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-lg font-semibold text-slate-900 truncate">
-                    {editMode ? editForm.payer_name || '—' : request.payer_name}
-                  </h2>
-                  <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${requestStatusStyle[editMode ? editForm.status : request.status] || 'bg-slate-100 text-slate-600 border-slate-200'}`}>
-                    {humanize(editMode ? editForm.status : request.status)}
-                  </span>
-                </div>
-                <p className="mt-1 text-xs text-slate-400">
-                  {request.service_request_code || request.request_id} &middot; Created {fmt(request.created_at)}
-                </p>
-              </div>
+        {/* ── HERO CARD ─────────────────────────────────────────────────────── */}
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
 
-              <div className="flex shrink-0 items-center gap-2">
-                {!editMode ? (
-                  <button
-                    onClick={openEdit}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                  >
-                    <Pencil className="h-3.5 w-3.5" /> Edit
-                  </button>
-                ) : (
-                  <>
-                    <button
-                      onClick={() => setEditMode(false)}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
-                    >
-                      <X className="h-3.5 w-3.5" /> Cancel
-                    </button>
-                    <button
-                      onClick={handleSave}
-                      disabled={saving}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                    >
-                      <Save className="h-3.5 w-3.5" />
-                      {saving ? 'Saving…' : 'Save Changes'}
-                    </button>
-                  </>
-                )}
+          {/* Top summary bar */}
+          <div className="flex flex-wrap items-start justify-between gap-4 px-6 py-5">
+
+            {/* Left: identity */}
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2.5 mb-1">
+                <h2 className="text-lg font-bold text-slate-900 truncate">
+                  {editMode ? editForm.payer_name || '—' : request.payer_name}
+                </h2>
+                <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${reqStatusCfg.bg} ${reqStatusCfg.text} ${reqStatusCfg.border}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${reqStatusCfg.dot}`} />
+                  {reqStatusCfg.label}
+                </span>
               </div>
+              <p className="text-xs text-slate-400">
+                {request.service_request_code || `Request #${requestId}`} &middot; Created {fmt(request.created_at)}
+              </p>
             </div>
 
-            {saveError && (
-              <div className="mx-5 mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{saveError}</div>
-            )}
-
-            <div className="flex items-center gap-6 border-t border-slate-100 px-5">
-              {TABS.map((tab) => (
+            {/* Right: edit controls */}
+            <div className="flex shrink-0 items-center gap-2">
+              {!editMode ? (
                 <button
-                  key={tab.key}
-                  type="button"
-                  onClick={() => setActiveTab(tab.key)}
-                  className={`relative py-3 text-sm font-medium transition-colors ${
-                    activeTab === tab.key ? 'text-blue-600' : 'text-slate-500 hover:text-slate-700'
-                  }`}
+                  onClick={openEdit}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
                 >
-                  {tab.label}
-                  {tab.key === 'quotations' && (
-                    <span className="ml-1.5 text-xs text-slate-400">({quotes.length})</span>
-                  )}
-                  {activeTab === tab.key && (
-                    <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-t bg-blue-600" />
-                  )}
+                  <Pencil className="h-3.5 w-3.5" /> Edit Request
                 </button>
-              ))}
+              ) : (
+                <>
+                  <button
+                    onClick={() => setEditMode(false)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+                  >
+                    <X className="h-3.5 w-3.5" /> Cancel
+                  </button>
+                  <button
+                    onClick={handleSave}
+                    disabled={saving}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                  >
+                    {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                    {saving ? 'Saving…' : 'Save Changes'}
+                  </button>
+                </>
+              )}
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+          {saveError && (
+            <div className="mx-6 mb-3 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              <AlertCircle className="h-4 w-4 flex-shrink-0" />
+              {saveError}
+            </div>
+          )}
 
-            {/* ══ LEFT COLUMN (2/3) — tab content ══ */}
-            <div className="space-y-5 lg:col-span-2">
-
-              {/* ── Details tab ── */}
-              {activeTab === 'details' && (
-                <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                  <div className="px-5 py-4">
-                    {editMode ? (
-                      /* ── Edit Form ── */
-                      <div className="space-y-5">
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                          <div>
-                            <SectionHeading icon={User} label="Client / Payer" />
-                            <div className="mt-3 space-y-3">
-                              <FormField label="Name" value={editForm.payer_name} onChange={set('payer_name')} />
-                              <FormField label="Mobile" value={editForm.payer_mobile} onChange={set('payer_mobile')} />
-                              <FormField label="Location" value={editForm.location_address} onChange={set('location_address')} />
-                            </div>
-                          </div>
-                          <div>
-                            <SectionHeading icon={Stethoscope} label="Care Profile" />
-                            <div className="mt-3 space-y-3">
-                              <FormField label="Name" value={editForm.patient_name} onChange={set('patient_name')} />
-                              <FormField label="Age" type="number" value={editForm.patient_age} onChange={set('patient_age')} />
-                              <FormField label="Relationship" value={editForm.relationship_to_client} onChange={set('relationship_to_client')} />
-                            </div>
-                          </div>
-                          <div>
-                            <SectionHeading icon={BadgeCheck} label="Service" />
-                            <div className="mt-3 space-y-3">
-                              <FormField label="Service Type" value={editForm.service_type} onChange={set('service_type')} />
-                              <FormSelect label="Service Model" value={editForm.service_model} options={serviceModelOptions} onChange={set('service_model')} />
-                              <FormSelect label="Preferred Gender" value={editForm.preferred_gender} options={genderOptions} onChange={set('preferred_gender')} />
-                              <FormSelect label="Status" value={editForm.status} options={requestStatusOptions} onChange={set('status')} />
-                              <FormField label="Start Date" type="date" value={editForm.start_date} onChange={set('start_date')} />
-                            </div>
-                          </div>
-                        </div>
-                        <FormTextarea label="Patient Condition" value={editForm.patient_condition} onChange={set('patient_condition')} />
-                        <FormTextarea label="Remarks" value={editForm.remarks} onChange={set('remarks')} />
-                      </div>
-                    ) : (
-                      /* ── View Mode ── */
-                      <div className="space-y-6">
-                        <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
-                          <section>
-                            <SectionHeading icon={User} label="Client / Payer" />
-                            <dl className="mt-3 space-y-3">
-                              <DetailField label="Name" value={request.payer_name} />
-                              <DetailField label="Mobile" value={request.payer_mobile} />
-                              <DetailField label="Location" value={request.location_address} />
-                              <DetailField label="Client Code" value={request.client_code} />
-                            </dl>
-                          </section>
-
-                          <section>
-                            <SectionHeading icon={Stethoscope} label="Care Profile" />
-                            <dl className="mt-3 space-y-3">
-                              <DetailField label="Name" value={request.patient_name} />
-                              <DetailField label="Age" value={request.patient_age} />
-                              <DetailField label="Relationship" value={request.relationship_to_client} />
-                            </dl>
-                          </section>
-
-                          <section>
-                            <SectionHeading icon={BadgeCheck} label="Service" />
-                            <dl className="mt-3 space-y-3">
-                              <DetailField label="Type" value={request.service_type} />
-                              <DetailField label="Model" value={humanize(request.service_model)} />
-                              <DetailField label="Preferred Gender" value={humanize(request.preferred_gender || 'ANY')} />
-                              <DetailField label="Start Date" value={fmt(request.start_date)} />
-                            </dl>
-                          </section>
-                        </div>
-
-                        {request.patient_condition && (
-                          <div className="rounded-lg border border-slate-100 bg-slate-50 px-4 py-3">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Condition</p>
-                            <p className="mt-1 text-sm leading-relaxed text-slate-700">{request.patient_condition}</p>
-                          </div>
-                        )}
-
-                        {request.remarks && (
-                          <div className="rounded-lg border border-amber-100 bg-amber-50 px-4 py-3">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-amber-600">Remarks</p>
-                            <p className="mt-1 text-sm leading-relaxed text-amber-900">{request.remarks}</p>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
+          {/* At-a-glance chips */}
+          {!editMode && (
+            <div className="border-t border-slate-100 px-6 py-3 bg-slate-50 flex flex-wrap items-center gap-x-6 gap-y-2">
+              <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                <Phone className="w-3.5 h-3.5 text-slate-400" />
+                <span className="font-medium text-slate-700">{request.payer_mobile || '—'}</span>
+              </div>
+              <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                <Heart className="w-3.5 h-3.5 text-slate-400" />
+                <span>{request.patient_name || '—'}</span>
+                {request.patient_age && <span className="text-slate-400">· Age {request.patient_age}</span>}
+              </div>
+              <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                <Stethoscope className="w-3.5 h-3.5 text-slate-400" />
+                <span className="font-medium text-slate-700">{serviceLabel(request.service_type)}</span>
+                {request.service_model && <span className="text-slate-400">· {modelLabel(request.service_model)}</span>}
+              </div>
+              {request.start_date && (
+                <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                  <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Starts {fmt(request.start_date)}</span>
                 </div>
               )}
-
-              {/* ── Quotations tab ── */}
-              {activeTab === 'quotations' && (
-                <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                  <div className="flex items-center justify-between px-5 py-4">
-                    <h3 className="text-sm font-semibold text-slate-900">Quotation History</h3>
-                    <div className="flex items-center gap-2">
-                      {request?.active_quote_id && (
-                        <span className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700">
-                          Active Quotation
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => navigate(`/admin/quote-builder/${request.request_id}`)}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
-                      >
-                        <Plus className="h-3.5 w-3.5" /> New Quotation
-                      </button>
-                    </div>
-                  </div>
-
-                  {quotes.length === 0 ? (
-                    <div className="border-t border-slate-100 px-5 py-8 text-center">
-                      <p className="text-sm text-slate-400">No quotations yet.</p>
-                      <button
-                        type="button"
-                        onClick={() => navigate(`/admin/quote-builder/${request.request_id}`)}
-                        className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
-                      >
-                        <Plus className="h-4 w-4" /> Build Quotation
-                      </button>
-                    </div>
-                  ) : (
-                    <ul className="divide-y divide-slate-100 border-t border-slate-100">
-                      {quotes.map((quote) => {
-                        const qStatus = getQuoteStatus(quote);
-                        const isSelected = selectedQuote?.quote_id === quote.quote_id;
-                        return (
-                          <li
-                            key={quote.quote_id}
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => setSelectedQuoteId(quote.quote_id)}
-                            onKeyDown={(e) => e.key === 'Enter' && setSelectedQuoteId(quote.quote_id)}
-                            className={`cursor-pointer px-5 py-4 transition-colors ${isSelected ? 'bg-blue-50/60' : 'hover:bg-slate-50'}`}
-                          >
-                            <div className="flex flex-wrap items-start justify-between gap-3">
-                              <div>
-                                <div className="flex flex-wrap items-center gap-2">
-                                  {isSelected && <CheckCircle2 className="h-4 w-4 text-blue-500" />}
-                                  <span className="font-semibold text-slate-900 text-sm">{quote.estimate_number}</span>
-                                  {quote.booking_id && (
-                                    <span className="rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700">
-                                      Booking Created
-                                    </span>
-                                  )}
-                                  <span className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${quoteStatusStyle[qStatus]}`}>
-                                    {humanize(qStatus)}
-                                  </span>
-                                </div>
-                                <p className="mt-1 text-xs text-slate-400">
-                                  Created {new Date(quote.created_at).toLocaleString('en-LK')} &middot; {quote.payment_count} payment{quote.payment_count !== 1 ? 's' : ''}
-                                </p>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={(e) => { e.stopPropagation(); navigate(`/admin/quotations/${quote.quote_id}`); }}
-                                className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700"
-                              >
-                                <ExternalLink className="h-3.5 w-3.5" /> Open
-                              </button>
-                            </div>
-
-                            <div className="mt-3 grid grid-cols-3 gap-2">
-                              <QuoteStat label="Total" value={money(quote.total_amount)} />
-                              <QuoteStat label="Paid" value={money(quote.total_paid)} accent="text-emerald-700" />
-                              <QuoteStat label="Remaining" value={money(quote.remaining_amount)} accent="text-amber-700" />
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
+              {request.location_address && (
+                <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                  <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                  <span className="truncate max-w-[220px]">{request.location_address}</span>
                 </div>
               )}
+            </div>
+          )}
 
-              {/* ── Payment tab ── */}
-              {activeTab === 'payment' && (
-                <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                  {!selectedQuote ? (
-                    <div className="px-5 py-8 text-center">
-                      <p className="text-sm text-slate-400">Select a quotation first to register a payment.</p>
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab('quotations')}
-                        className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                      >
-                        <FileText className="h-4 w-4" /> Go to Quotations
-                      </button>
+          {/* Tab strip */}
+          <div className="flex items-center gap-1 border-t border-slate-100 px-6">
+            {TABS.map(tab => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setActiveTab(tab.key)}
+                className={`relative py-3.5 px-1 mr-4 text-sm font-medium transition-colors ${
+                  activeTab === tab.key ? 'text-blue-600' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                {tab.label}
+                {tab.key === 'quotations' && (
+                  <span className="ml-1.5 text-xs text-slate-400">({quotes.length})</span>
+                )}
+                {activeTab === tab.key && (
+                  <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-t bg-blue-600" />
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* ── BODY ──────────────────────────────────────────────────────────── */}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+
+          {/* Main content — 2/3 */}
+          <div className="lg:col-span-2 space-y-4">
+
+            {/* ── DETAILS TAB ── */}
+            {activeTab === 'details' && (
+              <>
+                {editMode ? (
+                  /* Edit form */
+                  <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                    <div className="px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Editing Request Details</p>
                     </div>
-                  ) : (
-                    <>
-                      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
-                        <div>
-                          <h3 className="text-sm font-semibold text-slate-900">Payment Registration</h3>
-                          <p className="text-xs text-slate-400">{selectedQuote.estimate_number}</p>
+                    <div className="p-5 space-y-6">
+
+                      {/* Payer */}
+                      <div>
+                        <div className="flex items-center gap-2 mb-3">
+                          <User className="w-3.5 h-3.5 text-slate-400" />
+                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Client / Payer</p>
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => navigate(`/admin/quotations/${selectedQuote.quote_id}`)}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                          >
-                            <ExternalLink className="h-3.5 w-3.5" /> View Quotation
-                          </button>
-                          {(selectedQuoteStatus === 'FULLY_PAID' || selectedQuoteStatus === 'PARTIALLY_PAID') && (
-                            <button
-                              type="button"
-                              onClick={handleProceed}
-                              disabled={proceeding}
-                              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                            >
-                              <ArrowRight className="h-3.5 w-3.5" />
-                              {proceeding ? 'Proceeding…' : 'Proceed to Staff Roster'}
-                            </button>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className={labelCls}>Full Name</label>
+                            <input type="text" value={editForm.payer_name} onChange={e => set('payer_name')(e.target.value)} className={inputCls} />
+                          </div>
+                          <div>
+                            <label className={labelCls}>Mobile Number</label>
+                            <input type="tel" value={editForm.payer_mobile} onChange={e => set('payer_mobile')(e.target.value)} className={inputCls} />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className={labelCls}>Service Address</label>
+                            <textarea value={editForm.location_address} onChange={e => set('location_address')(e.target.value)} rows={2} className={inputCls} />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-slate-100" />
+
+                      {/* Care Profile */}
+                      <div>
+                        <div className="flex items-center gap-2 mb-3">
+                          <Heart className="w-3.5 h-3.5 text-slate-400" />
+                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Care Profile</p>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className={labelCls}>Full Name</label>
+                            <input type="text" value={editForm.patient_name} onChange={e => set('patient_name')(e.target.value)} className={inputCls} />
+                          </div>
+                          <div>
+                            <label className={labelCls}>Age</label>
+                            <input type="number" value={editForm.patient_age} onChange={e => set('patient_age')(e.target.value)} className={inputCls} min="1" />
+                          </div>
+                          <div>
+                            <label className={labelCls}>Relationship to Client</label>
+                            <select value={editForm.relationship_to_client} onChange={e => set('relationship_to_client')(e.target.value)} className={inputCls}>
+                              <option value="">— Select —</option>
+                              {RELATIONSHIP_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <label className={labelCls}>Medical Condition</label>
+                            <input type="text" value={editForm.patient_condition} onChange={e => set('patient_condition')(e.target.value)} className={inputCls} placeholder="Condition or care needs" />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-slate-100" />
+
+                      {/* Service */}
+                      <div>
+                        <div className="flex items-center gap-2 mb-3">
+                          <BadgeCheck className="w-3.5 h-3.5 text-slate-400" />
+                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Service Configuration</p>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className={labelCls}>Service Role</label>
+                            <select value={editForm.service_type} onChange={e => set('service_type')(e.target.value)} className={inputCls}>
+                              <option value="">— Select role —</option>
+                              {SERVICE_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <label className={labelCls}>Service Model</label>
+                            <select value={editForm.service_model} onChange={e => set('service_model')(e.target.value)} className={inputCls}>
+                              {SERVICE_MODEL_OPTIONS.map(o => <option key={o} value={o}>{modelLabel(o)}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <label className={labelCls}>Preferred Staff Gender</label>
+                            <select value={editForm.preferred_gender} onChange={e => set('preferred_gender')(e.target.value)} className={inputCls}>
+                              {GENDER_OPTIONS.map(o => <option key={o} value={o}>{o.charAt(0) + o.slice(1).toLowerCase()}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <label className={labelCls}>Request Status</label>
+                            <select value={editForm.status} onChange={e => set('status')(e.target.value)} className={inputCls}>
+                              {REQUEST_STATUS_OPTIONS.map(o => <option key={o} value={o}>{REQUEST_STATUS_CONFIG[o]?.label ?? o}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <label className={labelCls}>Preferred Start Date</label>
+                            <input type="date" value={editForm.start_date} onChange={e => set('start_date')(e.target.value)} className={inputCls} />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-slate-100" />
+
+                      <div>
+                        <label className={labelCls}>Additional Remarks</label>
+                        <textarea value={editForm.remarks} onChange={e => set('remarks')(e.target.value)} rows={3} className={inputCls} placeholder="Special requirements or notes" />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  /* View mode */
+                  <div className="space-y-4">
+
+                    {/* Payer + Care Profile side-by-side */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+                      {/* Payer card */}
+                      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                        <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-100 bg-slate-50">
+                          <User className="w-3.5 h-3.5 text-slate-400" />
+                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Client / Payer</p>
+                        </div>
+                        <div className="p-4 grid grid-cols-1 gap-3">
+                          <InfoRow label="Full Name" value={request.payer_name} />
+                          <InfoRow label="Mobile" value={request.payer_mobile} />
+                          {request.client_code && <InfoRow label="Client Code" value={request.client_code} />}
+                          {request.location_address && (
+                            <div>
+                              <p className="text-xs text-slate-400 mb-0.5">Service Address</p>
+                              <p className="text-sm font-medium text-slate-900 leading-relaxed">{request.location_address}</p>
+                            </div>
                           )}
                         </div>
                       </div>
 
-                      <form onSubmit={handlePaymentSubmit} className="border-t border-slate-100 px-5 pb-5 pt-4 space-y-3">
+                      {/* Care profile card */}
+                      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                        <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-100 bg-slate-50">
+                          <Heart className="w-3.5 h-3.5 text-slate-400" />
+                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Care Profile</p>
+                        </div>
+                        <div className="p-4 grid grid-cols-2 gap-3">
+                          <div className="col-span-2">
+                            <InfoRow label="Full Name" value={request.patient_name} />
+                          </div>
+                          <InfoRow label="Age" value={request.patient_age} />
+                          <InfoRow label="Relationship" value={request.relationship_to_client} />
+                          {request.patient_condition && (
+                            <div className="col-span-2">
+                              <p className="text-xs text-slate-400 mb-1">Condition / Needs</p>
+                              <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5">
+                                <p className="text-sm text-slate-700 leading-relaxed">{request.patient_condition}</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Service config card */}
+                    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                      <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-100 bg-slate-50">
+                        <BadgeCheck className="w-3.5 h-3.5 text-slate-400" />
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Service Configuration</p>
+                      </div>
+                      <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-4">
+                        <InfoRow label="Role / Type" value={serviceLabel(request.service_type)} />
+                        <InfoRow label="Service Model" value={modelLabel(request.service_model)} />
+                        <InfoRow label="Preferred Gender" value={request.preferred_gender || 'Any'} />
+                        <InfoRow label="Start Date" value={fmt(request.start_date)} />
+                      </div>
+                    </div>
+
+                    {/* Remarks */}
+                    {request.remarks && (
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-amber-600 mb-1">Remarks</p>
+                        <p className="text-sm leading-relaxed text-amber-900">{request.remarks}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* ── QUOTATIONS TAB ── */}
+            {activeTab === 'quotations' && (
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Quotation History</p>
+                    <p className="text-xs text-slate-400 mt-0.5">{quotes.length} quotation{quotes.length !== 1 ? 's' : ''} for this request</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/admin/modular-quote-builder/${request.request_id}`)}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> New Quotation
+                  </button>
+                </div>
+
+                {quotes.length === 0 ? (
+                  <div className="px-5 py-12 text-center">
+                    <FileText className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+                    <p className="text-sm font-medium text-slate-500">No quotations yet</p>
+                    <p className="text-xs text-slate-400 mt-1">Create the first quotation for this request</p>
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/admin/modular-quote-builder/${request.request_id}`)}
+                      className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
+                    >
+                      <Plus className="h-4 w-4" /> Build Quotation
+                    </button>
+                  </div>
+                ) : (
+                  <ul className="divide-y divide-slate-100">
+                    {quotes.map(quote => {
+                      const payStatus    = getQuoteStatus(quote);
+                      const payCfg       = QUOTE_STATUS_CONFIG[payStatus];
+                      const approvalCfg  = QUOTE_APPROVAL_CONFIG[quote.status] || QUOTE_APPROVAL_CONFIG.DRAFT;
+                      const isSelected   = selectedQuote?.quote_id === quote.quote_id;
+                      const isRejected   = quote.status === 'REJECTED';
+                      const actionKey    = quoteActionLoading[quote.quote_id];
+                      const canDecide    = !['ACCEPTED', 'REJECTED'].includes(quote.status);
+
+                      return (
+                        <li
+                          key={quote.quote_id}
+                          className={`px-5 py-4 transition-colors ${
+                            isRejected
+                              ? 'opacity-50 bg-slate-50'
+                              : isSelected
+                              ? 'bg-blue-50'
+                              : 'hover:bg-slate-50'
+                          }`}
+                        >
+                          {/* Header row */}
+                          <div
+                            className={`flex flex-wrap items-start justify-between gap-3 ${isRejected ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                            role={isRejected ? undefined : 'button'}
+                            tabIndex={isRejected ? -1 : 0}
+                            onClick={() => !isRejected && setSelectedQuoteId(quote.quote_id)}
+                            onKeyDown={e => !isRejected && e.key === 'Enter' && setSelectedQuoteId(quote.quote_id)}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              {isSelected
+                                ? <CheckCircle2 className="h-4 w-4 text-blue-500 flex-shrink-0" />
+                                : <div className="w-4 h-4 rounded-full border-2 border-slate-200 flex-shrink-0" />
+                              }
+                              <div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-sm font-semibold text-slate-900">{quote.estimate_number}</span>
+                                  {/* Approval status */}
+                                  <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${approvalCfg.bg} ${approvalCfg.text} ${approvalCfg.border}`}>
+                                    <span className={`w-1.5 h-1.5 rounded-full ${approvalCfg.dot}`} />
+                                    {approvalCfg.label}
+                                  </span>
+                                  {/* Payment status */}
+                                  <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${payCfg.bg} ${payCfg.text} ${payCfg.border}`}>
+                                    <span className={`w-1.5 h-1.5 rounded-full ${payCfg.dot}`} />
+                                    {payCfg.label}
+                                  </span>
+                                  {quote.booking_id && (
+                                    <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
+                                      Booking Linked
+                                    </span>
+                                  )}
+                                  {request.active_quote_id === quote.quote_id && (
+                                    <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                                      Active
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-slate-400 mt-0.5">
+                                  Created {new Date(quote.created_at).toLocaleString('en-LK')} &middot; {quote.payment_count} payment{quote.payment_count !== 1 ? 's' : ''}
+                                </p>
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={e => { e.stopPropagation(); navigate(`/admin/quotations/${quote.quote_id}`); }}
+                              className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 shrink-0"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" /> Open
+                            </button>
+                          </div>
+
+                          {/* Money stats */}
+                          <div className="mt-3 ml-6 grid grid-cols-3 gap-2">
+                            <QuoteStat label="Total"     value={money(quote.total_amount)} />
+                            <QuoteStat label="Paid"      value={money(quote.total_paid)}          accent="text-emerald-700" />
+                            <QuoteStat label="Remaining" value={money(quote.remaining_amount)}     accent="text-amber-700" />
+                          </div>
+
+                          {/* Action buttons */}
+                          <div className="mt-3 ml-6 flex items-center gap-2 flex-wrap">
+                            {/* Send to client */}
+                            <button
+                              type="button"
+                              onClick={e => { e.stopPropagation(); handleSendQuotePdf(quote.quote_id); }}
+                              disabled={!!actionKey || isRejected}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:border-slate-300 disabled:opacity-50 transition-colors"
+                            >
+                              {actionKey === 'sending'
+                                ? <Loader2 className="h-3 w-3 animate-spin" />
+                                : <Send className="h-3 w-3" />
+                              }
+                              {actionKey === 'sending' ? 'Sending…' : 'Send to Client'}
+                            </button>
+
+                            {/* Download PDF */}
+                            <button
+                              type="button"
+                              onClick={e => { e.stopPropagation(); handleDownloadQuotePdf(quote.quote_id); }}
+                              disabled={!!actionKey || isRejected}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:border-slate-300 disabled:opacity-50 transition-colors"
+                            >
+                              {actionKey === 'downloading'
+                                ? <Loader2 className="h-3 w-3 animate-spin" />
+                                : <Download className="h-3 w-3" />
+                              }
+                              {actionKey === 'downloading' ? 'Generating…' : 'Download PDF'}
+                            </button>
+
+                            {/* Accept — only when not yet decided */}
+                            {canDecide && (
+                              <button
+                                type="button"
+                                onClick={e => { e.stopPropagation(); handleAcceptQuote(quote.quote_id); }}
+                                disabled={!!actionKey}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 transition-colors"
+                              >
+                                {actionKey === 'accepting'
+                                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                                  : <ThumbsUp className="h-3 w-3" />
+                                }
+                                {actionKey === 'accepting' ? 'Accepting…' : 'Accept'}
+                              </button>
+                            )}
+
+                            {/* Reject — only when not yet decided */}
+                            {canDecide && (
+                              <button
+                                type="button"
+                                onClick={e => { e.stopPropagation(); handleRejectQuote(quote.quote_id, quote.estimate_number); }}
+                                disabled={!!actionKey}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-50 transition-colors"
+                              >
+                                {actionKey === 'rejecting'
+                                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                                  : <ThumbsDown className="h-3 w-3" />
+                                }
+                                {actionKey === 'rejecting' ? 'Rejecting…' : 'Reject'}
+                              </button>
+                            )}
+
+                            {/* Accepted/Rejected confirmation chip */}
+                            {quote.status === 'ACCEPTED' && (
+                              <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700">
+                                <CheckCircle2 className="h-3.5 w-3.5" /> Client accepted
+                              </span>
+                            )}
+                            {quote.status === 'REJECTED' && (
+                              <span className="inline-flex items-center gap-1 text-xs font-medium text-red-600">
+                                <ThumbsDown className="h-3.5 w-3.5" /> Client rejected
+                              </span>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+
+                {quotes.length > 0 && (
+                  <div className="border-t border-slate-100 px-5 py-2.5 text-xs text-slate-400">
+                    Click a quotation to select it for payment registration
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── PAYMENT TAB ── */}
+            {activeTab === 'payment' && (
+              <div className="space-y-4">
+                {!selectedQuote ? (
+                  <div className="bg-white rounded-xl border border-slate-200 px-5 py-12 text-center">
+                    <CircleDollarSign className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+                    <p className="text-sm font-medium text-slate-500">No quotation selected</p>
+                    <p className="text-xs text-slate-400 mt-1">Go to the Quotations tab and select a quote first</p>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('quotations')}
+                      className="mt-4 inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                    >
+                      <FileText className="h-4 w-4" /> Go to Quotations
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    {/* ── Selected quotation summary ── */}
+                    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                      <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+                        <div className="flex items-center gap-2">
+                          <FileText className="w-3.5 h-3.5 text-slate-400" />
+                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Active Quotation</p>
+                        </div>
+                        <button
+                          onClick={() => navigate(`/admin/quotations/${selectedQuote.quote_id}`)}
+                          className="text-xs font-medium text-blue-600 hover:text-blue-700 inline-flex items-center gap-1"
+                        >
+                          <ExternalLink className="w-3 h-3" /> Open
+                        </button>
+                      </div>
+                      <div className="px-5 py-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900">{selectedQuote.estimate_number}</p>
+                            <p className="text-xs text-slate-400 mt-0.5">
+                              Created {new Date(selectedQuote.created_at).toLocaleDateString('en-LK')}
+                              &nbsp;&middot;&nbsp;{selectedQuote.payment_count} payment{selectedQuote.payment_count !== 1 ? 's' : ''} recorded
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <StatusDot status={QUOTE_APPROVAL_CONFIG[selectedQuote.status] ? selectedQuote.status : 'DRAFT'} config={QUOTE_APPROVAL_CONFIG} />
+                            <StatusDot status={selectedQuoteStatus} config={QUOTE_STATUS_CONFIG} />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-3">
+                          <QuoteStat label="Total"     value={money(selectedQuote.total_amount)} />
+                          <QuoteStat label="Paid"      value={money(selectedQuote.total_paid)}       accent="text-emerald-700" />
+                          <QuoteStat label="Remaining" value={money(selectedQuote.remaining_amount)} accent="text-amber-700" />
+                        </div>
+                      </div>
+
+                      {/* Proceed to Booking — always available */}
+                      <div className="px-5 pb-5">
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-medium text-slate-800">Proceed to Booking</p>
+                            <p className="text-xs text-slate-400 mt-0.5">Create a booking for this service request — payment is not required to proceed.</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleProceed()}
+                            disabled={proceeding}
+                            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50 transition-colors"
+                          >
+                            {proceeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRight className="h-3.5 w-3.5" />}
+                            {proceeding ? 'Creating booking…' : 'Proceed to Staff Roster'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ── Make Payment form ── */}
+                    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                      <div className="px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Make Payment</p>
+                        <p className="text-xs text-slate-400 mt-0.5">Record a payment against {selectedQuote.estimate_number}</p>
+                      </div>
+
+                      {paymentSuccess && (
+                        <div className="mx-5 mt-4 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                          <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+                          {paymentSuccess}
+                        </div>
+                      )}
+
+                      <form onSubmit={handlePaymentSubmit} className="px-5 pb-5 pt-4 space-y-3">
                         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                           <div>
-                            <label className="mb-1 block text-xs font-medium text-slate-500">Amount Received (LKR) *</label>
+                            <label className={labelCls}>Amount Received (LKR) <span className="text-red-500">*</span></label>
                             <input
                               required
                               type="number"
                               min="0"
                               step="0.01"
                               value={paymentForm.amount_received}
-                              onChange={(e) => setPaymentForm({ ...paymentForm, amount_received: e.target.value })}
+                              onChange={e => { setPaymentSuccess(''); setPaymentForm({ ...paymentForm, amount_received: e.target.value }); }}
                               placeholder="0.00"
-                              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                              className={inputCls}
                             />
                           </div>
                           <div>
-                            <label className="mb-1 block text-xs font-medium text-slate-500">Payment Method</label>
+                            <label className={labelCls}>Payment Method</label>
                             <select
                               value={paymentForm.payment_method}
-                              onChange={(e) => setPaymentForm({ ...paymentForm, payment_method: e.target.value })}
-                              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                              onChange={e => setPaymentForm({ ...paymentForm, payment_method: e.target.value })}
+                              className={inputCls}
                             >
                               <option value="BANK_TRANSFER">Bank Transfer</option>
                               <option value="CASH_DEPOSIT">Cash Deposit</option>
@@ -599,15 +1072,15 @@ const ServiceRequestSummaryPage = () => {
 
                         {requiresBankAccount && (
                           <div>
-                            <label className="mb-1 block text-xs font-medium text-slate-500">Bank Account *</label>
+                            <label className={labelCls}>Bank Account <span className="text-red-500">*</span></label>
                             <select
                               required
                               value={paymentForm.bank_account_id}
-                              onChange={(e) => setPaymentForm({ ...paymentForm, bank_account_id: e.target.value })}
-                              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                              onChange={e => setPaymentForm({ ...paymentForm, bank_account_id: e.target.value })}
+                              className={inputCls}
                             >
                               <option value="">Select bank account</option>
-                              {bankAccounts.map((a) => (
+                              {bankAccounts.map(a => (
                                 <option key={a.account_id} value={a.account_id}>
                                   {a.account_nickname} ({a.bank_name})
                                 </option>
@@ -619,137 +1092,257 @@ const ServiceRequestSummaryPage = () => {
                         {isCheque && (
                           <div className="grid grid-cols-2 gap-3">
                             <div>
-                              <label className="mb-1 block text-xs font-medium text-slate-500">Cheque Number *</label>
-                              <input
-                                required
-                                value={paymentForm.cheque_number}
-                                onChange={(e) => setPaymentForm({ ...paymentForm, cheque_number: e.target.value })}
-                                placeholder="Cheque No."
-                                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                              />
+                              <label className={labelCls}>Cheque Number <span className="text-red-500">*</span></label>
+                              <input required value={paymentForm.cheque_number} onChange={e => setPaymentForm({ ...paymentForm, cheque_number: e.target.value })} placeholder="Cheque No." className={inputCls} />
                             </div>
                             <div>
-                              <label className="mb-1 block text-xs font-medium text-slate-500">Cheque Date *</label>
-                              <input
-                                required
-                                type="date"
-                                value={paymentForm.cheque_date}
-                                onChange={(e) => setPaymentForm({ ...paymentForm, cheque_date: e.target.value })}
-                                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                              />
+                              <label className={labelCls}>Cheque Date <span className="text-red-500">*</span></label>
+                              <input required type="date" value={paymentForm.cheque_date} onChange={e => setPaymentForm({ ...paymentForm, cheque_date: e.target.value })} className={inputCls} />
                             </div>
                           </div>
                         )}
 
-                        <div>
-                          <label className="mb-1 block text-xs font-medium text-slate-500">Reference Number</label>
-                          <input
-                            value={paymentForm.reference_number}
-                            onChange={(e) => setPaymentForm({ ...paymentForm, reference_number: e.target.value })}
-                            placeholder="Optional"
-                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                          />
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          <div>
+                            <label className={labelCls}>Reference Number</label>
+                            <input value={paymentForm.reference_number} onChange={e => setPaymentForm({ ...paymentForm, reference_number: e.target.value })} placeholder="Optional" className={inputCls} />
+                          </div>
+                          <div>
+                            <label className={labelCls}>Notes</label>
+                            <input value={paymentForm.notes} onChange={e => setPaymentForm({ ...paymentForm, notes: e.target.value })} placeholder="Optional" className={inputCls} />
+                          </div>
                         </div>
 
-                        <div>
-                          <label className="mb-1 block text-xs font-medium text-slate-500">Notes</label>
-                          <textarea
-                            value={paymentForm.notes}
-                            onChange={(e) => setPaymentForm({ ...paymentForm, notes: e.target.value })}
-                            placeholder="Optional"
-                            rows={2}
-                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                          />
-                        </div>
-
-                        <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
-                          <p className="mb-2 text-xs font-medium text-slate-500">Payment Slip</p>
-                          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
-                            <Upload className="h-3.5 w-3.5" /> Choose File
-                            <input
-                              type="file"
-                              accept="image/*,.pdf,.doc,.docx"
-                              className="hidden"
-                              onChange={(e) => setPaymentSlipFile(e.target.files?.[0] || null)}
-                            />
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 flex items-center gap-3">
+                          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors flex-shrink-0">
+                            <Upload className="h-3.5 w-3.5" />
+                            {paymentSlipFile ? 'Change File' : 'Attach Slip'}
+                            <input type="file" accept="image/*,.pdf,.doc,.docx" className="hidden" onChange={e => setPaymentSlipFile(e.target.files?.[0] || null)} />
                           </label>
-                          {paymentSlipFile && (
-                            <p className="mt-2 text-xs text-slate-500">{paymentSlipFile.name}</p>
-                          )}
+                          {paymentSlipFile
+                            ? <p className="text-xs text-slate-600 truncate">{paymentSlipFile.name}</p>
+                            : <p className="text-xs text-slate-400">Upload payment slip (image or PDF)</p>
+                          }
                         </div>
 
                         <button
                           type="submit"
                           disabled={submitting}
-                          className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                         >
-                          <CircleDollarSign className="h-4 w-4" />
-                          {submitting ? 'Saving…' : 'Register Payment & Continue'}
+                          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CircleDollarSign className="h-4 w-4" />}
+                          {submitting ? 'Saving…' : 'Record Payment'}
                         </button>
                       </form>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* ══ RIGHT COLUMN (1/3) — persistent sidebar ══ */}
-            <div className="space-y-5">
-
-              {/* Quick info */}
-              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="mb-3 flex items-center gap-2">
-                  <MapPin className="h-3.5 w-3.5 text-slate-400" />
-                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Overview</span>
-                </div>
-                <dl className="space-y-2.5">
-                  <Field label="Status" value={humanize(request.status)} />
-                  <Field label="Service" value={request.service_type} />
-                  <Field label="Model" value={humanize(request.service_model)} />
-                  <Field label="Pref. Gender" value={humanize(request.preferred_gender || 'ANY')} />
-                  <Field label="Start Date" value={fmt(request.start_date)} />
-                  <Field label="Created" value={fmt(request.created_at)} />
-                </dl>
-              </div>
-
-              {/* Selected quotation */}
-              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="mb-3 flex items-center gap-2">
-                  <FileText className="h-3.5 w-3.5 text-slate-400" />
-                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Selected Quotation</span>
-                </div>
-
-                {selectedQuote ? (
-                  <>
-                    <div className="mb-3 flex items-center justify-between">
-                      <span className="font-semibold text-slate-900 text-sm">{selectedQuote.estimate_number}</span>
-                      <span className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${quoteStatusStyle[selectedQuoteStatus]}`}>
-                        {humanize(selectedQuoteStatus)}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <QuoteStat label="Total" value={money(selectedQuote.total_amount)} />
-                      <QuoteStat label="Paid" value={money(selectedQuote.total_paid)} accent="text-emerald-700" />
-                      <QuoteStat label="Remaining" value={money(selectedQuote.remaining_amount)} accent="text-amber-700" />
-                      <QuoteStat label="Payments" value={String(selectedQuote.payment_count)} />
                     </div>
 
-                    {(selectedQuoteStatus === 'FULLY_PAID' || selectedQuoteStatus === 'PARTIALLY_PAID') && (
-                      <button
-                        type="button"
-                        onClick={handleProceed}
-                        disabled={proceeding}
-                        className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                      >
-                        <ArrowRight className="h-4 w-4" />
-                        {proceeding ? 'Proceeding…' : 'Proceed to Staff Roster'}
-                      </button>
-                    )}
+                    {/* ── Payment history ── */}
+                    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                      <div className="px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Payment History</p>
+                        <p className="text-xs text-slate-400 mt-0.5">All payments recorded against {selectedQuote.estimate_number}</p>
+                      </div>
+
+                      {paymentHistoryLoading ? (
+                        <div className="flex items-center justify-center py-10">
+                          <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+                        </div>
+                      ) : paymentHistory.length === 0 ? (
+                        <div className="px-5 py-10 text-center">
+                          <CircleDollarSign className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                          <p className="text-sm text-slate-400">No payments recorded yet</p>
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-slate-100">
+                          {paymentHistory.map((p, i) => {
+                            const amt = parseFloat(p.amount || 0);
+                            const methodLabel = {
+                              BANK_TRANSFER: 'Bank Transfer',
+                              CASH_DEPOSIT:  'Cash Deposit',
+                              CASH:          'Cash',
+                              CHEQUE:        'Cheque',
+                            }[p.payment_method] || p.payment_method || '—';
+                            const statusCfg = {
+                              VERIFIED: { cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', label: 'Verified' },
+                              REJECTED: { cls: 'bg-red-50 text-red-600 border-red-200',            label: 'Rejected' },
+                              PENDING:  { cls: 'bg-slate-50 text-slate-500 border-slate-200',      label: 'Pending' },
+                            }[p.status] || { cls: 'bg-slate-50 text-slate-500 border-slate-200', label: p.status || 'Pending' };
+                            return (
+                              <div key={p.payment_id || i} className="px-5 py-3.5 flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <p className="text-sm font-semibold text-slate-900">
+                                      LKR {amt.toLocaleString('en-LK', { minimumFractionDigits: 2 })}
+                                    </p>
+                                    <span className="text-xs text-slate-400 font-medium">{methodLabel}</span>
+                                  </div>
+                                  <p className="text-xs text-slate-400 mt-0.5">
+                                    {p.payment_date
+                                      ? new Date(p.payment_date).toLocaleString('en-LK', { day: '2-digit', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+                                      : '—'}
+                                    {p.reference_number && ` · Ref: ${p.reference_number}`}
+                                    {p.bank_account?.account_nickname && ` · ${p.bank_account.account_nickname}`}
+                                    {p.notes && ` · ${p.notes}`}
+                                  </p>
+                                </div>
+                                <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${statusCfg.cls}`}>
+                                  {statusCfg.label}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </>
-                ) : (
-                  <p className="text-sm text-slate-400">Select a quotation from the Quotations tab.</p>
                 )}
               </div>
+            )}
+          </div>
+
+          {/* Sidebar — 1/3 */}
+          <div className="space-y-4">
+
+            {/* Next step prompt */}
+            {quotes.length === 0 ? (
+              <div className="rounded-xl border border-slate-200 bg-white p-4">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Next Step</p>
+                <p className="text-sm text-slate-800 font-medium">Create a quotation</p>
+                <p className="text-xs text-slate-400 mt-0.5 mb-3">No quotations exist yet for this request.</p>
+                <button
+                  onClick={() => navigate(`/admin/modular-quote-builder/${request.request_id}`)}
+                  className="inline-flex items-center gap-1.5 w-full justify-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
+                >
+                  <Plus className="h-3.5 w-3.5" /> Build Quotation
+                </button>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-0.5">Actions</p>
+                  <p className="text-xs text-slate-400">{selectedQuote?.estimate_number}</p>
+                </div>
+                <button
+                  onClick={() => handleProceed()}
+                  disabled={proceeding}
+                  className="inline-flex items-center gap-1.5 w-full justify-center rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50 transition-colors"
+                >
+                  {proceeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRight className="h-3.5 w-3.5" />}
+                  {proceeding ? 'Creating booking…' : 'Proceed to Booking'}
+                </button>
+                <button
+                  onClick={() => setActiveTab('payment')}
+                  className="inline-flex items-center gap-1.5 w-full justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                >
+                  <CircleDollarSign className="h-3.5 w-3.5" /> Record Payment
+                </button>
+              </div>
+            )}
+
+            {/* Selected quotation card */}
+            {selectedQuote && (
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-3.5 h-3.5 text-slate-400" />
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Selected Quote</p>
+                  </div>
+                  <button
+                    onClick={() => navigate(`/admin/quotations/${selectedQuote.quote_id}`)}
+                    className="text-xs text-blue-600 hover:text-blue-700 font-medium inline-flex items-center gap-1"
+                  >
+                    <ExternalLink className="w-3 h-3" /> Open
+                  </button>
+                </div>
+                <div className="p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="font-semibold text-slate-900 text-sm">{selectedQuote.estimate_number}</p>
+                    <StatusDot status={selectedQuoteStatus} config={QUOTE_STATUS_CONFIG} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <QuoteStat label="Total"     value={money(selectedQuote.total_amount)} />
+                    <QuoteStat label="Paid"      value={money(selectedQuote.total_paid)}          accent="text-emerald-700" />
+                    <QuoteStat label="Remaining" value={money(selectedQuote.remaining_amount)}     accent="text-amber-700" />
+                    <QuoteStat label="Payments"  value={String(selectedQuote.payment_count)} />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Request overview */}
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-100 bg-slate-50">
+                <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Quick Overview</p>
+              </div>
+              <div className="p-4 space-y-2.5">
+                <SidebarField label="Status"       value={<StatusDot status={request.status} config={REQUEST_STATUS_CONFIG} />} />
+                <SidebarField label="Role"         value={serviceLabel(request.service_type)} />
+                <SidebarField label="Model"        value={modelLabel(request.service_model)} />
+                <SidebarField label="Gender Pref"  value={request.preferred_gender || 'Any'} />
+                <SidebarField label="Start Date"   value={fmt(request.start_date)} />
+                <SidebarField label="Quotations"   value={`${quotes.length} total`} />
+                <SidebarField label="Created"      value={fmt(request.created_at)} />
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+      {/* ── Receipt send popup ── */}
+      {showReceiptPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100">
+                  <MessageCircle className="h-4 w-4 text-slate-600" />
+                </div>
+                <h3 className="text-sm font-semibold text-slate-900">Send Payment Receipt?</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowReceiptPopup(false)}
+                className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="px-5 py-4">
+              <p className="text-sm text-slate-600">
+                Payment recorded. Would you like to send the receipt to{' '}
+                <span className="font-semibold text-slate-900">{request?.payer_name || 'the client'}</span>
+                {request?.payer_mobile && (
+                  <span className="text-slate-400"> ({request.payer_mobile})</span>
+                )}{' '}
+                via WhatsApp?
+              </p>
+              {!request?.client_id && (
+                <p className="mt-2 text-xs text-slate-400">
+                  No linked client profile — receipt sending is only available for registered clients.
+                </p>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-5 py-3">
+              <button
+                type="button"
+                onClick={() => setShowReceiptPopup(false)}
+                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Skip for now
+              </button>
+              <button
+                type="button"
+                onClick={handleSendLatestReceipt}
+                disabled={receiptSendBusy || !request?.client_id}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {receiptSendBusy ? (
+                  <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Sending…</>
+                ) : (
+                  <><SendHorizontal className="h-3.5 w-3.5" /> Yes, send now</>
+                )}
+              </button>
             </div>
           </div>
         </div>
@@ -758,32 +1351,7 @@ const ServiceRequestSummaryPage = () => {
   );
 };
 
-/* ── Sub-components ── */
-
-const SectionHeading = ({ icon: Icon, label }) => (
-  <div className="flex items-center gap-2">
-    <Icon className="h-3.5 w-3.5 text-slate-400" />
-    <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</span>
-  </div>
-);
-
-const Field = ({ label, value }) => (
-  <div className="flex items-start justify-between gap-3">
-    <dt className="shrink-0 text-xs text-slate-400">{label}</dt>
-    <dd className="text-right text-sm font-medium text-slate-800">
-      {value != null && value !== '' ? String(value) : <span className="font-normal text-slate-400">—</span>}
-    </dd>
-  </div>
-);
-
-const DetailField = ({ label, value }) => (
-  <div>
-    <dt className="text-xs font-medium text-slate-400">{label}</dt>
-    <dd className="mt-1 text-sm font-medium text-slate-800">
-      {value != null && value !== '' ? String(value) : <span className="font-normal text-slate-400">—</span>}
-    </dd>
-  </div>
-);
+// ─── micro-components ─────────────────────────────────────────────────────────
 
 const QuoteStat = ({ label, value, accent = 'text-slate-900' }) => (
   <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5">
@@ -792,28 +1360,15 @@ const QuoteStat = ({ label, value, accent = 'text-slate-900' }) => (
   </div>
 );
 
-const inputCls = 'w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100';
-
-const FormField = ({ label, value, onChange, type = 'text' }) => (
-  <div>
-    <label className="mb-1 block text-xs font-medium text-slate-500">{label}</label>
-    <input type={type} value={value} onChange={(e) => onChange(e.target.value)} className={inputCls} />
-  </div>
-);
-
-const FormTextarea = ({ label, value, onChange }) => (
-  <div>
-    <label className="mb-1 block text-xs font-medium text-slate-500">{label}</label>
-    <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={3} className={inputCls} />
-  </div>
-);
-
-const FormSelect = ({ label, value, options, onChange }) => (
-  <div>
-    <label className="mb-1 block text-xs font-medium text-slate-500">{label}</label>
-    <select value={value} onChange={(e) => onChange(e.target.value)} className={inputCls}>
-      {options.map((o) => <option key={o} value={o}>{o}</option>)}
-    </select>
+const SidebarField = ({ label, value }) => (
+  <div className="flex items-center justify-between gap-3">
+    <dt className="shrink-0 text-xs text-slate-400">{label}</dt>
+    <dd className="text-right text-sm font-medium text-slate-800 min-w-0">
+      {typeof value === 'string' || typeof value === 'number'
+        ? (value != null && value !== '' ? String(value) : <span className="font-normal text-slate-400">—</span>)
+        : value
+      }
+    </dd>
   </div>
 );
 

@@ -173,9 +173,15 @@ const QuoteBuilder = () => {
     return { totalCharges, totalDiscounts, subtotal: totalCharges - totalDiscounts };
   };
 
+  const isItemValid = (item) =>
+    item.description?.trim() && Math.abs(parseFloat(item.amount) || 0) > 0;
+
+  const validLineItems = lineItems.filter(isItemValid);
+  const skippedCount   = lineItems.length - validLineItems.length;
+
   const handleCreateQuote = async (e) => {
     e.preventDefault();
-    if (!serviceRequest || lineItems.length === 0) return;
+    if (!serviceRequest || validLineItems.length === 0) return;
     const totals = calculateTotals();
     if (totals.subtotal <= 0) {
       setError('Quote total must be greater than zero');
@@ -192,7 +198,7 @@ const QuoteBuilder = () => {
         },
         body: JSON.stringify({
           request_id: serviceRequest.request_id,
-          line_items: lineItems,
+          line_items: validLineItems,
           terms_conditions: termsConditions,
         }),
       });
@@ -469,11 +475,19 @@ const QuoteBuilder = () => {
               {/* Quote Items list */}
               <SectionCard>
                 <CardHeader icon={Tag} title="Quote Items" iconColor="text-slate-500">
-                  {lineItems.length > 0 && (
-                    <span className="bg-blue-100 text-blue-700 text-xs font-bold px-2.5 py-1 rounded-full">
-                      {lineItems.length} {lineItems.length === 1 ? 'item' : 'items'}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {skippedCount > 0 && (
+                      <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-1">
+                        <AlertCircle className="w-3 h-3" />
+                        {skippedCount} item{skippedCount > 1 ? 's' : ''} with Rs. 0 excluded
+                      </span>
+                    )}
+                    {lineItems.length > 0 && (
+                      <span className="bg-blue-100 text-blue-700 text-xs font-bold px-2.5 py-1 rounded-full">
+                        {validLineItems.length} {validLineItems.length === 1 ? 'item' : 'items'}
+                      </span>
+                    )}
+                  </div>
                 </CardHeader>
                 <div className="p-5">
                   {lineItems.length === 0 ? (
@@ -486,19 +500,29 @@ const QuoteBuilder = () => {
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {lineItems.map((item, index) => (
-                        <QuoteLineItem
-                          key={index}
-                          item={item}
-                          index={index}
-                          onUpdate={(updated) => updateLineItem(index, updated)}
-                          onDelete={() => deleteLineItem(index)}
-                          onMoveUp={() => moveLineItem(index, 'up')}
-                          onMoveDown={() => moveLineItem(index, 'down')}
-                          isFirst={index === 0}
-                          isLast={index === lineItems.length - 1}
-                        />
-                      ))}
+                      {lineItems.map((item, index) => {
+                        const invalid = !isItemValid(item);
+                        return (
+                          <div key={index} className={invalid ? 'opacity-50 relative' : 'relative'}>
+                            {invalid && (
+                              <div className="absolute -top-1 -right-1 z-10 flex items-center gap-1 bg-amber-50 border border-amber-200 text-amber-700 text-[11px] font-medium px-2 py-0.5 rounded-full">
+                                <AlertCircle className="w-3 h-3" />
+                                Won't be included (Rs. 0)
+                              </div>
+                            )}
+                            <QuoteLineItem
+                              item={item}
+                              index={index}
+                              onUpdate={(updated) => updateLineItem(index, updated)}
+                              onDelete={() => deleteLineItem(index)}
+                              onMoveUp={() => moveLineItem(index, 'up')}
+                              onMoveDown={() => moveLineItem(index, 'down')}
+                              isFirst={index === 0}
+                              isLast={index === lineItems.length - 1}
+                            />
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -527,7 +551,7 @@ const QuoteBuilder = () => {
               {/* Create Quote CTA */}
               <button
                 onClick={handleCreateQuote}
-                disabled={creatingQuote || lineItems.length === 0 || totals.subtotal <= 0}
+                disabled={creatingQuote || validLineItems.length === 0 || totals.subtotal <= 0}
                 className="w-full bg-blue-600 text-white py-3.5 px-6 rounded-xl font-semibold text-sm hover:bg-blue-700 active:scale-[0.99] transition-all disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-sm shadow-blue-100"
               >
                 {creatingQuote ? (

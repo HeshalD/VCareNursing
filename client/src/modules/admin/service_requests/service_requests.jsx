@@ -1,142 +1,112 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import {
+  Search, Phone, MapPin, Calendar, FileText,
+  Eye, Calculator, Settings, Shield, Loader2,
+  ChevronRight,
+} from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
-import { 
-  Calendar, 
-  User, 
-  Phone, 
-  MapPin, 
-  Clock, 
-  FileText,
-  Filter,
-  Search,
-  Eye,
-  CheckCircle,
-  XCircle,
-  AlertCircle,
-  Calculator,
-  Shield,
-  ShieldOff,
-  Settings
-} from 'lucide-react';
 import PresetManager from '../service_quotes/PresetManager';
+
+const STATUS_TABS = ['All', 'New Lead', 'Pending', 'Contacted', 'Confirmed', 'Cancelled', 'Booking Created'];
+
+const TAB_TO_STATUS = {
+  'New Lead':       'NEW_LEAD',
+  'Pending':        'PENDING',
+  'Contacted':      'CONTACTED',
+  'Confirmed':      'CONFIRMED',
+  'Cancelled':      'CANCELLED',
+  'Booking Created':'BOOKING_CREATED',
+};
+
+const STATUS_CONFIG = {
+  NEW_LEAD:        { dot: 'bg-purple-400', text: 'text-purple-700', label: 'New Lead' },
+  PENDING:         { dot: 'bg-amber-400',  text: 'text-amber-700',  label: 'Pending' },
+  CONTACTED:       { dot: 'bg-blue-400',   text: 'text-blue-700',   label: 'Contacted' },
+  CONFIRMED:       { dot: 'bg-emerald-500',text: 'text-emerald-700',label: 'Confirmed' },
+  CANCELLED:       { dot: 'bg-red-400',    text: 'text-red-700',    label: 'Cancelled' },
+  BOOKING_CREATED: { dot: 'bg-indigo-500', text: 'text-indigo-700', label: 'Booking Created' },
+};
+
+const BOOKING_STATUS_CONFIG = {
+  PENDING: { dot: 'bg-amber-400',   text: 'text-amber-700',   label: 'Pending' },
+  ACTIVE:  { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Active' },
+};
+
+const StatusBadge = ({ status }) => {
+  const cfg = STATUS_CONFIG[status] || { dot: 'bg-slate-400', text: 'text-slate-600', label: status };
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
+      {cfg.label}
+    </span>
+  );
+};
+
+const BookingStatusBadge = ({ status }) => {
+  const cfg = BOOKING_STATUS_CONFIG[status] || { dot: 'bg-slate-400', text: 'text-slate-500', label: status };
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
+      {cfg.label}
+    </span>
+  );
+};
+
+const formatDate = (v) =>
+  v ? new Date(v).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+
+const formatDateTime = (v) =>
+  v ? new Date(v).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
 
 const ServiceRequests = () => {
   const navigate = useNavigate();
-  const [serviceRequests, setServiceRequests] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [selectedRequest, setSelectedRequest] = useState(null);
-  const [isProxyMode, setIsProxyMode] = useState(false);
+  const [requests, setRequests]               = useState([]);
+  const [loading, setLoading]                 = useState(true);
+  const [error, setError]                     = useState(null);
+  const [search, setSearch]                   = useState('');
+  const [activeTab, setActiveTab]             = useState('All');
   const [showPresetManager, setShowPresetManager] = useState(false);
 
-  useEffect(() => {
-    fetchServiceRequests();
-  }, []);
+  useEffect(() => { fetchRequests(); }, []);
 
-  useEffect(() => {
-    console.log('Proxy mode changed:', isProxyMode);
-    if (isProxyMode) {
-      console.log('Proxy mode activated, navigating to proxy-service-requests');
-      navigate('/admin/proxy-service-requests');
-    } else {
-      console.log('Proxy mode deactivated');
-    }
-  }, [isProxyMode, navigate]);
-
-  const fetchServiceRequests = async () => {
+  const fetchRequests = async () => {
     try {
       setLoading(true);
-      const response = await apiClient.getAllServiceRequests();
-      console.log('Service requests data:', response.data);
-      setServiceRequests(response.data || []);
+      setError(null);
+      const res = await apiClient.getAllServiceRequests();
+      setRequests(res.data || []);
     } catch (err) {
-      console.error('Service Requests fetch error:', err);
-      setError(`Failed to fetch service requests: ${err.message || 'Unknown error'}`);
+      setError('Failed to load service requests.');
     } finally {
       setLoading(false);
     }
   };
 
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'NEW_LEAD':
-        return 'bg-purple-100 text-purple-800 border-purple-200';
-      case 'PENDING':
-        return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-      case 'CONTACTED':
-        return 'bg-blue-100 text-blue-800 border-blue-200';
-      case 'CONFIRMED':
-        return 'bg-green-100 text-green-800 border-green-200';
-      case 'CANCELLED':
-        return 'bg-red-100 text-red-800 border-red-200';
-      case 'BOOKING_CREATED':
-        return 'bg-indigo-100 text-indigo-800 border-indigo-200';
-      default:
-        return 'bg-gray-100 text-gray-800 border-gray-200';
-    }
-  };
-
-  const getBookingStatusColor = (status) => {
-    switch (status) {
-      case 'PENDING':
-        return 'bg-amber-100 text-amber-800 border-amber-200';
-      case 'ACTIVE':
-        return 'bg-emerald-100 text-emerald-800 border-emerald-200';
-      default:
-        return 'bg-gray-100 text-gray-800 border-gray-200';
-    }
-  };
-
-  const getStatusIcon = (status) => {
-    switch (status) {
-      case 'NEW_LEAD':
-        return <AlertCircle className="w-4 h-4" />;
-      case 'PENDING':
-        return <AlertCircle className="w-4 h-4" />;
-      case 'CONTACTED':
-        return <Clock className="w-4 h-4" />;
-      case 'CONFIRMED':
-        return <CheckCircle className="w-4 h-4" />;
-      case 'CANCELLED':
-        return <XCircle className="w-4 h-4" />;
-      case 'BOOKING_CREATED':
-        return <CheckCircle className="w-4 h-4" />;
-      default:
-        return <FileText className="w-4 h-4" />;
-    }
-  };
-
-  const filteredRequests = serviceRequests.filter(request => {
-    const matchesSearch = 
-      request.payer_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      request.patient_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      request.payer_mobile?.includes(searchTerm) ||
-      request.service_type?.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesStatus = statusFilter === 'all' || request.status === statusFilter;
-    
-    return matchesSearch && matchesStatus;
+  const filtered = requests.filter(r => {
+    const statusMatch = activeTab === 'All' || r.status === TAB_TO_STATUS[activeTab];
+    const q = search.trim().toLowerCase();
+    const textMatch = !q || [r.payer_name, r.patient_name, r.payer_mobile, r.service_type, r.service_request_code]
+      .some(v => v?.toLowerCase().includes(q));
+    return statusMatch && textMatch;
   });
 
-  const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+  const counts = {
+    All: requests.length,
+    ...Object.fromEntries(
+      STATUS_TABS.filter(t => t !== 'All').map(tab => [
+        tab,
+        requests.filter(r => r.status === TAB_TO_STATUS[tab]).length,
+      ])
+    ),
   };
 
   if (loading) {
     return (
-      <AdminLayout title="Service Requests" subtitle="Loading...">
+      <AdminLayout title="Service Requests" subtitle="Loading…">
         <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+          <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
         </div>
       </AdminLayout>
     );
@@ -144,313 +114,200 @@ const ServiceRequests = () => {
 
   if (error) {
     return (
-      <AdminLayout title="Service Requests" subtitle="Error occurred">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <div className="flex items-center gap-3">
-            <XCircle className="w-5 h-5 text-red-600" />
-            <span className="text-red-800">{error}</span>
-          </div>
-        </div>
+      <AdminLayout title="Service Requests">
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>
       </AdminLayout>
     );
   }
 
   return (
-    <AdminLayout 
-      title="Service Requests" 
-      subtitle={`Total ${filteredRequests.length} requests`}
-    >
-      {/* Filters and Search */}
-      <div className="bg-white rounded-lg border border-slate-200 p-4 mb-6 shadow-sm">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
-          <div className="md:col-span-2">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search by name, phone, or service type..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-12 pr-4 py-3 border border-slate-200 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <Filter className="w-5 h-5 text-slate-500" />
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="flex-1 px-3 py-2 border border-slate-200 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option key="all" value="all">All Status</option>
-              <option key="new_lead" value="NEW_LEAD">New Lead</option>
-              <option key="pending" value="PENDING">Pending</option>
-              <option key="contacted" value="CONTACTED">Contacted</option>
-              <option key="confirmed" value="CONFIRMED">Confirmed</option>
-              <option key="cancelled" value="CANCELLED">Cancelled</option>
-              <option key="booking_created" value="BOOKING_CREATED">Booking Created</option>
-            </select>
-          </div>
-
-          <div className="flex items-center justify-end gap-3">
-            {/* Proxy Mode Toggle */}
-            <div className="flex items-center gap-2 px-3 py-2 border border-slate-200 rounded-md bg-white shadow-sm">
-              {isProxyMode ? (
-                <Shield className="w-5 h-5 text-emerald-600" />
-              ) : (
-                <ShieldOff className="w-5 h-5 text-slate-400" />
-              )}
-              <span className={`text-sm font-medium ${isProxyMode ? 'text-emerald-600' : 'text-slate-600'}`}>
-                Proxy Mode
-              </span>
-              <button
-                onClick={() => setIsProxyMode(!isProxyMode)}
-                aria-pressed={isProxyMode}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${isProxyMode ? 'bg-emerald-600' : 'bg-slate-300'}`}
-                title="Toggle proxy mode"
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${isProxyMode ? 'translate-x-5' : 'translate-x-1'}`}
-                />
-              </button>
-            </div>
-
-            {/* Manage Presets Button */}
+    <AdminLayout
+      title="Service Requests"
+      subtitle={`${requests.length} total request${requests.length !== 1 ? 's' : ''}`}
+      actions={
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 px-3 py-1.5 border border-slate-200 bg-white rounded-lg">
+            <Shield className="w-3.5 h-3.5 text-slate-400" />
+            <span className="text-sm font-medium text-slate-500">Proxy Mode</span>
             <button
-              onClick={() => setShowPresetManager(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-shadow shadow"
+              type="button"
+              onClick={() => navigate('/admin/proxy-service-requests')}
+              role="switch"
+              aria-checked={false}
+              className="relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent bg-slate-200 transition-colors duration-200 ease-in-out focus:outline-none"
             >
-              <Settings className="w-4 h-4" />
-              <span className="text-sm font-medium">Manage Presets</span>
+              <span className="pointer-events-none inline-block h-4 w-4 translate-x-1 rounded-full bg-white shadow-sm ring-0 transition-transform duration-200 ease-in-out" />
             </button>
           </div>
+          <button
+            onClick={() => setShowPresetManager(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-500 transition-colors"
+          >
+            <Settings className="w-3.5 h-3.5" />
+            Manage Presets
+          </button>
+        </div>
+      }
+    >
+      {/* Toolbar */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
+        <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-1 w-fit flex-wrap">
+          {STATUS_TABS.map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                activeTab === tab
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              {tab}
+              <span className="ml-1.5 tabular-nums text-slate-400">{counts[tab]}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="relative sm:ml-auto">
+          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search by name, phone, service…"
+            className="pl-8 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none w-64"
+          />
         </div>
       </div>
 
-      {/* Service Requests List */}
-      <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm">
-        {filteredRequests.length === 0 ? (
-          <div className="p-12 text-center">
-            <div className="mx-auto mb-4 w-20 h-20 rounded-full bg-slate-50 flex items-center justify-center">
-              <FileText className="w-8 h-8 text-slate-300" />
-            </div>
-            <h3 className="text-lg font-semibold text-slate-900 mb-2">No service requests</h3>
-            <p className="text-sm text-slate-500">There are no service requests matching your filters.</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-200">
-              <thead className="bg-white">
-                <tr className="text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                  <th className="px-4 py-3">Request Details</th>
-                  <th className="px-4 py-3">Care Profile Info</th>
-                  <th className="px-4 py-3">Service</th>
-                  <th className="px-4 py-3">Location</th>
-                  <th className="px-4 py-3">Start Date</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Actions</th>
+      {/* Table */}
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50">
+                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Request</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Care Profile</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Service</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Location</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Start Date</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
+                <th className="px-4 py-3" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-16 text-center">
+                    <div className="flex flex-col items-center gap-2">
+                      <FileText className="w-8 h-8 text-slate-200" />
+                      <p className="text-sm text-slate-400">No service requests match your filters.</p>
+                    </div>
+                  </td>
                 </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-slate-100">
-                {filteredRequests.map((request) => (
-                  <tr key={request.request_id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-3 align-top">
-                      <div>
-                        <div className="text-xs font-mono font-medium text-slate-500 mb-1">{request.service_request_code}</div>
-                        <div className="font-medium text-slate-900">{request.payer_name}</div>
-                        <div className="flex items-center gap-2 text-sm text-slate-500 mt-1">
-                          <Phone className="w-3 h-3" />
-                          <span>{request.payer_mobile}</span>
-                        </div>
-                        <div className="text-xs text-slate-400 mt-1">{formatDate(request.created_at)}</div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 align-top">
-                      <div>
-                        <div className="font-medium text-slate-900">{request.patient_name}</div>
-                        <div className="text-sm text-slate-500">Age: {request.patient_age} • {request.relationship_to_client}</div>
-                        <div className="text-sm text-slate-500 mt-1">{request.patient_condition}</div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 align-top">
-                      <div>
-                        <div className="font-medium text-slate-900">{request.service_type}</div>
-                        <div className="text-sm text-slate-500">{request.service_model?.replace('_', ' ')}</div>
-                        {request.preferred_gender && (
-                          <div className="text-xs text-slate-500 mt-1">Prefers: {request.preferred_gender}</div>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 align-top max-w-xs">
-                      <div className="flex items-start gap-2">
-                        <MapPin className="w-3 h-3 text-slate-400 mt-0.5 flex-shrink-0" />
-                        <span className="text-sm text-slate-600 line-clamp-2">{request.location_address}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 align-top">
-                      <div className="flex items-center gap-2 text-sm text-slate-600">
-                        <Calendar className="w-3 h-3" />
-                        <span>{request.start_date ? new Date(request.start_date).toLocaleDateString('en-GB') : 'Not set'}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 align-top">
-                      <div className="flex flex-col gap-1.5">
-                        <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold border ${getStatusColor(request.status || 'PENDING')}`}>
-                          {getStatusIcon(request.status || 'PENDING')}
-                          <span className="uppercase">{(request.status || 'PENDING').replace(/_/g, ' ')}</span>
-                        </span>
-                        {request.status === 'BOOKING_CREATED' && request.booking_status && (
-                          <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${getBookingStatusColor(request.booking_status)}`}>
-                            <span className="w-1.5 h-1.5 rounded-full bg-current opacity-70" />
-                            <span className="uppercase">{request.booking_status}</span>
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 align-top">
-                      <div className="flex items-center gap-2">
+              ) : filtered.map(r => (
+                <tr key={r.request_id} className="hover:bg-slate-50 transition-colors">
+
+                  {/* Request */}
+                  <td className="px-4 py-3 align-top">
+                    <p className="font-semibold text-slate-900 leading-tight">{r.payer_name}</p>
+                    <div className="flex items-center gap-1 mt-0.5 text-slate-500 text-xs">
+                      <Phone className="w-3 h-3" />
+                      <span>{r.payer_mobile}</span>
+                    </div>
+                    {r.service_request_code && (
+                      <p className="text-xs text-slate-400 font-mono mt-0.5">{r.service_request_code}</p>
+                    )}
+                    <p className="text-xs text-slate-400 mt-0.5">{formatDateTime(r.created_at)}</p>
+                  </td>
+
+                  {/* Care Profile */}
+                  <td className="px-4 py-3 align-top">
+                    <p className="font-medium text-slate-900">{r.patient_name || '—'}</p>
+                    {(r.patient_age || r.relationship_to_client) && (
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        {[r.patient_age && `Age ${r.patient_age}`, r.relationship_to_client].filter(Boolean).join(' · ')}
+                      </p>
+                    )}
+                    {r.patient_condition && (
+                      <p className="text-xs text-slate-400 mt-0.5 max-w-[160px] truncate">{r.patient_condition}</p>
+                    )}
+                  </td>
+
+                  {/* Service */}
+                  <td className="px-4 py-3 align-top">
+                    <p className="font-medium text-slate-900">{r.service_type || '—'}</p>
+                    {r.service_model && (
+                      <p className="text-xs text-slate-500 mt-0.5">{r.service_model.replace(/_/g, ' ')}</p>
+                    )}
+                    {r.preferred_gender && r.preferred_gender !== 'ANY' && (
+                      <p className="text-xs text-slate-400 mt-0.5">Prefers {r.preferred_gender.toLowerCase()}</p>
+                    )}
+                  </td>
+
+                  {/* Location */}
+                  <td className="px-4 py-3 align-top max-w-[180px]">
+                    <div className="flex items-start gap-1 text-slate-600">
+                      <MapPin className="w-3 h-3 mt-0.5 flex-shrink-0 text-slate-400" />
+                      <span className="text-xs line-clamp-2">{r.location_address || '—'}</span>
+                    </div>
+                  </td>
+
+                  {/* Start Date */}
+                  <td className="px-4 py-3 align-top whitespace-nowrap">
+                    <div className="flex items-center gap-1 text-slate-600 text-xs">
+                      <Calendar className="w-3 h-3 text-slate-400" />
+                      <span>{formatDate(r.start_date)}</span>
+                    </div>
+                  </td>
+
+                  {/* Status */}
+                  <td className="px-4 py-3 align-top">
+                    <div className="flex flex-col gap-1">
+                      <StatusBadge status={r.status || 'PENDING'} />
+                      {r.status === 'BOOKING_CREATED' && r.booking_status && (
+                        <BookingStatusBadge status={r.booking_status} />
+                      )}
+                    </div>
+                  </td>
+
+                  {/* Actions */}
+                  <td className="px-4 py-3 align-top">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => navigate(`/admin/service-requests/${r.request_id}/summary`)}
+                        title="View Summary"
+                        className="p-1.5 rounded-md text-slate-400 hover:bg-slate-100 hover:text-blue-600 transition-colors"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </button>
+                      {['NEW_LEAD', 'PENDING'].includes(r.status || 'PENDING') && (
                         <button
-                          onClick={() => navigate(`/admin/service-requests/${request.request_id}/summary`)}
-                          className="p-2 rounded-md bg-slate-50 hover:bg-slate-100 text-blue-600 transition"
-                          title="Open Summary"
+                          onClick={() => navigate(`/admin/modular-quote-builder/${r.request_id}`)}
+                          title="Create Quote"
+                          className="p-1.5 rounded-md text-slate-400 hover:bg-slate-100 hover:text-emerald-600 transition-colors"
                         >
-                          <Eye className="w-4 h-4" />
+                          <Calculator className="w-4 h-4" />
                         </button>
-                        {['NEW_LEAD', 'PENDING'].includes(request.status || 'PENDING') && (
-                          <button
-                            onClick={() => navigate(`/admin/quote-builder/${request.request_id}`)}
-                            className="p-2 rounded-md bg-slate-50 hover:bg-slate-100 text-green-600 transition"
-                            title="Create Quote"
-                          >
-                            <Calculator className="w-4 h-4" />
-                          </button>
-                        )}
-                        {/* Assign Staff removed — not used in this process */}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {filtered.length > 0 && (
+          <div className="border-t border-slate-100 px-4 py-2.5 text-xs text-slate-400">
+            Showing {filtered.length} of {requests.length} request{requests.length !== 1 ? 's' : ''}
           </div>
         )}
       </div>
 
-      {/* Detail Modal */}
-      {selectedRequest && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-slate-200">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-bold text-slate-900">Service Request Details</h2>
-                <button
-                  onClick={() => setSelectedRequest(null)}
-                  className="text-slate-400 hover:text-slate-600"
-                >
-                  <XCircle className="w-6 h-6" />
-                </button>
-              </div>
-            </div>
-            
-            <div className="p-6 space-y-6">
-              {/* Payer Information */}
-              <div>
-                <h3 className="font-semibold text-slate-900 mb-3">Payer Information</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-sm text-slate-500">Name</label>
-                    <p className="font-medium">{selectedRequest.payer_name}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm text-slate-500">Mobile</label>
-                    <p className="font-medium">{selectedRequest.payer_mobile}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Patient Information */}
-              <div>
-                <h3 className="font-semibold text-slate-900 mb-3">Care Profile Information</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-sm text-slate-500">Name</label>
-                    <p className="font-medium">{selectedRequest.patient_name}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm text-slate-500">Age</label>
-                    <p className="font-medium">{selectedRequest.patient_age}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm text-slate-500">Relationship</label>
-                    <p className="font-medium">{selectedRequest.relationship_to_client}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm text-slate-500">Condition</label>
-                    <p className="font-medium">{selectedRequest.patient_condition}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Service Details */}
-              <div>
-                <h3 className="font-semibold text-slate-900 mb-3">Service Details</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-sm text-slate-500">Service Type</label>
-                    <p className="font-medium">{selectedRequest.service_type}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm text-slate-500">Service Model</label>
-                    <p className="font-medium">{selectedRequest.service_model?.replace('_', ' ')}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm text-slate-500">Preferred Gender</label>
-                    <p className="font-medium">{selectedRequest.preferred_gender || 'Any'}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm text-slate-500">Start Date</label>
-                    <p className="font-medium">
-                      {selectedRequest.start_date ? new Date(selectedRequest.start_date).toLocaleDateString('en-GB') : 'Not set'}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Location */}
-              <div>
-                <h3 className="font-semibold text-slate-900 mb-3">Service Location</h3>
-                <p className="text-slate-700">{selectedRequest.location_address}</p>
-              </div>
-
-              {/* Remarks */}
-              {selectedRequest.remarks && (
-                <div>
-                  <h3 className="font-semibold text-slate-900 mb-3">Remarks</h3>
-                  <p className="text-slate-700">{selectedRequest.remarks}</p>
-                </div>
-              )}
-
-              {/* Status */}
-              <div>
-                <h3 className="font-semibold text-slate-900 mb-3">Status</h3>
-                <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium border ${getStatusColor(selectedRequest.status || 'PENDING')}`}>
-                  {getStatusIcon(selectedRequest.status || 'PENDING')}
-                  {selectedRequest.status || 'PENDING'}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Preset Manager Modal */}
       <PresetManager
         isOpen={showPresetManager}
         onClose={() => setShowPresetManager(false)}
-        onSave={() => {
-          setShowPresetManager(false);
-        }}
+        onSave={() => setShowPresetManager(false)}
       />
     </AdminLayout>
   );

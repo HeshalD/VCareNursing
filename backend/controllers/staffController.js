@@ -1233,7 +1233,7 @@ exports.getAllStaff = async (req, res) => {
         `;
 
         const query = `
-            SELECT 
+            SELECT
                 sp.staff_profile_id,
                 sp.full_name,
                 sp.designation,
@@ -1266,9 +1266,23 @@ exports.getAllStaff = async (req, res) => {
                 u.role,
                 u.is_active,
                 u.is_email_verified,
-                u.created_at as user_created_at
+                u.created_at as user_created_at,
+                active_assign.service_end_date as active_assignment_end_date,
+                active_assign.booking_client_name as active_assignment_client
             FROM staff_profiles sp
             JOIN users u ON sp.user_id = u.user_id
+            LEFT JOIN LATERAL (
+                SELECT bsa.service_end_date,
+                       COALESCE(cp.full_name, sr.payer_name) AS booking_client_name
+                FROM booking_staff_assignments bsa
+                JOIN bookings b ON bsa.booking_id = b.booking_id
+                LEFT JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+                LEFT JOIN service_requests sr ON b.request_id = sr.request_id
+                WHERE bsa.staff_profile_id = sp.staff_profile_id
+                  AND bsa.status IN ('ACTIVE', 'SCHEDULED')
+                ORDER BY bsa.service_start_date DESC
+                LIMIT 1
+            ) active_assign ON true
             WHERE 1=1 ${whereClause}
             ORDER BY sp.created_at DESC
             LIMIT $${paramIndex} OFFSET $${paramIndex + 1}

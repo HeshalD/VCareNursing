@@ -8,7 +8,8 @@ module.exports = (data) => {
     });
 
     // Handle both old format (backwards compatibility) and new modular format
-    const lineItems = data.line_items || [];
+    // Filter out zero-amount items so they never appear in the PDF
+    const lineItems = (data.line_items || []).filter(item => Math.abs(parseFloat(item.amount) || 0) > 0);
     let itemsHtml = '';
     let itemNumber = 1;
 

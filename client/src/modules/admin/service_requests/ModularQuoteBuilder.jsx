@@ -6,37 +6,375 @@ import {
   User,
   Phone,
   MapPin,
-  Calendar,
   FileText,
-  Calculator,
   Send,
   AlertCircle,
   CheckCircle,
   ArrowLeft,
   Plus,
-  Minus
+  Eye,
+  Edit3,
+  Tag,
+  Download,
+  RefreshCw,
+  Trash2,
+  ChevronUp,
+  ChevronDown,
+  Percent,
 } from 'lucide-react';
-import QuoteLineItem from '../service_quotes/QuoteLineItem';
 import PresetItemSelector from '../service_quotes/PresetItemSelector';
-import QuoteSummary from '../service_quotes/QuoteSummary';
 import PresetManager from '../service_quotes/PresetManager';
 
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+const fmt = (n) =>
+  Number(n || 0).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const InfoRow = ({ label, value }) => (
+  <div>
+    <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">{label}</p>
+    <p className="mt-0.5 text-sm text-gray-800 font-medium">{value || '—'}</p>
+  </div>
+);
+
+// ---------------------------------------------------------------------------
+// Inline editable line-item row (Zoho-style)
+// ---------------------------------------------------------------------------
+const LineItemRow = ({ item, index, isFirst, isLast, onUpdate, onDelete, onMoveUp, onMoveDown }) => {
+  const isDiscount = item.item_type === 'DISCOUNT';
+  const qty        = parseFloat(item.quantity)  || 0;
+  const rate       = parseFloat(item.unit_price) || 0;
+  const amount     = parseFloat(item.amount)     || 0;
+
+  const set = (field, value) => {
+    const next = { ...item, [field]: value };
+    if (field === 'quantity' || field === 'unit_price') {
+      const q = parseFloat(field === 'quantity'  ? value : item.quantity)  || 0;
+      const r = parseFloat(field === 'unit_price' ? value : item.unit_price) || 0;
+      next.amount = isDiscount ? -(q * r) : q * r;
+    }
+    onUpdate(next);
+  };
+
+  return (
+    <tr className="group border-b border-gray-100 hover:bg-gray-50/60 transition-colors">
+      {/* # */}
+      <td className="py-3 pl-4 w-8 text-[12px] text-gray-300 select-none">{index + 1}</td>
+
+      {/* Item / Description */}
+      <td className="py-2 pr-3">
+        <input
+          value={item.description || ''}
+          onChange={(e) => set('description', e.target.value)}
+          placeholder="Type to enter item details"
+          className="w-full text-sm text-gray-800 bg-transparent placeholder-gray-300 border-0 outline-none focus:ring-0 p-0"
+        />
+        {isDiscount && (
+          <span className="text-[11px] text-gray-400 font-medium">Discount</span>
+        )}
+      </td>
+
+      {/* Qty */}
+      <td className="py-2 pr-3 w-24">
+        <input
+          type="number"
+          min="0"
+          value={item.quantity ?? 1}
+          onChange={(e) => set('quantity', e.target.value)}
+          className="w-full text-sm text-gray-800 bg-transparent border-0 outline-none focus:ring-0 text-right p-0 tabular-nums"
+        />
+      </td>
+
+      {/* Rate */}
+      <td className="py-2 pr-3 w-32">
+        <input
+          type="number"
+          min="0"
+          value={item.unit_price ?? 0}
+          onChange={(e) => set('unit_price', e.target.value)}
+          className="w-full text-sm text-gray-800 bg-transparent border-0 outline-none focus:ring-0 text-right p-0 tabular-nums"
+        />
+      </td>
+
+      {/* Amount */}
+      <td className={`py-2 pr-2 w-32 text-right text-sm tabular-nums font-medium select-none ${isDiscount ? 'text-gray-500' : 'text-gray-900'}`}>
+        {isDiscount ? `(${fmt(Math.abs(amount))})` : fmt(amount)}
+      </td>
+
+      {/* Actions */}
+      <td className="py-2 pr-3 w-20">
+        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            onClick={onMoveUp}
+            disabled={isFirst}
+            className="p-1 text-gray-400 hover:text-gray-700 disabled:opacity-20 disabled:cursor-not-allowed"
+          >
+            <ChevronUp className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={onMoveDown}
+            disabled={isLast}
+            className="p-1 text-gray-400 hover:text-gray-700 disabled:opacity-20 disabled:cursor-not-allowed"
+          >
+            <ChevronDown className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={onDelete}
+            className="p-1 text-gray-400 hover:text-red-500"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Quote Preview Panel
+// ---------------------------------------------------------------------------
+const QuotePreviewPanel = ({
+  serviceRequest,
+  validLineItems,
+  termsConditions,
+  onBack,
+  onGenerateDownload,
+  onGenerateSend,
+  onSend,
+  onResend,
+  loadingAction,
+  deliveryState,
+  error,
+}) => {
+  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+  const charges        = validLineItems.filter(i => i.item_type === 'CHARGE');
+  const discounts      = validLineItems.filter(i => i.item_type === 'DISCOUNT');
+  const totalCharges   = charges.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+  const totalDiscounts = discounts.reduce((s, i) => s + Math.abs(parseFloat(i.amount) || 0), 0);
+  const grandTotal     = totalCharges - totalDiscounts;
+  const busy           = !!loadingAction;
+
+  return (
+    <div className="space-y-4">
+      <button
+        onClick={onBack}
+        disabled={busy}
+        className="inline-flex items-center gap-1.5 text-[13px] text-gray-500 hover:text-gray-800 transition-colors disabled:opacity-40"
+      >
+        <Edit3 className="w-3.5 h-3.5" />
+        Back to edit
+      </button>
+
+      {/* Document */}
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+
+        {/* Header bar */}
+        <div className="px-8 py-6 border-b border-gray-100 flex items-start justify-between">
+          <div>
+            <h1 className="text-base font-semibold text-gray-900">VCare Nursing</h1>
+            <p className="text-[12px] text-gray-400 mt-0.5">Professional Home Care Services</p>
+          </div>
+          <div className="text-right">
+            <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">Quotation — Draft</p>
+            <p className="text-[12px] text-gray-500 mt-1">{today}</p>
+          </div>
+        </div>
+
+        {/* Bill-to grid */}
+        <div className="px-8 py-5 border-b border-gray-100 grid grid-cols-2 gap-6">
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1.5">Billed To</p>
+            <p className="text-sm font-semibold text-gray-900">{serviceRequest.payer_name}</p>
+            <p className="text-[12px] text-gray-500 mt-0.5">{serviceRequest.payer_mobile}</p>
+          </div>
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1.5">Care Recipient</p>
+            <p className="text-sm font-semibold text-gray-900">{serviceRequest.patient_name}</p>
+            {serviceRequest.patient_age && (
+              <p className="text-[12px] text-gray-500 mt-0.5">Age {serviceRequest.patient_age}</p>
+            )}
+          </div>
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1.5">Service</p>
+            <p className="text-[12px] text-gray-700">{serviceRequest.service_type?.replace(/_/g, ' ')}</p>
+            {serviceRequest.service_model && (
+              <p className="text-[12px] text-gray-500">{serviceRequest.service_model.replace(/_/g, ' ')}</p>
+            )}
+          </div>
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1.5">Location</p>
+            <p className="text-[12px] text-gray-700">{serviceRequest.location_address || '—'}</p>
+          </div>
+        </div>
+
+        {/* Items table */}
+        <div className="px-8 py-5">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-gray-200">
+                <th className="pb-2 text-left text-[11px] font-medium uppercase tracking-wider text-gray-400 w-8">#</th>
+                <th className="pb-2 text-left text-[11px] font-medium uppercase tracking-wider text-gray-400">Item &amp; Description</th>
+                <th className="pb-2 text-right text-[11px] font-medium uppercase tracking-wider text-gray-400 w-20">Qty</th>
+                <th className="pb-2 text-right text-[11px] font-medium uppercase tracking-wider text-gray-400 w-28">Rate</th>
+                <th className="pb-2 text-right text-[11px] font-medium uppercase tracking-wider text-gray-400 w-28">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {validLineItems.map((item, idx) => {
+                const isDiscount = item.item_type === 'DISCOUNT';
+                const amount     = Math.abs(parseFloat(item.amount) || 0);
+                const unitPrice  = parseFloat(item.unit_price) || 0;
+                const qty        = parseFloat(item.quantity) || 1;
+                return (
+                  <tr key={idx} className="border-b border-gray-100">
+                    <td className="py-3 text-[12px] text-gray-300">{idx + 1}</td>
+                    <td className="py-3">
+                      <p className="text-sm font-medium text-gray-800">{item.description}</p>
+                      {isDiscount && <p className="text-[11px] text-gray-400 mt-0.5">Discount</p>}
+                    </td>
+                    <td className="py-3 text-right text-sm text-gray-600 tabular-nums">{qty}</td>
+                    <td className="py-3 text-right text-sm text-gray-600 tabular-nums">{fmt(unitPrice)}</td>
+                    <td className={`py-3 text-right text-sm tabular-nums font-medium ${isDiscount ? 'text-gray-500' : 'text-gray-900'}`}>
+                      {isDiscount ? `(${fmt(amount)})` : fmt(amount)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+
+          {/* Totals */}
+          <div className="mt-4 pt-3 border-t border-gray-100 flex flex-col items-end gap-1.5">
+            <div className="flex justify-between w-52 text-[13px] text-gray-600">
+              <span>Subtotal</span>
+              <span className="tabular-nums">{fmt(totalCharges)}</span>
+            </div>
+            {totalDiscounts > 0 && (
+              <div className="flex justify-between w-52 text-[13px] text-gray-500">
+                <span>Discounts</span>
+                <span className="tabular-nums">({fmt(totalDiscounts)})</span>
+              </div>
+            )}
+            <div className="flex justify-between w-52 text-[14px] font-semibold text-gray-900 border-t border-gray-200 pt-2 mt-1">
+              <span>Total</span>
+              <span className="tabular-nums">LKR {fmt(grandTotal)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Terms */}
+        {termsConditions && (
+          <div className="px-8 pb-6">
+            <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1.5">Terms &amp; Conditions</p>
+            <p className="text-[12px] text-gray-600 leading-relaxed">{termsConditions}</p>
+          </div>
+        )}
+      </div>
+
+      {/* Error */}
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 flex items-center gap-3">
+          <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+          <span className="text-[13px] text-red-700">{error}</span>
+        </div>
+      )}
+
+      {/* Action buttons */}
+      {!deliveryState && (
+        <div className="flex gap-3">
+          <button
+            onClick={onGenerateDownload}
+            disabled={busy}
+            className="flex-1 flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg border border-gray-200 bg-white text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {loadingAction === 'downloading' ? (
+              <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-500" />Generating…</>
+            ) : (
+              <><Download className="w-4 h-4" />Generate &amp; Download</>
+            )}
+          </button>
+          <button
+            onClick={onGenerateSend}
+            disabled={busy}
+            className="flex-1 flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 text-[13px] font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {loadingAction === 'sending' ? (
+              <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />Sending…</>
+            ) : (
+              <><Send className="w-4 h-4" />Generate &amp; Send</>
+            )}
+          </button>
+        </div>
+      )}
+
+      {deliveryState === 'downloaded' && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 text-[13px] text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-4 py-2.5">
+            <CheckCircle className="w-4 h-4 text-gray-500 flex-shrink-0" />
+            PDF downloaded successfully.
+          </div>
+          <button
+            onClick={onSend}
+            disabled={busy}
+            className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 text-[13px] font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {loadingAction === 'sending' ? (
+              <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />Sending…</>
+            ) : (
+              <><Send className="w-4 h-4" />Send via WhatsApp</>
+            )}
+          </button>
+        </div>
+      )}
+
+      {deliveryState === 'sent' && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 text-[13px] text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-4 py-2.5">
+            <CheckCircle className="w-4 h-4 text-gray-500 flex-shrink-0" />
+            Quote sent to client via WhatsApp.
+          </div>
+          <button
+            onClick={onResend}
+            disabled={busy}
+            className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg border border-gray-200 bg-white text-[13px] font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {loadingAction === 'resending' ? (
+              <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-400" />Resending…</>
+            ) : (
+              <><RefreshCw className="w-4 h-4" />Resend via WhatsApp</>
+            )}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
 const ModularQuoteBuilder = () => {
   const { requestId } = useParams();
   const navigate = useNavigate();
-  
-  // State
+
   const [serviceRequest, setServiceRequest] = useState(null);
-  const [clientProfile, setClientProfile] = useState(null);
-  const [presets, setPresets] = useState([]);
-  const [lineItems, setLineItems] = useState([]);
-  const [termsConditions, setTermsConditions] = useState('The initial estimated amount is non-refundable.');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [creatingQuote, setCreatingQuote] = useState(false);
-  const [sendingPDF, setSendingPDF] = useState(false);
-  const [createdQuote, setCreatedQuote] = useState(null);
+  const [clientProfile, setClientProfile]   = useState(null);
+  const [presets, setPresets]               = useState([]);
+  const [lineItems, setLineItems]           = useState([]);
+  const [termsConditions, setTermsConditions] = useState(
+    'The initial estimated amount is non-refundable.'
+  );
+  const [loading, setLoading]             = useState(true);
+  const [error, setError]                 = useState(null);
   const [showPresetManager, setShowPresetManager] = useState(false);
+
+  // Preview / delivery
+  const [showPreview, setShowPreview]     = useState(false);
+  const [createdQuote, setCreatedQuote]   = useState(null);
+  const [loadingAction, setLoadingAction] = useState(null);
+  const [deliveryState, setDeliveryState] = useState(null);
 
   useEffect(() => {
     if (requestId) {
@@ -48,30 +386,18 @@ const ModularQuoteBuilder = () => {
   }, [requestId]);
 
   const fetchServiceRequest = async () => {
-    if (!requestId) {
-      setError('No service request ID provided');
-      return;
-    }
-    
     try {
       setLoading(true);
-      const response = await apiClient.getServiceRequestById(requestId);
-      setServiceRequest(response.data);
-      
-      if (response.data.client_id) {
+      const res = await apiClient.getServiceRequestById(requestId);
+      setServiceRequest(res.data);
+      if (res.data.client_id) {
         try {
-          const clientResponse = await apiClient.getClientProfile(response.data.client_id);
-          setClientProfile(clientResponse.data);
-        } catch (clientErr) {
-          console.warn('Failed to fetch client profile:', clientErr);
-        }
+          const cr = await apiClient.getClientProfile(res.data.client_id);
+          setClientProfile(cr.data);
+        } catch { /* non-critical */ }
       }
     } catch (err) {
-      if (err.message?.includes('404') || err.message?.includes('not found')) {
-        setError('Service request not found');
-      } else {
-        setError('Failed to fetch service request');
-      }
+      setError(err.message?.includes('404') ? 'Service request not found' : 'Failed to fetch service request');
     } finally {
       setLoading(false);
     }
@@ -80,179 +406,146 @@ const ModularQuoteBuilder = () => {
   const fetchNewLeads = async () => {
     try {
       setLoading(true);
-      const response = await apiClient.getNewLeads();
-      const leads = response.data || [];
-      if (leads.length === 0) {
-        setError('No new leads found');
-      } else {
-        setServiceRequest(leads[0]);
-        navigate(`/admin/modular-quote-builder/${leads[0].request_id}`, { replace: true });
-      }
-    } catch (err) {
-      setError('Failed to fetch new leads');
-    } finally {
-      setLoading(false);
-    }
+      const res   = await apiClient.getNewLeads();
+      const leads = res.data || [];
+      if (leads.length === 0) { setError('No new leads found'); return; }
+      setServiceRequest(leads[0]);
+      navigate(`/admin/modular-quote-builder/${leads[0].request_id}`, { replace: true });
+    } catch { setError('Failed to fetch new leads'); }
+    finally { setLoading(false); }
   };
 
   const fetchPresets = async () => {
     try {
-      const response = await fetch('/api/quotes/presets', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
+      const res  = await fetch('/api/quotes/presets', {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
       });
-      const data = await response.json();
+      const data = await res.json();
       setPresets(data.data || []);
-    } catch (err) {
-      console.warn('Failed to fetch presets:', err);
-    }
+    } catch { /* non-critical */ }
   };
 
-  const addPresetItem = (presetItem) => {
-    const newItem = {
-      ...presetItem,
-      sort_order: lineItems.length
-    };
-    setLineItems([...lineItems, newItem]);
+  // ── Line item helpers ──────────────────────────────────────────────────────
+  const addPresetItem = (p) =>
+    setLineItems(prev => [...prev, { ...p, sort_order: prev.length }]);
+
+  const addItem = (type) =>
+    setLineItems(prev => [
+      ...prev,
+      { item_type: type, description: '', quantity: 1, unit_price: 0, amount: 0, sort_order: prev.length },
+    ]);
+
+  const updateLineItem = (index, updated) => {
+    const next = [...lineItems];
+    next[index] = updated;
+    setLineItems(next);
   };
 
-  const addCustomItem = (type) => {
-    const newItem = {
-      item_type: type,
-      description: '',
-      quantity: 1,
-      unit_price: 0,
-      sort_order: lineItems.length
-    };
-    setLineItems([...lineItems, newItem]);
+  const deleteLineItem = (index) =>
+    setLineItems(lineItems.filter((_, i) => i !== index).map((it, i) => ({ ...it, sort_order: i })));
+
+  const moveLineItem = (index, dir) => {
+    const next   = [...lineItems];
+    const target = dir === 'up' ? index - 1 : index + 1;
+    if (target < 0 || target >= lineItems.length) return;
+    [next[index], next[target]] = [next[target], next[index]];
+    setLineItems(next.map((it, i) => ({ ...it, sort_order: i })));
   };
 
-  const updateLineItem = (index, updatedItem) => {
-    const newItems = [...lineItems];
-    newItems[index] = updatedItem;
-    setLineItems(newItems);
+  // ── Derived ────────────────────────────────────────────────────────────────
+  const isItemValid = (item) =>
+    item.description?.trim() && Math.abs(parseFloat(item.amount) || 0) > 0;
+
+  const validLineItems = lineItems.filter(isItemValid);
+  const skippedCount   = lineItems.length - validLineItems.length;
+
+  const charges        = validLineItems.filter(i => i.item_type === 'CHARGE');
+  const discounts      = validLineItems.filter(i => i.item_type === 'DISCOUNT');
+  const totalCharges   = charges.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+  const totalDiscounts = discounts.reduce((s, i) => s + Math.abs(parseFloat(i.amount) || 0), 0);
+  const grandTotal     = totalCharges - totalDiscounts;
+
+  // ── Preview trigger ────────────────────────────────────────────────────────
+  const handlePreviewClick = () => {
+    if (validLineItems.length === 0) return;
+    if (grandTotal <= 0) { setError('Quote total must be greater than zero'); return; }
+    setError(null);
+    setShowPreview(true);
   };
 
-  const deleteLineItem = (index) => {
-    const newItems = lineItems.filter((_, i) => i !== index);
-    // Reorder remaining items
-    const reorderedItems = newItems.map((item, i) => ({
-      ...item,
-      sort_order: i
-    }));
-    setLineItems(reorderedItems);
-  };
-
-  const moveLineItem = (index, direction) => {
-    const newItems = [...lineItems];
-    const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    
-    if (targetIndex < 0 || targetIndex >= lineItems.length) return;
-    
-    // Swap items
-    [newItems[index], newItems[targetIndex]] = [newItems[targetIndex], newItems[index]];
-    
-    // Update sort orders
-    const reorderedItems = newItems.map((item, i) => ({
-      ...item,
-      sort_order: i
-    }));
-    
-    setLineItems(reorderedItems);
-  };
-
-  const calculateTotals = () => {
-    let totalCharges = 0;
-    let totalDiscounts = 0;
-    
-    lineItems.forEach(item => {
-      if (item.item_type === 'CHARGE') {
-        totalCharges += parseFloat(item.amount) || 0;
-      } else if (item.item_type === 'DISCOUNT') {
-        totalDiscounts += Math.abs(parseFloat(item.amount) || 0);
-      }
+  // ── Create quote (once) ────────────────────────────────────────────────────
+  const ensureQuoteCreated = async () => {
+    if (createdQuote) return createdQuote;
+    const res = await fetch('/api/quotes/create-modular', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${localStorage.getItem('token')}`,
+      },
+      body: JSON.stringify({
+        request_id: serviceRequest.request_id,
+        line_items: validLineItems,
+        terms_conditions: termsConditions,
+      }),
     });
-
-    return {
-      totalCharges,
-      totalDiscounts,
-      subtotal: totalCharges - totalDiscounts
-    };
+    if (!res.ok) throw new Error('Failed to create quote');
+    const data = await res.json();
+    setCreatedQuote(data.data);
+    return data.data;
   };
 
-  const handleCreateQuote = async (e) => {
-    e.preventDefault();
-    if (!serviceRequest || lineItems.length === 0) return;
-
-    const totals = calculateTotals();
-    if (totals.subtotal <= 0) {
-      setError('Quote total must be greater than zero');
-      return;
-    }
-
+  // ── Action handlers ────────────────────────────────────────────────────────
+  const handleGenerateDownload = async () => {
     try {
-      setCreatingQuote(true);
-      setError('');
-
-      const response = await fetch('/api/quotes/create-modular', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify({
-          request_id: serviceRequest.request_id,
-          line_items: lineItems,
-          terms_conditions: termsConditions
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to create quote');
-      }
-
-      const data = await response.json();
-      setCreatedQuote(data.data);
-    } catch (err) {
-      setError('Failed to create quotation');
-      console.error('Error:', err);
-    } finally {
-      setCreatingQuote(false);
-    }
+      setLoadingAction('downloading');
+      setError(null);
+      const quote = await ensureQuoteCreated();
+      const res   = await apiClient.generateQuotePdf(quote.quote_id);
+      const url   = res?.pdf_url || res?.data?.pdf_url;
+      if (url) window.open(url, '_blank', 'noopener,noreferrer');
+      setDeliveryState('downloaded');
+    } catch { setError('Failed to generate PDF'); }
+    finally { setLoadingAction(null); }
   };
 
-  const handleSendPDF = async () => {
+  const handleGenerateSend = async () => {
+    try {
+      setLoadingAction('sending');
+      setError(null);
+      const quote = await ensureQuoteCreated();
+      await apiClient.sendQuotePDF(quote.quote_id);
+      setDeliveryState('sent');
+    } catch { setError('Failed to send quote'); }
+    finally { setLoadingAction(null); }
+  };
+
+  const handleSend = async () => {
     if (!createdQuote) return;
-
     try {
-      setSendingPDF(true);
+      setLoadingAction('sending');
+      setError(null);
       await apiClient.sendQuotePDF(createdQuote.quote_id);
-      alert('Quote sent successfully via WhatsApp!');
-      navigate('/admin/service-requests');
-    } catch (err) {
-      setError('Failed to send PDF');
-      console.error('Error:', err);
-    } finally {
-      setSendingPDF(false);
-    }
+      setDeliveryState('sent');
+    } catch { setError('Failed to send quote'); }
+    finally { setLoadingAction(null); }
   };
 
-  const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+  const handleResend = async () => {
+    if (!createdQuote) return;
+    try {
+      setLoadingAction('resending');
+      setError(null);
+      await apiClient.sendQuotePDF(createdQuote.quote_id);
+    } catch { setError('Failed to resend quote'); }
+    finally { setLoadingAction(null); }
   };
 
+  // ── Loading / error screens ────────────────────────────────────────────────
   if (loading) {
     return (
-      <AdminLayout title="Modular Quote Builder" subtitle="Loading...">
+      <AdminLayout title="Quote Builder" subtitle="Loading…">
         <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600" />
         </div>
       </AdminLayout>
     );
@@ -260,128 +553,90 @@ const ModularQuoteBuilder = () => {
 
   if (error && !serviceRequest) {
     return (
-      <AdminLayout title="Modular Quote Builder" subtitle="Error">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <div className="flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-red-600" />
-            <span className="text-red-800">{error}</span>
-          </div>
-          <button
-            onClick={() => navigate('/admin/service-requests')}
-            className="mt-4 flex items-center gap-2 text-blue-600 hover:text-blue-800"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Service Requests
-          </button>
+      <AdminLayout title="Quote Builder" subtitle="Error">
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4 flex items-center gap-3">
+          <AlertCircle className="w-5 h-5 text-red-500" />
+          <span className="text-sm text-red-700">{error}</span>
         </div>
+        <button
+          onClick={() => navigate('/admin/service-requests')}
+          className="mt-4 flex items-center gap-2 text-[13px] text-blue-600 hover:text-blue-800"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to Service Requests
+        </button>
       </AdminLayout>
     );
   }
 
-  const totals = calculateTotals();
-
   return (
-    <AdminLayout 
-      title="Modular Quote Builder" 
-      subtitle={serviceRequest ? `Quote for ${serviceRequest.patient_name}` : 'Create Quote'}
+    <AdminLayout
+      title="Quote Builder"
+      subtitle={serviceRequest ? `For ${serviceRequest.patient_name}` : 'Create Quote'}
     >
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        {/* Left Side - Service Request Details */}
+
+        {/* ── LEFT: Service Request Details ── */}
         <div className="xl:col-span-1">
-          <div className="bg-white rounded-lg border border-slate-200">
-            <div className="p-6 border-b border-slate-200">
-              <div className="flex items-center gap-3">
-                <FileText className="w-5 h-5 text-blue-600" />
-                <h2 className="text-lg font-semibold text-slate-900">Service Request Details</h2>
+          <div className="rounded-lg border border-gray-200 bg-white sticky top-4 divide-y divide-gray-100">
+
+            {/* Header */}
+            <div className="px-5 py-4 flex items-center gap-2.5">
+              <FileText className="w-4 h-4 text-gray-400" />
+              <h2 className="text-[13px] font-semibold text-gray-900">Service Request</h2>
+              {serviceRequest?.service_request_code && (
+                <span className="ml-auto text-[11px] font-mono text-gray-400">
+                  {serviceRequest.service_request_code}
+                </span>
+              )}
+            </div>
+
+            {/* Payer */}
+            <div className="px-5 py-4 space-y-3">
+              <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">Payer</p>
+              <div className="grid grid-cols-1 gap-3">
+                <InfoRow label="Name"   value={serviceRequest?.payer_name} />
+                <InfoRow label="Mobile" value={serviceRequest?.payer_mobile} />
               </div>
             </div>
-            
-            {serviceRequest && (
-              <div className="p-6 space-y-6">
-                {/* Payer Information */}
-                <div>
-                  <h3 className="font-medium text-slate-900 mb-3 flex items-center gap-2">
-                    <User className="w-4 h-4" />
-                    Payer Information
-                  </h3>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-500">Name:</span>
-                      <span className="text-sm font-medium">{serviceRequest.payer_name}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-500">Mobile:</span>
-                      <span className="text-sm font-medium">{serviceRequest.payer_mobile}</span>
-                    </div>
+
+            {/* Care recipient */}
+            <div className="px-5 py-4 space-y-3">
+              <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">Care Recipient</p>
+              <div className="grid grid-cols-2 gap-3">
+                <InfoRow label="Name"      value={serviceRequest?.patient_name} />
+                <InfoRow label="Age"       value={serviceRequest?.patient_age ? `${serviceRequest.patient_age} yrs` : null} />
+                <InfoRow label="Condition" value={serviceRequest?.patient_condition} />
+                <InfoRow label="Gender"    value={serviceRequest?.preferred_gender || 'Any'} />
+              </div>
+            </div>
+
+            {/* Service */}
+            <div className="px-5 py-4 space-y-3">
+              <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">Service</p>
+              <div className="grid grid-cols-2 gap-3">
+                <InfoRow label="Type"  value={serviceRequest?.service_type?.replace(/_/g, ' ')} />
+                <InfoRow label="Model" value={serviceRequest?.service_model?.replace(/_/g, ' ')} />
+              </div>
+            </div>
+
+            {/* Location */}
+            <div className="px-5 py-4">
+              <InfoRow label="Location" value={serviceRequest?.location_address} />
+            </div>
+
+            {/* Registration status */}
+            {clientProfile && (
+              <div className="px-5 py-4">
+                {clientProfile.is_registration_fee_paid ? (
+                  <div className="flex items-center gap-2 text-[12px] text-gray-600">
+                    <CheckCircle className="w-3.5 h-3.5 text-gray-400" />
+                    Registration fee paid
                   </div>
-                </div>
-
-                {/* Patient Information */}
-                <div>
-                  <h3 className="font-medium text-slate-900 mb-3 flex items-center gap-2">
-                    <User className="w-4 h-4" />
-                    Care Profile Information
-                  </h3>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-500">Name:</span>
-                      <span className="text-sm font-medium">{serviceRequest.patient_name}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-500">Age:</span>
-                      <span className="text-sm font-medium">{serviceRequest.patient_age} years</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-500">Condition:</span>
-                      <span className="text-sm font-medium">{serviceRequest.patient_condition}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Service Details */}
-                <div>
-                  <h3 className="font-medium text-slate-900 mb-3 flex items-center gap-2">
-                    <FileText className="w-4 h-4" />
-                    Service Details
-                  </h3>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-500">Service Type:</span>
-                      <span className="text-sm font-medium">{serviceRequest.service_type}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-sm text-slate-500">Service Model:</span>
-                      <span className="text-sm font-medium">
-                        {serviceRequest.service_model?.replace('_', ' ') || 'Not specified'}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Location */}
-                <div>
-                  <h3 className="font-medium text-slate-900 mb-3 flex items-center gap-2">
-                    <MapPin className="w-4 h-4" />
-                    Service Location
-                  </h3>
-                  <p className="text-sm text-slate-700">{serviceRequest.location_address}</p>
-                </div>
-
-                {/* Registration Fee Status */}
-                {clientProfile && (
-                  <div>
-                    <h3 className="font-medium text-slate-900 mb-3">Client Status</h3>
-                    {clientProfile.is_registration_fee_paid ? (
-                      <div className="flex items-center gap-2 text-sm text-green-600 bg-green-50 px-3 py-2 rounded-lg border border-green-200">
-                        <CheckCircle className="w-4 h-4" />
-                        <span>Registration fee already paid</span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2 text-sm text-amber-600 bg-amber-50 px-3 py-2 rounded-lg border border-amber-200">
-                        <AlertCircle className="w-4 h-4" />
-                        <span>Registration fee pending</span>
-                      </div>
-                    )}
+                ) : (
+                  <div className="flex items-center gap-2 text-[12px] text-gray-500">
+                    <AlertCircle className="w-3.5 h-3.5 text-gray-400" />
+                    Registration fee pending
                   </div>
                 )}
               </div>
@@ -389,12 +644,32 @@ const ModularQuoteBuilder = () => {
           </div>
         </div>
 
-        {/* Right Side - Quote Builder */}
-        <div className="xl:col-span-2 space-y-6">
-          {!createdQuote ? (
+        {/* ── RIGHT: Builder or Preview ── */}
+        <div className="xl:col-span-2 space-y-4">
+
+          {showPreview ? (
+            <QuotePreviewPanel
+              serviceRequest={serviceRequest}
+              validLineItems={validLineItems}
+              termsConditions={termsConditions}
+              onBack={() => {
+                setShowPreview(false);
+                setError(null);
+                setCreatedQuote(null);
+                setDeliveryState(null);
+              }}
+              onGenerateDownload={handleGenerateDownload}
+              onGenerateSend={handleGenerateSend}
+              onSend={handleSend}
+              onResend={handleResend}
+              loadingAction={loadingAction}
+              deliveryState={deliveryState}
+              error={error}
+            />
+          ) : (
             <>
-              {/* Preset Selector */}
-              <div className="bg-white rounded-lg border border-slate-200 p-6">
+              {/* Preset selector */}
+              <div className="rounded-lg border border-gray-200 bg-white px-5 py-4">
                 <PresetItemSelector
                   presets={presets}
                   onSelectPreset={addPresetItem}
@@ -402,184 +677,154 @@ const ModularQuoteBuilder = () => {
                 />
               </div>
 
-              {/* Custom Item Buttons */}
-              <div className="bg-white rounded-lg border border-slate-200 p-6">
-                <h3 className="font-medium text-slate-900 mb-4">Add Custom Items</h3>
-                <div className="flex gap-3">
+              {/* Line items table (Zoho-style) */}
+              <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+
+                {/* Table header row */}
+                <div className="border-b border-gray-100">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="bg-gray-50">
+                        <th className="py-3 pl-4 w-8" />
+                        <th className="py-3 text-left text-[11px] font-medium uppercase tracking-wider text-gray-400 pr-3">
+                          Item Details
+                        </th>
+                        <th className="py-3 text-right text-[11px] font-medium uppercase tracking-wider text-gray-400 pr-3 w-24">
+                          Quantity
+                        </th>
+                        <th className="py-3 text-right text-[11px] font-medium uppercase tracking-wider text-gray-400 pr-3 w-32">
+                          Rate
+                        </th>
+                        <th className="py-3 text-right text-[11px] font-medium uppercase tracking-wider text-gray-400 pr-2 w-32">
+                          Amount
+                        </th>
+                        <th className="py-3 pr-3 w-20" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lineItems.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="py-10 text-center text-[13px] text-gray-400">
+                            No items added. Select a preset above or add a custom item below.
+                          </td>
+                        </tr>
+                      ) : (
+                        lineItems.map((item, index) => (
+                          <LineItemRow
+                            key={index}
+                            item={item}
+                            index={index}
+                            isFirst={index === 0}
+                            isLast={index === lineItems.length - 1}
+                            onUpdate={(updated) => updateLineItem(index, updated)}
+                            onDelete={() => deleteLineItem(index)}
+                            onMoveUp={() => moveLineItem(index, 'up')}
+                            onMoveDown={() => moveLineItem(index, 'down')}
+                          />
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Add-item row */}
+                <div className="px-4 py-3 flex items-center gap-4 border-b border-gray-100">
                   <button
-                    type="button"
-                    onClick={() => addCustomItem('CHARGE')}
-                    className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                    onClick={() => addItem('CHARGE')}
+                    className="inline-flex items-center gap-1.5 text-[13px] text-blue-600 hover:text-blue-800 font-medium transition-colors"
                   >
-                    <Plus className="w-4 h-4" />
+                    <Plus className="w-3.5 h-3.5" />
                     Add Charge
                   </button>
+                  <span className="text-gray-200 select-none">|</span>
                   <button
-                    type="button"
-                    onClick={() => addCustomItem('DISCOUNT')}
-                    className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                    onClick={() => addItem('DISCOUNT')}
+                    className="inline-flex items-center gap-1.5 text-[13px] text-gray-500 hover:text-gray-700 font-medium transition-colors"
                   >
-                    <Minus className="w-4 h-4" />
+                    <Percent className="w-3.5 h-3.5" />
                     Add Discount
                   </button>
-                </div>
-              </div>
-
-              {/* Line Items */}
-              <div className="bg-white rounded-lg border border-slate-200">
-                <div className="p-6 border-b border-slate-200">
-                  <h3 className="font-medium text-slate-900">Quote Items ({lineItems.length})</h3>
-                </div>
-                
-                <div className="p-6">
-                  {lineItems.length === 0 ? (
-                    <div className="text-center py-8 text-slate-500">
-                      <Calculator className="w-12 h-12 mx-auto mb-4 text-slate-300" />
-                      <p>No items added yet. Add preset items or create custom charges/discounts.</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {lineItems.map((item, index) => (
-                        <QuoteLineItem
-                          key={index}
-                          item={item}
-                          index={index}
-                          onUpdate={(updated) => updateLineItem(index, updated)}
-                          onDelete={() => deleteLineItem(index)}
-                          onMoveUp={() => moveLineItem(index, 'up')}
-                          onMoveDown={() => moveLineItem(index, 'down')}
-                          isFirst={index === 0}
-                          isLast={index === lineItems.length - 1}
-                        />
-                      ))}
-                    </div>
+                  {skippedCount > 0 && (
+                    <span className="ml-auto text-[11px] text-gray-400">
+                      {skippedCount} item{skippedCount > 1 ? 's' : ''} with Rs. 0 will be excluded
+                    </span>
                   )}
                 </div>
+
+                {/* Totals + Terms */}
+                <div className="px-5 py-5 grid grid-cols-2 gap-6">
+
+                  {/* Terms */}
+                  <div>
+                    <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1.5">
+                      Terms &amp; Conditions
+                    </p>
+                    <textarea
+                      value={termsConditions}
+                      onChange={(e) => setTermsConditions(e.target.value)}
+                      rows={4}
+                      className="w-full text-[13px] text-gray-700 border border-gray-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 placeholder-gray-300"
+                      placeholder="Enter terms and conditions…"
+                    />
+                  </div>
+
+                  {/* Totals */}
+                  <div className="flex flex-col justify-end gap-2">
+                    <div className="flex justify-between text-[13px] text-gray-600">
+                      <span>Subtotal</span>
+                      <span className="tabular-nums">{fmt(totalCharges)}</span>
+                    </div>
+                    {totalDiscounts > 0 && (
+                      <div className="flex justify-between text-[13px] text-gray-500">
+                        <span>Discounts</span>
+                        <span className="tabular-nums">({fmt(totalDiscounts)})</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between text-[14px] font-semibold text-gray-900 border-t border-gray-200 pt-2 mt-1">
+                      <span>Total</span>
+                      <span className="tabular-nums">LKR {fmt(grandTotal)}</span>
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              {/* Quote Summary */}
-              <QuoteSummary
-                lineItems={lineItems}
-                termsConditions={termsConditions}
-                onTermsChange={setTermsConditions}
-              />
-
-              {/* Error Message */}
+              {/* Error */}
               {error && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                  <div className="flex items-center gap-3">
-                    <AlertCircle className="w-5 h-5 text-red-600" />
-                    <span className="text-red-800">{error}</span>
-                  </div>
+                <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 flex items-center gap-3">
+                  <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                  <span className="text-[13px] text-red-700">{error}</span>
                 </div>
               )}
 
-              {/* Submit Button */}
+              {/* Preview button */}
               <button
-                onClick={handleCreateQuote}
-                disabled={creatingQuote || lineItems.length === 0 || totals.subtotal <= 0}
-                className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                onClick={handlePreviewClick}
+                disabled={validLineItems.length === 0 || grandTotal <= 0}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-blue-600 text-[13px] font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                {creatingQuote ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                    Creating Quote...
-                  </>
-                ) : (
-                  <>
-                    <Calculator className="w-4 h-4" />
-                    Create Quote
-                  </>
-                )}
+                <Eye className="w-4 h-4" />
+                Preview Quote
               </button>
             </>
-          ) : (
-            /* Quote Created Success */
-            <div className="bg-white rounded-lg border border-slate-200 p-6">
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
-                <div className="flex items-center gap-3">
-                  <CheckCircle className="w-5 h-5 text-green-600" />
-                  <div>
-                    <h3 className="font-medium text-green-900">Quote Created Successfully!</h3>
-                    <p className="text-sm text-green-700">
-                      Quote Number: {createdQuote.estimate_number}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Quote Details */}
-              <div className="bg-slate-50 rounded-lg p-4 space-y-3 mb-6">
-                <h3 className="font-medium text-slate-900">Quote Details</h3>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-slate-600">Quote Number:</span>
-                    <span className="font-medium">{createdQuote.estimate_number}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-slate-600">Total Amount:</span>
-                    <span className="font-bold text-blue-600">
-                      Rs. {createdQuote.total_amount?.toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="space-y-3">
-                <button
-                  onClick={handleSendPDF}
-                  disabled={sendingPDF}
-                  className="w-full bg-green-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-green-700 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  {sendingPDF ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      Sending PDF...
-                    </>
-                  ) : (
-                    <>
-                      <Send className="w-4 h-4" />
-                      Send Quote via WhatsApp
-                    </>
-                  )}
-                </button>
-
-                <button
-                  onClick={() => {
-                    setCreatedQuote(null);
-                    setLineItems([]);
-                    setTermsConditions('The initial estimated amount is non-refundable.');
-                  }}
-                  className="w-full bg-slate-200 text-slate-700 py-3 px-4 rounded-lg font-medium hover:bg-slate-300 transition-colors"
-                >
-                  Create Another Quote
-                </button>
-              </div>
-            </div>
           )}
         </div>
       </div>
 
-      {/* Back Button */}
+      {/* Back link */}
       <div className="mt-6">
         <button
           onClick={() => navigate('/admin/service-requests')}
-          className="flex items-center gap-2 text-slate-600 hover:text-slate-900 transition-colors"
+          className="flex items-center gap-2 text-[13px] text-gray-500 hover:text-gray-800 transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
           Back to Service Requests
         </button>
       </div>
 
-      {/* Preset Manager Modal */}
       <PresetManager
         isOpen={showPresetManager}
         onClose={() => setShowPresetManager(false)}
-        onSave={() => {
-          setShowPresetManager(false);
-          fetchPresets();
-        }}
+        onSave={() => { setShowPresetManager(false); fetchPresets(); }}
       />
     </AdminLayout>
   );
