@@ -179,12 +179,25 @@ exports.generateAndSendPDF = async (req, res) => {
     const { quote_id } = req.params;
 
     try {
-        // 1. Fetch Quote & Patient Data
+        // 1. Fetch Quote & Patient Data (including line items)
         const result = await db.query(`
-            SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type 
+            SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type,
+                COALESCE(json_agg(
+                    json_build_object(
+                        'line_item_id', li.line_item_id,
+                        'item_type', li.item_type,
+                        'description', li.description,
+                        'quantity', li.quantity,
+                        'unit_price', li.unit_price,
+                        'amount', li.amount,
+                        'sort_order', li.sort_order
+                    ) ORDER BY li.sort_order
+                ) FILTER (WHERE li.line_item_id IS NOT NULL), '[]') AS line_items
             FROM quotations q
             JOIN service_requests s ON q.request_id = s.request_id
+            LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
             WHERE q.quote_id = $1
+            GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type
         `, [quote_id]);
 
         if (result.rows.length === 0) {
@@ -246,10 +259,23 @@ exports.generatePdfOnly = async (req, res) => {
     const { quote_id } = req.params;
     try {
         const result = await db.query(
-            `SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type
+            `SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type,
+                COALESCE(json_agg(
+                    json_build_object(
+                        'line_item_id', li.line_item_id,
+                        'item_type', li.item_type,
+                        'description', li.description,
+                        'quantity', li.quantity,
+                        'unit_price', li.unit_price,
+                        'amount', li.amount,
+                        'sort_order', li.sort_order
+                    ) ORDER BY li.sort_order
+                ) FILTER (WHERE li.line_item_id IS NOT NULL), '[]') AS line_items
              FROM quotations q
              JOIN service_requests s ON q.request_id = s.request_id
-             WHERE q.quote_id = $1`,
+             LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
+             WHERE q.quote_id = $1
+             GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type`,
             [quote_id]
         );
         if (result.rows.length === 0) {
