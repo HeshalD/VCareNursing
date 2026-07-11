@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, User, DollarSign, LogOut, Briefcase, Calendar, FilePen, CalendarOff,
   Menu, X
 } from 'lucide-react';
 import logoUrl from '../../../assets/Logo/VCareLogo.png';
+import { useAuth } from '../../../context/AuthContext';
 
 const NAV_ITEMS = [
   { icon: LayoutDashboard, label: 'Dashboard', to: '/services/provider-dashboard' },
@@ -50,7 +51,14 @@ const ProviderPortalCard = ({ onClick }) => (
 
 const StaffSidebar = ({ staffProfileId, title }) => {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  const handleLogout = () => {
+    logout();
+    navigate('/');
+  };
 
   // Close the drawer whenever the route changes.
   useEffect(() => {
@@ -107,7 +115,7 @@ const StaffSidebar = ({ staffProfileId, title }) => {
               ))}
             </nav>
             <div className="p-3 border-t border-slate-200">
-              <button className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-all w-full">
+              <button onClick={handleLogout} className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-all w-full">
                 <LogOut className="w-5 h-5 flex-shrink-0" />
                 <span>Sign Out</span>
               </button>
@@ -139,7 +147,7 @@ const StaffSidebar = ({ staffProfileId, title }) => {
         </nav>
 
         <div className="p-3 border-t border-slate-200 space-y-1">
-          <button className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-all w-full">
+          <button onClick={handleLogout} className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-all w-full">
             <LogOut className="w-5 h-5 flex-shrink-0" />
             <span>Sign Out</span>
           </button>

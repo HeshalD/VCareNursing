@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import StaffScheduleTimeline from '../components/StaffScheduleTimeline';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -190,6 +191,22 @@ const BookingStaffRosterPage = () => {
   };
 
   useEffect(() => { fetchStaff(page); }, [page, statusFilter, roleFilter]);
+
+  // Batched schedule lookup for whoever's on the current page — lets the admin see
+  // each candidate's existing/upcoming commitments before picking them for this booking.
+  const [schedules, setSchedules] = useState({});
+  const [schedulesLoading, setSchedulesLoading] = useState(false);
+  const [expandedScheduleId, setExpandedScheduleId] = useState(null);
+
+  useEffect(() => {
+    const ids = staff.map((m) => m.staff_profile_id);
+    if (ids.length === 0) { setSchedules({}); return; }
+    setSchedulesLoading(true);
+    apiClient.getStaffSchedules(ids)
+      .then((res) => setSchedules(res?.data || {}))
+      .catch(() => setSchedules({}))
+      .finally(() => setSchedulesLoading(false));
+  }, [staff]);
 
   const changeStatusFilter = (v) => { setStatusFilter(v); setPage(1); };
   const changeRoleFilter   = (v) => { setRoleFilter(v);   setPage(1); };
@@ -562,6 +579,49 @@ const BookingStaffRosterPage = () => {
                     </span>
                   )}
                 </div>
+
+                {/* Schedule — current + upcoming commitments, so admins can spot conflicts
+                    with this booking's start date before assigning this person */}
+                {(() => {
+                  const memberSchedule = schedules[member.staff_profile_id] || [];
+                  const hasConflict = startDate && memberSchedule.some((e) => {
+                    const ref = String(startDate).slice(0, 10);
+                    const s = (e.service_start_date || '').slice(0, 10);
+                    const en = e.service_end_date ? e.service_end_date.slice(0, 10) : null;
+                    return s && s <= ref && (!en || en >= ref);
+                  });
+                  const isExpanded = expandedScheduleId === member.staff_profile_id;
+                  return (
+                    <div className="border-t border-gray-100 px-4 py-2">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedScheduleId(isExpanded ? null : member.staff_profile_id)}
+                        className={`flex w-full items-center justify-between gap-2 text-xs font-medium transition-colors ${
+                          hasConflict ? 'text-rose-600' : 'text-gray-500 hover:text-gray-700'
+                        }`}
+                      >
+                        <span className="flex items-center gap-1.5">
+                          <CalendarClock className="h-3.5 w-3.5 shrink-0" />
+                          {schedulesLoading
+                            ? 'Checking schedule…'
+                            : hasConflict
+                              ? 'Busy on this booking’s start date'
+                              : memberSchedule.length > 0
+                                ? `${memberSchedule.length} other commitment${memberSchedule.length === 1 ? '' : 's'}`
+                                : 'No other commitments'}
+                        </span>
+                        {(memberSchedule.length > 0 || schedulesLoading) && (
+                          isExpanded ? <ChevronUp className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                        )}
+                      </button>
+                      {isExpanded && (
+                        <div className="mt-2">
+                          <StaffScheduleTimeline schedule={memberSchedule} loading={schedulesLoading} referenceDate={startDate} compact />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Actions */}
                 <div className="mt-auto border-t border-gray-100 px-4 py-3 flex items-center gap-2">

@@ -132,6 +132,9 @@ router.get('/terminations/history', protect, restrictTo('SUPER_ADMIN', 'ADMIN'),
 // POST /api/admin/terminations/:termination_id/approve
 router.post('/terminations/approve/:termination_id', protect, restrictTo('SUPER_ADMIN', 'ADMIN'), bookingController.approveTerminationRequest);
 
+// POST /api/admin/terminations/:termination_id/reject
+router.post('/terminations/reject/:termination_id', protect, restrictTo('SUPER_ADMIN', 'ADMIN'), bookingController.rejectTerminationRequest);
+
 // POST /api/admin/terminations/:booking_id/force-stop
 router.post(
     '/terminations/force-stop/:booking_id', 

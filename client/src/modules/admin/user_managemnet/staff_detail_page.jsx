@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   BadgeDollarSign,
   Briefcase,
+  CalendarClock,
   CalendarDays,
   Check,
   ChevronDown,
@@ -160,6 +161,9 @@ const StaffDetailPage = () => {
   const [earningsTransactions, setEarningsTransactions] = useState([]);
   const [currentBooking, setCurrentBooking] = useState(null);
   const [bookingHistory, setBookingHistory] = useState([]);
+  const [futureBookings, setFutureBookings] = useState([]);
+  const [cancellingAssignmentId, setCancellingAssignmentId] = useState(null);
+  const [cancelError, setCancelError] = useState('');
   const [payoutsSummary, setPayoutsSummary] = useState(null);
   const [payouts, setPayouts] = useState([]);
   const [bankAccounts, setBankAccounts] = useState([]);
@@ -216,6 +220,7 @@ const StaffDetailPage = () => {
     { id: 'overview', label: 'Overview', icon: Users },
     { id: 'earnings', label: 'Earnings', icon: BadgeDollarSign },
     { id: 'current-booking', label: 'Current Booking', icon: CalendarDays },
+    { id: 'future-bookings', label: 'Future Bookings', icon: CalendarClock },
     { id: 'booking-history', label: 'Booking History', icon: History },
     { id: 'reviews', label: 'Reviews', icon: Star },
     { id: 'payouts', label: 'Payouts', icon: Wallet },
@@ -265,6 +270,7 @@ const StaffDetailPage = () => {
       runAdminRequest(() => apiClient.getStaffEarningsTransactions(staffProfileId, { page: 1, limit: 50 })),
       runAdminRequest(() => apiClient.getStaffCurrentBooking(staffProfileId)),
       runAdminRequest(() => apiClient.getStaffBookingHistory(staffProfileId, { page: 1, limit: 20 })),
+      runAdminRequest(() => apiClient.getStaffFutureBookings(staffProfileId)),
       runAdminRequest(() => apiClient.getStaffPayoutsSummary(staffProfileId)),
       runAdminRequest(() => apiClient.getStaffPayouts(staffProfileId, { page: 1, limit: 20 })),
       runAdminRequest(() => apiClient.getStaffBankAccounts(staffProfileId)),
@@ -274,7 +280,7 @@ const StaffDetailPage = () => {
     ]);
 
     const nextErrors = {};
-    const [detailRes, earningsRes, earningsTxRes, currentBookingRes, historyRes, payoutsSummaryRes, payoutsRes, bankAccountsRes, companyBankAccountsRes, changeRequestsRes, deductionsRes] = results;
+    const [detailRes, earningsRes, earningsTxRes, currentBookingRes, historyRes, futureBookingsRes, payoutsSummaryRes, payoutsRes, bankAccountsRes, companyBankAccountsRes, changeRequestsRes, deductionsRes] = results;
 
     if (detailRes.status === 'fulfilled') {
       setDetail(detailRes.value?.data || null);
@@ -306,6 +312,12 @@ const StaffDetailPage = () => {
       setBookingHistory(safeArray(historyRes.value?.data));
     } else {
       nextErrors.bookingHistory = historyRes.reason?.message || 'Failed to load booking history';
+    }
+
+    if (futureBookingsRes.status === 'fulfilled') {
+      setFutureBookings(safeArray(futureBookingsRes.value?.data));
+    } else {
+      nextErrors.futureBookings = futureBookingsRes.reason?.message || 'Failed to load future bookings';
     }
 
     if (payoutsSummaryRes.status === 'fulfilled') {
@@ -697,6 +709,92 @@ const StaffDetailPage = () => {
           </div>
         ) : (
           <EmptyState title="No active booking" subtitle="This staff member is not currently assigned to a booking." />
+        )}
+      </Card>
+    </div>
+  );
+
+  const handleCancelFutureBooking = async (assignmentId, actionId) => {
+    if (!actionId) {
+      setCancelError('This assignment has no cancellable scheduled action (it may already be starting today).');
+      return;
+    }
+    if (!window.confirm('Cancel this future assignment? The shift/slot will become available again.')) return;
+
+    setCancellingAssignmentId(assignmentId);
+    setCancelError('');
+    try {
+      await runAdminRequest(() => apiClient.cancelScheduledAction(actionId));
+      setFutureBookings((prev) => prev.filter((row) => row.assignment_id !== assignmentId));
+    } catch (err) {
+      setCancelError(err?.message || 'Failed to cancel future assignment');
+    } finally {
+      setCancellingAssignmentId(null);
+    }
+  };
+
+  const renderFutureBookings = () => (
+    <div className="space-y-6">
+      <div className="grid gap-4 md:grid-cols-2">
+        <StatCard icon={CalendarClock} label="Scheduled Assignments" value={futureBookings.length} tone="violet" />
+        <StatCard icon={Activity} label="Earliest Start" value={futureBookings.length ? formatDate(futureBookings[0].service_start_date) : '-'} tone="amber" />
+      </div>
+
+      {cancelError && (
+        <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          <AlertCircle className="h-4 w-4 flex-shrink-0" /> {cancelError}
+        </div>
+      )}
+
+      <Card title="Future Bookings" subtitle="Assignments scheduled to start on a future date — not yet active">
+        {sectionLoadErrors.futureBookings ? (
+          <EmptyState title="Failed to load future bookings" subtitle={sectionLoadErrors.futureBookings} />
+        ) : safeArray(futureBookings).length === 0 ? (
+          <EmptyState title="No future bookings" subtitle="This staff member has no scheduled future assignments." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead className="bg-slate-50">
+                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <th className="px-4 py-3">Booking</th>
+                  <th className="px-4 py-3">Client</th>
+                  <th className="px-4 py-3">Care Profile</th>
+                  <th className="px-4 py-3">Shift</th>
+                  <th className="px-4 py-3">Start Date</th>
+                  <th className="px-4 py-3 text-right">Daily Rate</th>
+                  <th className="px-4 py-3 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 bg-white">
+                {futureBookings.map((row, index) => (
+                  <tr key={row.assignment_id || index} className="hover:bg-slate-50/60">
+                    <td className="px-4 py-3 font-medium text-slate-900">{row.booking_id || row.assignment_id || '-'}</td>
+                    <td className="px-4 py-3 text-slate-600">{row.client_name || '-'}</td>
+                    <td className="px-4 py-3 text-slate-600">{row.patient_name || '-'}</td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {row.shift_label || (row.shift_number ? `Shift ${row.shift_number}` : '-')}
+                      {row.shift_start_time && <span className="ml-1 text-xs text-slate-400">({row.shift_start_time})</span>}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">{formatDate(row.service_start_date)}</td>
+                    <td className="px-4 py-3 text-right font-semibold text-slate-900">{formatMoney(row.daily_rate)}</td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => handleCancelFutureBooking(row.assignment_id, row.action_id)}
+                        disabled={cancellingAssignmentId === row.assignment_id}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-rose-50 hover:border-rose-200 hover:text-rose-700 transition-all disabled:opacity-50"
+                      >
+                        {cancellingAssignmentId === row.assignment_id
+                          ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          : <Trash2 className="h-3.5 w-3.5" />}
+                        Cancel
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
     </div>
@@ -1726,6 +1824,7 @@ const StaffDetailPage = () => {
           {activeSection === 'overview' && renderOverview()}
           {activeSection === 'earnings' && renderEarnings()}
           {activeSection === 'current-booking' && renderCurrentBooking()}
+          {activeSection === 'future-bookings' && renderFutureBookings()}
           {activeSection === 'booking-history' && renderBookingHistory()}
           {activeSection === 'reviews' && renderReviews()}
           {activeSection === 'payouts' && renderPayouts()}

@@ -107,13 +107,17 @@ const getPatternHistory = async (client, booking_id) => {
 };
 
 const insertSlots = async (client, pattern_id, slots) => {
+    const inserted = [];
     for (const slot of slots) {
-        await client.query(
+        const res = await client.query(
             `INSERT INTO booking_shift_slots (pattern_id, shift_number, start_time, duration_hours, label)
-             VALUES ($1, $2, $3, $4, $5)`,
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING *`,
             [pattern_id, slot.shift_number, slot.start_time, slot.duration_hours, slot.label || null]
         );
+        inserted.push(res.rows[0]);
     }
+    return inserted;
 };
 
 // Create a new shift pattern version for a booking — either activating it now
@@ -151,12 +155,40 @@ const createShiftPattern = async (client, { booking_id, shift_count, slots, effe
     const warnings = validateNoOverlap(slots);
 
     if (isFuture) {
-        const alreadyScheduled = await client.query(
-            `SELECT 1 FROM booking_shift_patterns WHERE booking_id = $1 AND status = 'SCHEDULED' LIMIT 1`,
-            [booking_id]
-        );
-        if (alreadyScheduled.rows.length > 0) {
-            throw new Error('A shift pattern change is already scheduled for this booking.');
+        // Only block duplicate scheduling when there's already an ACTIVE pattern
+        // (i.e., this is a mid-booking change). For PENDING bookings with no active
+        // pattern, a leftover SCHEDULED row is just the initial setup — replace it.
+        if (current) {
+            const alreadyScheduled = await client.query(
+                `SELECT 1 FROM booking_shift_patterns WHERE booking_id = $1 AND status = 'SCHEDULED' LIMIT 1`,
+                [booking_id]
+            );
+            if (alreadyScheduled.rows.length > 0) {
+                throw new Error('A shift pattern change is already scheduled for this booking.');
+            }
+        } else {
+            // No active pattern: a leftover SCHEDULED pattern is only a true "orphan"
+            // (safe to discard) if nothing has been assigned to its slots yet. If staff
+            // are already assigned, this is a real in-progress setup, not a retry artifact.
+            const assignedRes = await client.query(
+                `SELECT 1 FROM booking_staff_assignments bsa
+                 JOIN booking_shift_slots s ON bsa.shift_slot_id = s.shift_slot_id
+                 JOIN booking_shift_patterns p ON s.pattern_id = p.pattern_id
+                 WHERE p.booking_id = $1 AND p.status = 'SCHEDULED' LIMIT 1`,
+                [booking_id]
+            );
+            if (assignedRes.rows.length > 0) {
+                throw new Error('Staff are already assigned under the pending shift pattern for this booking. Use reassign-staff on individual shifts instead of recreating the pattern.');
+            }
+
+            await client.query(
+                `DELETE FROM booking_shift_patterns WHERE booking_id = $1 AND status = 'SCHEDULED'`,
+                [booking_id]
+            );
+            await client.query(
+                `DELETE FROM scheduled_actions WHERE booking_id = $1 AND action_type = 'SHIFT_PATTERN_CHANGE' AND status = 'SCHEDULED'`,
+                [booking_id]
+            );
         }
 
         const patternRes = await client.query(
@@ -166,7 +198,7 @@ const createShiftPattern = async (client, { booking_id, shift_count, slots, effe
             [booking_id, shift_count, effFromStr, created_by]
         );
         const pattern = patternRes.rows[0];
-        await insertSlots(client, pattern.pattern_id, slots);
+        pattern.slots = await insertSlots(client, pattern.pattern_id, slots);
 
         await enqueueScheduledAction(client, {
             booking_id,
@@ -185,6 +217,30 @@ const createShiftPattern = async (client, { booking_id, shift_count, slots, effe
             `UPDATE booking_shift_patterns SET status = 'SUPERSEDED', effective_to_date = $1 WHERE pattern_id = $2`,
             [businessDate, current.pattern_id]
         );
+
+        // End the old pattern's assignments — otherwise they linger as ACTIVE rows
+        // under a dead pattern forever, and the staff on them stay stuck as
+        // current_status='ASSIGNED' with no real assignment. Whoever ends up reused
+        // in the new pattern (via the caller's follow-up assign-staff calls) simply
+        // flips back to ASSIGNED at that point. 'COMPLETED' matches the status used
+        // elsewhere (executeStaffSwap, termination) when an assignment ends normally.
+        const oldSlotIds = (current.slots || []).map((s) => s.shift_slot_id);
+        if (oldSlotIds.length) {
+            const endedRes = await client.query(
+                `UPDATE booking_staff_assignments
+                 SET status = 'COMPLETED', service_end_date = $2
+                 WHERE shift_slot_id = ANY($1::uuid[]) AND status IN ('ACTIVE', 'SCHEDULED')
+                 RETURNING staff_profile_id`,
+                [oldSlotIds, businessDate]
+            );
+            const staffIds = [...new Set(endedRes.rows.map((r) => r.staff_profile_id))];
+            if (staffIds.length) {
+                await client.query(
+                    `UPDATE staff_profiles SET current_status = 'AVAILABLE' WHERE staff_profile_id = ANY($1::uuid[])`,
+                    [staffIds]
+                );
+            }
+        }
     }
 
     const patternRes = await client.query(
@@ -194,7 +250,7 @@ const createShiftPattern = async (client, { booking_id, shift_count, slots, effe
         [booking_id, shift_count, effFromStr, created_by]
     );
     const pattern = patternRes.rows[0];
-    await insertSlots(client, pattern.pattern_id, slots);
+    pattern.slots = await insertSlots(client, pattern.pattern_id, slots);
 
     return { pattern, scheduled: false, warnings };
 };

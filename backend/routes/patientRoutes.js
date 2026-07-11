@@ -50,8 +50,9 @@ router.put(
 
 // Route to delete patient profile
 router.delete(
-    '/:patient_id', 
-    protect, 
+    '/:patient_id',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
     patientController.deletePatientProfile
 );
 

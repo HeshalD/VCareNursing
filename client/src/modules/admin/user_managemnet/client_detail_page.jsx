@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Activity,
+  AlertCircle,
   ChevronDown,
   BadgeDollarSign,
   BookOpen,
@@ -33,6 +34,8 @@ import {
   X,
   Building2,
   Receipt,
+  ArrowLeftRight,
+  Upload,
 } from 'lucide-react';
 
 const NOTE_TYPE_META = {
@@ -178,10 +181,18 @@ const ClientDetailPage = () => {
   const [invoiceDateFrom, setInvoiceDateFrom] = useState('');
   const [invoiceDateTo, setInvoiceDateTo] = useState('');
 
+  const [regFeeInvoices, setRegFeeInvoices] = useState([]);
+  const [regFeeInvoicesLoading, setRegFeeInvoicesLoading] = useState(false);
+
   const [editingBilling, setEditingBilling] = useState(false);
   const [billingForm, setBillingForm] = useState({ company_name: '', honorific: '' });
   const [billingLoading, setBillingLoading] = useState(false);
   const [billingError, setBillingError] = useState('');
+
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [profileForm, setProfileForm] = useState({ full_name: '', mobile_number: '', email: '', primary_address: '', gender: '' });
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState('');
   const [sentReviewIds, setSentReviewIds] = useState(new Set());
 
   const [quoteStatusBusy, setQuoteStatusBusy] = useState('');
@@ -196,8 +207,38 @@ const ClientDetailPage = () => {
   const [bankAccounts, setBankAccounts] = useState([]);
   const [bankAccountsLoading, setBankAccountsLoading] = useState(false);
   const [lastInvoicePdfUrl, setLastInvoicePdfUrl] = useState(null);
+  const [uploadingRegFeeReceipt, setUploadingRegFeeReceipt] = useState(false);
+  const regFeeReceiptInputRef = useRef(null);
 
   const [showAddPatient, setShowAddPatient] = useState(false);
+  const [linkedStaffProfileId, setLinkedStaffProfileId] = useState(null);
+
+  const [deletePatientTarget, setDeletePatientTarget] = useState(null);
+  const [deletePatientConfirmText, setDeletePatientConfirmText] = useState('');
+  const [deletingPatient, setDeletingPatient] = useState(false);
+  const [deletePatientError, setDeletePatientError] = useState('');
+
+  const closeDeletePatientModal = () => {
+    setDeletePatientTarget(null);
+    setDeletePatientConfirmText('');
+    setDeletePatientError('');
+  };
+
+  const handleDeletePatient = async () => {
+    if (!deletePatientTarget) return;
+    setDeletingPatient(true);
+    setDeletePatientError('');
+    try {
+      await apiClient.deletePatient(deletePatientTarget.patient_id);
+      const refreshed = await apiClient.getAdminClientDetail(clientId);
+      setDetail(refreshed.data || null);
+      closeDeletePatientModal();
+    } catch (err) {
+      setDeletePatientError(err.message || 'Failed to delete care profile');
+    } finally {
+      setDeletingPatient(false);
+    }
+  };
 
   useEffect(() => {
     const loadDetail = async () => {
@@ -212,6 +253,17 @@ const ClientDetailPage = () => {
             company_name: data.client_profile.company_name || '',
             honorific: data.client_profile.honorific || '',
           });
+        }
+
+        // This client may also hold a staff account (e.g. a caregiver who
+        // registered as a client too) — check so we can offer a view switch.
+        if (data?.client_profile?.user_id) {
+          try {
+            const staffRes = await apiClient.getStaffByUserID(data.client_profile.user_id);
+            setLinkedStaffProfileId(staffRes?.data?.staff_profile_id || null);
+          } catch {
+            setLinkedStaffProfileId(null);
+          }
         }
       } catch (err) {
         console.error('Error loading client detail:', err);
@@ -289,6 +341,19 @@ const ClientDetailPage = () => {
     }
   };
 
+  const fetchRegFeeInvoices = async () => {
+    if (!clientId) return;
+    try {
+      setRegFeeInvoicesLoading(true);
+      const res = await apiClient.getClientRegFeeInvoices(clientId);
+      setRegFeeInvoices(Array.isArray(res?.data) ? res.data : []);
+    } catch {
+      // non-fatal
+    } finally {
+      setRegFeeInvoicesLoading(false);
+    }
+  };
+
   const fetchBookingsPag = async ({ active_page: ap = activeBkPage, recent_page: rp = recentBkPage, search: s = bookingSearch } = {}) => {
     if (!clientId) return;
     try {
@@ -304,7 +369,7 @@ const ClientDetailPage = () => {
 
   useEffect(() => {
     if (activeSection === 'bookings') fetchBookingsPag();
-    if (activeSection === 'invoices') fetchClientInvoices();
+    if (activeSection === 'invoices') { fetchClientInvoices(); fetchRegFeeInvoices(); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSection]);
 
@@ -389,6 +454,37 @@ const ClientDetailPage = () => {
     }
   };
 
+  const openEditProfile = () => {
+    setProfileForm({
+      full_name: clientProfile.full_name || '',
+      mobile_number: clientProfile.mobile_number || '',
+      email: clientProfile.email || '',
+      primary_address: clientProfile.primary_address || '',
+      gender: clientProfile.gender || '',
+    });
+    setProfileError('');
+    setEditingProfile(true);
+  };
+
+  const saveProfile = async () => {
+    if (!profileForm.full_name.trim()) { setProfileError('Full name is required.'); return; }
+    if (!/^0\d{9}$/.test(profileForm.mobile_number.trim())) { setProfileError('Enter a valid 10-digit mobile number.'); return; }
+    setProfileLoading(true);
+    setProfileError('');
+    try {
+      const res = await apiClient.updateClientProfile(clientId, profileForm);
+      setDetail((prev) => ({
+        ...prev,
+        client_profile: { ...prev.client_profile, ...res.data },
+      }));
+      setEditingProfile(false);
+    } catch (err) {
+      setProfileError(err.message || 'Failed to save client details');
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+
   const handleSendRegFeeInvoice = async () => {
     if (!selectedBankAccountId) { setRegFeeError('Please select a bank account.'); return; }
     setRegFeeLoading(true);
@@ -400,6 +496,7 @@ const ClientDetailPage = () => {
         ...prev,
         client_profile: { ...prev.client_profile, ...res.data },
       }));
+      fetchRegFeeInvoices();
     } catch (err) {
       setRegFeeError(err.message || 'Failed to send registration fee invoice.');
     } finally {
@@ -407,15 +504,29 @@ const ClientDetailPage = () => {
     }
   };
 
+  // Marking the registration fee PAID also records a transaction server-side —
+  // refresh the client detail (payment summary) and transaction list so the
+  // new "Payments Made By Client" total and ledger row show up immediately.
+  const refreshAfterPaymentChange = async () => {
+    try {
+      const [refreshed, txRefreshed] = await Promise.all([
+        apiClient.getAdminClientDetail(clientId),
+        apiClient.getClientTransactions(clientId),
+      ]);
+      setDetail(refreshed.data || null);
+      setClientTransactions(txRefreshed.data || []);
+      fetchRegFeeInvoices();
+    } catch {
+      // non-fatal — the reg_fee_status change itself already succeeded
+    }
+  };
+
   const handleRegFeeStatusUpdate = async (status) => {
     setRegFeeLoading(true);
     setRegFeeError('');
     try {
-      const res = await apiClient.updateRegFeeStatus(clientId, status);
-      setDetail((prev) => ({
-        ...prev,
-        client_profile: { ...prev.client_profile, reg_fee_status: res.data.reg_fee_status },
-      }));
+      await apiClient.updateRegFeeStatus(clientId, status);
+      await refreshAfterPaymentChange();
     } catch (err) {
       setRegFeeError(err.message || 'Failed to update registration fee status.');
     } finally {
@@ -427,15 +538,27 @@ const ClientDetailPage = () => {
     setRegFeeLoading(true);
     setRegFeeError('');
     try {
-      const res = await apiClient.verifyRegFeePayment(clientId);
-      setDetail((prev) => ({
-        ...prev,
-        client_profile: { ...prev.client_profile, reg_fee_status: res.data.reg_fee_status },
-      }));
+      await apiClient.verifyRegFeePayment(clientId);
+      await refreshAfterPaymentChange();
     } catch (err) {
       setRegFeeError(err.message || 'Failed to verify registration fee payment.');
     } finally {
       setRegFeeLoading(false);
+    }
+  };
+
+  const handleAdminUploadRegFeeReceipt = async (file) => {
+    if (!file) return;
+    setUploadingRegFeeReceipt(true);
+    setRegFeeError('');
+    try {
+      await apiClient.adminUploadRegFeeReceipt(clientId, file);
+      await refreshAfterPaymentChange();
+    } catch (err) {
+      setRegFeeError(err.message || 'Failed to upload registration fee receipt.');
+    } finally {
+      setUploadingRegFeeReceipt(false);
+      if (regFeeReceiptInputRef.current) regFeeReceiptInputRef.current.value = '';
     }
   };
 
@@ -965,8 +1088,69 @@ const ClientDetailPage = () => {
           PENDING:  'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200',
         };
         const hasInvoiceFilter = invoiceStatusFilter || invoiceDateFrom || invoiceDateTo;
+        const REG_FEE_INVOICE_STATUS_COLORS = {
+          SENT: 'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200',
+          PAID: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
+        };
         return (
-          <div className="space-y-4">
+          <div className="space-y-6">
+            {/* Registration Fee Invoices */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">Registration Fee Invoices</h3>
+              {regFeeInvoicesLoading ? (
+                <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading registration fee invoicesâ€¦
+                </div>
+              ) : regFeeInvoices.length === 0 ? (
+                <EmptyState title="No registration fee invoices sent yet" />
+              ) : (
+                <div className="overflow-x-auto rounded-md border border-gray-200">
+                  <table className="min-w-full divide-y divide-gray-100 text-sm">
+                    <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                      <tr>
+                        <th className="px-4 py-3 text-left">Date Sent</th>
+                        <th className="px-4 py-3 text-left">Invoice Code</th>
+                        <th className="px-4 py-3 text-left">Bank Account</th>
+                        <th className="px-4 py-3 text-left">Status</th>
+                        <th className="px-4 py-3 text-right">Amount</th>
+                        <th className="px-4 py-3 text-left">Download</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 bg-white">
+                      {regFeeInvoices.map((inv) => (
+                        <tr key={inv.invoice_id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{formatDateTime(inv.created_at)}</td>
+                          <td className="px-4 py-3 font-mono text-xs text-gray-600">{inv.invoice_code}</td>
+                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
+                            {[inv.bank_account_nickname, inv.bank_name].filter(Boolean).join(' â€” ') || 'â€”'}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${REG_FEE_INVOICE_STATUS_COLORS[inv.status] || 'bg-gray-100 text-gray-600'}`}>
+                              {inv.status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(inv.amount)}</td>
+                          <td className="px-4 py-3">
+                            <a
+                              href={inv.pdf_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                            >
+                              <Download className="h-3.5 w-3.5" /> Download
+                            </a>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Daily Invoices */}
+            <div className="space-y-4">
+            <h3 className="text-sm font-semibold text-gray-700">Daily Invoices</h3>
             {/* Filters */}
             <div className="flex flex-wrap items-end gap-3">
               <div>
@@ -1081,6 +1265,7 @@ const ClientDetailPage = () => {
                 </table>
               </div>
             )}
+            </div>
           </div>
         );
       }
@@ -1327,6 +1512,16 @@ const ClientDetailPage = () => {
                         {patient.gender && <span className="text-sm text-gray-500">{patient.gender.charAt(0) + patient.gender.slice(1).toLowerCase()}</span>}
                         {patient.relationship_to_client && <span className="text-sm text-gray-400">{patient.relationship_to_client}</span>}
                       </div>
+                    }
+                    actions={
+                      <button
+                        type="button"
+                        onClick={() => { setDeletePatientTarget(patient); setDeletePatientConfirmText(''); setDeletePatientError(''); }}
+                        title="Delete Care Profile"
+                        className="shrink-0 rounded p-1.5 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
                     }
                   >
                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -1753,6 +1948,31 @@ const ClientDetailPage = () => {
                     </div>
                   )}
 
+                  {!isSettled && (
+                    <div className="mt-4 rounded-md border border-gray-200 bg-gray-50 p-3">
+                      <p className="text-xs font-semibold text-gray-700 mb-2">
+                        {canViewReceipt ? 'Received a different proof of payment? Replace the receipt' : 'Upload the payment receipt on the client\'s behalf'}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          ref={regFeeReceiptInputRef}
+                          type="file"
+                          accept="image/*,.pdf"
+                          className="hidden"
+                          id="admin-reg-fee-receipt-upload"
+                          onChange={(e) => handleAdminUploadRegFeeReceipt(e.target.files?.[0])}
+                        />
+                        <label
+                          htmlFor="admin-reg-fee-receipt-upload"
+                          className={`inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 cursor-pointer ${uploadingRegFeeReceipt ? 'opacity-60 pointer-events-none' : ''}`}
+                        >
+                          {uploadingRegFeeReceipt ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                          {uploadingRegFeeReceipt ? 'Uploadingâ€¦' : canViewReceipt ? 'Replace Receipt' : 'Upload Receipt'}
+                        </label>
+                      </div>
+                    </div>
+                  )}
+
                   {!isSettled && canSendInvoice && (
                     <div className="mt-4 space-y-3 border-t border-gray-100 pt-4">
                       <div className="grid gap-3 sm:grid-cols-2">
@@ -1840,16 +2060,104 @@ const ClientDetailPage = () => {
 
             <div className="grid gap-4 lg:grid-cols-2">
               <DataCard title="Client Information">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <InfoRow label="Client Code" value={clientProfile.client_code || clientProfile.client_profile_id} />
-                  <InfoRow label="User ID"     value={clientProfile.user_id} />
-                  <InfoRow label="Email"       value={clientProfile.email || '-'} />
-                  <InfoRow label="Phone"       value={clientProfile.mobile_number || '-'} />
-                  <InfoRow label="Address"     value={clientProfile.primary_address || '-'} />
-                  <InfoRow label="Type"        value={clientProfile.client_type || '-'} />
-                  <InfoRow label="Gender"      value={clientProfile.gender || '-'} />
-                  <InfoRow label="Active"      value={clientProfile.is_active ? 'Yes' : 'No'} />
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Contact &amp; Personal Details</span>
+                  {!editingProfile && (
+                    <button
+                      onClick={openEditProfile}
+                      className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-semibold"
+                    >
+                      <Pencil className="w-3 h-3" /> Edit
+                    </button>
+                  )}
                 </div>
+
+                {editingProfile ? (
+                  <div className="space-y-3">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Full Name</label>
+                        <input
+                          type="text"
+                          value={profileForm.full_name}
+                          onChange={(e) => setProfileForm(f => ({ ...f, full_name: e.target.value }))}
+                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Phone</label>
+                        <input
+                          type="tel"
+                          value={profileForm.mobile_number}
+                          onChange={(e) => setProfileForm(f => ({ ...f, mobile_number: e.target.value }))}
+                          placeholder="07XXXXXXXX"
+                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Email</label>
+                        <input
+                          type="email"
+                          value={profileForm.email}
+                          onChange={(e) => setProfileForm(f => ({ ...f, email: e.target.value }))}
+                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Gender</label>
+                        <select
+                          value={profileForm.gender}
+                          onChange={(e) => setProfileForm(f => ({ ...f, gender: e.target.value }))}
+                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
+                        >
+                          <option value="">-</option>
+                          <option value="MALE">Male</option>
+                          <option value="FEMALE">Female</option>
+                          <option value="OTHER">Other</option>
+                        </select>
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Address</label>
+                        <input
+                          type="text"
+                          value={profileForm.primary_address}
+                          onChange={(e) => setProfileForm(f => ({ ...f, primary_address: e.target.value }))}
+                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
+                        />
+                      </div>
+                    </div>
+                    {profileError && <p className="text-xs text-red-500">{profileError}</p>}
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        onClick={saveProfile}
+                        disabled={profileLoading}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-md hover:bg-blue-700 disabled:opacity-60"
+                      >
+                        {profileLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                        Save
+                      </button>
+                      <button
+                        onClick={() => setEditingProfile(false)}
+                        disabled={profileLoading}
+                        className="px-3 py-1.5 border border-gray-200 text-xs font-medium text-gray-600 rounded-md hover:bg-gray-50 disabled:opacity-60"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <InfoRow label="Client Code" value={clientProfile.client_code || clientProfile.client_profile_id} />
+                    <InfoRow label="User ID"     value={clientProfile.user_id} />
+                    <InfoRow label="Full Name"   value={clientProfile.full_name || '-'} />
+                    <InfoRow label="Email"       value={clientProfile.email || '-'} />
+                    <InfoRow label="Phone"       value={clientProfile.mobile_number || '-'} />
+                    <InfoRow label="Address"     value={clientProfile.primary_address || '-'} />
+                    <InfoRow label="Type"        value={clientProfile.client_type || '-'} />
+                    <InfoRow label="Gender"      value={clientProfile.gender || '-'} />
+                    <InfoRow label="Active"      value={clientProfile.is_active ? 'Yes' : 'No'} />
+                  </div>
+                )}
 
                 {/* Billing Details */}
                 <div className="mt-5 pt-4 border-t border-gray-100">
@@ -1994,13 +2302,24 @@ const ClientDetailPage = () => {
       <div className="space-y-4">
         {/* â”€â”€ Top action bar â”€â”€ */}
         <div className="flex items-center justify-between">
-          <button
-            type="button"
-            onClick={() => navigate('/admin/users')}
-            className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-[13px] font-medium text-gray-600 hover:bg-gray-50"
-          >
-            <ArrowLeft className="h-4 w-4" /> Back
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => navigate('/admin/users')}
+              className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-[13px] font-medium text-gray-600 hover:bg-gray-50"
+            >
+              <ArrowLeft className="h-4 w-4" /> Back
+            </button>
+            {linkedStaffProfileId && (
+              <button
+                type="button"
+                onClick={() => navigate(`/admin/staff/${linkedStaffProfileId}/detail`)}
+                className="inline-flex items-center gap-1.5 rounded border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[13px] font-medium text-indigo-700 hover:bg-indigo-100"
+              >
+                <ArrowLeftRight className="h-4 w-4" /> Switch to Staff View
+              </button>
+            )}
+          </div>
 
           {/* Actions dropdown */}
           <div className="relative" ref={actionsDropdownRef}>
@@ -2233,6 +2552,69 @@ const ClientDetailPage = () => {
           </div>
         </div>
       )}
+
+      {deletePatientTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-red-100">
+                  <Trash2 className="h-4 w-4 text-red-600" />
+                </div>
+                <h3 className="text-sm font-semibold text-gray-900">Delete Care Profile</h3>
+              </div>
+              <button
+                type="button"
+                onClick={closeDeletePatientModal}
+                className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="px-5 py-4">
+              {deletePatientError && (
+                <div className="mb-3 flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {deletePatientError}
+                </div>
+              )}
+              <p className="text-sm text-gray-600">
+                Are you sure you want to delete{' '}
+                <span className="font-semibold text-gray-900">{deletePatientTarget.full_name || 'this care profile'}</span>?
+                This action cannot be undone. Care Profiles with active bookings cannot be deleted.
+              </p>
+              <label className="mt-4 block text-xs font-medium text-gray-600">
+                Type <span className="font-semibold text-gray-900">{deletePatientTarget.full_name}</span> to confirm
+              </label>
+              <input
+                type="text"
+                value={deletePatientConfirmText}
+                onChange={(e) => setDeletePatientConfirmText(e.target.value)}
+                placeholder={deletePatientTarget.full_name}
+                autoFocus
+                className="mt-1.5 w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-gray-100 px-5 py-3">
+              <button
+                type="button"
+                onClick={closeDeletePatientModal}
+                className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDeletePatient}
+                disabled={deletingPatient || deletePatientConfirmText.trim() !== (deletePatientTarget.full_name || '').trim()}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {deletingPatient && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AdminLayout>
   );
 };
@@ -2258,18 +2640,21 @@ const SectionList = ({ children }) => (
   </div>
 );
 
-const ExpandableRow = ({ summary, children }) => {
+const ExpandableRow = ({ summary, actions, children }) => {
   const [open, setOpen] = useState(false);
   return (
     <div>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-4 px-5 py-3.5 text-left transition-colors hover:bg-gray-50"
-      >
-        <div className="min-w-0 flex-1">{summary}</div>
-        <ChevronDown className={`h-4 w-4 shrink-0 text-gray-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
-      </button>
+      <div className="flex w-full items-center gap-2 px-5 py-3.5 transition-colors hover:bg-gray-50">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex min-w-0 flex-1 items-center gap-4 text-left"
+        >
+          <div className="min-w-0 flex-1">{summary}</div>
+          <ChevronDown className={`h-4 w-4 shrink-0 text-gray-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
+        </button>
+        {actions}
+      </div>
       {open && (
         <div className="border-t border-gray-100 bg-gray-50 px-5 py-4">
           {children}

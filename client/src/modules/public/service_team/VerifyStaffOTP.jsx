@@ -95,6 +95,7 @@ const VerifyStaffOTP = () => {
           state: {
             applicationData: {
               application_id: response.data?.application_id,
+              application_code: response.data?.application_code,
               full_name: response.data?.full_name,
               mobile_number: response.data?.mobile_number,
               applied_roles: response.data?.applied_roles

@@ -44,7 +44,9 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], leaveDays
   // ── Booking colour pool — assigned in service_start_date order ────────────
   const bookingColorMap = useMemo(() => {
     const map = new Map();
-    const sorted = [...assignments].sort((a, b) => new Date(a.service_start_date) - new Date(b.service_start_date));
+    const sorted = [...assignments]
+      .filter((a) => a.assignment_status !== 'CANCELLED')
+      .sort((a, b) => new Date(a.service_start_date) - new Date(b.service_start_date));
     let idx = 0;
     sorted.forEach((a) => {
       if (a.booking_id && !map.has(a.booking_id)) { map.set(a.booking_id, BOOKING_COLORS[idx % BOOKING_COLORS.length]); idx++; }
@@ -83,8 +85,15 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], leaveDays
     let best = null, bestStart = null;
     for (const a of assignments) {
       if (!a.service_start_date) continue;
+      if (a.assignment_status === 'CANCELLED') continue;
       const start = new Date(a.service_start_date); start.setHours(0, 0, 0, 0);
-      const end = a.service_end_date ? new Date(a.service_end_date) : null;
+      // service_end_date stays NULL until a scheduled completion/termination's cron
+      // actually runs — until then, fall back to the scheduled_actions effective_date
+      // (pending_end_date) so the assignment doesn't render as open-ended forever; the
+      // staff shows free again starting the day *after* that date, since the booking is
+      // still active/billed through the end date itself.
+      const endSource = a.service_end_date || a.pending_end_date;
+      const end = endSource ? new Date(endSource) : null;
       if (end) end.setHours(23, 59, 59, 999);
       if (date >= start && (!end || date <= end)) {
         if (!bestStart || start > bestStart) { bestStart = start; best = a; }

@@ -32,15 +32,6 @@ const formatDate = (dateStr) => {
   return new Date(dateStr).toLocaleDateString('en-LK', { day: 'numeric', month: 'short', year: 'numeric' });
 };
 
-const EXPERIENCE_LEVELS = [
-  { value: '1_YEAR', label: '1 Year' },
-  { value: '2_YEARS', label: '2 Years' },
-  { value: '3_YEARS', label: '3 Years' },
-  { value: '4_YEARS', label: '4 Years' },
-  { value: '5_YEARS', label: '5 Years' },
-  { value: 'MORE_THAN_5_YEARS', label: 'More than 5 Years' },
-];
-
 const WorkerDashboardDemo = () => {
   const { user, loading: authLoading } = useAuth();
   const [staffData, setStaffData] = useState(null);
@@ -49,7 +40,6 @@ const WorkerDashboardDemo = () => {
   const [completedCount, setCompletedCount] = useState(null);
   const [dataLoading, setDataLoading] = useState(true);
   const [updatingStatus, setUpdatingStatus] = useState(false);
-  const [updatingExperience, setUpdatingExperience] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -138,22 +128,6 @@ const WorkerDashboardDemo = () => {
       console.error('Error updating status:', error);
     } finally {
       setUpdatingStatus(false);
-    }
-  };
-
-  const updateExperienceLevel = async (newLevel) => {
-    if (!staffData?.staff_profile_id || updatingExperience || !newLevel) return;
-    setUpdatingExperience(true);
-    try {
-      await apiClient.updateStaffExperienceLevel(staffData.staff_profile_id, newLevel);
-      const response = user?.staff_id
-        ? await apiClient.getStaffByID(user.staff_id)
-        : await apiClient.getStaffByUserID(user.id);
-      setStaffData(response.data);
-    } catch (error) {
-      console.error('Error updating experience level:', error);
-    } finally {
-      setUpdatingExperience(false);
     }
   };
 
@@ -287,24 +261,6 @@ const WorkerDashboardDemo = () => {
                 {status === 'VERIFIED' ? 'Verified' : status === 'REJECTED' ? 'Rejected' : 'Pending Verification'}
               </span>
             </div>
-          </div>
-
-          <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="font-semibold text-slate-900">Experience Level</p>
-              <p className="text-sm text-slate-500">Let coordinators know how many years of relevant experience you have.</p>
-            </div>
-            <select
-              value={staffData?.experience_level || ''}
-              onChange={(e) => updateExperienceLevel(e.target.value)}
-              disabled={updatingExperience}
-              className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium text-slate-700 disabled:opacity-50"
-            >
-              <option value="" disabled>Select experience</option>
-              {EXPERIENCE_LEVELS.map(({ value, label }) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </select>
           </div>
 
           {/* Required compliance documents */}

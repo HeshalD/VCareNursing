@@ -193,7 +193,7 @@ exports.verifyStaffApplicationOtp = async (req, res) => {
 
     // Fetch application details for the success response
     const appResult = await db.query(
-      'SELECT full_name, mobile_number, applied_roles FROM staff_applications WHERE application_id = $1',
+      'SELECT application_code, full_name, mobile_number, applied_roles FROM staff_applications WHERE application_id = $1',
       [application_id]
     );
 
@@ -204,6 +204,7 @@ exports.verifyStaffApplicationOtp = async (req, res) => {
       message: 'Phone number verified successfully.',
       data: {
         application_id,
+        application_code: app.application_code,
         full_name: app.full_name,
         mobile_number: app.mobile_number,
         applied_roles: app.applied_roles
@@ -642,6 +643,84 @@ exports.sendApplicationAgreement = async (req, res) => {
     });
   } catch (error) {
     console.error('Send Agreement Error:', error.response?.data || error.message);
+    res.status(500).json({ message: 'Failed to send the agreement via WhatsApp.', error: error.message });
+  }
+};
+
+// Same as sendApplicationAgreement, but looked up by staff_profile_id instead of
+// application_id — used from the staff detail page (Documents tab), which only
+// has the staff profile, not the originating application, to hand.
+exports.sendApplicationAgreementByStaffId = async (req, res) => {
+  const { staff_profile_id } = req.params;
+
+  try {
+    const staffRes = await db.query(
+      `SELECT sp.full_name, u.mobile_number
+       FROM staff_profiles sp
+       JOIN users u ON sp.user_id = u.user_id
+       WHERE sp.staff_profile_id = $1`,
+      [staff_profile_id]
+    );
+
+    if (staffRes.rows.length === 0) {
+      return res.status(404).json({ message: 'Staff member not found.' });
+    }
+
+    const { full_name, mobile_number } = staffRes.rows[0];
+
+    if (!mobile_number) {
+      return res.status(400).json({ message: 'This staff member does not have a mobile number on file.' });
+    }
+
+    const appRes = await db.query(
+      `SELECT application_id, agreement_sent_at FROM staff_applications
+       WHERE mobile_number = $1 AND status = 'ACCEPTED'
+       ORDER BY applied_at DESC LIMIT 1`,
+      [mobile_number]
+    );
+
+    if (appRes.rows.length === 0) {
+      return res.status(404).json({ message: 'No accepted application found for this staff member.' });
+    }
+
+    const { application_id, agreement_sent_at } = appRes.rows[0];
+
+    if (agreement_sent_at) {
+      return res.status(409).json({
+        message: 'The agreement has already been sent to this staff member.',
+        agreement_sent_at,
+      });
+    }
+
+    await sendStaffAgreement(mobile_number, full_name);
+
+    const updated = await db.query(
+      'UPDATE staff_applications SET agreement_sent_at = CURRENT_TIMESTAMP WHERE application_id = $1 RETURNING agreement_sent_at',
+      [application_id]
+    );
+
+    try {
+      const actorName = await getActorName(req.user.user_id);
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName,
+        actorRole: extractActorRole(req.user.role),
+        actionType: 'APPLICATION_AGREEMENT_SENT',
+        entityType: 'STAFF_APPLICATION',
+        entityId: String(application_id),
+        details: { applicant_name: full_name, mobile_number },
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (send agreement):', logErr.message);
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: `Agreement sent to ${full_name} on WhatsApp.`,
+      agreement_sent_at: updated.rows[0].agreement_sent_at,
+    });
+  } catch (error) {
+    console.error('Send Agreement (by staff id) Error:', error.response?.data || error.message);
     res.status(500).json({ message: 'Failed to send the agreement via WhatsApp.', error: error.message });
   }
 };

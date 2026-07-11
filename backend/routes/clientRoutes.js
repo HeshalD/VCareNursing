@@ -3,6 +3,7 @@ const router = express.Router();
 const clientController = require('../controllers/clientController');
 const bookingNotesController = require('../controllers/bookingNotesController');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { uploadPaymentReceipt } = require('../middleware/uploadMiddleware');
 
 // All routes below require login
 router.use(protect);
@@ -27,10 +28,15 @@ router.get('/:client_id/detail', restrictTo('SUPER_ADMIN'), clientController.get
 router.patch('/:client_id/deactivate', protect, restrictTo('SUPER_ADMIN'), clientController.deactivateClientProfile);
 router.patch('/:client_id/reactivate', protect, restrictTo('SUPER_ADMIN'), clientController.reactivateClientProfile);
 router.patch('/:client_id/billing', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.updateClientCompanyName);
+router.patch('/:client_id/profile', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), clientController.updateClientProfile);
 router.post('/:client_id/send-reg-fee-invoice', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.sendRegFeeInvoice);
 router.patch('/:client_id/reg-fee-status', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.updateRegFeeStatus);
 router.post('/:client_id/verify-reg-fee-payment', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.verifyRegFeePayment);
+router.post('/:client_id/admin-upload-reg-fee-receipt', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), uploadPaymentReceipt, clientController.adminUploadRegFeeReceipt);
 router.get('/:client_id/invoices', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.getClientInvoices);
+// Registration fee invoices — must stay above the generic '/:client_id' catch-all route below.
+router.get('/all-reg-fee-invoices', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.getAllRegFeeInvoices);
+router.get('/:client_id/reg-fee-invoices', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.getClientRegFeeInvoices);
 
 // Payment and financial endpoints
 router.get('/payment-history/:client_id', clientController.getClientPaymentHistory);
@@ -45,6 +51,9 @@ router.post('/proxy-create', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), 
 
 // Global admin invoices list (must be before /:client_id catch-all)
 router.get('/all-invoices', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.getAdminInvoices);
+
+// On-demand daily invoice PDF download (must be before /:client_id catch-all)
+router.get('/invoice-pdf/:daily_invoice_id', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.downloadDailyInvoicePdf);
 
 // Generic client profile route - MUST come after specific routes
 router.get('/:client_id', clientController.getClientProfile);

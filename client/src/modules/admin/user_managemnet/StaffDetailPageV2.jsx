@@ -3,16 +3,20 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowLeft,
+  ArrowLeftRight,
   Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  Eye,
+  FileText,
   Landmark,
   Loader2,
   Pencil,
   Plus,
   Save,
+  Send,
   StickyNote,
   Trash2,
   X,
@@ -112,6 +116,28 @@ const MiniCard = ({ label, value, color, onClick }) => (
     <p className="text-xl font-bold mt-1.5" style={{ color: color || '#0f172a' }}>{value}</p>
     {onClick && <p className="text-xs text-blue-600 font-semibold mt-1">View breakdown →</p>}
   </div>
+);
+
+const DocButton = ({ label, url }) => (
+  <button
+    type="button"
+    onClick={() => window.open(url, '_blank')}
+    className="flex items-center gap-2 p-3 border border-slate-200 rounded-lg hover:bg-slate-50 hover:border-blue-200 transition-all text-left group w-full"
+  >
+    <FileText className="w-4 h-4 text-slate-400 group-hover:text-blue-500 flex-shrink-0" />
+    <div className="flex-1 min-w-0">
+      <p className="text-xs font-semibold text-slate-700 group-hover:text-blue-700">{label}</p>
+      <p className="text-xs text-slate-400">Click to view</p>
+    </div>
+    <Eye className="w-3.5 h-3.5 text-slate-300 group-hover:text-blue-400 flex-shrink-0" />
+  </button>
+);
+
+const DocStatusBadge = ({ submitted }) => (
+  <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full ${submitted ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${submitted ? 'bg-emerald-500' : 'bg-amber-400'}`} />
+    {submitted ? 'Submitted' : 'Pending'}
+  </span>
 );
 
 const StatusPill = ({ value }) => {
@@ -341,6 +367,9 @@ const StaffDetailPageV2 = () => {
   const [earningsTransactions, setEarningsTransactions] = useState([]);
   const [currentBooking, setCurrentBooking] = useState(null);
   const [bookingHistory, setBookingHistory] = useState([]);
+  const [futureBookings, setFutureBookings] = useState([]);
+  const [cancellingAssignmentId, setCancellingAssignmentId] = useState(null);
+  const [cancelError, setCancelError] = useState('');
   const [payoutsSummary, setPayoutsSummary] = useState(null);
   const [payouts, setPayouts] = useState([]);
   const [bankAccounts, setBankAccounts] = useState([]);
@@ -355,6 +384,11 @@ const StaffDetailPageV2 = () => {
     saving: false, error: '',
   });
   const [deletingBankId, setDeletingBankId] = useState(null);
+  const [editModal, setEditModal] = useState({ isOpen: false, saving: false, error: '', form: {} });
+  const [sendingAgreement, setSendingAgreement] = useState(false);
+  const [sendingDocRequest, setSendingDocRequest] = useState(false);
+  const [sendActionError, setSendActionError] = useState('');
+  const [sendActionSuccess, setSendActionSuccess] = useState('');
   const [sectionErrors, setSectionErrors] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -380,6 +414,7 @@ const StaffDetailPageV2 = () => {
   const [adminNotes, setAdminNotes] = useState([]);
   const [adminNotesLoading, setAdminNotesLoading] = useState(true);
   const [adminNotesBusy, setAdminNotesBusy] = useState(false);
+  const [linkedClientProfileId, setLinkedClientProfileId] = useState(null);
 
   const profile = detail?.profile || {};
   const overviewEarnings = detail?.earnings || {};
@@ -403,11 +438,13 @@ const StaffDetailPageV2 = () => {
     { id: 'overview',        label: 'Overview' },
     { id: 'earnings',        label: 'Earnings' },
     { id: 'current-booking', label: 'Current Booking' },
+    { id: 'future-bookings', label: 'Future Bookings' },
     { id: 'booking-history', label: 'Booking History' },
     { id: 'reviews',         label: 'Reviews' },
     { id: 'payouts',         label: 'Payouts' },
     { id: 'deductions',      label: 'Deductions' },
     { id: 'bank-accounts',   label: 'Bank Accounts' },
+    { id: 'documents',       label: 'Documents' },
     { id: 'change-history',  label: 'Change History' },
   ]), []);
 
@@ -433,6 +470,7 @@ const StaffDetailPageV2 = () => {
       runAdminRequest(() => apiClient.getStaffEarningsTransactions(staffProfileId, { page: 1, limit: 50 })),
       runAdminRequest(() => apiClient.getStaffCurrentBooking(staffProfileId)),
       runAdminRequest(() => apiClient.getStaffBookingHistory(staffProfileId, { page: 1, limit: 20 })),
+      runAdminRequest(() => apiClient.getStaffFutureBookings(staffProfileId)),
       runAdminRequest(() => apiClient.getStaffPayoutsSummary(staffProfileId)),
       runAdminRequest(() => apiClient.getStaffPayouts(staffProfileId, { page: 1, limit: 20 })),
       runAdminRequest(() => apiClient.getStaffBankAccounts(staffProfileId)),
@@ -447,13 +485,25 @@ const StaffDetailPageV2 = () => {
     const nextErrors = {};
     const [
       detailRes, earningsRes, earningsTxRes, currentBookingRes, historyRes,
-      payoutsSummaryRes, payoutsRes, bankAccountsRes, companyBankAccountsRes,
+      futureBookingsRes, payoutsSummaryRes, payoutsRes, bankAccountsRes, companyBankAccountsRes,
       changeRequestsRes, deductionsRes, attendanceCalendarRes, adminNotesRes,
       leaveSummaryRes,
     ] = results;
 
     if (detailRes.status === 'fulfilled') {
-      setDetail(detailRes.value?.data || null);
+      const detailData = detailRes.value?.data || null;
+      setDetail(detailData);
+
+      // This staff member may also hold a client account (e.g. they registered
+      // as a client too) — check so we can offer a view switch.
+      if (detailData?.profile?.user_id) {
+        try {
+          const clientRes = await runAdminRequest(() => apiClient.getClientProfileByUserId(detailData.profile.user_id));
+          setLinkedClientProfileId(clientRes?.data?.client_profile_id || null);
+        } catch {
+          setLinkedClientProfileId(null);
+        }
+      }
     } else {
       setError(detailRes.reason?.message || 'Failed to load staff detail');
       setLoading(false);
@@ -471,6 +521,9 @@ const StaffDetailPageV2 = () => {
 
     if (historyRes.status === 'fulfilled') setBookingHistory(safeArray(historyRes.value?.data));
     else nextErrors.bookingHistory = historyRes.reason?.message;
+
+    if (futureBookingsRes.status === 'fulfilled') setFutureBookings(safeArray(futureBookingsRes.value?.data));
+    else nextErrors.futureBookings = futureBookingsRes.reason?.message;
 
     if (payoutsSummaryRes.status === 'fulfilled') setPayoutsSummary(payoutsSummaryRes.value?.data || null);
     else nextErrors.payoutsSummary = payoutsSummaryRes.reason?.message;
@@ -695,6 +748,44 @@ const StaffDetailPageV2 = () => {
     }
   };
 
+  const openEditProfileModal = () => setEditModal({
+    isOpen: true, saving: false, error: '',
+    form: {
+      staff_code: profile.staff_code || '',
+      full_name: profile.full_name || '',
+      email: profile.email || '',
+      mobile_number: profile.mobile_number || '',
+      designation: profile.designation || '',
+      nic_number: profile.nic_number || '',
+      location: profile.location || '',
+      home_address: profile.home_address || '',
+      gender: (profile.gender || '').toUpperCase(),
+      date_of_birth: profile.date_of_birth ? String(profile.date_of_birth).slice(0, 10) : '',
+      willing_to_live_in: profile.willing_to_live_in ? 'true' : 'false',
+    },
+  });
+
+  const handleEditProfileSave = async () => {
+    const { form } = editModal;
+    if (!form.full_name.trim() || !form.staff_code.trim()) {
+      setEditModal(p => ({ ...p, error: 'Staff code and full name are required.' }));
+      return;
+    }
+    setEditModal(p => ({ ...p, saving: true, error: '' }));
+    try {
+      const fd = new FormData();
+      Object.entries(form).forEach(([key, value]) => {
+        // Skip blanks so the backend keeps the existing value instead of wiping it
+        if (String(value).trim() !== '') fd.append(key, String(value).trim());
+      });
+      await runAdminRequest(() => apiClient.updateStaffProfile(staffProfileId, fd));
+      setEditModal(p => ({ ...p, isOpen: false }));
+      await loadPage();
+    } catch (err) {
+      setEditModal(p => ({ ...p, saving: false, error: err?.message || 'Failed to update staff profile.' }));
+    }
+  };
+
   const handleDeleteBankAccount = async (bankAccountId) => {
     setDeletingBankId(bankAccountId);
     try {
@@ -702,6 +793,36 @@ const StaffDetailPageV2 = () => {
       const res = await runAdminRequest(() => apiClient.getStaffBankAccounts(staffProfileId));
       setBankAccounts(safeArray(res?.data));
     } catch { } finally { setDeletingBankId(null); }
+  };
+
+  const handleSendAgreement = async () => {
+    setSendingAgreement(true);
+    setSendActionError('');
+    setSendActionSuccess('');
+    try {
+      await runAdminRequest(() => apiClient.sendStaffAgreement(staffProfileId));
+      setSendActionSuccess('Contract sent successfully.');
+      await loadPage();
+    } catch (err) {
+      setSendActionError(err?.message || 'Failed to send the contract via WhatsApp.');
+    } finally {
+      setSendingAgreement(false);
+    }
+  };
+
+  const handleSendDocRequest = async () => {
+    setSendingDocRequest(true);
+    setSendActionError('');
+    setSendActionSuccess('');
+    try {
+      await runAdminRequest(() => apiClient.sendStaffDocumentRequest(staffProfileId));
+      setSendActionSuccess('Compliance document request sent successfully.');
+      await loadPage();
+    } catch (err) {
+      setSendActionError(err?.message || 'Failed to send the document request via WhatsApp.');
+    } finally {
+      setSendingDocRequest(false);
+    }
   };
 
   // ── change history helpers ────────────────────────────────────────────────
@@ -768,9 +889,22 @@ const StaffDetailPageV2 = () => {
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
         <Card>
-          <CardHead title="Staff information" />
+          <CardHead
+            title="Staff information"
+            action={
+              <button
+                type="button"
+                onClick={openEditProfileModal}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors"
+              >
+                <Pencil className="w-3 h-3" /> Edit
+              </button>
+            }
+          />
           <CardBody>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field label="Staff code" value={profile.staff_code} mono />
+              <Field label="NIC number" value={profile.nic_number} mono />
               <Field label="Full name" value={profile.full_name} />
               <Field label="Designation" value={profile.designation} />
               <Field label="Email" value={profile.email} />
@@ -931,12 +1065,115 @@ const StaffDetailPageV2 = () => {
               <Field label="Client name" value={currentAssignment.client_name} />
               <Field label="Patient name" value={currentAssignment.patient_name} />
               <Field label="Service start" value={formatDate(currentAssignment.service_start_date || currentAssignment.start_date)} />
-              <Field label="Service end" value={formatDate(currentAssignment.service_end_date)} />
+              <Field
+                label="Service end"
+                value={
+                  currentAssignment.service_end_date
+                    ? formatDate(currentAssignment.service_end_date)
+                    : currentAssignment.pending_end_date
+                    ? `${formatDate(currentAssignment.pending_end_date)} (scheduled)`
+                    : undefined
+                }
+                color={!currentAssignment.service_end_date && currentAssignment.pending_end_date ? '#b45309' : undefined}
+              />
               <Field label="Daily rate" value={formatMoney(currentAssignment.daily_rate || currentAssignment.booking_daily_rate)} />
               <Field label="Assigned on" value={formatDateTime(currentAssignment.assigned_on)} />
             </div>
           ) : (
             <Empty title="No active booking" subtitle="This staff member is not currently assigned to a booking." />
+          )}
+          {currentAssignment?.pending_end_date && !currentAssignment.service_end_date && (
+            <p className="mt-3 text-xs text-amber-600">
+              A {(currentAssignment.pending_end_action_type || 'COMPLETION').toLowerCase()} is scheduled for{' '}
+              {formatDate(currentAssignment.pending_end_date)}. This staff member stays assigned and billed
+              through that date, then becomes available again from the next day.
+            </p>
+          )}
+        </CardBody>
+      </Card>
+    </div>
+  );
+
+  const handleCancelFutureBooking = async (assignmentId, actionId) => {
+    if (!actionId) {
+      setCancelError('This assignment has no cancellable scheduled action (it may already be starting today).');
+      return;
+    }
+    if (!window.confirm('Cancel this future assignment? The shift/slot will become available again.')) return;
+
+    setCancellingAssignmentId(assignmentId);
+    setCancelError('');
+    try {
+      await runAdminRequest(() => apiClient.cancelScheduledAction(actionId));
+      setFutureBookings((prev) => prev.filter((row) => row.assignment_id !== assignmentId));
+      // Keep the care timeline in sync immediately — mark the assignment CANCELLED
+      // (StaffCareTimeline already skips CANCELLED rows) rather than waiting on a reload.
+      setAttendanceCalendar((prev) => ({
+        ...prev,
+        assignments: prev.assignments.map((a) =>
+          a.assignment_id === assignmentId ? { ...a, assignment_status: 'CANCELLED' } : a
+        ),
+      }));
+    } catch (err) {
+      setCancelError(err?.message || 'Failed to cancel future assignment');
+    } finally {
+      setCancellingAssignmentId(null);
+    }
+  };
+
+  const renderFutureBookings = () => (
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <MiniCard label="Scheduled assignments" value={futureBookings.length} />
+        <MiniCard label="Earliest start" value={futureBookings.length ? formatDate(futureBookings[0].service_start_date) : '—'} />
+      </div>
+
+      {cancelError && (
+        <div className="border border-red-200 bg-red-50 text-red-700 rounded-lg px-4 py-3 text-sm">
+          {cancelError}
+        </div>
+      )}
+
+      <Card>
+        <CardHead title="Future bookings" sub="Assignments scheduled to start on a future date — not yet active" />
+        <CardBody className="p-0">
+          {sectionErrors.futureBookings ? (
+            <div className="p-5"><Empty title="Failed to load future bookings" subtitle={sectionErrors.futureBookings} /></div>
+          ) : futureBookings.length === 0 ? (
+            <div className="p-5"><Empty title="No future bookings" subtitle="This staff member has no scheduled future assignments." /></div>
+          ) : (
+            <div className="px-5 pb-5 pt-4">
+              <TableHead cols="1fr 1.2fr 1.2fr 1fr 1fr 0.8fr 0.8fr">
+                <span>Booking</span><span>Client</span><span>Care profile</span><span>Shift</span>
+                <span>Start date</span><span className="text-right">Daily rate</span><span className="text-right">Action</span>
+              </TableHead>
+              {futureBookings.map((row, i) => (
+                <TableRow key={row.assignment_id || i} cols="1fr 1.2fr 1.2fr 1fr 1fr 0.8fr 0.8fr">
+                  <div className="font-mono text-xs text-slate-500">{row.booking_id || row.assignment_id || '-'}</div>
+                  <div className="text-sm font-semibold text-slate-900">{row.client_name || '-'}</div>
+                  <div className="text-sm text-slate-600">{row.patient_name || '-'}</div>
+                  <div className="text-xs text-slate-500">
+                    {row.shift_label || (row.shift_number ? `Shift ${row.shift_number}` : '-')}
+                    {row.shift_start_time && <span className="ml-1 text-slate-400">({row.shift_start_time})</span>}
+                  </div>
+                  <div className="text-xs text-slate-500">{formatDate(row.service_start_date)}</div>
+                  <div className="text-right text-sm font-semibold text-slate-900">{formatMoney(row.daily_rate)}</div>
+                  <div className="text-right">
+                    <button
+                      type="button"
+                      onClick={() => handleCancelFutureBooking(row.assignment_id, row.action_id)}
+                      disabled={cancellingAssignmentId === row.assignment_id}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-colors disabled:opacity-50"
+                    >
+                      {cancellingAssignmentId === row.assignment_id
+                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        : <Trash2 className="w-3.5 h-3.5" />}
+                      Cancel
+                    </button>
+                  </div>
+                </TableRow>
+              ))}
+            </div>
           )}
         </CardBody>
       </Card>
@@ -1335,6 +1572,130 @@ const StaffDetailPageV2 = () => {
     </div>
   );
 
+  const renderDocuments = () => {
+    const documentUrls = safeArray(profile.document_urls);
+    const complianceSubmitted = !!(profile.grama_niladhari_url && profile.police_report_url);
+
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="bg-white border border-slate-200 rounded-lg p-4">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Compliance status</p>
+            <DocStatusBadge submitted={complianceSubmitted} />
+          </div>
+          <MiniCard label="NIC on file" value={profile.nic_front_url && profile.nic_back_url ? 'Yes' : 'Incomplete'} color={profile.nic_front_url && profile.nic_back_url ? '#059669' : '#dc2626'} />
+          <MiniCard label="Supporting docs" value={documentUrls.length} />
+          <MiniCard label="NIC number" value={profile.nic_number || '-'} />
+        </div>
+
+        {(sendActionError || sendActionSuccess) && (
+          <div className={`rounded-lg px-4 py-3 text-sm border ${sendActionError ? 'bg-red-50 border-red-200 text-red-700' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
+            {sendActionError || sendActionSuccess}
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <Card>
+            <CardHead title="Contract" sub="Independent Contractor Agreement" />
+            <CardBody>
+              {profile.agreement_sent_at ? (
+                <div className="flex items-center gap-2 text-sm font-semibold text-emerald-700">
+                  <Check className="w-4 h-4" /> Sent {formatDateTime(profile.agreement_sent_at)}
+                </div>
+              ) : (
+                <>
+                  <p className="text-xs text-slate-500 mb-3">
+                    Send the Independent Contractor Agreement PDF to {profile.full_name || 'this staff member'} via WhatsApp.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleSendAgreement}
+                    disabled={sendingAgreement || !profile.mobile_number}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-500 transition-colors disabled:opacity-60"
+                  >
+                    {sendingAgreement ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                    Send Contract
+                  </button>
+                </>
+              )}
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHead title="Compliance Document Request" sub="WhatsApp upload link for GN/Police docs" />
+            <CardBody>
+              {profile.doc_request_sent_at && (
+                <p className="text-xs text-slate-400 mb-2.5">Requested {formatDateTime(profile.doc_request_sent_at)}</p>
+              )}
+              <button
+                type="button"
+                onClick={handleSendDocRequest}
+                disabled={sendingDocRequest || !profile.mobile_number}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 text-white text-xs font-semibold rounded-lg hover:bg-violet-500 transition-colors disabled:opacity-60"
+              >
+                {sendingDocRequest ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                {profile.doc_request_sent_at ? 'Resend Request' : 'Send Request'}
+              </button>
+            </CardBody>
+          </Card>
+        </div>
+
+        <Card>
+          <CardHead title="Compliance documents" sub="Grama Niladhari report and Police report" />
+          <CardBody>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {[
+                { label: 'Grama Niladhari Report', url: profile.grama_niladhari_url },
+                { label: 'Police Report', url: profile.police_report_url },
+              ].map(({ label, url }) => (
+                <div key={label} className="border border-slate-200 rounded-lg p-3.5">
+                  <div className="flex items-center justify-between gap-2 mb-2.5">
+                    <p className="text-sm font-semibold text-slate-800">{label}</p>
+                    <DocStatusBadge submitted={!!url} />
+                  </div>
+                  {url ? (
+                    <DocButton label={label} url={url} />
+                  ) : (
+                    <p className="text-xs text-slate-400">Not uploaded yet.</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHead title="Identity documents" sub="NIC front and back" />
+          <CardBody>
+            {profile.nic_front_url || profile.nic_back_url ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {profile.nic_front_url && <DocButton label="NIC Front" url={profile.nic_front_url} />}
+                {profile.nic_back_url && <DocButton label="NIC Back" url={profile.nic_back_url} />}
+              </div>
+            ) : (
+              <Empty title="No NIC documents on file" />
+            )}
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHead title="Supporting documents" sub="Certificates and CVs submitted with the application" />
+          <CardBody>
+            {documentUrls.length === 0 ? (
+              <Empty title="No supporting documents" subtitle="This staff member has not uploaded any certificates or CVs." />
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {documentUrls.map((url, i) => (
+                  <DocButton key={i} label={`Document ${i + 1}`} url={url} />
+                ))}
+              </div>
+            )}
+          </CardBody>
+        </Card>
+      </div>
+    );
+  };
+
   const renderChangeHistory = () => {
     const approvedCount = changeRequests.filter(r => r.status === 'APPROVED').length;
     const rejectedCount = changeRequests.filter(r => r.status === 'REJECTED').length;
@@ -1513,6 +1874,121 @@ const StaffDetailPageV2 = () => {
     </div>
   );
 
+  // ── edit profile modal ──────────────────────────────────────────────────────
+  const editField = (key, value) => setEditModal(p => ({ ...p, form: { ...p.form, [key]: value } }));
+  const editInputCls = 'w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-100';
+
+  const renderEditProfileModal = () => !editModal.isOpen ? null : (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-start gap-3 mb-5">
+          <div className="p-2 bg-blue-100 rounded-xl">
+            <Pencil className="h-5 w-5 text-blue-600" />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold text-slate-900">Edit Staff Information</h3>
+            <p className="text-sm text-slate-500">Changes to email or mobile number also update their login credentials.</p>
+          </div>
+        </div>
+        {editModal.error && (
+          <div className="mb-4 bg-rose-50 border border-rose-200 text-rose-700 px-3 py-2 rounded-xl text-sm flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 flex-shrink-0" /> {editModal.error}
+          </div>
+        )}
+        <div className="space-y-3 mb-5">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Staff Code <span className="text-rose-500">*</span></label>
+              <input value={editModal.form.staff_code} onChange={e => editField('staff_code', e.target.value)}
+                placeholder="e.g. VC-0042" className={editInputCls} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">NIC Number</label>
+              <input value={editModal.form.nic_number} onChange={e => editField('nic_number', e.target.value)}
+                placeholder="e.g. 199012345678" className={editInputCls} />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Full Name <span className="text-rose-500">*</span></label>
+            <input value={editModal.form.full_name} onChange={e => editField('full_name', e.target.value)}
+              placeholder="e.g. Nimal Silva" className={editInputCls} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Email</label>
+              <input type="email" value={editModal.form.email} onChange={e => editField('email', e.target.value)}
+                placeholder="e.g. nimal@example.com" className={editInputCls} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Mobile Number</label>
+              <input type="tel" value={editModal.form.mobile_number} onChange={e => editField('mobile_number', e.target.value)}
+                placeholder="e.g. 0771234567" className={editInputCls} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Designation</label>
+              <input value={editModal.form.designation} onChange={e => editField('designation', e.target.value)}
+                placeholder="e.g. NURSE" className={editInputCls} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Gender</label>
+              <select value={editModal.form.gender} onChange={e => editField('gender', e.target.value)} className={editInputCls}>
+                <option value="">—</option>
+                <option value="MALE">Male</option>
+                <option value="FEMALE">Female</option>
+                <option value="OTHER">Other</option>
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Date of Birth</label>
+              <input type="date" value={editModal.form.date_of_birth} onChange={e => editField('date_of_birth', e.target.value)}
+                className={editInputCls} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Willing to Live In</label>
+              <select value={editModal.form.willing_to_live_in} onChange={e => editField('willing_to_live_in', e.target.value)} className={editInputCls}>
+                <option value="true">Yes</option>
+                <option value="false">No</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Location</label>
+            <input value={editModal.form.location} onChange={e => editField('location', e.target.value)}
+              placeholder="e.g. Colombo" className={editInputCls} />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Home Address</label>
+            <input value={editModal.form.home_address} onChange={e => editField('home_address', e.target.value)}
+              placeholder="e.g. 45/A, Galle Road, Dehiwala" className={editInputCls} />
+          </div>
+        </div>
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={() => setEditModal(p => ({ ...p, isOpen: false }))}
+            disabled={editModal.saving}
+            className="flex-1 rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-200 transition-all disabled:opacity-60"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleEditProfileSave}
+            disabled={editModal.saving}
+            className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500 transition-all shadow-lg shadow-blue-600/20 disabled:opacity-60"
+          >
+            {editModal.saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            Save Changes
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   // ── loading / error ───────────────────────────────────────────────────────
   if (loading || authLoading) {
     return (
@@ -1550,6 +2026,7 @@ const StaffDetailPageV2 = () => {
   return (
     <AdminLayout>
       {renderBankModal()}
+      {renderEditProfileModal()}
 
       {/* HEADER ROW */}
       <div className="flex items-center justify-between gap-4 flex-wrap mb-5 -mt-2">
@@ -1561,6 +2038,15 @@ const StaffDetailPageV2 = () => {
           >
             <ArrowLeft className="w-3.5 h-3.5" /> Back to roster
           </button>
+          {linkedClientProfileId && (
+            <button
+              type="button"
+              onClick={() => navigate(`/admin/users/${linkedClientProfileId}/detail`)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-indigo-200 bg-indigo-50 text-indigo-700 text-sm font-semibold rounded-lg hover:bg-indigo-100 transition-colors"
+            >
+              <ArrowLeftRight className="w-3.5 h-3.5" /> Switch to Client View
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-2.5">
           <span className="font-mono text-xs text-slate-400 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
@@ -1664,15 +2150,13 @@ const StaffDetailPageV2 = () => {
       </div>
 
       {/* WORK & PAY CALENDAR */}
-      {(attendanceCalendar.assignments.length > 0 || leaveSummary.approved_leaves.length > 0) && (
-        <div className="mb-4">
-          <StaffCareTimeline
-            assignments={attendanceCalendar.assignments}
-            attendanceRecords={attendanceCalendar.attendance}
-            leaveDays={leaveSummary.approved_leaves}
-          />
-        </div>
-      )}
+      <div className="mb-4">
+        <StaffCareTimeline
+          assignments={attendanceCalendar.assignments}
+          attendanceRecords={attendanceCalendar.attendance}
+          leaveDays={leaveSummary.approved_leaves}
+        />
+      </div>
 
       {/* TABS */}
       <div className="flex gap-1 mb-4 bg-slate-100 p-1 rounded-lg w-fit max-w-full flex-wrap">
@@ -1696,11 +2180,13 @@ const StaffDetailPageV2 = () => {
       {activeSection === 'overview'        && renderOverview()}
       {activeSection === 'earnings'        && renderEarnings()}
       {activeSection === 'current-booking' && renderCurrentBooking()}
+      {activeSection === 'future-bookings' && renderFutureBookings()}
       {activeSection === 'booking-history' && renderBookingHistory()}
       {activeSection === 'reviews'         && renderReviews()}
       {activeSection === 'payouts'         && renderPayouts()}
       {activeSection === 'deductions'      && renderDeductions()}
       {activeSection === 'bank-accounts'   && renderBankAccounts()}
+      {activeSection === 'documents'       && renderDocuments()}
       {activeSection === 'change-history'  && renderChangeHistory()}
 
     </AdminLayout>

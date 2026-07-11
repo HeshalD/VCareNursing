@@ -115,21 +115,26 @@ const executeTermination = async (client, params) => {
         [booking_id, endDate]
     );
 
-    // Close any active assignment so payroll stops.
+    // Release every staff member tied to this booking — not just bookings.assigned_staff_id,
+    // which is empty for SHIFT_BASED bookings — covering ACTIVE and not-yet-started SCHEDULED
+    // assignments, matching the immediate-termination path in finalizeBookingState.
+    await client.query(
+        `UPDATE staff_profiles sp
+         SET current_status = 'AVAILABLE'
+         FROM booking_staff_assignments bsa
+         WHERE bsa.booking_id = $1
+           AND bsa.status IN ('ACTIVE', 'SCHEDULED')
+           AND sp.staff_profile_id = bsa.staff_profile_id`,
+        [booking_id]
+    );
+
+    // Close any active/scheduled assignment so payroll stops.
     await client.query(
         `UPDATE booking_staff_assignments
          SET service_end_date = $1, status = 'COMPLETED'
-         WHERE booking_id = $2 AND status = 'ACTIVE'`,
+         WHERE booking_id = $2 AND status IN ('ACTIVE', 'SCHEDULED')`,
         [toDateStr(endDate), booking_id]
     );
-
-    // Free the staff member.
-    if (booking.assigned_staff_id) {
-        await client.query(
-            `UPDATE staff_profiles SET current_status = 'AVAILABLE' WHERE staff_profile_id = $1`,
-            [booking.assigned_staff_id]
-        );
-    }
 
     // Financial settlement — quote-based unused-days refund (same rule as approveTerminationRequest).
     const financeRes = await client.query(
@@ -229,7 +234,7 @@ const executeCompletion = async (client, params) => {
 
     const endTime = new Date(end_date);
 
-    const booking = await getBookingSettlementSnapshot(client, booking_id);
+    const booking = await getBookingSettlementSnapshot(client, booking_id, end_date);
     if (!booking) throw new Error(`Booking ${booking_id} not found`);
     if (['COMPLETED', 'TERMINATED'].includes(booking.status)) {
         return { result: { booking_id, skipped: `already ${booking.status}` }, notify: null };
@@ -240,19 +245,25 @@ const executeCompletion = async (client, params) => {
         [booking_id, endTime]
     );
 
+    // Release every staff member tied to this booking — not just bookings.assigned_staff_id,
+    // which is empty for SHIFT_BASED bookings — covering ACTIVE and not-yet-started SCHEDULED
+    // assignments, matching the immediate-completion path in finalizeBookingState.
+    await client.query(
+        `UPDATE staff_profiles sp
+         SET current_status = 'AVAILABLE'
+         FROM booking_staff_assignments bsa
+         WHERE bsa.booking_id = $1
+           AND bsa.status IN ('ACTIVE', 'SCHEDULED')
+           AND sp.staff_profile_id = bsa.staff_profile_id`,
+        [booking_id]
+    );
+
     await client.query(
         `UPDATE booking_staff_assignments
          SET service_end_date = $1, status = 'COMPLETED'
-         WHERE booking_id = $2 AND status = 'ACTIVE'`,
+         WHERE booking_id = $2 AND status IN ('ACTIVE', 'SCHEDULED')`,
         [toDateStr(endTime), booking_id]
     );
-
-    if (booking.assigned_staff_id) {
-        await client.query(
-            `UPDATE staff_profiles SET current_status = 'AVAILABLE' WHERE staff_profile_id = $1`,
-            [booking.assigned_staff_id]
-        );
-    }
 
     const settlementResult = await applyBookingSettlement(
         client, booking, settlement_action || 'NO_REFUND', settlement_note, reason, actorLabel

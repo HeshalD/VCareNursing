@@ -5,6 +5,11 @@
 
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
+
+function extractActorRole(role) {
+    const raw = Array.isArray(role) ? role[0] : role;
+    return typeof raw === 'string' ? raw.replace(/\{|\}/g, '').split(',')[0].trim() : String(raw);
+}
 const {
     getActivePattern,
     getScheduledPattern,
@@ -106,6 +111,7 @@ exports.createOrChangeShiftPattern = async (req, res) => {
 
         logActivity({
             actorUserId: req.user?.user_id,
+            actorRole: extractActorRole(req.user?.role),
             actionType: scheduled ? 'SHIFT_PATTERN_CHANGE_SCHEDULED' : 'SHIFT_PATTERN_CHANGED',
             entityType: 'BOOKING',
             entityId: String(booking_id),
@@ -132,7 +138,10 @@ exports.createOrChangeShiftPattern = async (req, res) => {
 
 /**
  * @route GET /api/bookings/:booking_id/shift-slots
- * @desc  Flat list of the active pattern's slots, each with its current ACTIVE assignment (if any).
+ * @desc  Flat list of the active (or pending) pattern's slots, each with its current
+ *        or upcoming assignment. Prefers an ACTIVE assignment per slot; falls back to
+ *        a SCHEDULED one (a future-dated booking's slots are all SCHEDULED until their
+ *        start date arrives — those must still show up as "assigned", not blank).
  */
 exports.getShiftSlots = async (req, res) => {
     const { booking_id } = req.params;
@@ -141,7 +150,10 @@ exports.getShiftSlots = async (req, res) => {
         if (error) return res.status(error.status).json({ status: 'error', message: error.message });
 
         const businessDate = await getBusinessDate(db);
-        const pattern = await getActivePattern(db, booking_id, businessDate);
+        // Fall back to the SCHEDULED pattern for PENDING bookings that have no ACTIVE
+        // pattern yet (effective date is in the future).
+        const pattern = await getActivePattern(db, booking_id, businessDate)
+                     || await getScheduledPattern(db, booking_id);
         if (!pattern) {
             return res.status(200).json({ status: 'success', data: [] });
         }
@@ -149,11 +161,13 @@ exports.getShiftSlots = async (req, res) => {
         const slotIds = pattern.slots.map((s) => s.shift_slot_id);
         const assignmentsRes = slotIds.length
             ? await db.query(
-                `SELECT bsa.shift_slot_id, bsa.assignment_id, bsa.staff_profile_id, bsa.daily_rate,
-                        bsa.service_start_date, sp.full_name AS staff_name
+                `SELECT DISTINCT ON (bsa.shift_slot_id)
+                        bsa.shift_slot_id, bsa.assignment_id, bsa.staff_profile_id, bsa.daily_rate,
+                        bsa.service_start_date, bsa.status, sp.full_name AS staff_name
                  FROM booking_staff_assignments bsa
                  JOIN staff_profiles sp ON bsa.staff_profile_id = sp.staff_profile_id
-                 WHERE bsa.shift_slot_id = ANY($1::uuid[]) AND bsa.status = 'ACTIVE'`,
+                 WHERE bsa.shift_slot_id = ANY($1::uuid[]) AND bsa.status IN ('ACTIVE', 'SCHEDULED')
+                 ORDER BY bsa.shift_slot_id, (bsa.status = 'ACTIVE') DESC, bsa.assigned_on DESC`,
                 [slotIds]
             )
             : { rows: [] };
@@ -227,8 +241,19 @@ exports.assignStaffToSlot = async (req, res) => {
         }
         const staff = staffRes.rows[0];
         if (staff.current_status !== 'AVAILABLE') {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ status: 'error', message: `${staff.full_name} is not available (status: ${staff.current_status})` });
+            // Not a real conflict if what's holding them "ASSIGNED" is another shift (or
+            // the pattern being replaced) on this SAME booking — e.g. keeping the same
+            // staff on a shift pattern change, or adding a new shift alongside their
+            // existing one. Only block on a genuinely other booking.
+            const sameBookingRes = await client.query(
+                `SELECT 1 FROM booking_staff_assignments
+                 WHERE staff_profile_id = $1 AND booking_id = $2 AND status IN ('ACTIVE', 'SCHEDULED') LIMIT 1`,
+                [staff_profile_id, booking_id]
+            );
+            if (sameBookingRes.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ status: 'error', message: `${staff.full_name} is not available (status: ${staff.current_status})` });
+            }
         }
 
         const bookingRes = await client.query(`SELECT daily_rate FROM bookings WHERE booking_id = $1`, [booking_id]);
@@ -273,6 +298,7 @@ exports.assignStaffToSlot = async (req, res) => {
 
         logActivity({
             actorUserId: assigned_by,
+            actorRole: extractActorRole(req.user?.role),
             actionType: 'SHIFT_STAFF_ASSIGNED',
             entityType: 'BOOKING',
             entityId: String(booking_id),
@@ -336,8 +362,17 @@ exports.reassignSlotStaff = async (req, res) => {
         }
         const newStaff = newStaffRes.rows[0];
         if (newStaff.current_status !== 'AVAILABLE') {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ status: 'error', message: `${newStaff.full_name} is not available (status: ${newStaff.current_status})` });
+            // Same exception as assignStaffToSlot — being tied up on THIS booking
+            // (another shift, or the pattern being replaced) isn't a real conflict.
+            const sameBookingRes = await client.query(
+                `SELECT 1 FROM booking_staff_assignments
+                 WHERE staff_profile_id = $1 AND booking_id = $2 AND status IN ('ACTIVE', 'SCHEDULED') LIMIT 1`,
+                [new_staff_id, booking_id]
+            );
+            if (sameBookingRes.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ status: 'error', message: `${newStaff.full_name} is not available (status: ${newStaff.current_status})` });
+            }
         }
 
         const businessDate = await getBusinessDate(client);
@@ -410,6 +445,7 @@ exports.reassignSlotStaff = async (req, res) => {
 
         logActivity({
             actorUserId,
+            actorRole: extractActorRole(req.user?.role),
             actionType: 'SHIFT_STAFF_REASSIGNED',
             entityType: 'BOOKING',
             entityId: String(booking_id),

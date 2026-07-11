@@ -386,6 +386,126 @@ exports.getAllStaff = async (req, res) => {
   }
 };
 
+// Returns the current authenticated user's known account details (from
+// client_profiles / staff_profiles) — used to prefill and lock fields when a
+// staff member without a client profile creates one for themselves.
+exports.getMyAccountInfo = async (req, res) => {
+  try {
+    const userId = req.user.user_id;
+
+    const userRes = await db.query(
+      'SELECT user_id, mobile_number, email FROM users WHERE user_id = $1',
+      [userId]
+    );
+    if (userRes.rows.length === 0) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+    const account = userRes.rows[0];
+
+    const [clientRes, staffRes] = await Promise.all([
+      db.query('SELECT client_profile_id, full_name, gender, primary_address FROM client_profiles WHERE user_id = $1', [userId]),
+      db.query('SELECT staff_profile_id, full_name, gender, home_address FROM staff_profiles WHERE user_id = $1', [userId]),
+    ]);
+
+    const clientProfile = clientRes.rows[0] || null;
+    const staffProfile = staffRes.rows[0] || null;
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        user_id: account.user_id,
+        mobile_number: account.mobile_number,
+        email: account.email,
+        full_name: clientProfile?.full_name || staffProfile?.full_name || null,
+        gender: clientProfile?.gender || staffProfile?.gender || null,
+        primary_address: clientProfile?.primary_address || staffProfile?.home_address || null,
+        has_client_profile: !!clientProfile,
+        has_staff_profile: !!staffProfile,
+      },
+    });
+  } catch (error) {
+    console.error('getMyAccountInfo error:', error);
+    res.status(500).json({ message: 'Failed to load account info.' });
+  }
+};
+
+// Creates a client_profiles row for the currently authenticated user (e.g. a staff
+// member who wants to also book care as a client) and adds the CLIENT role to their
+// account. Locked/known fields (name, gender, address) are always read server-side
+// from staff_profiles — never taken from the request body — so they can't be tampered with.
+exports.createClientProfileForExistingUser = async (req, res) => {
+  const { client_type, company_name, honorific, terms_accepted } = req.body;
+  const userId = req.user.user_id;
+
+  if (!terms_accepted) {
+    return res.status(400).json({ message: 'You must accept the Terms & Conditions.' });
+  }
+
+  const dbClient = await db.pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+
+    const existing = await dbClient.query(
+      'SELECT client_profile_id FROM client_profiles WHERE user_id = $1',
+      [userId]
+    );
+    if (existing.rows.length > 0) {
+      await dbClient.query('ROLLBACK');
+      return res.status(409).json({ message: 'You already have a client profile.' });
+    }
+
+    const staffRes = await dbClient.query(
+      'SELECT full_name, gender, home_address FROM staff_profiles WHERE user_id = $1',
+      [userId]
+    );
+    const staffProfile = staffRes.rows[0];
+    if (!staffProfile) {
+      await dbClient.query('ROLLBACK');
+      return res.status(400).json({ message: 'No staff profile found for this account.' });
+    }
+
+    const newProfile = await dbClient.query(
+      `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address, company_name, honorific)
+       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7) RETURNING client_profile_id`,
+      [
+        userId,
+        staffProfile.full_name,
+        client_type || 'INDIVIDUAL',
+        staffProfile.gender,
+        staffProfile.home_address,
+        client_type === 'CORPORATE_PROXY' ? (company_name || null) : null,
+        honorific || null,
+      ]
+    );
+
+    const userRoleRes = await dbClient.query('SELECT role FROM users WHERE user_id = $1', [userId]);
+    let currentRoles = userRoleRes.rows[0]?.role || [];
+    if (typeof currentRoles === 'string') {
+      currentRoles = currentRoles.replace(/^\{|\}$/g, '').split(',').map(r => r.trim()).filter(Boolean);
+    }
+    const newRoles = [...new Set([...currentRoles, 'CLIENT'])];
+    await dbClient.query('UPDATE users SET role = $1::user_role_enum[] WHERE user_id = $2', [newRoles, userId]);
+
+    await dbClient.query('COMMIT');
+
+    res.status(201).json({
+      status: 'success',
+      message: 'Client profile created successfully.',
+      data: {
+        client_profile_id: newProfile.rows[0].client_profile_id,
+        payment_required: true,
+        amount_due: 10000.00,
+      },
+    });
+  } catch (error) {
+    await dbClient.query('ROLLBACK');
+    console.error('createClientProfileForExistingUser error:', error);
+    res.status(500).json({ message: 'Failed to create client profile.' });
+  } finally {
+    dbClient.release();
+  }
+};
+
 exports.getUnifiedOverview = async (req, res) => {
   try {
     const query = `

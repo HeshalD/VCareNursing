@@ -7,12 +7,37 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import StaffScheduleTimeline from '../components/StaffScheduleTimeline';
 
 const money = (value) =>
   `LKR ${parseFloat(value || 0).toLocaleString('en-LK', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+
+// Formats raw digits typed by the user into a DD/MM/YYYY masked string
+const maskDateInput = (raw) => {
+  const digits = raw.replace(/\D/g, '').slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+};
+
+// Converts a DD/MM/YYYY string into YYYY-MM-DD for the backend (empty string if invalid/incomplete)
+const formatDateForBackend = (value) => {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value || '');
+  if (!match) return '';
+  const [, day, month, year] = match;
+  return `${year}-${month}-${day}`;
+};
+
+// Converts a YYYY-MM-DD string (as returned by the backend) into DD/MM/YYYY for display/editing
+const formatDateForDisplay = (value) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value || '');
+  if (!match) return '';
+  const [, year, month, day] = match;
+  return `${day}/${month}/${year}`;
+};
 
 const NOTE_TYPE_LABEL = {
   GENERAL: 'General',
@@ -44,15 +69,28 @@ const BookingStaffAssignmentPage = () => {
 
   const [salespersons, setSalespersons] = useState([]);
 
-  const buildDefaultShiftSlots = (count) =>
-    Array.from({ length: count }, (_, i) => ({
+  const cascadeStartTimes = (slots, fromIdx = 0) => {
+    const result = [...slots];
+    for (let i = fromIdx; i < result.length - 1; i++) {
+      const [h, m] = (result[i].start_time || '00:00').split(':').map(Number);
+      const totalMins = (h * 60 + m + Math.round(parseFloat(result[i].duration_hours || 0) * 60)) % 1440;
+      result[i + 1] = { ...result[i + 1], start_time: `${String(Math.floor(totalMins / 60)).padStart(2, '0')}:${String(totalMins % 60).padStart(2, '0')}` };
+    }
+    return result;
+  };
+
+  const buildDefaultShiftSlots = (count) => {
+    const dur = (24 / count).toFixed(1);
+    const base = Array.from({ length: count }, (_, i) => ({
       shift_number: i + 1,
       start_time: '08:00',
-      duration_hours: (24 / count).toFixed(1),
+      duration_hours: dur,
       label: `Shift ${i + 1}`,
       staff_profile_id: '',
       daily_rate: '',
     }));
+    return cascadeStartTimes(base, 0);
+  };
 
   const [shiftSlots, setShiftSlots] = useState(() => {
     const queue = location.state?.selectedStaffQueue;
@@ -94,7 +132,10 @@ const BookingStaffAssignmentPage = () => {
   };
 
   const updateShiftSlot = (idx, field, value) =>
-    setShiftSlots((prev) => prev.map((s, i) => (i === idx ? { ...s, [field]: value } : s)));
+    setShiftSlots((prev) => {
+      const updated = prev.map((s, i) => (i === idx ? { ...s, [field]: value } : s));
+      return (field === 'start_time' || field === 'duration_hours') ? cascadeStartTimes(updated, idx) : updated;
+    });
 
   const fetchData = async () => {
     try {
@@ -104,7 +145,7 @@ const BookingStaffAssignmentPage = () => {
       setFormData(response.data || null);
       setAssignment((cur) => ({
         ...cur,
-        service_start_date: cur.service_start_date || response.data?.booking?.start_date || '',
+        service_start_date: cur.service_start_date || formatDateForDisplay(response.data?.booking?.start_date) || '',
         daily_rate:         cur.daily_rate          || response.data?.booking?.quote_daily_rate || '',
       }));
     } catch (err) {
@@ -135,15 +176,32 @@ const BookingStaffAssignmentPage = () => {
     if (bookingId) { fetchData(); fetchNotes(); fetchSalespersons(); }
   }, [bookingId]);
 
+  // Batched schedule lookup for every candidate on this form — lets the admin see
+  // each staff member's existing/upcoming commitments before assigning them here.
+  const [schedules, setSchedules] = useState({});
+  const [schedulesLoading, setSchedulesLoading] = useState(false);
+
+  useEffect(() => {
+    const ids = (formData?.available_staff || []).map((s) => s.staff_profile_id);
+    if (ids.length === 0) { setSchedules({}); return; }
+    setSchedulesLoading(true);
+    apiClient.getStaffSchedules(ids)
+      .then((res) => setSchedules(res?.data || {}))
+      .catch(() => setSchedules({}))
+      .finally(() => setSchedulesLoading(false));
+  }, [formData]);
+
   const handleSubmitShiftBased = async () => {
     if (!assignment.service_start_date) { setError('Service start date is required'); return; }
+    const isoStartDate = formatDateForBackend(assignment.service_start_date);
+    if (!isoStartDate) { setError('Enter a valid Service Start Date as DD/MM/YYYY'); return; }
     if (shiftSlots.some((s) => !s.staff_profile_id || !s.start_time || !s.duration_hours)) {
       setError('Every shift needs a start time, duration, and assigned staff member');
       return;
     }
     setSubmitting(true); setError(''); setSuccess('');
     try {
-      await apiClient.createShiftPattern(bookingId, {
+      const patternRes = await apiClient.createShiftPattern(bookingId, {
         shift_count: shiftSlots.length,
         slots: shiftSlots.map((s) => ({
           shift_number:   s.shift_number,
@@ -151,18 +209,20 @@ const BookingStaffAssignmentPage = () => {
           duration_hours: parseFloat(s.duration_hours),
           label:          s.label || null,
         })),
-        effective_from_date: assignment.service_start_date,
+        effective_from_date: isoStartDate,
       });
 
-      const slotsRes    = await apiClient.getShiftSlots(bookingId);
-      const createdSlots = slotsRes?.data || [];
+      // Use slots from the create response — avoids a second round-trip and works
+      // for SCHEDULED patterns (PENDING bookings with a future start date) where
+      // GET /shift-slots only returns ACTIVE pattern slots.
+      const createdSlots = patternRes?.data?.pattern?.slots || [];
 
       for (const slot of shiftSlots) {
         const created = createdSlots.find((c) => c.shift_number === slot.shift_number);
         if (!created) continue;
         await apiClient.assignStaffToShiftSlot(bookingId, created.shift_slot_id, {
           staff_profile_id:   slot.staff_profile_id,
-          service_start_date: assignment.service_start_date,
+          service_start_date: isoStartDate,
           daily_rate:         slot.daily_rate ? parseFloat(slot.daily_rate) : null,
           notes:              assignment.notes || null,
         });
@@ -174,7 +234,7 @@ const BookingStaffAssignmentPage = () => {
       }
 
       setSuccess('Shift pattern created and staff assigned successfully.');
-      setTimeout(() => navigate(`/admin/bookings/${bookingId}`), 1500);
+      setTimeout(() => navigate(`/admin/bookings/${bookingId}/detail`), 1500);
     } catch (err) {
       setError(err.message || 'Failed to set up shifts');
     } finally {
@@ -185,11 +245,13 @@ const BookingStaffAssignmentPage = () => {
   const handleSubmit = async (event) => {
     event.preventDefault();
     if (isShiftBased) { await handleSubmitShiftBased(); return; }
+    const isoStartDate = formatDateForBackend(assignment.service_start_date);
+    if (!isoStartDate) { setError('Enter a valid Service Start Date as DD/MM/YYYY'); return; }
     try {
       setSubmitting(true); setError(''); setSuccess('');
       await apiClient.assignStaffToBooking(bookingId, {
         staff_profile_id:   assignment.staff_profile_id,
-        service_start_date: assignment.service_start_date,
+        service_start_date: isoStartDate,
         service_start_time: assignment.service_start_time || null,
         daily_rate:         assignment.daily_rate  ? parseFloat(assignment.daily_rate)  : null,
         ot_rate:            assignment.ot_rate     ? parseFloat(assignment.ot_rate)     : null,
@@ -197,7 +259,7 @@ const BookingStaffAssignmentPage = () => {
         salesperson_id:     assignment.salesperson_id || null,
       });
       setSuccess('Staff assigned successfully.');
-      setTimeout(() => navigate(`/admin/bookings/${bookingId}`), 1500);
+      setTimeout(() => navigate(`/admin/bookings/${bookingId}/detail`), 1500);
     } catch (err) {
       setError(err.message || 'Failed to assign staff');
     } finally {
@@ -302,7 +364,7 @@ const BookingStaffAssignmentPage = () => {
                     label="Start Date"
                     value={
                       formData.booking.start_date
-                        ? new Date(formData.booking.start_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+                        ? new Date(formData.booking.start_date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
                         : 'N/A'
                     }
                   />
@@ -334,6 +396,16 @@ const BookingStaffAssignmentPage = () => {
                         </option>
                       ))}
                     </select>
+                    {assignment.staff_profile_id && (
+                      <div className="mt-2 rounded-md border border-gray-100 bg-gray-50 p-2.5">
+                        <StaffScheduleTimeline
+                          schedule={schedules[assignment.staff_profile_id] || []}
+                          loading={schedulesLoading}
+                          referenceDate={formatDateForBackend(assignment.service_start_date)}
+                          compact
+                        />
+                      </div>
+                    )}
                   </FormField>
                 )}
 
@@ -341,9 +413,12 @@ const BookingStaffAssignmentPage = () => {
                   <FormField label="Service Start Date">
                     <input
                       required
-                      type="date"
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="DD/MM/YYYY"
+                      maxLength={10}
                       value={assignment.service_start_date}
-                      onChange={(e) => setAssignment({ ...assignment, service_start_date: e.target.value })}
+                      onChange={(e) => setAssignment({ ...assignment, service_start_date: maskDateInput(e.target.value) })}
                       className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                     />
                     {isShiftBased && (
@@ -457,6 +532,7 @@ const BookingStaffAssignmentPage = () => {
                                     onChange={(e) => updateShiftSlot(idx, 'start_time', e.target.value)}
                                     className="w-full rounded-md border border-gray-200 px-2.5 py-1.5 text-sm text-gray-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                                   />
+                                  {idx > 0 && <span className="text-[10px] text-blue-400 mt-0.5 block">auto</span>}
                                 </td>
                                 <td className="px-3 py-2.5">
                                   <input
@@ -483,6 +559,16 @@ const BookingStaffAssignmentPage = () => {
                                       </option>
                                     ))}
                                   </select>
+                                  {slot.staff_profile_id && (
+                                    <div className="mt-1.5">
+                                      <StaffScheduleTimeline
+                                        schedule={schedules[slot.staff_profile_id] || []}
+                                        loading={schedulesLoading}
+                                        referenceDate={formatDateForBackend(assignment.service_start_date)}
+                                        compact
+                                      />
+                                    </div>
+                                  )}
                                 </td>
                                 <td className="px-3 py-2.5">
                                   <input

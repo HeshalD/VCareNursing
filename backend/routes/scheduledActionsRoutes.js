@@ -10,6 +10,13 @@ router.get(
     scheduledActionsController.getUpcomingEvents
 );
 
+router.get(
+    '/booking/:booking_id',
+    protect,
+    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    scheduledActionsController.getBookingScheduledEvents
+);
+
 router.post(
     '/:action_id/cancel',
     protect,

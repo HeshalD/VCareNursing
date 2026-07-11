@@ -40,6 +40,13 @@ const SERVICE_MODELS = [
   }
 ];
 
+// Must match the options in ClientPatients.jsx (RELATIONSHIP_OPTIONS) so that a
+// registered patient's stored relationship_to_client value matches an option here.
+const RELATIONSHIP_OPTIONS = [
+  'Self', 'Parent', 'Child', 'Sibling', 'Spouse / Partner',
+  'Guardian', 'Caregiver', 'Friend', 'Neighbor', 'Other'
+];
+
 const BabyCareBookingPage = () => {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
@@ -55,6 +62,8 @@ const BabyCareBookingPage = () => {
   const [patients, setPatients] = useState([]);
   const [patientsLoading, setPatientsLoading] = useState(false);
   const [staffSearch, setStaffSearch] = useState('');
+  const [selectedPatientId, setSelectedPatientId] = useState(null);
+  const isPatientLocked = !!selectedPatientId;
 
   const [formData, setFormData] = useState({
     // Payer Information
@@ -66,7 +75,7 @@ const BabyCareBookingPage = () => {
     patient_name: '',
     patient_age: '',
     patient_gender: '',
-    relationship: 'PARENT',
+    relationship: 'Child',
     patient_condition: '',
 
     // Service Details
@@ -177,9 +186,10 @@ const BabyCareBookingPage = () => {
         patient_name: '',
         patient_age: '',
         patient_gender: '',
-        relationship: 'PARENT',
+        relationship: 'Child',
         patient_condition: ''
       }));
+      setSelectedPatientId(null);
       return;
     }
 
@@ -190,9 +200,10 @@ const BabyCareBookingPage = () => {
         patient_name: selectedPatient.full_name,
         patient_age: selectedPatient.age.toString(),
         patient_gender: selectedPatient.gender || '',
-        relationship: selectedPatient.relationship_to_client || 'OTHER',
+        relationship: selectedPatient.relationship_to_client || 'Other',
         patient_condition: selectedPatient.medical_condition || ''
       }));
+      setSelectedPatientId(patientId);
     }
   };
 
@@ -364,6 +375,7 @@ const BabyCareBookingPage = () => {
       navigate('/booking-success', {
         state: {
           requestId: response.data?.request_id,
+          requestCode: response.data?.service_request_code,
           selectedStaff: selectedStaff
         }
       });
@@ -510,10 +522,9 @@ const BabyCareBookingPage = () => {
                           {patients.map(patient => (
                             <div
                               key={patient.patient_id}
-                              onClick={() => handlePatientSelection(patient.patient_id)}
+                              onClick={() => handlePatientSelection(selectedPatientId === patient.patient_id ? '' : patient.patient_id)}
                               className={`p-4 border-2 rounded-xl cursor-pointer transition-all duration-200 hover:shadow-md ${
-                                formData.patient_name === patient.full_name && 
-                                formData.patient_age === patient.age.toString()
+                                selectedPatientId === patient.patient_id
                                   ? 'border-rose-500 bg-rose-50'
                                   : 'border-slate-200 bg-white hover:border-rose-300'
                               }`}
@@ -544,8 +555,7 @@ const BabyCareBookingPage = () => {
                                   )}
                                 </div>
                                 <div className="ml-4">
-                                  {formData.patient_name === patient.full_name && 
-                                   formData.patient_age === patient.age.toString() && (
+                                  {selectedPatientId === patient.patient_id && (
                                     <div className="w-6 h-6 bg-rose-500 rounded-full flex items-center justify-center">
                                       <CheckCircle className="w-4 h-4 text-white" />
                                     </div>
@@ -563,8 +573,15 @@ const BabyCareBookingPage = () => {
                             Clear selection
                           </button>
                           <span>•</span>
-                          <span>Or fill in form below for a new child</span>
+                          <span>Or clear selection to fill in a new child</span>
                         </div>
+                      </div>
+                    )}
+
+                    {isPatientLocked && (
+                      <div className="md:col-span-2 mb-4 flex items-start gap-2 text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-3">
+                        <ShieldCheck className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
+                        <span>Details for this registered child are locked. Clear the selection above if you need to change them.</span>
                       </div>
                     )}
 
@@ -578,33 +595,36 @@ const BabyCareBookingPage = () => {
                         </label>
                         <input
                           type="text"
-                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-slate-900 placeholder:text-slate-400"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-slate-900 placeholder:text-slate-400 disabled:opacity-70 disabled:cursor-not-allowed"
                           value={formData.patient_name}
                           onChange={e => setFormData({ ...formData, patient_name: e.target.value })}
                           onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
                           placeholder="e.g. Emma Johnson"
                           required={!isAuthenticated || patients.length === 0}
+                          disabled={isPatientLocked}
                         />
                       </div>
                       <div>
                         <label className="text-sm font-semibold text-slate-600 block mb-1">Baby Age</label>
                         <input
                           type="number"
-                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-slate-900 placeholder:text-slate-400"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-slate-900 placeholder:text-slate-400 disabled:opacity-70 disabled:cursor-not-allowed"
                           value={formData.patient_age}
                           onChange={e => setFormData({ ...formData, patient_age: e.target.value })}
                           onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
                           placeholder="e.g. 6 months, 2 years"
                           required
+                          disabled={isPatientLocked}
                         />
                       </div>
                       <div>
                         <label className="text-sm font-semibold text-slate-600 block mb-1">Gender</label>
                         <select
-                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-slate-900"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-slate-900 disabled:opacity-70 disabled:cursor-not-allowed"
                           value={formData.patient_gender}
                           onChange={e => setFormData({ ...formData, patient_gender: e.target.value })}
                           onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
+                          disabled={isPatientLocked}
                         >
                           <option value="">— Select —</option>
                           <option value="MALE">Male</option>
@@ -615,27 +635,28 @@ const BabyCareBookingPage = () => {
                       <div>
                         <label className="text-sm font-semibold text-slate-600 block mb-1">Relationship to Client</label>
                         <select
-                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-slate-900"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-slate-900 disabled:opacity-70 disabled:cursor-not-allowed"
                           value={formData.relationship}
                           onChange={e => setFormData({ ...formData, relationship: e.target.value })}
                           onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
                           required
+                          disabled={isPatientLocked}
                         >
-                          <option value="CHILD">Child</option>
-                          <option value="WARD">Ward</option>
-                          <option value="GRANDCHILD">Grandchild</option>
-                          <option value="OTHER">Other</option>
+                          {RELATIONSHIP_OPTIONS.map(opt => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))}
                         </select>
                       </div>
                       <div className="md:col-span-2">
                         <label className="text-sm font-semibold text-slate-600 block mb-1">Special Needs or Requirements (Optional)</label>
                         <textarea
                           rows="3"
-                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none resize-none text-slate-900 placeholder:text-slate-400"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none resize-none text-slate-900 placeholder:text-slate-400 disabled:opacity-70 disabled:cursor-not-allowed"
                           value={formData.patient_condition}
                           onChange={e => setFormData({ ...formData, patient_condition: e.target.value })}
                           onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
                           placeholder="Any special care requirements, allergies, or preferences..."
+                          disabled={isPatientLocked}
                         />
                       </div>
                     </div>

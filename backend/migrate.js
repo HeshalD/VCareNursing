@@ -771,10 +771,17 @@ async function runMigration() {
     );
   `);
 
-  // At most one open (SCHEDULED) action per booking + type.
+  // At most one open (SCHEDULED) action per booking + type + shift slot. The
+  // shift_slot_id component (pulled from payload) lets SHIFT_BASED bookings have
+  // one open ASSIGNMENT_START/SHIFT_REASSIGNMENT per slot running concurrently —
+  // e.g. two shifts each getting a future-dated staff member in the same request.
+  // Bookings whose action has no shift_slot_id (LIVE_IN/VISITING, or booking-wide
+  // action types) collapse to '' and keep the original one-open-action-per-booking
+  // behaviour.
+  await db.query(`DROP INDEX IF EXISTS uniq_open_scheduled_action`);
   await db.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS uniq_open_scheduled_action
-      ON scheduled_actions (booking_id, action_type)
+      ON scheduled_actions (booking_id, action_type, COALESCE(payload->>'shift_slot_id', ''))
       WHERE status = 'SCHEDULED'
   `);
 
@@ -1358,6 +1365,11 @@ async function runMigration() {
     ALTER COLUMN termination_code SET DEFAULT 'TER-' || LPAD(nextval('termination_code_seq')::text, 5, '0')
   `);
 
+  // Rejecting a termination request: who reviewed it, when, and why.
+  await db.query(`ALTER TABLE service_terminations ADD COLUMN IF NOT EXISTS rejection_reason TEXT`);
+  await db.query(`ALTER TABLE service_terminations ADD COLUMN IF NOT EXISTS reviewed_by UUID REFERENCES users(user_id)`);
+  await db.query(`ALTER TABLE service_terminations ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP WITH TIME ZONE`);
+
   await db.query(`CREATE SEQUENCE IF NOT EXISTS client_code_seq START 1`);
   await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS client_code VARCHAR(15) UNIQUE`);
   await db.query(`
@@ -1843,6 +1855,27 @@ async function runMigration() {
   await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_receipt_token VARCHAR(64)`);
   await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_receipt_token_expires_at TIMESTAMPTZ`);
   await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_receipt_url TEXT`);
+
+  // Persistent record of every registration fee invoice PDF ever sent, so admins
+  // can re-download past invoices instead of losing the link on resend (the old
+  // flow only stored the PDF URL transiently in the WhatsApp message/activity log).
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS client_reg_fee_invoices (
+      invoice_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      client_id UUID NOT NULL REFERENCES client_profiles(client_profile_id) ON DELETE CASCADE,
+      invoice_code VARCHAR(50) NOT NULL,
+      amount NUMERIC(12,2) NOT NULL,
+      pdf_url TEXT NOT NULL,
+      bank_account_id UUID REFERENCES bank_accounts(account_id),
+      status VARCHAR(20) NOT NULL DEFAULT 'SENT',
+      sent_by UUID REFERENCES users(user_id),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_client_reg_fee_invoices_client_id
+    ON client_reg_fee_invoices(client_id);
+  `);
 
   // Temporary staging table for registrations awaiting OTP verification.
   // Rows are promoted to users + client_profiles on successful OTP verify, then deleted.

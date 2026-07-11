@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import LandingPage from './modules/public/LandingPage';
 import LoginPage from './modules/auth/LoginPage';
 import RegisterPage from './modules/auth/RegisterPage';
+import CreateClientProfilePage from './modules/auth/CreateClientProfilePage';
 import StaffPasswordChangePage from './modules/auth/StaffPasswordChangePage';
 import HomeNursingPage from './modules/public/HomeNursingPage';
 import AboutPage from './modules/public/AboutPage';
@@ -107,6 +108,7 @@ function App() {
             <Route path="/about" element={<AboutPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
+            <Route path="/create-client-profile" element={<CreateClientProfilePage />} />
             <Route path="/forgot-password" element={<ForgotPasswordPage />} />
             <Route path="/forgot-password/verify-otp" element={<VerifyForgotPasswordOtp />} />
             <Route path="/forgot-password/reset" element={<ResetPasswordPage />} />

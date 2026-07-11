@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { User, MapPin, Phone, Mail, Edit2, Save, X, Loader2, CheckCircle, AlertCircle, Wallet, Shield, Building2, Upload } from 'lucide-react';
+import { User, MapPin, Phone, Mail, MessageCircle, Loader2, CheckCircle, AlertCircle, Wallet, Shield, Building2, Upload } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import apiClient from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
@@ -10,9 +10,6 @@ const ClientProfile = () => {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [isEditing, setIsEditing] = useState(false);
-  const [editForm, setEditForm] = useState({});
-  const [saveLoading, setSaveLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
 
   useEffect(() => {
@@ -26,7 +23,6 @@ const ClientProfile = () => {
       const response = await apiClient.getClientProfileByUserId(user.id);
       if (response.status === 'success' || response.message?.toLowerCase().includes('retrieved successfully')) {
         setProfile(response.data);
-        setEditForm(response.data);
         setError('');
       } else {
         setError(response.message || 'Failed to load profile');
@@ -36,33 +32,6 @@ const ClientProfile = () => {
       setError(err.message || 'Failed to load profile');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleEdit = () => { setIsEditing(true); setSuccessMessage(''); };
-  const handleCancel = () => { setIsEditing(false); setEditForm(profile); setSuccessMessage(''); };
-  const handleInputChange = (field, value) => setEditForm(prev => ({ ...prev, [field]: value }));
-
-  const handleSave = async () => {
-    try {
-      setSaveLoading(true);
-      setError('');
-      if (editForm.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(editForm.email)) {
-        setError('Please enter a valid email address'); return;
-      }
-      if (editForm.mobile_number && !/^\d{10}$/.test(editForm.mobile_number)) {
-        setError('Please enter a valid 10-digit mobile number'); return;
-      }
-      await apiClient.updateMe(editForm);
-      setProfile(editForm);
-      setIsEditing(false);
-      setSuccessMessage('Profile updated successfully.');
-      setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (err) {
-      console.error('Error updating profile:', err);
-      setError(err.message || 'Failed to update profile');
-    } finally {
-      setSaveLoading(false);
     }
   };
 
@@ -109,23 +78,6 @@ const ClientProfile = () => {
             <p style={styles.breadcrumb}>Account</p>
             <h1 style={styles.pageTitle}>Profile</h1>
           </div>
-          {!isEditing ? (
-            <button onClick={handleEdit} style={styles.editBtn}>
-              <Edit2 size={14} />
-              Edit
-            </button>
-          ) : (
-            <div style={styles.actionRow}>
-              <button onClick={handleCancel} style={styles.cancelBtn}>
-                <X size={14} />
-                Cancel
-              </button>
-              <button onClick={handleSave} disabled={saveLoading} style={styles.saveBtn}>
-                {saveLoading ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Save size={14} />}
-                {saveLoading ? 'Saving…' : 'Save Changes'}
-              </button>
-            </div>
-          )}
         </header>
 
         {/* Alerts */}
@@ -141,6 +93,12 @@ const ClientProfile = () => {
             <span>{error}</span>
           </div>
         )}
+
+        {/* Contact-to-edit notice */}
+        <div style={styles.contactBanner}>
+          <MessageCircle size={15} style={{ color: '#475569', flexShrink: 0 }} />
+          <span>To update any of your profile details, please contact VCare Nursing.</span>
+        </div>
 
         {/* Outstanding fee banner */}
         {(profile?.reg_fee_status === 'PENDING' || profile?.reg_fee_status === 'INVOICED') && (
@@ -221,25 +179,9 @@ const ClientProfile = () => {
         <section style={styles.card}>
           <h2 style={styles.cardHeading}>Personal Information</h2>
           <div style={styles.fieldGrid}>
-            {/* Title (honorific) — full width in edit, inline in display */}
-            <div style={{ gridColumn: '1 / -1' }}>
-              {isEditing ? (
-                <div style={styles.fieldWrap}>
-                  <label style={styles.fieldLabel}>Title <span style={{ textTransform: 'none', fontWeight: 400, color: '#94a3b8' }}>(optional)</span></label>
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    {['Mr', 'Mrs', 'Miss', 'Doc', 'Prof'].map(h => (
-                      <button
-                        key={h}
-                        type="button"
-                        onClick={() => handleInputChange('honorific', editForm.honorific === h ? '' : h)}
-                        style={editForm.honorific === h ? styles.pillActive : styles.pill}
-                      >
-                        {h}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : profile?.honorific ? (
+            {/* Title (honorific) */}
+            {profile?.honorific && (
+              <div style={{ gridColumn: '1 / -1' }}>
                 <div style={styles.fieldWrap}>
                   <label style={styles.fieldLabel}>Title</label>
                   <div style={styles.displayField}>
@@ -247,61 +189,37 @@ const ClientProfile = () => {
                     <span style={styles.displayValue}>{profile.honorific}</span>
                   </div>
                 </div>
-              ) : null}
-            </div>
+              </div>
+            )}
 
             <Field
               label="Full Name"
               icon={<User size={15} style={styles.fieldIcon} />}
-              editing={isEditing}
-              value={editForm.full_name || ''}
               display={profile?.full_name}
-              onChange={v => handleInputChange('full_name', v)}
-              placeholder="Enter your full name"
             />
             <Field
               label="Mobile Number"
               icon={<Phone size={15} style={styles.fieldIcon} />}
-              editing={isEditing}
-              value={editForm.mobile_number || ''}
               display={profile?.mobile_number}
-              onChange={v => handleInputChange('mobile_number', v)}
-              placeholder="10-digit mobile number"
-              maxLength={10}
-              inputType="tel"
             />
             <Field
               label="Email Address"
               icon={<Mail size={15} style={styles.fieldIcon} />}
-              editing={isEditing}
-              value={editForm.email || ''}
               display={profile?.email}
-              onChange={v => handleInputChange('email', v)}
-              placeholder="Email address"
-              inputType="email"
             />
             <Field
               label="Address"
               icon={<MapPin size={15} style={styles.fieldIcon} />}
-              editing={isEditing}
-              value={editForm.primary_address || ''}
               display={profile?.primary_address}
-              onChange={v => handleInputChange('primary_address', v)}
-              placeholder="Primary address"
-              textarea
             />
 
-            {/* Company Name — show in edit mode always; in view mode only if set */}
-            {(isEditing || profile?.company_name) && (
+            {/* Company Name — only shown if set */}
+            {profile?.company_name && (
               <div style={{ gridColumn: '1 / -1' }}>
                 <Field
                   label="Company Name"
                   icon={<Building2 size={15} style={styles.fieldIcon} />}
-                  editing={isEditing}
-                  value={editForm.company_name || ''}
                   display={profile?.company_name}
-                  onChange={v => handleInputChange('company_name', v)}
-                  placeholder="Company or organisation name"
                 />
               </div>
             )}
@@ -335,34 +253,13 @@ const ClientProfile = () => {
 
 /* ─── Sub-components ─────────────────────────────────────── */
 
-const Field = ({ label, icon, editing, value, display, onChange, placeholder, maxLength, inputType = 'text', textarea }) => (
+const Field = ({ label, icon, display }) => (
   <div style={styles.fieldWrap}>
     <label style={styles.fieldLabel}>{label}</label>
-    {editing ? (
-      textarea ? (
-        <textarea
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          placeholder={placeholder}
-          rows={3}
-          style={styles.input}
-        />
-      ) : (
-        <input
-          type={inputType}
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          placeholder={placeholder}
-          maxLength={maxLength}
-          style={styles.input}
-        />
-      )
-    ) : (
-      <div style={styles.displayField}>
-        {icon}
-        <span style={styles.displayValue}>{display || <span style={styles.empty}>Not provided</span>}</span>
-      </div>
-    )}
+    <div style={styles.displayField}>
+      {icon}
+      <span style={styles.displayValue}>{display || <span style={styles.empty}>Not provided</span>}</span>
+    </div>
   </div>
 );
 
@@ -444,30 +341,6 @@ const styles = {
   breadcrumb: { fontSize: 12, color: '#64748b', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4, fontWeight: 500 },
   pageTitle: { fontSize: 28, fontWeight: 600, color: '#1e293b', letterSpacing: '-0.02em', margin: 0, fontFamily: "'DM Serif Display', serif" },
 
-  editBtn: {
-    display: 'inline-flex', alignItems: 'center', gap: 6,
-    background: '#1e293b', color: '#f8f7f4',
-    border: 'none', borderRadius: 8,
-    padding: '9px 18px', fontSize: 13, fontWeight: 500,
-    cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
-    letterSpacing: '0.01em',
-  },
-  actionRow: { display: 'flex', gap: 8 },
-  cancelBtn: {
-    display: 'inline-flex', alignItems: 'center', gap: 6,
-    background: 'transparent', color: '#64748b',
-    border: '1px solid #cbd5e1', borderRadius: 8,
-    padding: '9px 18px', fontSize: 13, fontWeight: 500,
-    cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
-  },
-  saveBtn: {
-    display: 'inline-flex', alignItems: 'center', gap: 6,
-    background: '#0f172a', color: '#fff',
-    border: 'none', borderRadius: 8,
-    padding: '9px 18px', fontSize: 13, fontWeight: 500,
-    cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
-  },
-
   /* Alerts */
   alertSuccess: {
     display: 'flex', alignItems: 'center', gap: 10,
@@ -480,6 +353,12 @@ const styles = {
     background: '#fef2f2', border: '1px solid #fecaca',
     borderRadius: 8, padding: '12px 16px',
     fontSize: 13, color: '#991b1b', marginBottom: 24,
+  },
+  contactBanner: {
+    display: 'flex', alignItems: 'center', gap: 10,
+    background: '#f1f5f9', border: '1px solid #e2e8f0',
+    borderRadius: 8, padding: '12px 16px',
+    fontSize: 13, color: '#475569', marginBottom: 24,
   },
 
   /* Identity strip */
@@ -587,32 +466,12 @@ const styles = {
   fieldIcon: { color: '#94a3b8', marginTop: 1, flexShrink: 0 },
   displayValue: { fontSize: 14, color: '#1e293b', fontWeight: 450, lineHeight: 1.5 },
   empty: { color: '#cbd5e1', fontStyle: 'italic' },
-  input: {
-    width: '100%', fontSize: 14, color: '#1e293b',
-    border: '1px solid #e2e8f0', borderRadius: 8,
-    padding: '9px 12px', background: '#fff',
-    fontFamily: "'DM Sans', sans-serif",
-    resize: 'vertical', lineHeight: 1.5,
-    transition: 'border-color 0.15s, box-shadow 0.15s',
-  },
 
   /* Meta */
   metaGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px 28px' },
   metaItem: { borderBottom: '1px solid #f1f5f9', paddingBottom: 14 },
   metaLabel: { fontSize: 11, color: '#94a3b8', fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', margin: '0 0 4px' },
   metaValue: { fontSize: 14, color: '#1e293b', fontWeight: 500, margin: 0 },
-
-  /* Honorific pills */
-  pill: {
-    padding: '6px 16px', fontSize: 13, fontWeight: 500, cursor: 'pointer',
-    border: '1px solid #e2e8f0', borderRadius: 8, background: '#fff', color: '#475569',
-    fontFamily: "'DM Sans', sans-serif", transition: 'all 0.1s',
-  },
-  pillActive: {
-    padding: '6px 16px', fontSize: 13, fontWeight: 500, cursor: 'pointer',
-    border: '1px solid #1e293b', borderRadius: 8, background: '#1e293b', color: '#fff',
-    fontFamily: "'DM Sans', sans-serif",
-  },
 };
 
 export default ClientProfile;

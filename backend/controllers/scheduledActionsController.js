@@ -252,6 +252,24 @@ exports.getUpcomingEvents = async (req, res) => {
     }
 };
 
+exports.getBookingScheduledEvents = async (req, res) => {
+    const { booking_id } = req.params;
+    try {
+        const result = await db.query(
+            `SELECT action_id, action_type, effective_date::text AS effective_date,
+                    status, payload, reason, created_at
+             FROM scheduled_actions
+             WHERE booking_id = $1 AND status = 'SCHEDULED'
+             ORDER BY effective_date ASC`,
+            [booking_id]
+        );
+        res.status(200).json({ status: 'success', data: result.rows });
+    } catch (error) {
+        console.error('getBookingScheduledEvents error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to fetch scheduled events' });
+    }
+};
+
 exports.cancelScheduledAction = async (req, res) => {
     const { action_id } = req.params;
     const client = await db.pool.connect();

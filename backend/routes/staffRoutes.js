@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const staffAppController = require('../controllers/staffAppController');
 const staffController = require('../controllers/staffController');
+const staffDocUploadController = require('../controllers/staffDocUploadController');
 const { uploadApplicationFiles } = require('../middleware/uploadMiddleware');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const db = require('../config/db');
@@ -154,6 +155,15 @@ router.get('/', staffController.getAllStaff);
 // Public: Get top 5 staff members by highest average ratings
 router.get('/top-rated', staffController.getTopRatedStaff);
 
+// Admin: Batched schedule lookup (current + future bookings) for staff-picker UIs —
+// ?ids=uuid1,uuid2,... — used to show scheduling conflicts before assigning/swapping staff
+router.get(
+  '/schedules',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getStaffSchedules
+);
+
 // Public: Get all staff members with current_status as 'available'
 router.get('/available-staff', staffController.getAvailableStaff);
 
@@ -263,6 +273,14 @@ router.get(
   protect,
   restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
   staffController.getBookingHistory
+);
+
+// Future-dated (SCHEDULED) assignments for staff (admin view)
+router.get(
+  '/:staff_profile_id/future-bookings',
+  protect,
+  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  staffController.getFutureBookings
 );
 
 // Full attendance calendar (assignment spans + per-day attendance) for staff
@@ -418,12 +436,17 @@ router.put('/:staff_profile_id/unavailable', protect, staffController.updateStaf
 // Update staff status (general)
 router.put('/:staff_profile_id/status', protect, staffController.updateStaffStatus);
 
-// Update years of experience. Admins can set this for any staff member;
-// staff can only set their own (enforced in controller).
+// Admin Only: Send the Independent Contractor Agreement PDF via WhatsApp (Staff Detail > Documents tab)
+router.post('/:staff_profile_id/send-agreement', protect, restrictTo('SUPER_ADMIN'), staffAppController.sendApplicationAgreementByStaffId);
+
+// Admin Only: Send the compliance-document upload request via WhatsApp (Staff Detail > Documents tab)
+router.post('/:staff_profile_id/send-document-request', protect, restrictTo('SUPER_ADMIN'), staffDocUploadController.sendDocumentRequestByStaffId);
+
+// Admin Only: update years of experience. Staff profile changes are admin-dashboard-only.
 router.patch(
   '/:staff_profile_id/experience-level',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'STAFF', 'NURSE', 'CARETAKER', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'),
+  restrictTo('SUPER_ADMIN', 'COORDINATOR'),
   staffController.updateStaffExperienceLevel
 );
 
