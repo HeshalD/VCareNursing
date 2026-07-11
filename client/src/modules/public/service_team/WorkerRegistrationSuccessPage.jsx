@@ -1,31 +1,42 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { CheckCircle, ArrowRight, Phone, Mail, Calendar, Briefcase, Home, FileText, User } from 'lucide-react';
 import Navbar from '../../../components/layout/Navbar';
 import Footer from '../../../components/layout/Footer';
 
+const CONTACT_NUMBERS = [
+  { label: '+94 (77) 393 9112', href: 'tel:+94773939112' },
+  { label: '+94 76 799 7796', href: 'tel:+94767997796' },
+  { label: '+94 777 00 4068', href: 'tel:+94777004068' },
+  { label: '(011) 317 6545', href: 'tel:0113176545' },
+];
+
+const CONTACT_EMAIL = 'info@vcarenursing.com';
+
+const NEXT_STEPS = [
+  {
+    icon: FileText,
+    title: 'Application Review',
+    description: 'Our team will review your qualifications and documents.',
+  },
+  {
+    icon: Phone,
+    title: 'Confirmation',
+    description: "We'll contact you with a confirmation or rejection based on your application.",
+  },
+  {
+    icon: Briefcase,
+    title: 'Onboarding',
+    description: 'Successful candidates will be onboarded and trained.',
+  },
+];
+
 const WorkerRegistrationSuccessPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const [countdown, setCountdown] = useState(10);
 
   const { applicationData } = location.state || {};
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          navigate('/');
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [navigate]);
 
   const handleGoHome = () => {
     navigate('/');
@@ -39,205 +50,222 @@ const WorkerRegistrationSuccessPage = () => {
     <div className="min-h-screen bg-slate-50">
       <Navbar />
 
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8 }}
-          className="text-center"
-        >
-          {/* Success Icon */}
-          <div className="flex justify-center mb-8">
+      {/* Hero */}
+      <div className="relative overflow-hidden">
+        <div className="absolute inset-0">
+          <img
+            src="https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?ixlib=rb-4.0.3&auto=format&fit=crop&w=2070&q=80"
+            alt=""
+            className="w-full h-full object-cover"
+          />
+          <div className="absolute inset-0 bg-gradient-to-b from-indigo-950/90 via-indigo-900/85 to-indigo-900/95" />
+        </div>
+
+        <div className="relative max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pt-32 pb-20 text-center">
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            transition={{ delay: 0.15, type: 'spring', stiffness: 200 }}
+            className="w-20 h-20 bg-white/10 border border-white/20 backdrop-blur-sm rounded-full flex items-center justify-center mx-auto mb-6"
+          >
+            <CheckCircle className="w-10 h-10 text-emerald-400" />
+          </motion.div>
+
+          <motion.h1
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3, duration: 0.6 }}
+            className="text-3xl md:text-5xl font-bold text-white mb-4"
+          >
+            Application Submitted
+          </motion.h1>
+          <motion.p
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4, duration: 0.6 }}
+            className="text-lg text-indigo-100 max-w-2xl mx-auto"
+          >
+            Your caregiver application has been successfully submitted. Our team will review it and
+            get back to you within 3-5 business days.
+          </motion.p>
+
+          {applicationData?.application_code && (
             <motion.div
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
-              transition={{ delay: 0.2, type: "spring", stiffness: 200 }}
-              className="w-24 h-24 bg-emerald-100 rounded-full flex items-center justify-center"
-            >
-              <CheckCircle className="w-12 h-12 text-emerald-600" />
-            </motion.div>
-          </div>
-
-          {/* Success Message */}
-          <h1 className="text-4xl md:text-5xl font-bold text-slate-900 mb-4">
-            Application Submitted!
-          </h1>
-          <p className="text-xl text-slate-600 mb-8 max-w-2xl mx-auto">
-            Your caregiver application has been successfully submitted. Our team will review your application and contact you within 3-5 business days.
-          </p>
-
-          {/* Application ID */}
-          {applicationData?.application_id && (
-            <div className="bg-slate-100 rounded-xl p-4 mb-8 inline-block">
-              <p className="text-sm text-slate-600">Application ID</p>
-              <p className="font-mono font-bold text-slate-900">{applicationData.application_id}</p>
-            </div>
-          )}
-
-          {/* Applicant Info */}
-          {applicationData && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.4 }}
-              className="bg-white rounded-2xl shadow-lg border border-slate-100 p-8 mb-8 text-left"
+              transition={{ delay: 0.5, duration: 0.6 }}
+              className="mt-8 inline-flex flex-col items-center bg-white/10 border border-white/20 backdrop-blur-sm rounded-2xl px-6 py-4"
             >
-              <h2 className="text-2xl font-bold text-slate-900 mb-6 flex items-center gap-3">
-                <Briefcase className="w-6 h-6 text-amber-600" />
-                Your Application Details
-              </h2>
-              <div className="grid md:grid-cols-2 gap-6">
-                <div>
-                  <h3 className="font-bold text-slate-900 mb-4">Personal Information</h3>
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-3">
-                      <User className="w-4 h-4 text-slate-400" />
-                      <span className="text-sm text-slate-600">Name:</span>
-                      <span className="font-medium text-slate-900">{applicationData.full_name}</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Mail className="w-4 h-4 text-slate-400" />
-                      <span className="text-sm text-slate-600">Email:</span>
-                      <span className="font-medium text-slate-900">{applicationData.email}</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Phone className="w-4 h-4 text-slate-400" />
-                      <span className="text-sm text-slate-600">Mobile:</span>
-                      <span className="font-medium text-slate-900">{applicationData.mobile_number}</span>
-                    </div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-indigo-200">
+                Application Reference
+              </p>
+              <p className="font-mono text-2xl font-bold text-white mt-1">
+                {applicationData.application_code}
+              </p>
+            </motion.div>
+          )}
+        </div>
+
+        {/* Wave divider into the body */}
+        <svg
+          className="relative block w-full text-slate-50"
+          viewBox="0 0 1440 60"
+          preserveAspectRatio="none"
+          style={{ height: 40 }}
+        >
+          <path fill="currentColor" d="M0,32 C240,64 480,0 720,16 C960,32 1200,64 1440,32 L1440,60 L0,60 Z" />
+        </svg>
+      </div>
+
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pb-16 -mt-2">
+        {/* Applicant Info */}
+        {applicationData && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="bg-white rounded-2xl shadow-lg border border-slate-100 p-8 mb-8"
+          >
+            <h2 className="text-xl font-bold text-slate-900 mb-6 flex items-center gap-3">
+              <div className="w-9 h-9 bg-indigo-50 rounded-lg flex items-center justify-center">
+                <Briefcase className="w-[18px] h-[18px] text-indigo-600" />
+              </div>
+              Your Application Details
+            </h2>
+            <div className="grid md:grid-cols-2 gap-8">
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-4">
+                  Personal Information
+                </h3>
+                <div className="space-y-3.5">
+                  <div className="flex items-center gap-3">
+                    <User className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                    <span className="text-sm text-slate-500 w-14 flex-shrink-0">Name</span>
+                    <span className="font-medium text-slate-900">{applicationData.full_name}</span>
                   </div>
-                </div>
-                <div>
-                  <h3 className="font-bold text-slate-900 mb-4">Application Information</h3>
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-3">
-                      <Briefcase className="w-4 h-4 text-slate-400" />
-                      <span className="text-sm text-slate-600">Applied Roles:</span>
-                      <span className="font-medium text-slate-900">
-                        {Array.isArray(applicationData.applied_roles) 
-                          ? applicationData.applied_roles.join(', ')
-                          : applicationData.applied_roles}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <FileText className="w-4 h-4 text-slate-400" />
-                      <span className="text-sm text-slate-600">Status:</span>
-                      <span className="px-3 py-1 bg-amber-100 text-amber-800 rounded-full text-sm font-medium">
-                        Under Review
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Calendar className="w-4 h-4 text-slate-400" />
-                      <span className="text-sm text-slate-600">Submitted:</span>
-                      <span className="font-medium text-slate-900">
-                        {new Date().toLocaleDateString('en-GB')}
-                      </span>
-                    </div>
+                  <div className="flex items-center gap-3">
+                    <Phone className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                    <span className="text-sm text-slate-500 w-14 flex-shrink-0">Mobile</span>
+                    <span className="font-medium text-slate-900">{applicationData.mobile_number}</span>
                   </div>
                 </div>
               </div>
-            </motion.div>
-          )}
-
-          {/* What Happens Next */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.6 }}
-            className="bg-amber-50 rounded-2xl p-8 mb-8 text-left"
-          >
-            <h2 className="text-2xl font-bold text-slate-900 mb-6">What Happens Next?</h2>
-            <div className="grid md:grid-cols-3 gap-6">
-              {[
-                {
-                  icon: FileText,
-                  title: "Application Review",
-                  description: "Our team will review your qualifications and documents"
-                },
-                {
-                  icon: Phone,
-                  title: "Confirmation",
-                  description: "We'll contact you with a confirmation or rejection based on your application"
-                },
-                {
-                  icon: Briefcase,
-                  title: "Onboarding",
-                  description: "Successful candidates will be onboarded and trained"
-                }
-              ].map((step, index) => (
-                <div key={index} className="flex gap-4">
-                  <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center flex-shrink-0">
-                    <step.icon className="w-6 h-6 text-amber-600" />
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-4">
+                  Application Information
+                </h3>
+                <div className="space-y-3.5">
+                  <div className="flex items-start gap-3">
+                    <Briefcase className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />
+                    <span className="text-sm text-slate-500 w-14 flex-shrink-0 mt-0.5">Roles</span>
+                    <div className="flex flex-wrap gap-1.5 min-w-0">
+                      {(Array.isArray(applicationData.applied_roles)
+                        ? applicationData.applied_roles
+                        : [applicationData.applied_roles]
+                      ).filter(Boolean).map((role) => (
+                        <span
+                          key={role}
+                          className="px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded-full text-xs font-semibold"
+                        >
+                          {role.replace(/_/g, ' ')}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-bold text-slate-900 mb-1">{step.title}</h3>
-                    <p className="text-sm text-slate-600">{step.description}</p>
+                  <div className="flex items-center gap-3">
+                    <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                    <span className="text-sm text-slate-500 w-14 flex-shrink-0">Status</span>
+                    <span className="px-2.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-100 rounded-full text-xs font-semibold">
+                      Under Review
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Calendar className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                    <span className="text-sm text-slate-500 w-14 flex-shrink-0">Date</span>
+                    <span className="font-medium text-slate-900">
+                      {new Date().toLocaleDateString('en-GB')}
+                    </span>
                   </div>
                 </div>
-              ))}
+              </div>
             </div>
           </motion.div>
+        )}
 
-          {/* Contact Information */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.8 }}
-            className="bg-blue-50 rounded-xl p-6 mb-8 border border-blue-100"
-          >
-            <h3 className="font-bold text-blue-900 mb-2">Questions About Your Application?</h3>
-            <p className="text-blue-800 mb-4">
-              For inquiries about your application status, please contact our HR team
-            </p>
-            <div className="flex flex-col sm:flex-row gap-4">
-              <a 
-                href="tel:0771234567" 
-                className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-colors"
+        {/* What Happens Next */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className="bg-white rounded-2xl shadow-lg border border-slate-100 p-8 mb-8"
+        >
+          <h2 className="text-xl font-bold text-slate-900 mb-8">What Happens Next?</h2>
+          <div className="grid md:grid-cols-3 gap-8 relative">
+            <div className="hidden md:block absolute top-6 left-[16.5%] right-[16.5%] h-px bg-slate-200" />
+            {NEXT_STEPS.map((step, index) => (
+              <div key={index} className="relative flex flex-col items-center text-center md:text-left md:items-start">
+                <div className="w-12 h-12 bg-indigo-600 rounded-full flex items-center justify-center flex-shrink-0 mb-4 relative z-10 ring-4 ring-white">
+                  <step.icon className="w-5 h-5 text-white" />
+                </div>
+                <h3 className="font-bold text-slate-900 mb-1">{step.title}</h3>
+                <p className="text-sm text-slate-500">{step.description}</p>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+
+        {/* Contact Information */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4 }}
+          className="bg-indigo-900 rounded-2xl p-8 mb-8 text-white"
+        >
+          <h3 className="font-bold text-lg mb-1.5">Questions About Your Application?</h3>
+          <p className="text-indigo-200 text-sm mb-6">
+            For inquiries about your application status, please contact our HR team.
+          </p>
+          <div className="grid sm:grid-cols-2 gap-3">
+            {CONTACT_NUMBERS.map((c) => (
+              <a
+                key={c.href}
+                href={c.href}
+                className="flex items-center gap-2.5 px-4 py-3 bg-white/10 hover:bg-white/15 border border-white/10 rounded-xl transition-colors text-sm font-medium"
               >
-                <Phone className="w-5 h-5" />
-                Call HR: 077-123-4567
+                <Phone className="w-4 h-4 text-indigo-300 flex-shrink-0" />
+                {c.label}
               </a>
-              <a 
-                href="mailto:hr@vcarenursing.com" 
-                className="inline-flex items-center justify-center gap-2 px-6 py-3 bg-white border-2 border-blue-200 text-blue-700 rounded-xl font-bold hover:border-blue-600 hover:text-blue-800 transition-all"
-              >
-                <Mail className="w-5 h-5" />
-                hr@vcarenursing.com
-              </a>
-            </div>
-          </motion.div>
-
-          {/* Action Buttons */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 1.0 }}
-            className="flex flex-col sm:flex-row gap-4 justify-center"
+            ))}
+          </div>
+          <a
+            href={`mailto:${CONTACT_EMAIL}`}
+            className="flex items-center justify-center gap-2.5 mt-3 px-4 py-3 bg-amber-500 hover:bg-amber-400 rounded-xl transition-colors text-sm font-bold text-indigo-950"
           >
-            <button
-              onClick={handleViewApplications}
-              className="flex items-center justify-center gap-2 px-8 py-4 bg-amber-600 text-white rounded-full font-bold text-lg hover:bg-amber-700 transition-all shadow-lg shadow-amber-500/20"
-            >
-              View Service Team <ArrowRight className="w-5 h-5" />
-            </button>
-            <button
-              onClick={handleGoHome}
-              className="flex items-center justify-center gap-2 px-8 py-4 bg-white border-2 border-slate-200 text-slate-700 rounded-full font-bold text-lg hover:border-slate-900 hover:text-slate-900 transition-all"
-            >
-              <Home className="w-5 h-5" />
-              Back to Home
-            </button>
-          </motion.div>
+            <Mail className="w-4 h-4" />
+            {CONTACT_EMAIL}
+          </a>
+        </motion.div>
 
-          {/* Auto-redirect Countdown */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 1.2 }}
-            className="mt-12 text-sm text-slate-500"
+        {/* Action Buttons */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5 }}
+          className="flex flex-col sm:flex-row gap-4 justify-center"
+        >
+          <button
+            onClick={handleViewApplications}
+            className="flex items-center justify-center gap-2 px-8 py-4 bg-amber-600 text-white rounded-full font-bold text-lg hover:bg-amber-700 transition-all shadow-lg shadow-amber-500/20"
           >
-            Redirecting to homepage in {countdown} seconds...
-          </motion.div>
+            View Service Team <ArrowRight className="w-5 h-5" />
+          </button>
+          <button
+            onClick={handleGoHome}
+            className="flex items-center justify-center gap-2 px-8 py-4 bg-white border-2 border-slate-200 text-slate-700 rounded-full font-bold text-lg hover:border-slate-900 hover:text-slate-900 transition-all"
+          >
+            <Home className="w-5 h-5" />
+            Back to Home
+          </button>
         </motion.div>
       </div>
 

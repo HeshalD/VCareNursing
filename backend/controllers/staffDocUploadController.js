@@ -81,6 +81,68 @@ exports.sendDocumentRequest = async (req, res) => {
   }
 };
 
+// Admin: send WhatsApp document upload request, looked up by staff_profile_id
+// instead of application_id — used from the staff detail page (Documents tab).
+exports.sendDocumentRequestByStaffId = async (req, res) => {
+  const { staff_profile_id } = req.params;
+
+  try {
+    const staffRes = await db.query(
+      `SELECT sp.full_name, sp.doc_upload_token, u.mobile_number
+       FROM staff_profiles sp
+       JOIN users u ON sp.user_id = u.user_id
+       WHERE sp.staff_profile_id = $1`,
+      [staff_profile_id]
+    );
+
+    if (staffRes.rows.length === 0) {
+      return res.status(404).json({ message: 'Staff member not found.' });
+    }
+
+    const { full_name, doc_upload_token, mobile_number } = staffRes.rows[0];
+
+    if (!mobile_number) {
+      return res.status(400).json({ message: 'This staff member does not have a mobile number on file.' });
+    }
+
+    if (!doc_upload_token) {
+      return res.status(400).json({ message: 'This staff member does not have a document upload link.' });
+    }
+
+    await sendDocumentUploadRequest(mobile_number, full_name, doc_upload_token);
+
+    const updated = await db.query(
+      `UPDATE staff_profiles SET doc_request_sent_at = CURRENT_TIMESTAMP
+       WHERE staff_profile_id = $1 RETURNING doc_request_sent_at`,
+      [staff_profile_id]
+    );
+
+    try {
+      const actorName = await getActorName(req.user.user_id);
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName,
+        actorRole: extractActorRole(req.user.role),
+        actionType: 'DOC_REQUEST_SENT',
+        entityType: 'STAFF_PROFILE',
+        entityId: String(staff_profile_id),
+        details: { applicant_name: full_name, mobile_number },
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (send doc request):', logErr.message);
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: `Document upload request sent to ${full_name} on WhatsApp.`,
+      doc_request_sent_at: updated.rows[0].doc_request_sent_at,
+    });
+  } catch (error) {
+    console.error('Send Document Request (by staff id) Error:', error.response?.data || error.message);
+    res.status(500).json({ message: 'Failed to send the document request via WhatsApp.', error: error.message });
+  }
+};
+
 // Public (token-gated, no auth): return staff name + document upload status.
 exports.getDocUploadPortal = async (req, res) => {
   const { token } = req.params;

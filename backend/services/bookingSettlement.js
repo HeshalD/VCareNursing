@@ -19,7 +19,7 @@ const getBookingFinancialTotals = async (client, booking_id) => {
     };
 };
 
-const getBookingSettlementSnapshot = async (client, booking_id) => {
+const getBookingSettlementSnapshot = async (client, booking_id, targetDateInput = null) => {
     const bookingResult = await client.query(
         `SELECT
             b.booking_id,
@@ -54,21 +54,52 @@ const getBookingSettlementSnapshot = async (client, booking_id) => {
 
     const { total_paid: totalPaid, total_invoiced: totalInvoiced } = await getBookingFinancialTotals(client, booking_id);
 
+    // The ledger-based remaining balance only reflects invoicing already recorded. When
+    // completing/terminating on a given date, days between the last invoiced day and that
+    // date still need to be billed — a prepayment that exactly covers the full period through
+    // the chosen end date isn't a refundable surplus, it's earmarked for those pending
+    // invoices. Project the true settlement balance using the booking's daily rate and the
+    // number of days from start through the target date, so it reflects the full cost of
+    // service through that day rather than however far invoicing has caught up so far.
+    let settlementBalance = totalPaid - totalInvoiced;
+    const dailyRate = parseFloat(booking.quote_daily_rate || booking.daily_rate || 0);
+    if (targetDateInput && dailyRate > 0 && booking.start_date) {
+        const start = new Date(booking.start_date); start.setHours(0, 0, 0, 0);
+        const target = new Date(targetDateInput); target.setHours(0, 0, 0, 0);
+        if (!isNaN(target.getTime())) {
+            const targetServedDays = Math.max(0, Math.floor((target - start) / 86400000) + 1);
+            settlementBalance = totalPaid - (targetServedDays * dailyRate);
+        }
+    }
+
     return {
         ...booking,
         total_paid: totalPaid,
         total_invoiced: totalInvoiced,
         remaining_balance: Math.max(totalPaid - totalInvoiced, 0),
-        amount_owed: Math.max(totalInvoiced - totalPaid, 0)
+        amount_owed: Math.max(totalInvoiced - totalPaid, 0),
+        settlement_balance: settlementBalance
     };
 };
 
 const applyBookingSettlement = async (client, booking, settlementAction, settlementNote, reason, actorLabel) => {
-    const remainingBalance = parseFloat(booking.remaining_balance || 0);
+    // Use the date-projected settlement balance (falls back to the plain ledger remaining
+    // balance if no target date/daily rate was available to project with) — this is what
+    // will genuinely be left over once the days through the completion/termination date are
+    // billed, not just what's been invoiced so far.
+    const settlementBalance = parseFloat(booking.settlement_balance ?? booking.remaining_balance ?? 0);
+
+    // Nothing to settle — the prepayment doesn't exceed the cost of service through the
+    // chosen end date, so there's no surplus to credit, refund, or write off. Don't record a
+    // Rs. 0 wallet deposit / bank refund / write-off note for money that isn't actually spare.
+    if (settlementBalance <= 0) {
+        return { remaining_balance: 0, wallet_deposited_amount: 0, settlement_notes: null, skipped: true };
+    }
+
     let walletDepositedAmount = 0;
 
-    if (settlementAction === 'WALLET_DEPOSIT' && remainingBalance > 0) {
-        walletDepositedAmount = remainingBalance;
+    if (settlementAction === 'WALLET_DEPOSIT') {
+        walletDepositedAmount = settlementBalance;
 
         await client.query(
             `UPDATE client_profiles
@@ -82,7 +113,7 @@ const applyBookingSettlement = async (client, booking, settlementAction, settlem
         `${actorLabel}`,
         reason ? `Reason: ${reason}` : null,
         settlementAction ? `Settlement action: ${settlementAction}` : null,
-        remainingBalance > 0 ? `Remaining balance: Rs.${remainingBalance.toFixed(2)}` : 'No remaining balance',
+        `Remaining balance: Rs.${settlementBalance.toFixed(2)}`,
         settlementNote ? `Note: ${settlementNote}` : null
     ].filter(Boolean).join(' | ');
 
@@ -107,7 +138,7 @@ const applyBookingSettlement = async (client, booking, settlementAction, settlem
     );
 
     return {
-        remaining_balance: remainingBalance,
+        remaining_balance: settlementBalance,
         wallet_deposited_amount: walletDepositedAmount,
         settlement_notes: settlementNotes
     };

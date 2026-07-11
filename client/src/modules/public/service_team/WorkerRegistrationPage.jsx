@@ -215,34 +215,32 @@ const WorkerRegistrationPage = () => {
     setProfilePicturePreview('');
   };
 
-  // Handle documents change
+  // Handle documents change — adds newly selected files to the existing
+  // selection instead of replacing it, since the upload area stays visible
+  // after the first upload and users naturally reopen it to add more files.
   const handleDocumentsChange = (files) => {
-    const newDocuments = Array.from(files);
-    setFormData(prev => ({ ...prev, documents: newDocuments }));
-    const error = validateField('documents', newDocuments);
+    const incoming = Array.from(files);
+    if (incoming.length === 0) return;
+
+    const existingNames = new Set(formData.documents.map(d => d.name));
+    const newFiles = incoming.filter(f => !existingNames.has(f.name));
+    if (newFiles.length === 0) return;
+
+    const merged = [...formData.documents, ...newFiles];
+    setFormData(prev => ({ ...prev, documents: merged }));
+    const error = validateField('documents', merged);
     setFieldErrors(prev => ({ ...prev, documents: error }));
-    
-    // Create previews for new documents
-    const newPreviews = newDocuments.map(file => {
+
+    newFiles.forEach(file => {
       if (file.type.startsWith('image/')) {
         const reader = new FileReader();
         reader.onloadend = () => {
-          setDocumentPreviews(prev => {
-            const filtered = prev.filter(p => p.name !== file.name);
-            return [...filtered, { name: file.name, type: file.type, preview: reader.result }];
-          });
+          setDocumentPreviews(prev => [...prev, { name: file.name, type: file.type, preview: reader.result }]);
         };
         reader.readAsDataURL(file);
-        return { name: file.name, type: file.type, preview: null };
       } else {
-        return { name: file.name, type: file.type, preview: null };
+        setDocumentPreviews(prev => [...prev, { name: file.name, type: file.type, preview: null }]);
       }
-    });
-    
-    // Update previews state for non-image files immediately
-    setDocumentPreviews(prev => {
-      const filtered = prev.filter(p => !newDocuments.find(doc => doc.name === p.name));
-      return [...filtered, ...newPreviews.filter(p => p.preview === null)];
     });
   };
 

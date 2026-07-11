@@ -19,4 +19,9 @@ router.use(protect);
 router.get('/unified-overview', authController.getUnifiedOverview);
 router.get('/users', restrictTo('SUPER_ADMIN'), authController.getAllUsers);
 
+// Self-service: let an already-authenticated user (e.g. staff without a client
+// profile) fetch their known account details and create a linked client profile.
+router.get('/me', authController.getMyAccountInfo);
+router.post('/create-client-profile', authController.createClientProfileForExistingUser);
+
 module.exports = router;

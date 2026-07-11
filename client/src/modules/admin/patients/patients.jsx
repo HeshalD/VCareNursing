@@ -229,41 +229,57 @@ const PatientModal = ({ mode, initial, clients, onClose, onSave, saving }) => {
 
 // ─── Delete Confirm Modal ────────────────────────────────────────────────────
 
-const DeleteModal = ({ patient, onClose, onConfirm, deleting }) => (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
-      <div className="flex items-center gap-3 mb-4">
-        <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
-          <Trash2 className="w-5 h-5 text-red-600" />
+const DeleteModal = ({ patient, onClose, onConfirm, deleting }) => {
+  const [confirmText, setConfirmText] = useState('');
+  const nameMatches = confirmText.trim() === (patient.full_name || '').trim();
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+            <Trash2 className="w-5 h-5 text-red-600" />
+          </div>
+          <div>
+            <h2 className="text-base font-bold text-slate-900">Delete Care Profile</h2>
+            <p className="text-sm text-slate-500">This action cannot be undone.</p>
+          </div>
         </div>
-        <div>
-          <h2 className="text-base font-bold text-slate-900">Delete Care Profile</h2>
-          <p className="text-sm text-slate-500">This action cannot be undone.</p>
+        <p className="text-sm text-slate-700 mb-4">
+          Are you sure you want to delete <span className="font-semibold">{patient.full_name}</span>?
+          Care Profiles with active bookings cannot be deleted.
+        </p>
+        <label className="block text-xs font-medium text-slate-600 mb-1.5">
+          Type <span className="font-semibold text-slate-800">{patient.full_name}</span> to confirm
+        </label>
+        <input
+          type="text"
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+          placeholder={patient.full_name}
+          autoFocus
+          className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-6 focus:outline-none focus:ring-2 focus:ring-red-500"
+        />
+        <div className="flex justify-end gap-3">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 rounded-lg border border-slate-300 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={deleting || !nameMatches}
+            className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
+            Delete
+          </button>
         </div>
-      </div>
-      <p className="text-sm text-slate-700 mb-6">
-        Are you sure you want to delete <span className="font-semibold">{patient.full_name}</span>?
-        Care Profiles with active bookings cannot be deleted.
-      </p>
-      <div className="flex justify-end gap-3">
-        <button
-          onClick={onClose}
-          className="px-4 py-2 rounded-lg border border-slate-300 text-sm font-medium text-slate-700 hover:bg-slate-50"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={onConfirm}
-          disabled={deleting}
-          className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-60 flex items-center gap-2"
-        >
-          {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
-          Delete
-        </button>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 // ─── Patient Row ─────────────────────────────────────────────────────────────
 

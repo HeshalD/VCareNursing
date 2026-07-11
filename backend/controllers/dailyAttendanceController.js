@@ -165,11 +165,11 @@ exports.upsertAttendance = async (req, res) => {
  *          The 12h-served threshold is informational only — the decision is always
  *          a manual judgement call.
  * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
- * @body    approve (boolean)
+ * @body    approve (boolean), amount (optional — overrides the assignment's daily_rate)
  */
 exports.confirmSalary = async (req, res) => {
     const { attendance_id } = req.params;
-    const { approve } = req.body;
+    const { approve, amount } = req.body;
 
     if (typeof approve !== 'boolean') {
         return res.status(400).json({ status: 'error', message: 'approve (boolean) is required' });
@@ -207,11 +207,19 @@ exports.confirmSalary = async (req, res) => {
         let salaryAmount = null;
 
         if (approve) {
-            const assignmentRes = await client.query(
-                `SELECT daily_rate FROM booking_staff_assignments WHERE assignment_id = $1`,
-                [attendance.assignment_id]
-            );
-            salaryAmount = parseFloat(assignmentRes.rows[0].daily_rate);
+            if (amount !== undefined && amount !== null && amount !== '') {
+                salaryAmount = parseFloat(amount);
+                if (Number.isNaN(salaryAmount) || salaryAmount <= 0) {
+                    await client.query('ROLLBACK');
+                    return res.status(400).json({ status: 'error', message: 'amount must be a positive number' });
+                }
+            } else {
+                const assignmentRes = await client.query(
+                    `SELECT daily_rate FROM booking_staff_assignments WHERE assignment_id = $1`,
+                    [attendance.assignment_id]
+                );
+                salaryAmount = parseFloat(assignmentRes.rows[0].daily_rate);
+            }
 
             salaryTransactionId = await creditStaffSalary(client, {
                 staff_profile_id: attendance.staff_profile_id,

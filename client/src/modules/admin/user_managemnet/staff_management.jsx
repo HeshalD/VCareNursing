@@ -47,6 +47,20 @@ const StatusDot = ({ status }) => {
   );
 };
 
+const DocsStatusDot = ({ worker }) => {
+  const submitted = !!(worker.grama_niladhari_url && worker.police_report_url);
+  const cfg = submitted
+    ? { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Documents Submitted' }
+    : { dot: 'bg-amber-400',   text: 'text-amber-700',   label: 'Documents Pending' };
+
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
+      {cfg.label}
+    </span>
+  );
+};
+
 const StaffManagement = () => {
   const navigate = useNavigate();
   const [workers, setWorkers] = useState([]);
@@ -159,6 +173,7 @@ const StaffManagement = () => {
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Role</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Location</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Compliance Docs</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Current Earnings</th>
                 <th className="px-4 py-3" />
               </tr>
@@ -166,7 +181,7 @@ const StaffManagement = () => {
             <tbody className="divide-y divide-slate-100">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-16 text-slate-400 text-sm">
+                  <td colSpan={8} className="text-center py-16 text-slate-400 text-sm">
                     No staff members match your filters.
                   </td>
                 </tr>
@@ -215,6 +230,11 @@ const StaffManagement = () => {
                   {/* Status */}
                   <td className="px-4 py-3 whitespace-nowrap">
                     <StatusDot status={worker.current_status} />
+                  </td>
+
+                  {/* Compliance Docs */}
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <DocsStatusDot worker={worker} />
                   </td>
 
                   {/* Current Earnings */}

@@ -438,9 +438,15 @@ exports.getAdminStaffDetail = async (req, res) => {
     try {
         // 1) Profile + user
         const profileQuery = `
-            SELECT sp.*, u.user_id, u.email, u.mobile_number, u.role, u.is_active
+            SELECT sp.*, u.user_id, u.email, u.mobile_number, u.role, u.is_active,
+                   sa.agreement_sent_at
             FROM staff_profiles sp
             JOIN users u ON sp.user_id = u.user_id
+            LEFT JOIN LATERAL (
+                SELECT agreement_sent_at FROM staff_applications
+                WHERE mobile_number = u.mobile_number AND status = 'ACCEPTED'
+                ORDER BY applied_at DESC LIMIT 1
+            ) sa ON true
             WHERE sp.staff_profile_id = $1
         `;
         const profileRes = await db.query(profileQuery, [staff_profile_id]);
@@ -468,13 +474,26 @@ exports.getAdminStaffDetail = async (req, res) => {
         const outstanding = currentEarnings; // current_earnings reflects unpaid balance
 
         // 3) Current active assignment / booking
+        // pending_end (LATERAL): a scheduled-but-not-yet-executed COMPLETION/TERMINATION
+        // on this booking — service_end_date stays NULL until the cron actually runs, so
+        // without this the assignment looks open-ended even though it's due to wrap up.
         const currentAssignRes = await db.query(`
             SELECT bsa.*, b.booking_id, b.status as booking_status, b.start_date, b.daily_rate as booking_daily_rate,
-                   c.full_name as client_name, p.full_name as patient_name
+                   c.full_name as client_name, p.full_name as patient_name,
+                   pending_end.effective_date as pending_end_date, pending_end.action_type as pending_end_action_type
             FROM booking_staff_assignments bsa
             LEFT JOIN bookings b ON bsa.booking_id = b.booking_id
             LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
             LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+            LEFT JOIN LATERAL (
+                SELECT sa.effective_date, sa.action_type
+                FROM scheduled_actions sa
+                WHERE sa.booking_id = bsa.booking_id
+                  AND sa.action_type IN ('COMPLETION', 'TERMINATION')
+                  AND sa.status = 'SCHEDULED'
+                ORDER BY sa.effective_date ASC
+                LIMIT 1
+            ) pending_end ON true
             WHERE bsa.staff_profile_id = $1 AND bsa.status = 'ACTIVE'
             ORDER BY bsa.service_start_date ASC
             LIMIT 1
@@ -676,11 +695,21 @@ exports.getCurrentBooking = async (req, res) => {
             SELECT bsa.assignment_id, bsa.booking_id, bsa.assigned_on, bsa.service_start_date, bsa.service_end_date, bsa.daily_rate, bsa.amount_allocated, bsa.status,
                          b.booking_id as booking_id, b.status as booking_status, b.start_date as booking_start_date, b.daily_rate as booking_daily_rate,
                          c.client_profile_id, c.full_name as client_name,
-                         p.patient_id, p.full_name as patient_name
+                         p.patient_id, p.full_name as patient_name,
+                         pending_end.effective_date as pending_end_date, pending_end.action_type as pending_end_action_type
             FROM booking_staff_assignments bsa
             LEFT JOIN bookings b ON bsa.booking_id = b.booking_id
             LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
             LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+            LEFT JOIN LATERAL (
+                SELECT sa.effective_date, sa.action_type
+                FROM scheduled_actions sa
+                WHERE sa.booking_id = bsa.booking_id
+                  AND sa.action_type IN ('COMPLETION', 'TERMINATION')
+                  AND sa.status = 'SCHEDULED'
+                ORDER BY sa.effective_date ASC
+                LIMIT 1
+            ) pending_end ON true
             WHERE bsa.staff_profile_id = $1 AND bsa.status = 'ACTIVE'
             ORDER BY bsa.assigned_on DESC
             LIMIT 1
@@ -756,6 +785,80 @@ exports.getBookingHistory = async (req, res) => {
     }
 };
 
+// Batched schedule lookup for staff-picker UIs: given a set of staff_profile_ids,
+// returns each one's current + future commitments (status ACTIVE or SCHEDULED) so an
+// admin assigning/swapping/reassigning staff can see at a glance whether the person
+// they're about to pick is already busy on another booking around the same dates.
+exports.getStaffSchedules = async (req, res) => {
+    const idsParam = req.query.ids;
+    if (!idsParam) return res.status(200).json({ status: 'success', data: {} });
+
+    const ids = String(idsParam).split(',').map((s) => s.trim()).filter(Boolean);
+    if (ids.length === 0) return res.status(200).json({ status: 'success', data: {} });
+
+    try {
+        const result = await db.query(`
+            SELECT bsa.staff_profile_id, bsa.booking_id, bsa.status,
+                   bsa.service_start_date, bsa.service_end_date,
+                   b.booking_code, b.service_model,
+                   c.full_name AS client_name, p.full_name AS patient_name,
+                   s.shift_number, s.label AS shift_label
+            FROM booking_staff_assignments bsa
+            JOIN bookings b ON bsa.booking_id = b.booking_id
+            LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
+            LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+            LEFT JOIN booking_shift_slots s ON bsa.shift_slot_id = s.shift_slot_id
+            WHERE bsa.staff_profile_id = ANY($1::uuid[])
+              AND bsa.status IN ('ACTIVE', 'SCHEDULED')
+            ORDER BY bsa.staff_profile_id, bsa.service_start_date ASC
+        `, [ids]);
+
+        const byStaff = {};
+        for (const id of ids) byStaff[id] = [];
+        for (const row of result.rows) {
+            (byStaff[row.staff_profile_id] ||= []).push(row);
+        }
+
+        return res.status(200).json({ status: 'success', data: byStaff });
+    } catch (error) {
+        console.error('getStaffSchedules Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error while fetching staff schedules' });
+    }
+};
+
+// Future-dated assignments (status = 'SCHEDULED') for a staff member — bookings/shifts
+// this staff member is queued to start on a future date but hasn't begun yet. Each row
+// carries the matching scheduled_actions.action_id (if still open) so the admin can
+// cancel the future assignment directly from the staff profile.
+exports.getFutureBookings = async (req, res) => {
+    const { staff_profile_id } = req.params;
+
+    try {
+        const dataRes = await db.query(`
+            SELECT bsa.assignment_id, bsa.booking_id, bsa.assigned_on, bsa.service_start_date, bsa.daily_rate, bsa.amount_allocated, bsa.status,
+                   b.status as booking_status, b.service_type, b.service_model,
+                   c.full_name as client_name, p.full_name as patient_name,
+                   s.shift_number, s.label as shift_label, s.start_time as shift_start_time,
+                   sa.action_id
+            FROM booking_staff_assignments bsa
+            LEFT JOIN bookings b ON bsa.booking_id = b.booking_id
+            LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
+            LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+            LEFT JOIN booking_shift_slots s ON bsa.shift_slot_id = s.shift_slot_id
+            LEFT JOIN scheduled_actions sa ON sa.action_type = 'ASSIGNMENT_START' AND sa.status = 'SCHEDULED'
+                AND (sa.payload->>'assignment_id')::uuid = bsa.assignment_id
+            WHERE bsa.staff_profile_id = $1 AND bsa.status = 'SCHEDULED'
+            ORDER BY bsa.service_start_date ASC
+        `, [staff_profile_id]);
+
+        return res.status(200).json({ status: 'success', data: dataRes.rows });
+
+    } catch (error) {
+        console.error('getFutureBookings Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error while fetching future bookings' });
+    }
+};
+
 // Full assignment span + daily attendance history for the staff calendar view.
 // Unlike getBookingHistory (paginated, recent-first), this returns everything
 // needed to render a continuous past/future calendar: every assignment this
@@ -783,11 +886,21 @@ exports.getAttendanceCalendar = async (req, res) => {
                     bsa.assignment_id, bsa.booking_id, bsa.service_start_date, bsa.service_end_date,
                     bsa.daily_rate, bsa.status as assignment_status,
                     b.booking_code, b.status as booking_status, b.service_type, b.service_model,
-                    c.full_name as client_name, p.full_name as patient_name
+                    c.full_name as client_name, p.full_name as patient_name,
+                    pending_end.effective_date as pending_end_date, pending_end.action_type as pending_end_action_type
                 FROM booking_staff_assignments bsa
                 LEFT JOIN bookings b ON bsa.booking_id = b.booking_id
                 LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
                 LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+                LEFT JOIN LATERAL (
+                    SELECT sa.effective_date, sa.action_type
+                    FROM scheduled_actions sa
+                    WHERE sa.booking_id = bsa.booking_id
+                      AND sa.action_type IN ('COMPLETION', 'TERMINATION')
+                      AND sa.status = 'SCHEDULED'
+                    ORDER BY sa.effective_date ASC
+                    LIMIT 1
+                ) pending_end ON true
                 WHERE bsa.staff_profile_id = $1
                 ORDER BY bsa.service_start_date ASC
             `, [staff_profile_id]),
@@ -1468,17 +1581,6 @@ exports.updateStaffExperienceLevel = async (req, res) => {
     }
 
     try {
-        const actorRole = _extractActorRole(req.user.role);
-        if (!['SUPER_ADMIN', 'COORDINATOR'].includes(actorRole)) {
-            const ownProfile = await db.query(
-                'SELECT staff_profile_id FROM staff_profiles WHERE user_id = $1',
-                [req.user.user_id]
-            );
-            if (!ownProfile.rows.length || String(ownProfile.rows[0].staff_profile_id) !== String(staff_profile_id)) {
-                return res.status(403).json({ status: 'error', message: 'Not authorized to update this staff member\'s experience level' });
-            }
-        }
-
         const result = await db.query(
             `UPDATE staff_profiles
              SET experience_level = $1
@@ -2334,7 +2436,8 @@ exports.updateStaffProfile = async (req, res) => {
         email,
         mobile_number,
         role,
-        nic_number
+        nic_number,
+        staff_code
     } = req.body;
 
     // Extract file URLs from multer/S3
@@ -2413,6 +2516,37 @@ exports.updateStaffProfile = async (req, res) => {
             }
         }
 
+        // Validate staff_code uniqueness if changing it
+        if (staff_code !== undefined && String(staff_code).trim() === '') {
+            return res.status(400).json({ status: 'error', message: 'Staff code cannot be empty' });
+        }
+        if (staff_code) {
+            const codeConflict = await db.query(
+                'SELECT 1 FROM staff_profiles WHERE staff_code = $1 AND staff_profile_id <> $2',
+                [String(staff_code).trim(), staff_profile_id]
+            );
+            if (codeConflict.rows.length > 0) {
+                return res.status(409).json({ status: 'error', message: 'This staff code is already in use by another staff member.' });
+            }
+        }
+
+        // Update login credentials on the users table if email / mobile provided
+        if (email || mobile_number) {
+            const userConflict = await db.query(
+                'SELECT user_id FROM users WHERE (email = $1 OR mobile_number = $2) AND user_id <> $3',
+                [email || null, mobile_number || null, existingStaff.user_id]
+            );
+            if (userConflict.rows.length > 0) {
+                return res.status(409).json({ status: 'error', message: 'Another user already has this email or mobile number.' });
+            }
+            await db.query(
+                `UPDATE users
+                 SET email = COALESCE($1, email), mobile_number = COALESCE($2, mobile_number)
+                 WHERE user_id = $3`,
+                [email || null, mobile_number || null, existingStaff.user_id]
+            );
+        }
+
         // Prepare document URLs - keep existing if no new ones uploaded
         const finalDocumentUrls = uploadedDocuments.length > 0 ? uploadedDocuments : existingStaff.document_urls;
 
@@ -2433,10 +2567,13 @@ exports.updateStaffProfile = async (req, res) => {
                 gender = COALESCE($9, gender),
                 willing_to_live_in = COALESCE($10, willing_to_live_in),
                 date_of_birth = COALESCE($11, date_of_birth),
-                updated_at = NOW()
+                staff_code = COALESCE($12, staff_code),
+                nic_number = COALESCE($13, nic_number)
             WHERE staff_profile_id = $1
-            RETURNING 
+            RETURNING
                 staff_profile_id,
+                staff_code,
+                nic_number,
                 user_id,
                 full_name,
                 designation,
@@ -2450,8 +2587,7 @@ exports.updateStaffProfile = async (req, res) => {
                 date_of_birth,
                 current_status,
                 verification_status,
-                created_at,
-                updated_at
+                created_at
         `;
 
         const updateValues = [
@@ -2465,7 +2601,9 @@ exports.updateStaffProfile = async (req, res) => {
             finalProfilePicture || null,
             gender ? gender.toUpperCase() : null,
             willing_to_live_in !== undefined ? willing_to_live_in : null,
-            date_of_birth || null
+            date_of_birth || null,
+            staff_code ? String(staff_code).trim() : null,
+            nic_number || null
         ];
 
         const result = await db.query(updateQuery, updateValues);
@@ -2513,6 +2651,12 @@ exports.updateStaffProfile = async (req, res) => {
 
     } catch (error) {
         console.error('Update Staff Profile Error:', error);
+        if (error.code === '23505') {
+            return res.status(409).json({
+                status: 'error',
+                message: 'A staff member or user with this staff code, email or mobile number already exists.'
+            });
+        }
         res.status(500).json({
             status: 'error',
             message: 'Server error while updating staff profile'
@@ -2537,7 +2681,10 @@ exports.createStaffProfile = async (req, res) => {
         email,
         mobile_number,
         role,
-        nic_number
+        nic_number,
+        staff_code,
+        experience_level,
+        admin_remarks
     } = req.body;
 
     // Extract file URLs from multer/S3
@@ -2566,28 +2713,44 @@ exports.createStaffProfile = async (req, res) => {
             });
         }
 
-        // Always create new user for staff profile creation (Admin only)
-        if (!email || !mobile_number) {
+        // Always create new user for staff profile creation (Admin only).
+        // Mobile number is the login username, so it is the only required contact field;
+        // email is optional.
+        if (!mobile_number) {
             return res.status(400).json({
                 status: 'error',
-                message: 'Email and mobile number are required for staff profile creation'
+                message: 'Mobile number is required for staff profile creation'
             });
         }
+        const finalEmail = email && String(email).trim() ? String(email).trim() : null;
 
-        // Check if user already exists by email or mobile
-        const existingUserQuery = `
-            SELECT user_id, email, mobile_number
-            FROM users 
-            WHERE email = $1 OR mobile_number = $2
-        `;
-
-        const userCheckResult = await db.query(existingUserQuery, [email, mobile_number]);
+        // Check if user already exists by mobile (or email, when one was provided)
+        const userCheckResult = await db.query(
+            `SELECT user_id, email, mobile_number
+             FROM users
+             WHERE mobile_number = $1 OR ($2::text IS NOT NULL AND email = $2)`,
+            [mobile_number, finalEmail]
+        );
 
         if (userCheckResult.rows.length > 0) {
             return res.status(400).json({
                 status: 'error',
                 message: 'User with this email or mobile number already exists'
             });
+        }
+
+        // Enforce staff_code uniqueness server-side
+        if (staff_code) {
+            const codeCheck = await db.query(
+                'SELECT 1 FROM staff_profiles WHERE staff_code = $1',
+                [String(staff_code).trim()]
+            );
+            if (codeCheck.rows.length > 0) {
+                return res.status(409).json({
+                    status: 'error',
+                    message: 'This staff code is already assigned to another staff member.'
+                });
+            }
         }
 
         // Generate temporary password
@@ -2602,7 +2765,7 @@ exports.createStaffProfile = async (req, res) => {
             RETURNING user_id, email, mobile_number, role
         `;
 
-        const userResult = await db.query(createUserQuery, [email, hashedPassword, mobile_number, userRole]);
+        const userResult = await db.query(createUserQuery, [finalEmail, hashedPassword, mobile_number, userRole]);
         const user = userResult.rows[0];
         const finalUserId = user.user_id;
 
@@ -2660,14 +2823,20 @@ exports.createStaffProfile = async (req, res) => {
                 gender,
                 willing_to_live_in,
                 date_of_birth,
+                staff_code,
+                experience_level,
+                admin_remarks,
                 current_status,
                 verification_status,
                 created_at
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'AVAILABLE', 'VERIFIED', NOW()
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'AVAILABLE', 'VERIFIED', NOW()
             )
-            RETURNING 
+            RETURNING
                 staff_profile_id,
+                staff_code,
+                experience_level,
+                admin_remarks,
                 user_id,
                 full_name,
                 designation,
@@ -2701,7 +2870,10 @@ exports.createStaffProfile = async (req, res) => {
             uploadedNicBack,
             gender.toUpperCase(),
             willing_to_live_in || false,
-            date_of_birth
+            date_of_birth,
+            staff_code ? String(staff_code).trim() : null,
+            experience_level || null,
+            admin_remarks || null
         ];
 
         const result = await db.query(insertQuery, insertValues);
@@ -2724,23 +2896,21 @@ exports.createStaffProfile = async (req, res) => {
             console.error('Activity log failed (createStaffProfile):', logErr.message);
         }
 
-        // Send WhatsApp notification with temporary password and email
+        // Send WhatsApp notification with the login credentials (mobile number is the username)
         const messageBody = `Hello ${full_name}!
 
 Great news! Your staff account has been created by the administrator!
 
 Here are your login details:
 
-EMAIL: ${email}
+PHONE NUMBER: ${mobile_number}
 TEMPORARY PASSWORD: ${tempPassword}
 
 STEP 1: Go to VCare website
-STEP 2: Click "Login" 
-STEP 3: Enter your EMAIL: ${email}
+STEP 2: Click "Login"
+STEP 3: Enter your PHONE NUMBER: ${mobile_number}
 STEP 4: Enter your temporary password: ${tempPassword}
 STEP 5: You'll be automatically prompted to set your own permanent password
-
-IMPORTANT: Use your EMAIL address (not phone number) to login the first time!
 
 We're excited to have you join our team of dedicated healthcare professionals!
 

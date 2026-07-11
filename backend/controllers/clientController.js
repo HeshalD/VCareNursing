@@ -1,8 +1,11 @@
 const crypto = require('crypto');
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
-const { sendRegFeeNotice, sendRegFeeInvoice } = require('../utils/metaWhatsapp');
+const { sendRegFeeNotice, sendRegFeeInvoice, sendClientWelcomeNew } = require('../utils/metaWhatsapp');
+const { sendSms } = require('../utils/sms');
 const { generateAndUploadRegFeeInvoice } = require('../utils/regFeeInvoicePdf');
+const html_to_pdf = require('html-pdf-node');
+const dailyInvoiceTemplate = require('../templates/dailyInvoiceTemplate');
 
 async function getActorName(userId) {
   const result = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [userId]);
@@ -763,6 +766,86 @@ exports.updateClientCompanyName = async (req, res) => {
   }
 };
 
+// Admin: update a client's core profile details (name, phone, email, address, gender).
+// Unlike updateClientCompanyName (billing-only), this writes across both
+// client_profiles (full_name, primary_address, gender) and users (mobile_number, email).
+exports.updateClientProfile = async (req, res) => {
+  const { client_id } = req.params;
+  const { full_name, mobile_number, email, primary_address, gender } = req.body;
+
+  if (!full_name || !full_name.trim()) {
+    return res.status(400).json({ message: 'Full name is required.' });
+  }
+  if (!mobile_number || !/^0\d{9}$/.test(mobile_number.trim())) {
+    return res.status(400).json({ message: 'A valid 10-digit mobile number is required.' });
+  }
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+    return res.status(400).json({ message: 'Please enter a valid email address.' });
+  }
+
+  const dbClient = await db.pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+
+    const clientRes = await dbClient.query(
+      `SELECT user_id FROM client_profiles WHERE client_profile_id = $1 FOR UPDATE`,
+      [client_id]
+    );
+    if (clientRes.rows.length === 0) {
+      await dbClient.query('ROLLBACK');
+      return res.status(404).json({ message: 'Client not found.' });
+    }
+    const { user_id } = clientRes.rows[0];
+
+    await dbClient.query(
+      `UPDATE client_profiles
+       SET full_name = $1, primary_address = $2, gender = $3::gender_enum, updated_at = NOW()
+       WHERE client_profile_id = $4`,
+      [full_name.trim(), primary_address?.trim() || null, gender || null, client_id]
+    );
+
+    await dbClient.query(
+      `UPDATE users SET mobile_number = $1, email = $2 WHERE user_id = $3`,
+      [mobile_number.trim(), email?.trim() || null, user_id]
+    );
+
+    const updated = await dbClient.query(
+      `SELECT cp.*, u.email, u.mobile_number
+       FROM client_profiles cp JOIN users u ON cp.user_id = u.user_id
+       WHERE cp.client_profile_id = $1`,
+      [client_id]
+    );
+
+    await dbClient.query('COMMIT');
+
+    try {
+      const actorName = await getActorName(req.user.user_id);
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName,
+        actorRole: extractActorRole(req.user?.role),
+        actionType: 'CLIENT_PROFILE_UPDATED',
+        entityType: 'CLIENT',
+        entityId: String(client_id),
+        details: { full_name: full_name.trim(), mobile_number: mobile_number.trim(), email: email?.trim() || null },
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (client profile update):', logErr.message);
+    }
+
+    return res.status(200).json({ status: 'success', data: updated.rows[0] });
+  } catch (err) {
+    await dbClient.query('ROLLBACK');
+    if (err.code === '23505') {
+      return res.status(409).json({ message: 'That mobile number or email is already in use by another account.' });
+    }
+    console.error('updateClientProfile error:', err);
+    return res.status(500).json({ message: 'Failed to update client details.' });
+  } finally {
+    dbClient.release();
+  }
+};
+
 // 2. Delete Account (Hard Delete)
 exports.deleteMe = async (req, res) => {
   const userId = req.user.user_id;
@@ -1126,7 +1209,9 @@ exports.proxyCreateClient = async (req, res) => {
       return res.status(400).json({ message: 'A user with this email or mobile number already exists.' });
     }
 
-    const tempPassword = Math.random().toString(36).slice(-10);
+    // 8 lowercase alphanumeric chars — the login endpoint recognises this shape as a
+    // temporary password and forces a password change on first login (see authController).
+    const tempPassword = Math.random().toString(36).slice(-8);
     const hashedPassword = await bcrypt.hash(tempPassword, 12);
 
     await dbClient.query('BEGIN');
@@ -1151,9 +1236,24 @@ exports.proxyCreateClient = async (req, res) => {
 
     await dbClient.query('COMMIT');
 
+    // Onboard the new client exactly like a brand-new user from a staff application
+    // approval / booking conversion: login credentials (mobile + temp password) go via
+    // SMS, and a welcome message goes via WhatsApp. WhatsApp policy disallows sending
+    // the password in the template, so the WhatsApp message just welcomes them and
+    // tells them to expect the SMS.
+    const welcomeSms = `Welcome to VCare Nursing, ${full_name}! An account has been created for you. Log in at https://vcarenursing.com/login\n\nUsername (mobile): ${mobile_number}\nTemporary password: ${tempPassword}\n\nYou'll be asked to set your own password on first login. - VCare Nursing`;
+
+    Promise.allSettled([
+      sendSms(mobile_number, welcomeSms),
+      sendClientWelcomeNew(mobile_number, full_name),
+    ]).then(([smsResult, waResult]) => {
+      if (smsResult.status === 'rejected') console.error('Client welcome SMS failed:', smsResult.reason?.message);
+      if (waResult.status === 'rejected') console.error('Client welcome WhatsApp failed:', waResult.reason?.message);
+    });
+
     res.status(201).json({
       status: 'success',
-      message: 'Client profile created successfully.',
+      message: 'Client profile created. Login credentials sent via SMS and a welcome message via WhatsApp.',
       data: { userId, clientProfileId, tempPassword },
     });
   } catch (error) {
@@ -1448,6 +1548,19 @@ exports.sendRegFeeInvoice = async (req, res) => {
       [feeAmount, receiptToken, tokenExpiry, client_id]
     );
 
+    // Persist the invoice PDF so it stays downloadable later (in the client's
+    // Invoices tab and the admin-wide invoice list) instead of only living in
+    // the WhatsApp message that was just sent.
+    try {
+      await db.query(
+        `INSERT INTO client_reg_fee_invoices (client_id, invoice_code, amount, pdf_url, bank_account_id, status, sent_by)
+         VALUES ($1, $2, $3, $4, $5, 'SENT', $6)`,
+        [client_id, invoiceCode, feeAmount, invoicePdfUrl, bank_account_id, req.user.user_id]
+      );
+    } catch (saveErr) {
+      console.error('Failed to save registration fee invoice record:', saveErr.message);
+    }
+
     // Send notice template, then invoice template (PDF document header + bank details in body + CTA button)
     const [noticeResult, invoiceResult] = await Promise.allSettled([
       sendRegFeeNotice(client.mobile_number, client.full_name),
@@ -1515,6 +1628,15 @@ exports.updateRegFeeStatus = async (req, res) => {
     // PAID and WAIVED both resolve the fee obligation; PENDING resets it.
     const feePaid = status === 'PAID' || status === 'WAIVED';
 
+    const current = await db.query(
+      `SELECT reg_fee_status, reg_fee_amount FROM client_profiles WHERE client_profile_id = $1`,
+      [client_id]
+    );
+    if (current.rows.length === 0) {
+      return res.status(404).json({ message: 'Client not found.' });
+    }
+    const wasAlreadyPaid = current.rows[0].reg_fee_status === 'PAID';
+
     const updated = await db.query(
       `UPDATE client_profiles
        SET reg_fee_status = $1, is_registration_fee_paid = $2
@@ -1525,6 +1647,30 @@ exports.updateRegFeeStatus = async (req, res) => {
 
     if (updated.rows.length === 0) {
       return res.status(404).json({ message: 'Client not found.' });
+    }
+
+    // Manually marking PAID (no receipt-upload flow) still means real cash was
+    // confirmed received — record it the same way verifyRegFeePayment does.
+    // WAIVED involves no cash, so no transaction is created for it.
+    if (status === 'PAID' && !wasAlreadyPaid) {
+      try {
+        await db.query(
+          `INSERT INTO transactions (client_id, category, amount, transaction_type, status, notes)
+           VALUES ($1, 'CLIENT_PAYMENT', $2, 'CREDIT', 'COMPLETED', 'Registration fee payment (marked paid by admin)')`,
+          [client_id, current.rows[0].reg_fee_amount]
+        );
+      } catch (txErr) {
+        console.error('Failed to record registration fee transaction:', txErr.message);
+      }
+      try {
+        await db.query(
+          `UPDATE client_reg_fee_invoices SET status = 'PAID'
+           WHERE client_id = $1 AND status = 'SENT'`,
+          [client_id]
+        );
+      } catch (invErr) {
+        console.error('Failed to sync registration fee invoice status:', invErr.message);
+      }
     }
 
     try {
@@ -1585,6 +1731,27 @@ exports.verifyRegFeePayment = async (req, res) => {
       [client_id]
     );
 
+    // Real cash was just confirmed received — record it as a client payment
+    // transaction so it appears on the Transactions ledger and counts as Money In.
+    try {
+      await db.query(
+        `INSERT INTO transactions (client_id, category, amount, transaction_type, status, receipt_url, notes)
+         VALUES ($1, 'CLIENT_PAYMENT', $2, 'CREDIT', 'COMPLETED', $3, 'Registration fee payment (receipt verified)')`,
+        [client_id, client.reg_fee_amount, client.reg_fee_receipt_url || null]
+      );
+    } catch (txErr) {
+      console.error('Failed to record registration fee transaction:', txErr.message);
+    }
+    try {
+      await db.query(
+        `UPDATE client_reg_fee_invoices SET status = 'PAID'
+         WHERE client_id = $1 AND status = 'SENT'`,
+        [client_id]
+      );
+    } catch (invErr) {
+      console.error('Failed to sync registration fee invoice status:', invErr.message);
+    }
+
     try {
       const actorName = await getActorName(req.user.user_id);
       await logActivity({
@@ -1612,6 +1779,65 @@ exports.verifyRegFeePayment = async (req, res) => {
   } catch (error) {
     console.error('Verify Reg Fee Payment Error:', error.message);
     res.status(500).json({ message: 'Failed to verify registration fee payment.', error: error.message });
+  }
+};
+
+// Admin: upload the registration fee payment receipt/slip on the client's behalf
+// (e.g. the client sent it over WhatsApp/email instead of using the self-upload
+// portal). Mirrors the public uploadPaymentReceipt flow, just admin-initiated.
+exports.adminUploadRegFeeReceipt = async (req, res) => {
+  const { client_id } = req.params;
+  const receiptFile = req.file;
+
+  if (!receiptFile) {
+    return res.status(400).json({ message: 'No receipt file was uploaded.' });
+  }
+
+  try {
+    const clientRes = await db.query(
+      `SELECT full_name, reg_fee_status FROM client_profiles WHERE client_profile_id = $1`,
+      [client_id]
+    );
+    if (clientRes.rows.length === 0) {
+      return res.status(404).json({ message: 'Client not found.' });
+    }
+
+    const client = clientRes.rows[0];
+    if (['PAID', 'WAIVED'].includes(client.reg_fee_status)) {
+      return res.status(409).json({ message: `Registration fee is already marked as ${client.reg_fee_status}.` });
+    }
+
+    const updated = await db.query(
+      `UPDATE client_profiles
+       SET reg_fee_receipt_url = $1, reg_fee_status = 'RECEIPT_UPLOADED'
+       WHERE client_profile_id = $2
+       RETURNING reg_fee_status, reg_fee_receipt_url`,
+      [receiptFile.location, client_id]
+    );
+
+    try {
+      const actorName = await getActorName(req.user.user_id);
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName,
+        actorRole: extractActorRole(req.user?.role),
+        actionType: 'REG_FEE_RECEIPT_UPLOADED_BY_ADMIN',
+        entityType: 'CLIENT',
+        entityId: String(client_id),
+        details: { client_name: client.full_name, receipt_url: receiptFile.location },
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (admin reg fee receipt upload):', logErr.message);
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Receipt uploaded. Review it and verify the payment to mark the fee as paid.',
+      data: updated.rows[0],
+    });
+  } catch (error) {
+    console.error('Admin Upload Reg Fee Receipt Error:', error.message);
+    res.status(500).json({ message: 'Failed to upload registration fee receipt.', error: error.message });
   }
 };
 
@@ -1731,5 +1957,140 @@ exports.getAdminInvoices = async (req, res) => {
   } catch (err) {
     console.error('Get admin invoices error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to fetch invoices.' });
+  }
+};
+
+/**
+ * @route   GET /api/client/invoice-pdf/:daily_invoice_id
+ * @desc    Generate and download a single daily invoice as a PDF (on demand)
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ */
+exports.downloadDailyInvoicePdf = async (req, res) => {
+  const { daily_invoice_id } = req.params;
+  try {
+    const result = await db.query(
+      `SELECT
+          bdi.daily_invoice_id, bdi.service_date::text, bdi.status, bdi.amount,
+          bdi.decided_by_name, bdi.decided_at, bdi.notes,
+          ss.label AS shift_label, ss.shift_number,
+          b.booking_id, b.booking_code, b.service_type,
+          cp.full_name AS client_name
+       FROM booking_daily_invoices bdi
+       JOIN bookings b ON bdi.booking_id = b.booking_id
+       LEFT JOIN booking_shift_slots ss ON bdi.shift_slot_id = ss.shift_slot_id
+       LEFT JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+       WHERE bdi.daily_invoice_id = $1`,
+      [daily_invoice_id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ status: 'error', message: 'Invoice not found.' });
+    }
+
+    const inv = result.rows[0];
+    const formatDate = (v) => {
+      if (!v) return null;
+      const d = new Date(v);
+      return isNaN(d) ? null : d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+    };
+
+    const invoiceCode = `DINV-${String(inv.daily_invoice_id).slice(0, 8).toUpperCase()}`;
+    const html = dailyInvoiceTemplate({
+      invoice_code: invoiceCode,
+      invoice_date: formatDate(new Date()),
+      service_date: formatDate(inv.service_date),
+      client_name: inv.client_name,
+      booking_code: inv.booking_code || String(inv.booking_id).slice(0, 8),
+      service_type: inv.service_type,
+      shift_label: inv.shift_label || (inv.shift_number ? `Shift ${inv.shift_number}` : null),
+      status: inv.status,
+      amount: inv.amount,
+      decided_by_name: inv.decided_by_name,
+      decided_at: formatDate(inv.decided_at),
+      notes: inv.notes,
+    });
+
+    const pdfBuffer = await html_to_pdf.generatePdf({ content: html }, { format: 'A4' });
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${invoiceCode}.pdf"`,
+      'Content-Length': pdfBuffer.length,
+    });
+    res.status(200).send(pdfBuffer);
+  } catch (err) {
+    console.error('Download daily invoice PDF error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to generate invoice PDF.' });
+  }
+};
+
+/**
+ * @route   GET /api/client/:client_id/reg-fee-invoices
+ * @desc    All registration fee invoices ever sent to a single client
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ */
+exports.getClientRegFeeInvoices = async (req, res) => {
+  const { client_id } = req.params;
+  try {
+    const result = await db.query(
+      `SELECT crfi.invoice_id, crfi.invoice_code, crfi.amount, crfi.pdf_url, crfi.status, crfi.created_at,
+              ba.account_nickname AS bank_account_nickname, ba.bank_name
+       FROM client_reg_fee_invoices crfi
+       LEFT JOIN bank_accounts ba ON crfi.bank_account_id = ba.account_id
+       WHERE crfi.client_id = $1
+       ORDER BY crfi.created_at DESC`,
+      [client_id]
+    );
+    res.status(200).json({ status: 'success', data: result.rows });
+  } catch (err) {
+    console.error('Get client reg fee invoices error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to fetch registration fee invoices.' });
+  }
+};
+
+/**
+ * @route   GET /api/client/reg-fee-invoices
+ * @desc    Global registration fee invoices list with filters (status, date, client)
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ */
+exports.getAllRegFeeInvoices = async (req, res) => {
+  const { status, date_from, date_to, client_id, page = 1, limit = 50 } = req.query;
+  const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
+
+  const conditions = [];
+  const params = [];
+  let idx = 1;
+
+  if (status) { conditions.push(`crfi.status = $${idx++}`); params.push(status); }
+  if (date_from) { conditions.push(`crfi.created_at >= $${idx++}`); params.push(date_from); }
+  if (date_to) { conditions.push(`crfi.created_at <= $${idx++}`); params.push(date_to); }
+  if (client_id) { conditions.push(`crfi.client_id = $${idx++}`); params.push(client_id); }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  try {
+    const [rows, countResult] = await Promise.all([
+      db.query(
+        `SELECT crfi.invoice_id, crfi.invoice_code, crfi.amount, crfi.pdf_url, crfi.status, crfi.created_at,
+                cp.client_profile_id, cp.full_name AS client_name
+         FROM client_reg_fee_invoices crfi
+         LEFT JOIN client_profiles cp ON crfi.client_id = cp.client_profile_id
+         ${where}
+         ORDER BY crfi.created_at DESC
+         LIMIT $${idx} OFFSET $${idx + 1}`,
+        [...params, parseInt(limit, 10), offset]
+      ),
+      db.query(`SELECT COUNT(*) FROM client_reg_fee_invoices crfi ${where}`, params),
+    ]);
+
+    const total = parseInt(countResult.rows[0].count, 10);
+    res.status(200).json({
+      status: 'success',
+      data: rows.rows,
+      pagination: { total, page: parseInt(page, 10), limit: parseInt(limit, 10), total_pages: Math.ceil(total / parseInt(limit, 10)) },
+    });
+  } catch (err) {
+    console.error('Get all reg fee invoices error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to fetch registration fee invoices.' });
   }
 };

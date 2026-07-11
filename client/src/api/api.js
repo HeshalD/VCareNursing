@@ -229,6 +229,17 @@ class ApiClient {
 
   }
 
+  async getMyAccountInfo() {
+    return this.request('/auth/me');
+  }
+
+  async createClientProfileForExistingUser(payload) {
+    return this.request('/auth/create-client-profile', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
 
 
   async getAllUsers() {
@@ -296,6 +307,22 @@ class ApiClient {
     return this.request(`/client/${clientId}/billing`, {
       method: 'PATCH',
       body: JSON.stringify({ company_name, honorific }),
+    });
+  }
+
+  async updateClientProfile(clientId, { full_name, mobile_number, email, primary_address, gender }) {
+    return this.request(`/client/${clientId}/profile`, {
+      method: 'PATCH',
+      body: JSON.stringify({ full_name, mobile_number, email, primary_address, gender }),
+    });
+  }
+
+  async adminUploadRegFeeReceipt(clientId, file) {
+    const formData = new FormData();
+    formData.append('receipt', file);
+    return this.request(`/client/${clientId}/admin-upload-reg-fee-receipt`, {
+      method: 'POST',
+      body: formData,
     });
   }
 
@@ -833,6 +860,18 @@ class ApiClient {
     });
   }
 
+  async sendStaffAgreement(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/send-agreement`, {
+      method: 'POST',
+    });
+  }
+
+  async sendStaffDocumentRequest(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/send-document-request`, {
+      method: 'POST',
+    });
+  }
+
   async acceptApplication(applicationId, extras = {}) {
 
     return this.request('/staff/accept', {
@@ -978,6 +1017,16 @@ class ApiClient {
     const queryParams = new URLSearchParams(filters).toString();
     const url = queryParams ? `/staff/${staffProfileId}/booking-history?${queryParams}` : `/staff/${staffProfileId}/booking-history`;
     return this.request(url);
+  }
+
+  async getStaffFutureBookings(staffProfileId) {
+    return this.request(`/staff/${staffProfileId}/future-bookings`);
+  }
+
+  async getStaffSchedules(staffProfileIds) {
+    const ids = [...new Set((staffProfileIds || []).filter(Boolean))];
+    if (ids.length === 0) return { status: 'success', data: {} };
+    return this.request(`/staff/schedules?ids=${ids.join(',')}`);
   }
 
   async getStaffAttendanceCalendar(staffProfileId) {
@@ -1258,10 +1307,10 @@ class ApiClient {
     });
   }
 
-  async confirmAttendanceSalary(attendanceId, approve) {
+  async confirmAttendanceSalary(attendanceId, approve, amount) {
     return this.request(`/bookings/attendance/${attendanceId}/confirm-salary`, {
       method: 'POST',
-      body: JSON.stringify({ approve }),
+      body: JSON.stringify({ approve, ...(amount !== undefined ? { amount } : {}) }),
     });
   }
 
@@ -1277,6 +1326,35 @@ class ApiClient {
   async getAdminInvoices(filters = {}) {
     const qs = new URLSearchParams(filters).toString();
     return this.request(qs ? `/client/all-invoices?${qs}` : '/client/all-invoices');
+  }
+
+  async downloadDailyInvoicePdf(dailyInvoiceId) {
+    const url = `${this.baseURL}/client/invoice-pdf/${dailyInvoiceId}`;
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          ...(this.token && { Authorization: `Bearer ${this.token}` }),
+        },
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Invoice PDF download failed');
+      }
+      return await response.blob();
+    } catch (error) {
+      console.error('Invoice PDF Download Error:', error);
+      throw error;
+    }
+  }
+
+  async getClientRegFeeInvoices(clientId) {
+    return this.request(`/client/${clientId}/reg-fee-invoices`);
+  }
+
+  async getAllRegFeeInvoices(filters = {}) {
+    const qs = new URLSearchParams(filters).toString();
+    return this.request(qs ? `/client/all-reg-fee-invoices?${qs}` : '/client/all-reg-fee-invoices');
   }
 
   // ── Payment receipts ──────────────────────────────────────────────
@@ -1354,10 +1432,21 @@ class ApiClient {
     });
   }
 
+  async rejectTerminationRequest(terminationId, reason) {
+    return this.request(`/bookings/terminations/reject/${terminationId}`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  }
+
   // ── Scheduled actions / Upcoming Events ────────────────────────────────
 
   async getUpcomingEvents() {
     return this.request('/scheduled-actions/upcoming');
+  }
+
+  async getBookingScheduledEvents(bookingId) {
+    return this.request(`/scheduled-actions/booking/${bookingId}`);
   }
 
   async cancelScheduledAction(actionId) {

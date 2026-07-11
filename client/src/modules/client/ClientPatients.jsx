@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import {
-  Search, Plus, Edit2, Trash2, User, Calendar, MapPin,
+  Search, Plus, Trash2, User, Calendar, MapPin,
   Phone, AlertCircle, ChevronDown, ChevronRight,
-  Clock, FileText, Shield, X, Save, Loader2, CheckCircle
+  Clock, FileText, Shield, X, Save, Loader2, CheckCircle, MessageCircle
 } from 'lucide-react';
 import apiClient from '../../api/api';
 
@@ -61,16 +61,9 @@ const serializeEmergencyContacts = (contacts) => ({
   emergency_contact_number: contacts.map(c => c.number).join(' | '),
 });
 
-const deserializeEmergencyContacts = (name, number) => {
-  if (!name) return [{ name: '', number: '' }];
-  const names = name.split(' | ');
-  const numbers = (number || '').split(' | ');
-  return names.map((n, i) => ({ name: n.trim(), number: (numbers[i] || '').trim() }));
-};
-
 // ─── PatientCard ──────────────────────────────────────────────────────────────
 
-const PatientCard = ({ patient, onEdit, onDelete, expanded, onToggle }) => {
+const PatientCard = ({ patient, onDelete, expanded, onToggle }) => {
   const initials = patient.full_name
     ? patient.full_name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
     : '?';
@@ -89,9 +82,6 @@ const PatientCard = ({ patient, onEdit, onDelete, expanded, onToggle }) => {
             <p style={s.patientSub}>{patient.relationship_to_client}</p>
           </div>
           <div style={s.cardActions}>
-            <button onClick={() => onEdit(patient)} style={s.iconBtn} title="Edit">
-              <Edit2 size={13} />
-            </button>
             <button onClick={() => onDelete(patient)} style={{ ...s.iconBtn, color: '#ef4444' }} title="Delete">
               <Trash2 size={13} />
             </button>
@@ -215,8 +205,7 @@ const MetaPair = ({ label, value, mono, valueStyle }) => (
 
 // ─── PatientFormModal ─────────────────────────────────────────────────────────
 
-const PatientFormModal = ({ mode, formData, onChange, onSubmit, onClose, saving }) => {
-  const isEdit = mode === 'edit';
+const PatientFormModal = ({ formData, onChange, onSubmit, onClose, saving }) => {
   const field = (label, key, opts = {}) => (
     <div style={s.fieldWrap}>
       <label style={s.fieldLabel}>{label}</label>
@@ -264,7 +253,7 @@ const PatientFormModal = ({ mode, formData, onChange, onSubmit, onClose, saving 
       <div style={s.modal}>
         {/* Modal header */}
         <div style={s.modalHeader}>
-          <h2 style={s.modalTitle}>{isEdit ? 'Edit Care Profile' : 'Add New Care Profile'}</h2>
+          <h2 style={s.modalTitle}>Add New Care Profile</h2>
           <button onClick={onClose} style={s.modalClose}>
             <X size={16} />
           </button>
@@ -341,7 +330,7 @@ const PatientFormModal = ({ mode, formData, onChange, onSubmit, onClose, saving 
             {saving
               ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
               : <Save size={13} />}
-            {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Care Profile'}
+            {saving ? 'Saving…' : 'Add Care Profile'}
           </button>
         </div>
       </div>
@@ -410,7 +399,6 @@ const ClientPatients = () => {
   const [clientProfile, setClientProfile]   = useState(null);
   const [searchTerm, setSearchTerm]         = useState('');
   const [showAddModal, setShowAddModal]     = useState(false);
-  const [showEditModal, setShowEditModal]   = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState(null);
   const [expandedPatients, setExpandedPatients] = useState(new Set());
@@ -476,28 +464,6 @@ const ClientPatients = () => {
     }
   };
 
-  const handleUpdatePatient = async () => {
-    try {
-      setSaving(true);
-      const { emergency_contacts, ...rest } = formData;
-      const serialized = serializeEmergencyContacts(emergency_contacts);
-      const res = await fetch(`/api/patients/${selectedPatient.patient_id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
-        body: JSON.stringify({ ...rest, ...serialized, age: parseInt(rest.age) }),
-      });
-      if (!res.ok) throw new Error('Failed to update care profile');
-      setShowEditModal(false);
-      setFormData(FORM_EMPTY);
-      await fetchPatients(clientProfile.client_profile_id);
-      flash('Care Profile updated successfully.');
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const handleDeletePatient = async () => {
     try {
       const res = await fetch(`/api/patients/${selectedPatient.patient_id}`, {
@@ -511,19 +477,6 @@ const ClientPatients = () => {
     } catch (err) {
       setError(err.message);
     }
-  };
-
-  const openEditModal = (patient) => {
-    setSelectedPatient(patient);
-    setFormData({
-      full_name: patient.full_name, age: String(patient.age),
-      gender: patient.gender || '',
-      relationship_to_client: patient.relationship_to_client,
-      medical_condition: patient.medical_condition,
-      residential_address: patient.residential_address,
-      emergency_contacts: deserializeEmergencyContacts(patient.emergency_contact_name, patient.emergency_contact_number),
-    });
-    setShowEditModal(true);
   };
 
   const toggleExpanded = async (patientId) => {
@@ -592,6 +545,12 @@ const ClientPatients = () => {
           </div>
         )}
 
+        {/* Contact-to-edit notice */}
+        <div style={s.contactBanner}>
+          <MessageCircle size={14} style={{ color: '#475569', flexShrink: 0 }} />
+          <span>To edit an existing care profile's details, please contact VCare Nursing.</span>
+        </div>
+
         {/* Stats + search row */}
         <div style={s.topRow}>
           <div style={s.statPill}>
@@ -648,7 +607,6 @@ const ClientPatients = () => {
               <div key={patient.patient_id} style={{ display: 'flex', flexDirection: 'column' }}>
                 <PatientCard
                   patient={patient}
-                  onEdit={openEditModal}
                   onDelete={p => { setSelectedPatient(p); setShowDeleteModal(true); }}
                   expanded={expandedPatients.has(patient.patient_id)}
                   onToggle={() => toggleExpanded(patient.patient_id)}
@@ -662,21 +620,10 @@ const ClientPatients = () => {
       {/* Modals */}
       {showAddModal && (
         <PatientFormModal
-          mode="add"
           formData={formData}
           onChange={(k, v) => setFormData(p => ({ ...p, [k]: v }))}
           onSubmit={handleAddPatient}
           onClose={() => { setShowAddModal(false); setFormData(FORM_EMPTY); }}
-          saving={saving}
-        />
-      )}
-      {showEditModal && (
-        <PatientFormModal
-          mode="edit"
-          formData={formData}
-          onChange={(k, v) => setFormData(p => ({ ...p, [k]: v }))}
-          onSubmit={handleUpdatePatient}
-          onClose={() => { setShowEditModal(false); setFormData(FORM_EMPTY); }}
           saving={saving}
         />
       )}
@@ -761,6 +708,12 @@ const s = {
     background: '#fef2f2', border: '1px solid #fecaca',
     borderRadius: 8, padding: '12px 16px',
     fontSize: 13, color: '#991b1b', marginBottom: 20,
+  },
+  contactBanner: {
+    display: 'flex', alignItems: 'center', gap: 10,
+    background: '#f1f5f9', border: '1px solid #e2e8f0',
+    borderRadius: 8, padding: '12px 16px',
+    fontSize: 13, color: '#475569', marginBottom: 20,
   },
 
   /* Top row */

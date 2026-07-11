@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Menu, X, User, LogOut, Briefcase, Calendar, ChevronDown, Users, Wallet, Star } from 'lucide-react';
+import { Menu, X, User, LogOut, Briefcase, Calendar, ChevronDown, Users, Wallet, Star, UserPlus } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import logoUrl from '../../assets/Logo/VCareLogo.png';
 const Navbar = () => {
@@ -69,7 +69,10 @@ const Navbar = () => {
   };
 
   const isStaffUser = () => {
-    const staffRoles = ['CARETAKER', 'NURSE', 'NANNY', 'ACCOUNTS', 'COORDINATOR', 'SALES', 'STORE_MANAGER'];
+    const staffRoles = [
+      'CARETAKER', 'NURSE', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR',
+      'ACCOUNTS', 'COORDINATOR', 'SALES', 'STORE_MANAGER',
+    ];
     return normalizeRoles(user?.role).some(r => staffRoles.includes(r));
   };
 
@@ -186,14 +189,23 @@ const Navbar = () => {
                     )}
                   </div>
                 ) : (
-                  /* Staff-only: no dropdown, just a logout icon button */
-                  <button
-                    onClick={handleLogout}
-                    className="flex items-center gap-2 px-3 py-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-full transition-all text-sm font-medium"
-                    title="Logout"
-                  >
-                    <LogOut className="w-4 h-4" />
-                  </button>
+                  /* Staff-only, no client profile yet: offer to create one, plus logout */
+                  <div className="flex items-center gap-2">
+                    <Link
+                      to="/create-client-profile"
+                      className="flex items-center gap-2 px-4 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-full text-sm font-medium transition-all"
+                    >
+                      <UserPlus className="w-4 h-4" />
+                      Create Client Profile
+                    </Link>
+                    <button
+                      onClick={handleLogout}
+                      className="flex items-center gap-2 px-3 py-2 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-full transition-all text-sm font-medium"
+                      title="Logout"
+                    >
+                      <LogOut className="w-4 h-4" />
+                    </button>
+                  </div>
                 )}
               </div>
             ) : (
@@ -324,14 +336,24 @@ const Navbar = () => {
                     </div>
                   </>
                 ) : (
-                  /* Staff-only: logout button below the dashboard link */
-                  <button
-                    onClick={() => { handleLogout(); setIsOpen(false); }}
-                    className="flex items-center justify-center gap-2 w-full px-5 py-3 text-red-600 hover:bg-red-50 rounded-xl font-medium transition-all"
-                  >
-                    <LogOut className="w-4 h-4" />
-                    Logout
-                  </button>
+                  /* Staff-only, no client profile yet: offer to create one, plus logout */
+                  <>
+                    <Link
+                      to="/create-client-profile"
+                      className="flex items-center justify-center gap-2 w-full px-5 py-3 text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-xl font-medium transition-all"
+                      onClick={() => setIsOpen(false)}
+                    >
+                      <UserPlus className="w-4 h-4" />
+                      Create Client Profile
+                    </Link>
+                    <button
+                      onClick={() => { handleLogout(); setIsOpen(false); }}
+                      className="flex items-center justify-center gap-2 w-full px-5 py-3 text-red-600 hover:bg-red-50 rounded-xl font-medium transition-all"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      Logout
+                    </button>
+                  </>
                 )}
               </>
             ) : (

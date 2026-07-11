@@ -61,7 +61,11 @@ const finalizeBookingState = async (req, res, nextStatus, actorLabel, includeTer
     try {
         await client.query('BEGIN');
 
-        const booking = await getBookingSettlementSnapshot(client, booking_id);
+        // Resolve the chosen completion/termination date up front so the settlement snapshot
+        // can project the balance through that date — not just what's been invoiced so far.
+        const targetDateInput = effective_date || actual_end_time || null;
+
+        const booking = await getBookingSettlementSnapshot(client, booking_id, targetDateInput);
 
         if (!booking) {
             await client.query('ROLLBACK');
@@ -79,30 +83,29 @@ const finalizeBookingState = async (req, res, nextStatus, actorLabel, includeTer
             });
         }
 
-        const remainingBalance = parseFloat(booking.remaining_balance || 0);
+        const settlementBalance = parseFloat(booking.settlement_balance ?? booking.remaining_balance ?? 0);
 
-        if (remainingBalance > 0 && !settlement_action) {
+        if (settlementBalance > 0 && !settlement_action) {
             await client.query('ROLLBACK');
             return res.status(400).json({
                 status: 'error',
                 message: 'settlement_action is required when there is a remaining balance',
-                remaining_balance: remainingBalance,
+                remaining_balance: settlementBalance,
                 allowed_actions: ['WALLET_DEPOSIT', 'BANK_REFUND', 'NO_REFUND']
             });
         }
 
-        if (remainingBalance > 0 && settlement_action === 'NO_REFUND' && !settlement_note) {
+        if (settlementBalance > 0 && settlement_action === 'NO_REFUND' && !settlement_note) {
             await client.query('ROLLBACK');
             return res.status(400).json({
                 status: 'error',
                 message: 'settlement_note is required when choosing NO_REFUND',
-                remaining_balance: remainingBalance
+                remaining_balance: settlementBalance
             });
         }
 
         // If the admin chose a future date, defer execution: leave the booking running
         // (still billed) and enqueue a scheduled_actions row the cron will execute on the day.
-        const targetDateInput = effective_date || actual_end_time || null;
         const businessDate = await getBusinessDate(client);
 
         if (targetDateInput && isFutureDate(toDateStr(targetDateInput), businessDate)) {
@@ -1009,6 +1012,7 @@ exports.getAdminBookingDetail = async (req, res) => {
                     st.requested_end_date,
                     st.end_date,
                     st.reason,
+                    st.rejection_reason,
                     st.status,
                     st.created_at,
                     st.end_date - CURRENT_DATE as days_until_end
@@ -1767,6 +1771,7 @@ exports.getTerminationHistory = async (req, res) => {
                 st.end_date as official_end_date,
                 st.status,
                 st.reason,
+                st.rejection_reason,
                 st.created_at as request_date,
                 b.booking_id,
                 b.booking_code,
@@ -1909,6 +1914,104 @@ exports.approveTerminationRequest = async (req, res) => {
         await client.query('ROLLBACK');
         console.error("Approve Termination Error:", error);
         res.status(500).json({ message: "Failed to approve termination request." });
+    } finally {
+        client.release();
+    }
+};
+
+exports.rejectTerminationRequest = async (req, res) => {
+    const { termination_id } = req.params;
+    const { reason } = req.body;
+
+    if (!reason || !reason.trim()) {
+        return res.status(400).json({ status: 'error', message: 'A reason is required when rejecting a termination request.' });
+    }
+
+    const client = await db.pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        const termRes = await client.query(
+            `SELECT st.*, b.client_id, b.status as booking_status
+             FROM service_terminations st
+             JOIN bookings b ON st.booking_id = b.booking_id
+             WHERE st.termination_id = $1 FOR UPDATE`,
+            [termination_id]
+        );
+
+        if (termRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Termination request not found.' });
+        }
+
+        const request = termRes.rows[0];
+
+        if (request.status !== 'PENDING') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ status: 'error', message: `Request is already ${request.status}.` });
+        }
+
+        await client.query(
+            `UPDATE service_terminations
+             SET status = 'REJECTED', rejection_reason = $1, reviewed_by = $2, reviewed_at = NOW()
+             WHERE termination_id = $3`,
+            [reason.trim(), req.user?.user_id || null, termination_id]
+        );
+
+        // The booking was parked as PENDING_TERMINATION while this request was open — restore it.
+        if (request.booking_status === 'PENDING_TERMINATION') {
+            await client.query(`UPDATE bookings SET status = 'ACTIVE' WHERE booking_id = $1`, [request.booking_id]);
+        }
+
+        await client.query('COMMIT');
+
+        // Notify the client (fire-and-forget, non-blocking)
+        (async () => {
+            try {
+                const clientRes = await db.query(
+                    `SELECT u.mobile_number, cp.full_name
+                     FROM client_profiles cp JOIN users u ON cp.user_id = u.user_id
+                     WHERE cp.client_profile_id = $1`,
+                    [request.client_id]
+                );
+                if (clientRes.rows.length > 0) {
+                    const { mobile_number, full_name } = clientRes.rows[0];
+                    await sendSms(
+                        mobile_number,
+                        `VCare: Hi ${full_name}, your termination request (${request.termination_code}) was not approved. Reason: ${reason.trim()}. Please contact us if you have questions.`
+                    );
+                }
+            } catch (e) {
+                console.error('[rejectTerminationRequest] notify error:', e.message);
+            }
+        })();
+
+        try {
+            const actorRole = extractActorRole(req.user?.role);
+            const actorName = await getActorName(req.user?.user_id);
+            await logActivity({
+                actorUserId: req.user?.user_id,
+                actorName,
+                actorRole,
+                actionType: 'TERMINATION_REJECTED',
+                entityType: 'booking',
+                entityId: String(request.booking_id),
+                details: { termination_id, booking_id: request.booking_id, reason: reason.trim() },
+            });
+        } catch (e) {
+            console.error('[rejectTerminationRequest] activity log error:', e.message);
+        }
+
+        res.status(200).json({
+            status: 'success',
+            message: 'Termination request rejected. The booking remains active.'
+        });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error("Reject Termination Error:", error);
+        res.status(500).json({ status: 'error', message: "Failed to reject termination request." });
     } finally {
         client.release();
     }

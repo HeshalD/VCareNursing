@@ -62,6 +62,11 @@ const RELATIONSHIPS = [
   'Guardian', 'Caregiver', 'Friend', 'Neighbor', 'Other',
 ];
 
+const serializeEmergencyContacts = (contacts) => ({
+  emergencyContactName: contacts.map((c) => c.name).join(' | '),
+  emergencyContactNumber: contacts.map((c) => c.number).join(' | '),
+});
+
 // ─── Searchable client select ─────────────────────────────────────────────────
 
 const ClientSelect = ({ clients, value, onChange, disabled }) => {
@@ -167,8 +172,7 @@ const AdminDirectBookingDrawer = ({
   const [npRelationship, setNpRelationship] = useState('');
   const [npMedicalCondition, setNpMedicalCondition] = useState('');
   const [npResidentialAddress, setNpResidentialAddress] = useState('');
-  const [npEmergencyContactName, setNpEmergencyContactName] = useState('');
-  const [npEmergencyContactNumber, setNpEmergencyContactNumber] = useState('');
+  const [npEmergencyContacts, setNpEmergencyContacts] = useState([{ name: '', number: '' }]);
 
   // Service details
   const [serviceType, setServiceType] = useState('');
@@ -201,7 +205,7 @@ const AdminDirectBookingDrawer = ({
       setSelectedPatientId('');
       setNpFullName(''); setNpAge(''); setNpGender(''); setNpRelationship('');
       setNpMedicalCondition(''); setNpResidentialAddress('');
-      setNpEmergencyContactName(''); setNpEmergencyContactNumber('');
+      setNpEmergencyContacts([{ name: '', number: '' }]);
       setServiceType(''); setServiceModel(''); setPreferredGender('ANY');
       setStartDate(''); setScheduledEndDate(''); setDailyRate('');
       setAdminNotes('');
@@ -229,6 +233,16 @@ const AdminDirectBookingDrawer = ({
       .catch(() => setPatients([]))
       .finally(() => setPatientsLoading(false));
   }, [selectedClientId]);
+
+  // ── New-patient emergency contacts (one or more) ─────────────────────────
+  const updateEmergencyContact = (idx, key, value) =>
+    setNpEmergencyContacts((prev) => prev.map((c, i) => (i === idx ? { ...c, [key]: value } : c)));
+
+  const addEmergencyContact = () =>
+    setNpEmergencyContacts((prev) => [...prev, { name: '', number: '' }]);
+
+  const removeEmergencyContact = (idx) =>
+    setNpEmergencyContacts((prev) => prev.filter((_, i) => i !== idx));
 
   // ── Validation ────────────────────────────────────────────────────────────
   const validate = () => {
@@ -272,8 +286,11 @@ const AdminDirectBookingDrawer = ({
       if (npRelationship) payload.new_patient_relationship_to_client = npRelationship;
       if (npMedicalCondition.trim()) payload.new_patient_medical_condition = npMedicalCondition.trim();
       if (npResidentialAddress.trim()) payload.new_patient_residential_address = npResidentialAddress.trim();
-      if (npEmergencyContactName.trim()) payload.new_patient_emergency_contact_name = npEmergencyContactName.trim();
-      if (npEmergencyContactNumber.trim()) payload.new_patient_emergency_contact_number = npEmergencyContactNumber.trim();
+      const { emergencyContactName, emergencyContactNumber } = serializeEmergencyContacts(
+        npEmergencyContacts.filter((c) => c.name.trim() || c.number.trim())
+      );
+      if (emergencyContactName) payload.new_patient_emergency_contact_name = emergencyContactName;
+      if (emergencyContactNumber) payload.new_patient_emergency_contact_number = emergencyContactNumber;
     }
 
     try {
@@ -465,25 +482,46 @@ const AdminDirectBookingDrawer = ({
                       placeholder="Patient's residential address"
                     />
                   </Field>
-                  <div className="grid grid-cols-2 gap-3">
-                    <Field label="Emergency Contact Name">
-                      <input
-                        type="text"
-                        value={npEmergencyContactName}
-                        onChange={(e) => setNpEmergencyContactName(e.target.value)}
-                        className={inputCls(false)}
-                        placeholder="Contact name"
-                      />
-                    </Field>
-                    <Field label="Emergency Contact Number">
-                      <input
-                        type="tel"
-                        value={npEmergencyContactNumber}
-                        onChange={(e) => setNpEmergencyContactNumber(e.target.value)}
-                        className={inputCls(false)}
-                        placeholder="Phone number"
-                      />
-                    </Field>
+                  <div>
+                    <div className="mb-2 flex items-center justify-between">
+                      <label className="block text-xs font-medium text-slate-600">Emergency Contacts</label>
+                      <button
+                        type="button"
+                        onClick={addEmergencyContact}
+                        className="text-xs font-semibold text-blue-600 hover:text-blue-700"
+                      >
+                        + Add Contact
+                      </button>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      {npEmergencyContacts.map((contact, idx) => (
+                        <div key={idx} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
+                          <input
+                            type="text"
+                            value={contact.name}
+                            onChange={(e) => updateEmergencyContact(idx, 'name', e.target.value)}
+                            className={inputCls(false)}
+                            placeholder="Contact name"
+                          />
+                          <input
+                            type="tel"
+                            value={contact.number}
+                            onChange={(e) => updateEmergencyContact(idx, 'number', e.target.value)}
+                            className={inputCls(false)}
+                            placeholder="Phone number"
+                          />
+                          {npEmergencyContacts.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removeEmergencyContact(idx)}
+                              className="flex h-9 w-9 items-center justify-center rounded-lg border border-red-200 bg-red-50 text-red-500 hover:bg-red-100"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
@@ -544,7 +582,7 @@ const AdminDirectBookingDrawer = ({
               </Field>
               <Field label="Daily Rate" required error={errors.dailyRate}>
                 <div className="flex">
-                  <span className="inline-flex items-center px-3 text-sm text-slate-500 bg-slate-50 border border-r-0 border-slate-200 rounded-l-lg">
+                  <span className="inline-flex items-center px-3 text-sm text-slate-700 bg-slate-50 border border-r-0 border-slate-200 rounded-l-lg">
                     LKR
                   </span>
                   <input
@@ -554,7 +592,7 @@ const AdminDirectBookingDrawer = ({
                     min="0"
                     step="0.01"
                     placeholder="e.g. 2500.00"
-                    className={`flex-1 px-3 py-2 text-sm border rounded-r-lg outline-none focus:ring-2 focus:border-blue-400 transition-colors ${
+                    className={`flex-1 px-3 py-2 text-sm text-slate-800 border rounded-r-lg outline-none focus:ring-2 focus:border-blue-400 transition-colors ${
                       errors.dailyRate
                         ? 'border-red-400 bg-red-50 focus:ring-red-100'
                         : 'border-slate-200 focus:ring-blue-100'

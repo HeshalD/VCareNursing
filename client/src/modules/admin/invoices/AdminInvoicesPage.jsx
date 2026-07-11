@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Loader2, X, Filter, ExternalLink, Receipt, Check, AlertCircle,
+  Loader2, X, Filter, ExternalLink, Receipt, Check, AlertCircle, Download,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -20,11 +20,20 @@ const STATUS_COLORS = {
   PENDING:  'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200',
 };
 
+const REG_FEE_STATUS_COLORS = {
+  SENT: 'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200',
+  PAID: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
+};
+
 const PAGE_SIZE = 50;
 
 export default function AdminInvoicesPage() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState('pending'); // 'pending' | 'all'
+  const [tab, setTab] = useState('pending'); // 'pending' | 'all' | 'reg-fee'
+
+  // ── Registration fee invoices state ────────────────────────────────────────
+  const [regFeeInvoices, setRegFeeInvoices] = useState([]);
+  const [regFeeLoading, setRegFeeLoading] = useState(false);
 
   // ── Pending queue state ────────────────────────────────────────────────────
   const [pending, setPending] = useState([]);
@@ -96,9 +105,23 @@ export default function AdminInvoicesPage() {
     }
   }, [page, statusFilter, dateFrom, dateTo, bookingIdFilter]);
 
+  // ── Registration fee invoices fetch ────────────────────────────────────────
+  const fetchRegFeeInvoices = useCallback(async () => {
+    setRegFeeLoading(true);
+    try {
+      const res = await apiClient.getAllRegFeeInvoices({ limit: 200 });
+      setRegFeeInvoices(Array.isArray(res?.data) ? res.data : []);
+    } catch {
+      setRegFeeInvoices([]);
+    } finally {
+      setRegFeeLoading(false);
+    }
+  }, []);
+
   useEffect(() => { fetchPending(); }, [fetchPending]);
   useEffect(() => { if (tab === 'all') fetchInvoices(); }, [tab]); // eslint-disable-line
   useEffect(() => { if (tab === 'all') fetchInvoices(); }, [page]); // eslint-disable-line
+  useEffect(() => { if (tab === 'reg-fee') fetchRegFeeInvoices(); }, [tab]); // eslint-disable-line
 
   // ── Decide (approve / reject) ──────────────────────────────────────────────
   const handleDecide = async (inv, approve) => {
@@ -122,6 +145,29 @@ export default function AdminInvoicesPage() {
     }
   };
 
+  // ── Download a single daily invoice PDF ────────────────────────────────────
+  const [downloadingId, setDownloadingId] = useState('');
+  const [downloadError, setDownloadError] = useState('');
+  const handleDownload = async (inv) => {
+    setDownloadingId(inv.daily_invoice_id);
+    setDownloadError('');
+    try {
+      const blob = await apiClient.downloadDailyInvoicePdf(inv.daily_invoice_id);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Invoice_${inv.booking_code || inv.booking_id?.slice(0, 8)}_${inv.service_date}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setDownloadError(err.message || 'Failed to download invoice PDF.');
+    } finally {
+      setDownloadingId('');
+    }
+  };
+
   const applyFilters = () => { setPage(1); fetchInvoices({ page: 1 }); };
   const clearFilters = () => {
     setStatusFilter(''); setDateFrom(''); setDateTo(''); setBookingIdFilter('');
@@ -141,6 +187,7 @@ export default function AdminInvoicesPage() {
           {[
             { id: 'pending', label: 'Pending Approvals', count: pending.length },
             { id: 'all',     label: 'All Invoices' },
+            { id: 'reg-fee', label: 'Registration Fees' },
           ].map(({ id, label, count }) => (
             <button
               key={id}
@@ -163,6 +210,13 @@ export default function AdminInvoicesPage() {
             </button>
           ))}
         </div>
+
+        {/* Download error (shared across tabs) */}
+        {downloadError && (
+          <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+            <AlertCircle className="h-4 w-4 shrink-0" /> {downloadError}
+          </div>
+        )}
 
         {/* ── PENDING APPROVALS TAB ─────────────────────────────────────────── */}
         {tab === 'pending' && (
@@ -266,6 +320,17 @@ export default function AdminInvoicesPage() {
                                 >
                                   {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
                                   Reject
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={downloadingId === inv.daily_invoice_id}
+                                  onClick={() => handleDownload(inv)}
+                                  title="Download invoice PDF"
+                                  className="inline-flex items-center gap-1 rounded border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  {downloadingId === inv.daily_invoice_id
+                                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                                    : <Download className="h-3 w-3" />}
                                 </button>
                               </div>
                             </td>
@@ -379,6 +444,7 @@ export default function AdminInvoicesPage() {
                         <th className="px-4 py-3 text-right">Amount</th>
                         <th className="px-4 py-3 text-left">Decided By</th>
                         <th className="px-4 py-3 text-left">Notes</th>
+                        <th className="px-4 py-3 text-left">Download</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 bg-white">
@@ -423,6 +489,19 @@ export default function AdminInvoicesPage() {
                             {inv.decided_at && <span className="block text-[11px] text-gray-400">{formatDate(inv.decided_at)}</span>}
                           </td>
                           <td className="px-4 py-3 text-gray-500 max-w-[160px] truncate">{inv.notes || '—'}</td>
+                          <td className="px-4 py-3">
+                            <button
+                              type="button"
+                              disabled={downloadingId === inv.daily_invoice_id}
+                              onClick={() => handleDownload(inv)}
+                              className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {downloadingId === inv.daily_invoice_id
+                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                : <Download className="h-3.5 w-3.5" />}
+                              Download
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -458,6 +537,73 @@ export default function AdminInvoicesPage() {
               )}
             </div>
           </>
+        )}
+
+        {/* ── REGISTRATION FEES TAB ─────────────────────────────────────────── */}
+        {tab === 'reg-fee' && (
+          <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+            {regFeeLoading ? (
+              <div className="flex items-center justify-center gap-2 py-16 text-sm text-gray-500">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading registration fee invoices…
+              </div>
+            ) : regFeeInvoices.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-3 py-16 text-gray-400">
+                <Receipt className="h-8 w-8" />
+                <p className="text-sm font-medium">No registration fee invoices sent yet</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-100 text-sm">
+                  <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                    <tr>
+                      <th className="px-4 py-3 text-left">Date Sent</th>
+                      <th className="px-4 py-3 text-left">Client</th>
+                      <th className="px-4 py-3 text-left">Invoice Code</th>
+                      <th className="px-4 py-3 text-left">Status</th>
+                      <th className="px-4 py-3 text-right">Amount</th>
+                      <th className="px-4 py-3 text-left">Download</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 bg-white">
+                    {regFeeInvoices.map((inv) => (
+                      <tr key={inv.invoice_id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{formatDate(inv.created_at)}</td>
+                        <td className="px-4 py-3">
+                          {inv.client_name ? (
+                            <button
+                              type="button"
+                              onClick={() => navigate(`/admin/users/${inv.client_profile_id}/detail`)}
+                              className="text-blue-600 hover:underline font-medium inline-flex items-center gap-1"
+                            >
+                              {inv.client_name}
+                              <ExternalLink className="h-3 w-3 text-gray-400" />
+                            </button>
+                          ) : '—'}
+                        </td>
+                        <td className="px-4 py-3 font-mono text-xs text-gray-600">{inv.invoice_code}</td>
+                        <td className="px-4 py-3">
+                          <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${REG_FEE_STATUS_COLORS[inv.status] || 'bg-gray-100 text-gray-600'}`}>
+                            {inv.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(inv.amount)}</td>
+                        <td className="px-4 py-3">
+                          <a
+                            href={inv.pdf_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                          >
+                            <Download className="h-3.5 w-3.5" /> Download
+                          </a>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         )}
       </div>
     </AdminLayout>

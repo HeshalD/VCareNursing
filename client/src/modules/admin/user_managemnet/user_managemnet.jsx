@@ -132,7 +132,7 @@ const ClientManagement = () => {
         company_name: formData.company_name || undefined,
       };
       const res = await apiClient.createClientProfile(payload);
-      setFormSuccess(`Client created. Temporary password: ${res.data?.tempPassword ?? '(check server)'}`);
+      setFormSuccess(`Temporary password: ${res.data?.tempPassword ?? '(check server)'}`);
       fetchClients();
     } catch (err) {
       setFormError(err.response?.data?.message || 'Failed to create client.');
@@ -325,8 +325,11 @@ const ClientManagement = () => {
               {formSuccess && (
                 <div className="mx-5 mt-4 px-4 py-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-lg">
                   <p className="font-semibold mb-0.5">Client created successfully.</p>
-                  <p>{formSuccess.replace('Client created. ', '')}</p>
-                  <p className="mt-1 text-emerald-600">Share this password with the client and ask them to change it on first login.</p>
+                  <p>{formSuccess}</p>
+                  <p className="mt-1 text-emerald-600">
+                    Login credentials (mobile number + temporary password) have been sent to the client via SMS,
+                    and a welcome message via WhatsApp. They'll be required to set their own password on first login.
+                  </p>
                 </div>
               )}
 

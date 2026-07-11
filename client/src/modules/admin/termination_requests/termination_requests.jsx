@@ -94,6 +94,12 @@ const TerminationRequests = () => {
   const [approveLoading, setApproveLoading] = useState(false);
   const [approveError, setApproveError] = useState(null);
 
+  // Reject modal state
+  const [rejectModal, setRejectModal] = useState(null); // null | request object
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejectLoading, setRejectLoading] = useState(false);
+  const [rejectError, setRejectError] = useState(null);
+
   useEffect(() => {
     fetchAll();
   }, []);
@@ -174,6 +180,38 @@ const TerminationRequests = () => {
       setApproveError(err.message || 'Failed to approve termination.');
     } finally {
       setApproveLoading(false);
+    }
+  };
+
+  const openRejectModal = (e, request) => {
+    e.stopPropagation();
+    setRejectModal(request);
+    setRejectReason('');
+    setRejectError(null);
+  };
+
+  const closeRejectModal = () => {
+    setRejectModal(null);
+    setRejectError(null);
+  };
+
+  const submitRejection = async () => {
+    if (!rejectReason.trim()) {
+      setRejectError('A reason is required when rejecting a termination request.');
+      return;
+    }
+    try {
+      setRejectLoading(true);
+      setRejectError(null);
+      await apiClient.rejectTerminationRequest(rejectModal.termination_id, rejectReason.trim());
+      closeRejectModal();
+      setExpandedId(null);
+      fetchTerminationRequests();
+    } catch (err) {
+      console.error('Error rejecting termination:', err);
+      setRejectError(err.message || 'Failed to reject termination.');
+    } finally {
+      setRejectLoading(false);
     }
   };
 
@@ -384,13 +422,22 @@ const TerminationRequests = () => {
                                       Finalises the termination and processes settlement. The staff member will be marked as available.
                                     </p>
                                   </div>
-                                  <button
-                                    onClick={(e) => openModal(e, request)}
-                                    className="inline-flex items-center gap-2 px-5 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 transition-colors"
-                                  >
-                                    <CheckCircle className="w-4 h-4" />
-                                    Approve
-                                  </button>
+                                  <div className="flex items-center gap-2 flex-shrink-0">
+                                    <button
+                                      onClick={(e) => openRejectModal(e, request)}
+                                      className="inline-flex items-center gap-2 px-5 py-2 bg-white text-red-600 border border-red-200 text-sm font-semibold rounded-lg hover:bg-red-50 transition-colors"
+                                    >
+                                      <XCircle className="w-4 h-4" />
+                                      Reject
+                                    </button>
+                                    <button
+                                      onClick={(e) => openModal(e, request)}
+                                      className="inline-flex items-center gap-2 px-5 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 transition-colors"
+                                    >
+                                      <CheckCircle className="w-4 h-4" />
+                                      Approve
+                                    </button>
+                                  </div>
                                 </div>
                               </div>
                             </div>
@@ -489,7 +536,9 @@ const TerminationRequests = () => {
                             </td>
                             <td className="px-5 py-4">
                               <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                r.status === 'APPROVED' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'
+                                r.status === 'APPROVED' ? 'bg-green-100 text-green-700'
+                                  : r.status === 'REJECTED' ? 'bg-red-100 text-red-700'
+                                  : 'bg-slate-100 text-slate-600'
                               }`}>
                                 {r.status}
                               </span>
@@ -536,9 +585,15 @@ const TerminationRequests = () => {
                                     </div>
                                   </div>
                                   <div className="bg-white rounded-lg border border-slate-200 p-4">
-                                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Reason</p>
+                                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Client's Reason</p>
                                     <p className="text-sm text-slate-700 leading-relaxed">{r.reason || 'No reason provided.'}</p>
                                   </div>
+                                  {r.status === 'REJECTED' && r.rejection_reason && (
+                                    <div className="bg-red-50 rounded-lg border border-red-200 p-4">
+                                      <p className="text-xs font-semibold text-red-400 uppercase tracking-wide mb-2">Rejection Reason</p>
+                                      <p className="text-sm text-red-800 leading-relaxed">{r.rejection_reason}</p>
+                                    </div>
+                                  )}
                                 </div>
                               </td>
                             </tr>
@@ -706,6 +761,75 @@ const TerminationRequests = () => {
                   <CheckCircle className="w-4 h-4" />
                 )}
                 Confirm Approval
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reject Modal */}
+      {rejectModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={closeRejectModal} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg border border-slate-200" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">Reject Termination Request</h2>
+                <p className="text-xs text-slate-500 mt-0.5">{rejectModal.client_name} · {rejectModal.booking_code || rejectModal.booking_id}</p>
+              </div>
+              <button onClick={closeRejectModal} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors">
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="px-6 py-5 space-y-4">
+              <div className="flex items-center gap-2 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                The booking will remain active and the client will be notified of the rejection.
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+                  Reason for Rejection <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  rows={4}
+                  placeholder="Explain why this termination request is being rejected — this will be shared with the client"
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
+                />
+              </div>
+
+              {rejectError && (
+                <div className="flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                  <XCircle className="w-4 h-4 flex-shrink-0" />
+                  {rejectError}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-200">
+              <button
+                onClick={closeRejectModal}
+                className="px-4 py-2 text-sm font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitRejection}
+                disabled={rejectLoading || !rejectReason.trim()}
+                className="inline-flex items-center gap-2 px-5 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {rejectLoading ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <XCircle className="w-4 h-4" />
+                )}
+                Confirm Rejection
               </button>
             </div>
           </div>
