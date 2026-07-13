@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Search, UserCircle, ChevronRight, Loader2, Plus, X } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import useAutoRefresh from '../../../hooks/useAutoRefresh';
 
 const REG_TABS = ['All', 'Pending', 'Invoiced', 'Receipt Submitted', 'Paid', 'Waived'];
 
@@ -80,18 +81,26 @@ const ClientManagement = () => {
 
   useEffect(() => { fetchClients(); }, []);
 
-  const fetchClients = async () => {
+  const fetchClients = async ({ silent = false } = {}) => {
     try {
-      setLoading(true);
-      setError(null);
+      if (!silent) setLoading(true);
+      if (!silent) setError(null);
       const response = await apiClient.getAllClients();
       setClients(response.data || []);
     } catch (err) {
-      setError('Failed to load clients');
+      if (!silent) setError('Failed to load clients');
+      else console.error('ClientManagement silent refresh error:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
+
+  // Pause while the "Add Client" drawer is open so a background refresh
+  // can't disturb the form the admin is filling in.
+  useAutoRefresh(() => fetchClients({ silent: true }), {
+    intervalMs: 5000,
+    enabled: !showDrawer,
+  });
 
   const openAdd = () => {
     setFormData(BLANK_FORM);

@@ -1,0 +1,567 @@
+// Rental units (physical inventory) + rental agreements (the "who has what,
+// billed how" record) + deposits held against a rental agreement.
+//
+// A rental agreement bills either:
+//  - ONE_TIME: a single invoice covering the whole agreed period, created here.
+//  - RECURRING: a first invoice created here for the opening period, then
+//    cron/rentalInvoicing.js generates one more per billing cycle while the
+//    agreement stays ACTIVE.
+// Any deposit_amount on the agreement rides along on that first invoice —
+// the deposits row itself is only created once that invoice is actually
+// paid (see invoiceController.recordInvoicePayment), so `deposits` only ever
+// contains deposits that were genuinely collected.
+
+const db = require('../config/db');
+const { logActivity } = require('../utils/activityLogger');
+
+function extractActorRole(role) {
+  const raw = Array.isArray(role) ? role[0] : role;
+  return typeof raw === 'string' ? raw.replace(/\{|\}/g, '').split(',')[0].trim() : String(raw);
+}
+
+async function safeLog(params) {
+  try {
+    await logActivity(params);
+  } catch (err) {
+    console.error('Activity log error:', err);
+  }
+}
+
+const VALID_PAYMENT_METHODS = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
+
+class RentalAgreementError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+// Shared by the direct "New Rental Agreement" endpoint (createRentalAgreement
+// below) and quoteController.acceptProductQuote (converting an accepted
+// quotation's rental line item straight into a live agreement). Runs on a
+// caller-supplied pgClient — the caller owns BEGIN/COMMIT/ROLLBACK so it can
+// bundle in its own side effects (e.g. marking a quotation ACCEPTED) in the
+// same transaction. Throws RentalAgreementError for anything the caller
+// should turn into a 4xx response; caller is responsible for rolling back.
+async function createRentalAgreementCore(pgClient, {
+  product_id, unit_id, client_id, walk_in_customer_id, quote_id,
+  billing_type, rate, start_date, end_date, deposit_amount, notes, createdBy,
+}) {
+  if (!product_id) throw new RentalAgreementError(400, 'product_id is required');
+  if (!client_id && !walk_in_customer_id) {
+    throw new RentalAgreementError(400, 'Either client_id or walk_in_customer_id is required');
+  }
+  if (!['ONE_TIME', 'RECURRING'].includes(billing_type)) {
+    throw new RentalAgreementError(400, 'billing_type must be ONE_TIME or RECURRING');
+  }
+  if (!rate || parseFloat(rate) <= 0) {
+    throw new RentalAgreementError(400, 'rate must be a positive number');
+  }
+  if (billing_type === 'ONE_TIME' && !end_date) {
+    throw new RentalAgreementError(400, 'end_date is required for ONE_TIME rentals');
+  }
+
+  const startDate = start_date || new Date().toISOString().slice(0, 10);
+  const depositAmt = parseFloat(deposit_amount) || 0;
+
+  // Pick a unit: explicit unit_id (validated AVAILABLE) or the first
+  // AVAILABLE unit for the product, locked so concurrent requests can't
+  // double-book the same physical item.
+  let unit;
+  if (unit_id) {
+    const unitResult = await pgClient.query(
+      `SELECT * FROM rental_units WHERE unit_id = $1 AND product_id = $2 FOR UPDATE`,
+      [unit_id, product_id]
+    );
+    if (unitResult.rows.length === 0) {
+      throw new RentalAgreementError(404, 'Rental unit not found for this product');
+    }
+    if (unitResult.rows[0].status !== 'AVAILABLE') {
+      throw new RentalAgreementError(409, 'This unit is not available');
+    }
+    unit = unitResult.rows[0];
+  } else {
+    const unitResult = await pgClient.query(
+      `SELECT * FROM rental_units WHERE product_id = $1 AND status = 'AVAILABLE'
+       ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED`,
+      [product_id]
+    );
+    if (unitResult.rows.length === 0) {
+      throw new RentalAgreementError(409, 'No available units for this product');
+    }
+    unit = unitResult.rows[0];
+  }
+
+  await pgClient.query(`UPDATE rental_units SET status = 'RENTED', updated_at = NOW() WHERE unit_id = $1`, [unit.unit_id]);
+
+  const periodEnd = billing_type === 'ONE_TIME'
+    ? end_date
+    : (() => { const d = new Date(startDate); d.setMonth(d.getMonth() + 1); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); })();
+
+  const nextInvoiceDate = billing_type === 'RECURRING' ? addOneMonth(startDate) : null;
+
+  const agreementResult = await pgClient.query(
+    `INSERT INTO rental_agreements
+       (unit_id, product_id, client_id, walk_in_customer_id, quote_id, billing_type,
+        rate, start_date, end_date, next_invoice_date, deposit_amount, notes, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+     RETURNING *`,
+    [
+      unit.unit_id, product_id, client_id || null, walk_in_customer_id || null, quote_id || null,
+      billing_type, rate, startDate, billing_type === 'ONE_TIME' ? end_date : null,
+      nextInvoiceDate, depositAmt, notes || null, createdBy || null,
+    ]
+  );
+  const agreement = agreementResult.rows[0];
+
+  const invoiceAmount = parseFloat(rate) + depositAmt;
+  const invoiceCategory = billing_type === 'ONE_TIME' ? 'RENTAL_ONE_TIME' : 'RENTAL_RECURRING';
+
+  const invoiceResult = await pgClient.query(
+    `INSERT INTO invoices
+       (category, client_id, walk_in_customer_id, quote_id, rental_agreement_id,
+        amount, billing_period_start, billing_period_end, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     RETURNING *`,
+    [
+      invoiceCategory, client_id || null, walk_in_customer_id || null, quote_id || null,
+      agreement.rental_agreement_id, invoiceAmount, startDate, periodEnd, createdBy || null,
+    ]
+  );
+
+  return { agreement, invoice: invoiceResult.rows[0], unit };
+}
+
+module.exports.RentalAgreementError = RentalAgreementError;
+module.exports.createRentalAgreementCore = createRentalAgreementCore;
+
+// ==================== RENTAL UNITS ====================
+
+exports.createRentalUnit = async (req, res) => {
+  const { product_id, unit_code, notes } = req.body;
+
+  if (!product_id) {
+    return res.status(400).json({ message: 'product_id is required' });
+  }
+
+  try {
+    const productResult = await db.query(
+      'SELECT product_id, product_type FROM products WHERE product_id = $1',
+      [product_id]
+    );
+    if (productResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Product not found' });
+    }
+    if (productResult.rows[0].product_type !== 'RENTAL') {
+      return res.status(400).json({ message: 'Rental units can only be added to RENTAL-type products' });
+    }
+
+    const result = await db.query(
+      `INSERT INTO rental_units (product_id, unit_code, notes) VALUES ($1, $2, $3) RETURNING *`,
+      [product_id, unit_code || null, notes || null]
+    );
+
+    res.status(201).json({ status: 'success', data: result.rows[0] });
+  } catch (error) {
+    console.error('Create Rental Unit Error:', error);
+    res.status(500).json({ message: 'Failed to create rental unit' });
+  }
+};
+
+exports.getRentalUnits = async (req, res) => {
+  const { product_id, status } = req.query;
+
+  try {
+    const conditions = [];
+    const params = [];
+    if (product_id) {
+      params.push(product_id);
+      conditions.push(`ru.product_id = $${params.length}`);
+    }
+    if (status) {
+      params.push(status);
+      conditions.push(`ru.status = $${params.length}`);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const result = await db.query(
+      `SELECT ru.*, p.name as product_name,
+              ra.rental_agreement_id, ra.billing_type as rental_billing_type,
+              ra.end_date as rental_end_date, ra.next_invoice_date as rental_next_invoice_date,
+              cp.full_name as rented_to_client_name, wc.full_name as rented_to_walk_in_name
+       FROM rental_units ru
+       JOIN products p ON ru.product_id = p.product_id
+       LEFT JOIN rental_agreements ra ON ra.unit_id = ru.unit_id AND ra.status = 'ACTIVE'
+       LEFT JOIN client_profiles cp ON ra.client_id = cp.client_profile_id
+       LEFT JOIN walk_in_customers wc ON ra.walk_in_customer_id = wc.walk_in_customer_id
+       ${where}
+       ORDER BY ru.created_at DESC`,
+      params
+    );
+    res.status(200).json({ status: 'success', data: result.rows });
+  } catch (error) {
+    console.error('Get Rental Units Error:', error);
+    res.status(500).json({ message: 'Failed to fetch rental units' });
+  }
+};
+
+exports.updateRentalUnitStatus = async (req, res) => {
+  const { unit_id } = req.params;
+  const { status, notes } = req.body;
+
+  if (!['AVAILABLE', 'MAINTENANCE'].includes(status)) {
+    return res.status(400).json({ message: 'status must be AVAILABLE or MAINTENANCE (RENTED is set automatically)' });
+  }
+
+  try {
+    const current = await db.query('SELECT status FROM rental_units WHERE unit_id = $1', [unit_id]);
+    if (current.rows.length === 0) {
+      return res.status(404).json({ message: 'Rental unit not found' });
+    }
+    if (current.rows[0].status === 'RENTED') {
+      return res.status(409).json({ message: 'This unit is currently rented out — it cannot be changed until returned' });
+    }
+
+    const result = await db.query(
+      `UPDATE rental_units SET status = $1, notes = COALESCE($2, notes), updated_at = CURRENT_TIMESTAMP
+       WHERE unit_id = $3 RETURNING *`,
+      [status, notes, unit_id]
+    );
+    res.status(200).json({ status: 'success', data: result.rows[0] });
+  } catch (error) {
+    console.error('Update Rental Unit Status Error:', error);
+    res.status(500).json({ message: 'Failed to update rental unit' });
+  }
+};
+
+// ==================== RENTAL AGREEMENTS ====================
+
+function addOneMonth(dateStr) {
+  const d = new Date(dateStr);
+  d.setMonth(d.getMonth() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+exports.createRentalAgreement = async (req, res) => {
+  const pgClient = await db.pool.connect();
+  const {
+    product_id, unit_id, client_id, walk_in_customer_id, quote_id,
+    billing_type, rate, start_date, end_date, deposit_amount, notes,
+  } = req.body;
+
+  try {
+    await pgClient.query('BEGIN');
+
+    const { agreement, invoice, unit } = await createRentalAgreementCore(pgClient, {
+      product_id, unit_id, client_id, walk_in_customer_id, quote_id,
+      billing_type, rate, start_date, end_date, deposit_amount, notes,
+      createdBy: req.user?.user_id,
+    });
+
+    await pgClient.query('COMMIT');
+
+    await safeLog({
+      actorUserId: req.user?.user_id,
+      actorRole: extractActorRole(req.user?.role),
+      actionType: 'RENTAL_AGREEMENT_CREATED',
+      entityType: 'RENTAL_AGREEMENT',
+      entityId: agreement.rental_agreement_id,
+      details: { unit_id: unit.unit_id, product_id, billing_type, rate, deposit_amount: parseFloat(deposit_amount) || 0 },
+    });
+
+    res.status(201).json({
+      status: 'success',
+      data: { ...agreement, invoice },
+    });
+  } catch (error) {
+    await pgClient.query('ROLLBACK');
+    if (error instanceof RentalAgreementError) {
+      return res.status(error.status).json({ message: error.message });
+    }
+    console.error('Create Rental Agreement Error:', error);
+    res.status(500).json({ message: 'Failed to create rental agreement' });
+  } finally {
+    pgClient.release();
+  }
+};
+
+exports.listRentalAgreements = async (req, res) => {
+  const { status, client_id } = req.query;
+
+  try {
+    const conditions = [];
+    const params = [];
+    if (status) {
+      params.push(status);
+      conditions.push(`ra.status = $${params.length}`);
+    }
+    if (client_id) {
+      params.push(client_id);
+      conditions.push(`ra.client_id = $${params.length}`);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const result = await db.query(
+      `SELECT ra.*, p.name as product_name, ru.unit_code,
+              cp.full_name as client_name, u.mobile_number as client_mobile,
+              wc.full_name as walk_in_name, wc.mobile_number as walk_in_mobile,
+              d.deposit_id, d.status as deposit_status, d.amount as deposit_collected_amount
+       FROM rental_agreements ra
+       JOIN products p ON ra.product_id = p.product_id
+       JOIN rental_units ru ON ra.unit_id = ru.unit_id
+       LEFT JOIN client_profiles cp ON ra.client_id = cp.client_profile_id
+       LEFT JOIN users u ON cp.user_id = u.user_id
+       LEFT JOIN walk_in_customers wc ON ra.walk_in_customer_id = wc.walk_in_customer_id
+       LEFT JOIN deposits d ON d.rental_agreement_id = ra.rental_agreement_id
+       ${where}
+       ORDER BY ra.created_at DESC`,
+      params
+    );
+    res.status(200).json({ status: 'success', data: result.rows });
+  } catch (error) {
+    console.error('List Rental Agreements Error:', error);
+    res.status(500).json({ message: 'Failed to fetch rental agreements' });
+  }
+};
+
+exports.getRentalAgreement = async (req, res) => {
+  const { rental_agreement_id } = req.params;
+
+  try {
+    const agreementResult = await db.query(
+      `SELECT ra.*, p.name as product_name, ru.unit_code,
+              cp.full_name as client_name, u.mobile_number as client_mobile,
+              wc.full_name as walk_in_name, wc.mobile_number as walk_in_mobile,
+              d.deposit_id, d.status as deposit_status, d.amount as deposit_collected_amount,
+              d.held_at as deposit_held_at, d.refunded_at as deposit_refunded_at
+       FROM rental_agreements ra
+       JOIN products p ON ra.product_id = p.product_id
+       JOIN rental_units ru ON ra.unit_id = ru.unit_id
+       LEFT JOIN client_profiles cp ON ra.client_id = cp.client_profile_id
+       LEFT JOIN users u ON cp.user_id = u.user_id
+       LEFT JOIN walk_in_customers wc ON ra.walk_in_customer_id = wc.walk_in_customer_id
+       LEFT JOIN deposits d ON d.rental_agreement_id = ra.rental_agreement_id
+       WHERE ra.rental_agreement_id = $1`,
+      [rental_agreement_id]
+    );
+    if (agreementResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Rental agreement not found' });
+    }
+
+    const invoicesResult = await db.query(
+      `SELECT * FROM invoices WHERE rental_agreement_id = $1 ORDER BY created_at DESC`,
+      [rental_agreement_id]
+    );
+
+    res.status(200).json({
+      status: 'success',
+      data: { ...agreementResult.rows[0], invoices: invoicesResult.rows },
+    });
+  } catch (error) {
+    console.error('Get Rental Agreement Error:', error);
+    res.status(500).json({ message: 'Failed to fetch rental agreement' });
+  }
+};
+
+// POST /api/rentals/:rental_agreement_id/return
+exports.returnRentalUnit = async (req, res) => {
+  const pgClient = await db.pool.connect();
+  const { rental_agreement_id } = req.params;
+
+  try {
+    await pgClient.query('BEGIN');
+
+    const agreementResult = await pgClient.query(
+      `SELECT * FROM rental_agreements WHERE rental_agreement_id = $1 FOR UPDATE`,
+      [rental_agreement_id]
+    );
+    if (agreementResult.rows.length === 0) {
+      await pgClient.query('ROLLBACK');
+      return res.status(404).json({ message: 'Rental agreement not found' });
+    }
+    const agreement = agreementResult.rows[0];
+    if (agreement.status !== 'ACTIVE') {
+      await pgClient.query('ROLLBACK');
+      return res.status(409).json({ message: `Agreement is already ${agreement.status}` });
+    }
+
+    await pgClient.query(
+      `UPDATE rental_agreements SET status = 'COMPLETED', returned_at = NOW(), next_invoice_date = NULL
+       WHERE rental_agreement_id = $1`,
+      [rental_agreement_id]
+    );
+    await pgClient.query(`UPDATE rental_units SET status = 'AVAILABLE', updated_at = NOW() WHERE unit_id = $1`, [agreement.unit_id]);
+
+    await pgClient.query('COMMIT');
+
+    await safeLog({
+      actorUserId: req.user?.user_id,
+      actorRole: extractActorRole(req.user?.role),
+      actionType: 'RENTAL_UNIT_RETURNED',
+      entityType: 'RENTAL_AGREEMENT',
+      entityId: rental_agreement_id,
+      details: { unit_id: agreement.unit_id },
+    });
+
+    res.status(200).json({ status: 'success', message: 'Unit marked as returned' });
+  } catch (error) {
+    await pgClient.query('ROLLBACK');
+    console.error('Return Rental Unit Error:', error);
+    res.status(500).json({ message: 'Failed to mark unit as returned' });
+  } finally {
+    pgClient.release();
+  }
+};
+
+// ==================== DEPOSITS ====================
+
+// GET /api/rentals/deposits?status=HELD — a flat, global view across all
+// agreements, so an admin can see everything currently held (or refunded/
+// forfeited for audit purposes) without drilling into each rental agreement.
+exports.listDeposits = async (req, res) => {
+  const { status, client_id } = req.query;
+
+  try {
+    const conditions = [];
+    const params = [];
+    if (status) {
+      params.push(status);
+      conditions.push(`d.status = $${params.length}`);
+    }
+    if (client_id) {
+      params.push(client_id);
+      conditions.push(`COALESCE(ra.client_id, d.client_id) = $${params.length}`);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const result = await db.query(
+      `SELECT d.*,
+              ra.product_id,
+              COALESCE(ra.client_id, d.client_id) as client_id,
+              COALESCE(ra.walk_in_customer_id, d.walk_in_customer_id) as walk_in_customer_id,
+              ra.status as agreement_status,
+              p.name as product_name, ru.unit_code, q.estimate_number,
+              cp.full_name as client_name, u.mobile_number as client_mobile,
+              wc.full_name as walk_in_name, wc.mobile_number as walk_in_mobile
+       FROM deposits d
+       LEFT JOIN rental_agreements ra ON d.rental_agreement_id = ra.rental_agreement_id
+       LEFT JOIN products p ON ra.product_id = p.product_id
+       LEFT JOIN rental_units ru ON ra.unit_id = ru.unit_id
+       LEFT JOIN quotations q ON d.quote_id = q.quote_id
+       LEFT JOIN client_profiles cp ON COALESCE(ra.client_id, d.client_id) = cp.client_profile_id
+       LEFT JOIN users u ON cp.user_id = u.user_id
+       LEFT JOIN walk_in_customers wc ON COALESCE(ra.walk_in_customer_id, d.walk_in_customer_id) = wc.walk_in_customer_id
+       ${where}
+       ORDER BY d.held_at DESC`,
+      params
+    );
+    res.status(200).json({ status: 'success', data: result.rows });
+  } catch (error) {
+    console.error('List Deposits Error:', error);
+    res.status(500).json({ message: 'Failed to fetch deposits' });
+  }
+};
+
+exports.refundDeposit = async (req, res) => {
+  const pgClient = await db.pool.connect();
+  const { deposit_id } = req.params;
+  const { payment_method, notes, company_bank_account_id } = req.body;
+
+  if (!VALID_PAYMENT_METHODS.includes(payment_method)) {
+    return res.status(400).json({ message: `payment_method must be one of: ${VALID_PAYMENT_METHODS.join(', ')}` });
+  }
+
+  try {
+    await pgClient.query('BEGIN');
+
+    const depositResult = await pgClient.query('SELECT * FROM deposits WHERE deposit_id = $1 FOR UPDATE', [deposit_id]);
+    if (depositResult.rows.length === 0) {
+      await pgClient.query('ROLLBACK');
+      return res.status(404).json({ message: 'Deposit not found' });
+    }
+    const deposit = depositResult.rows[0];
+    if (deposit.status !== 'HELD') {
+      await pgClient.query('ROLLBACK');
+      return res.status(409).json({ message: `Deposit is already ${deposit.status}` });
+    }
+
+    if (company_bank_account_id) {
+      const accountCheck = await pgClient.query('SELECT account_id FROM bank_accounts WHERE account_id = $1', [company_bank_account_id]);
+      if (accountCheck.rows.length === 0) {
+        await pgClient.query('ROLLBACK');
+        return res.status(404).json({ message: 'Company bank account not found' });
+      }
+    }
+
+    let refundClientId = deposit.client_id || null;
+    if (deposit.rental_agreement_id) {
+      const agreementResult = await pgClient.query(
+        'SELECT client_id FROM rental_agreements WHERE rental_agreement_id = $1',
+        [deposit.rental_agreement_id]
+      );
+      refundClientId = agreementResult.rows[0]?.client_id || null;
+    }
+
+    const txResult = await pgClient.query(
+      `INSERT INTO transactions (client_id, category, transaction_type, amount, payment_method, bank_account_id, notes, status, verified_by)
+       VALUES ($1, 'DEPOSIT_REFUND', 'DEBIT', $2, $3, $4, $5, 'COMPLETED', $6)
+       RETURNING transaction_id`,
+      [refundClientId, deposit.amount, payment_method, company_bank_account_id || null, notes || null, req.user?.user_id || null]
+    );
+
+    const updated = await pgClient.query(
+      `UPDATE deposits SET status = 'REFUNDED', refund_transaction_id = $1, refunded_at = NOW()
+       WHERE deposit_id = $2 RETURNING *`,
+      [txResult.rows[0].transaction_id, deposit_id]
+    );
+
+    await pgClient.query('COMMIT');
+
+    await safeLog({
+      actorUserId: req.user?.user_id,
+      actorRole: extractActorRole(req.user?.role),
+      actionType: 'DEPOSIT_REFUNDED',
+      entityType: 'DEPOSIT',
+      entityId: deposit_id,
+      details: { amount: deposit.amount, payment_method },
+    });
+
+    res.status(200).json({ status: 'success', data: updated.rows[0] });
+  } catch (error) {
+    await pgClient.query('ROLLBACK');
+    console.error('Refund Deposit Error:', error);
+    res.status(500).json({ message: 'Failed to refund deposit' });
+  } finally {
+    pgClient.release();
+  }
+};
+
+exports.forfeitDeposit = async (req, res) => {
+  const { deposit_id } = req.params;
+  const { notes } = req.body;
+
+  try {
+    const result = await db.query(
+      `UPDATE deposits SET status = 'FORFEITED', notes = COALESCE($1, notes)
+       WHERE deposit_id = $2 AND status = 'HELD' RETURNING *`,
+      [notes || null, deposit_id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(409).json({ message: 'Deposit not found or not currently held' });
+    }
+
+    await safeLog({
+      actorUserId: req.user?.user_id,
+      actorRole: extractActorRole(req.user?.role),
+      actionType: 'DEPOSIT_FORFEITED',
+      entityType: 'DEPOSIT',
+      entityId: deposit_id,
+      details: { amount: result.rows[0].amount, notes },
+    });
+
+    res.status(200).json({ status: 'success', data: result.rows[0] });
+  } catch (error) {
+    console.error('Forfeit Deposit Error:', error);
+    res.status(500).json({ message: 'Failed to forfeit deposit' });
+  }
+};

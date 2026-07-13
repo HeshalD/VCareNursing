@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import useAutoRefresh from '../../../hooks/useAutoRefresh';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -102,21 +103,24 @@ const AdminDashboard = () => {
   const [data, setData] = useState(EMPTY_DATA);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchOverview = async () => {
-      setLoading(true);
-      try {
-        const serviceType = TABS.find((t) => t.id === activeTab)?.serviceType;
-        const res = await apiClient.getDashboardOverview(serviceType);
-        setData(res.data);
-      } catch (err) {
-        console.error('Failed to load dashboard overview:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchOverview();
-  }, [activeTab]);
+  const fetchOverview = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
+    try {
+      const serviceType = TABS.find((t) => t.id === activeTab)?.serviceType;
+      const res = await apiClient.getDashboardOverview(serviceType);
+      setData(res.data);
+    } catch (err) {
+      console.error('Failed to load dashboard overview:', err);
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchOverview(); }, [activeTab]);
+
+  // Keeps the Overview stats and recent-requests feed current without
+  // interrupting whatever tab/filter the admin currently has selected.
+  useAutoRefresh(() => fetchOverview({ silent: true }), { intervalMs: 5000 });
 
   const { stats, category_breakdown, recent_requests, pending_actions } = data;
 

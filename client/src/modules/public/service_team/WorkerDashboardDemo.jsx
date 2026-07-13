@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   User,
   Calendar,
@@ -33,6 +34,7 @@ const formatDate = (dateStr) => {
 };
 
 const WorkerDashboardDemo = () => {
+  const { t } = useTranslation('workerDashboard');
   const { user, loading: authLoading } = useAuth();
   const [staffData, setStaffData] = useState(null);
   const [walletData, setWalletData] = useState(null);
@@ -100,12 +102,12 @@ const WorkerDashboardDemo = () => {
   if (authLoading || dataLoading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="text-center text-slate-600 font-medium">Loading your dashboard...</div>
+        <div className="text-center text-slate-600 font-medium">{t('loading')}</div>
       </div>
     );
   }
 
-  const displayName = staffData?.full_name || user?.name || 'Staff Member';
+  const displayName = staffData?.full_name || user?.name || t('header.staffMemberFallback');
   const profilePicture = staffData?.profile_picture_url;
   const status = staffData?.verification_status || 'PENDING';
   const currentStatus = staffData?.current_status || 'AVAILABLE';
@@ -132,31 +134,37 @@ const WorkerDashboardDemo = () => {
   };
 
   const role = Array.isArray(user?.role) ? user.role[0] : user?.role;
-  const displayRole = role === 'NURSE' ? 'Certified Nurse' :
-    role === 'CAREGIVER' ? 'Professional Caregiver' :
-      role === 'COORDINATOR' ? 'Care Coordinator' :
-        'Healthcare Professional';
+  const displayRole = role === 'NURSE' ? t('roles.nurse') :
+    role === 'CAREGIVER' ? t('roles.caregiver') :
+      role === 'COORDINATOR' ? t('roles.coordinator') :
+        t('roles.default');
 
   const avgRating = staffData?.average_rating;
   const totalReviews = staffData?.total_reviews ?? 0;
 
   const stats = [
     {
-      title: 'Wallet Balance',
+      title: t('stats.wallet.title'),
       value: `LKR ${Number(walletData?.balance || 0).toLocaleString()}`,
-      description: 'Available for advances and adjustments',
+      description: t('stats.wallet.description'),
       icon: DollarSign,
     },
     {
-      title: 'Completed Shifts',
+      title: t('stats.completedShifts.title'),
       value: completedCount !== null ? String(completedCount) : '—',
-      description: completedCount === 1 ? '1 assignment completed' : `${completedCount ?? 0} assignments completed`,
+      description: completedCount === 1
+        ? t('stats.completedShifts.descriptionOne')
+        : t('stats.completedShifts.descriptionOther', { count: completedCount ?? 0 }),
       icon: Clock,
     },
     {
-      title: 'Rating',
+      title: t('stats.rating.title'),
       value: avgRating ? Number(avgRating).toFixed(1) : '—',
-      description: totalReviews > 0 ? `Based on ${totalReviews} review${totalReviews !== 1 ? 's' : ''}` : 'No reviews yet',
+      description: totalReviews > 0
+        ? (totalReviews !== 1
+          ? t('stats.rating.descriptionReviewOther', { count: totalReviews })
+          : t('stats.rating.descriptionReviewOne', { count: totalReviews }))
+        : t('stats.rating.descriptionNoReviews'),
       icon: Star,
     },
   ];
@@ -170,18 +178,18 @@ const WorkerDashboardDemo = () => {
           <header className="flex flex-col gap-4 border-b border-slate-200 bg-white px-6 py-6 rounded-2xl shadow-sm">
             <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400 mb-1">Provider Portal</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400 mb-1">{t('header.portalLabel')}</p>
                 <h1 className="text-3xl md:text-4xl font-semibold tracking-tight text-slate-900">
-                  Hello, {displayName}
+                  {t('header.greeting', { name: displayName })}
                 </h1>
                 <p className="text-sm text-slate-500 mt-2 max-w-2xl">
-                  Welcome back to your professional portal. Track your status, balance, and current assignments.
+                  {t('header.welcomeMessage')}
                 </p>
               </div>
 
               <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                 {profilePicture ? (
-                  <img src={profilePicture} alt="Profile" className="h-10 w-10 rounded-full object-cover border border-slate-200" />
+                  <img src={profilePicture} alt={t('header.profileAlt')} className="h-10 w-10 rounded-full object-cover border border-slate-200" />
                 ) : (
                   <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-white">
                     <User className="h-5 w-5" />
@@ -199,12 +207,12 @@ const WorkerDashboardDemo = () => {
                 <div className={`h-3 w-3 rounded-full ${isAvailable ? 'bg-emerald-500' : 'bg-slate-400'}`} />
                 <div>
                   <p className="font-semibold text-slate-900">
-                    {isAvailable ? 'Available for shifts' : 'Currently unavailable'}
+                    {isAvailable ? t('availability.availableTitle') : t('availability.unavailableTitle')}
                   </p>
                   <p className="text-sm text-slate-500">
                     {isAvailable
-                      ? 'You are visible to coordinators for assignment.'
-                      : 'You will not receive new shift assignments.'}
+                      ? t('availability.availableDesc')
+                      : t('availability.unavailableDesc')}
                   </p>
                 </div>
               </div>
@@ -218,7 +226,7 @@ const WorkerDashboardDemo = () => {
                 } ${updatingStatus ? 'cursor-not-allowed opacity-50' : ''}`}
               >
                 <div className={`h-2.5 w-2.5 rounded-full ${isAvailable ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-                {isAvailable ? 'Mark unavailable' : 'Mark available'}
+                {isAvailable ? t('availability.markUnavailable') : t('availability.markAvailable')}
               </button>
             </div>
           </header>
@@ -242,23 +250,23 @@ const WorkerDashboardDemo = () => {
                 <div>
                   <h2 className="text-lg font-semibold text-inherit">
                     {status === 'VERIFIED'
-                      ? 'Profile verified successfully'
+                      ? t('verification.verifiedTitle')
                       : status === 'REJECTED'
-                        ? 'Application rejected'
-                        : 'Application under review'}
+                        ? t('verification.rejectedTitle')
+                        : t('verification.pendingTitle')}
                   </h2>
                   <p className="text-sm text-inherit/80">
                     {status === 'VERIFIED'
-                      ? 'Your profile has been verified and you can start accepting shifts.'
+                      ? t('verification.verifiedDesc')
                       : status === 'REJECTED'
-                        ? 'Your application was not approved at this time.'
-                        : 'Your profile is currently under review by our team.'}
+                        ? t('verification.rejectedDesc')
+                        : t('verification.pendingDesc')}
                   </p>
                 </div>
               </div>
 
               <span className="inline-flex items-center self-start rounded-full border border-current/20 bg-white/70 px-3 py-1 text-xs font-semibold uppercase tracking-[0.08em]">
-                {status === 'VERIFIED' ? 'Verified' : status === 'REJECTED' ? 'Rejected' : 'Pending Verification'}
+                {status === 'VERIFIED' ? t('verification.verifiedBadge') : status === 'REJECTED' ? t('verification.rejectedBadge') : t('verification.pendingBadge')}
               </span>
             </div>
           </div>
@@ -269,25 +277,25 @@ const WorkerDashboardDemo = () => {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <ShieldCheck className="h-4 w-4 text-violet-500" />
-                  <p className="font-semibold text-slate-900 text-sm">Required Documents</p>
+                  <p className="font-semibold text-slate-900 text-sm">{t('documents.title')}</p>
                 </div>
                 {staffData.grama_niladhari_url && staffData.police_report_url ? (
                   <span className="flex items-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
-                    <CheckCircle2 className="h-3 h-3" /> Complete
+                    <CheckCircle2 className="h-3 h-3" /> {t('documents.complete')}
                   </span>
                 ) : (
                   <span className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full">
-                    Action required
+                    {t('documents.actionRequired')}
                   </span>
                 )}
               </div>
               <p className="text-xs text-slate-500">
-                Upload your Grama Niladhari Report and Police Report to complete your registration.
+                {t('documents.description')}
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {[
-                  { label: 'Grama Niladhari Report', url: staffData.grama_niladhari_url },
-                  { label: 'Police Report', url: staffData.police_report_url },
+                  { label: t('documents.gramaNiladhari'), url: staffData.grama_niladhari_url },
+                  { label: t('documents.policeReport'), url: staffData.police_report_url },
                 ].map(({ label, url }) => (
                   <div
                     key={label}
@@ -297,11 +305,11 @@ const WorkerDashboardDemo = () => {
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-semibold text-slate-800 truncate">{label}</p>
                       <p className={`text-xs font-medium ${url ? 'text-emerald-700' : 'text-amber-700'}`}>
-                        {url ? 'Uploaded' : 'Pending'}
+                        {url ? t('documents.uploaded') : t('documents.pending')}
                       </p>
                     </div>
                     {url && (
-                      <button onClick={() => window.open(url, '_blank')} className="text-emerald-600 hover:text-emerald-700" title="View">
+                      <button onClick={() => window.open(url, '_blank')} className="text-emerald-600 hover:text-emerald-700" title={t('documents.view')}>
                         <Eye className="h-3.5 w-3.5" />
                       </button>
                     )}
@@ -314,7 +322,7 @@ const WorkerDashboardDemo = () => {
                   className="flex items-center justify-center gap-2 w-full rounded-xl bg-violet-600 text-white text-sm font-medium py-2.5 hover:bg-violet-500 transition-all shadow-md shadow-violet-600/20"
                 >
                   <Upload className="h-4 w-4" />
-                  Upload Documents
+                  {t('documents.uploadButton')}
                 </Link>
               )}
             </div>
@@ -328,60 +336,62 @@ const WorkerDashboardDemo = () => {
 
           <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-6 py-4 shadow-sm">
             <div>
-              <p className="text-sm font-semibold text-slate-900">Need to update your details?</p>
-              <p className="text-xs text-slate-500 mt-0.5">Submit a request to change your profile or bank account information.</p>
+              <p className="text-sm font-semibold text-slate-900">{t('changeRequest.title')}</p>
+              <p className="text-xs text-slate-500 mt-0.5">{t('changeRequest.description')}</p>
             </div>
             <Link
               to="/services/change-request"
               className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors"
             >
               <FilePen className="h-4 w-4" />
-              Request a Change
+              {t('changeRequest.button')}
             </Link>
           </div>
 
           <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-6 py-4 shadow-sm">
             <div>
-              <p className="text-sm font-semibold text-slate-900">Planning some time off?</p>
-              <p className="text-xs text-slate-500 mt-0.5">Request leave for a date range and track the status of your requests.</p>
+              <p className="text-sm font-semibold text-slate-900">{t('leaveRequest.title')}</p>
+              <p className="text-xs text-slate-500 mt-0.5">{t('leaveRequest.description')}</p>
             </div>
             <Link
               to="/services/leave-request"
               className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors"
             >
               <CalendarOff className="h-4 w-4" />
-              Request Leave
+              {t('leaveRequest.button')}
             </Link>
           </div>
 
           <section className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
               <div>
-                <h3 className="text-lg font-semibold text-slate-900">Active Shifts</h3>
+                <h3 className="text-lg font-semibold text-slate-900">{t('activeShifts.title')}</h3>
                 <p className="text-sm text-slate-500 mt-1">
                   {activeBookings.length > 0
-                    ? `You have ${activeBookings.length} active assignment${activeBookings.length !== 1 ? 's' : ''}.`
-                    : 'Your current work assignments.'}
+                    ? (activeBookings.length !== 1
+                      ? t('activeShifts.subtitleCountOther', { count: activeBookings.length })
+                      : t('activeShifts.subtitleCountOne', { count: activeBookings.length }))
+                    : t('activeShifts.subtitleDefault')}
                 </p>
               </div>
               <Link to="/services/bookings" className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-900">
-                View all <ArrowUpRight className="h-4 w-4" />
+                {t('activeShifts.viewAll')} <ArrowUpRight className="h-4 w-4" />
               </Link>
             </div>
 
             <div className="p-6 space-y-4">
               {activeBookings.length > 0 ? (
                 activeBookings.map((booking) => (
-                  <ActiveBookingCard key={booking.assignment_id || booking.booking_id} booking={booking} />
+                  <ActiveBookingCard key={booking.assignment_id || booking.booking_id} booking={booking} t={t} />
                 ))
               ) : (
                 <div className="flex flex-col items-center justify-center py-12 text-slate-400">
                   <div className="flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 mb-4">
                     <Briefcase className="w-7 h-7 text-slate-300" />
                   </div>
-                  <p className="text-sm font-semibold text-slate-500">No active shifts</p>
+                  <p className="text-sm font-semibold text-slate-500">{t('activeShifts.emptyTitle')}</p>
                   <p className="text-xs mt-1 text-slate-400 text-center max-w-xs">
-                    Your current assignments will appear here once you are assigned to a booking.
+                    {t('activeShifts.emptyDesc')}
                   </p>
                 </div>
               )}
@@ -408,23 +418,26 @@ const StatCard = ({ title, value, description, icon: Icon }) => (
 );
 
 const SERVICE_TYPE_CONFIG = {
-  NURSE:       { label: 'Nurse',        Icon: Stethoscope, bg: 'bg-blue-50',   text: 'text-blue-700',   border: 'border-blue-100'   },
-  HOME_NURSING:{ label: 'Home Nursing', Icon: Heart,       bg: 'bg-rose-50',   text: 'text-rose-700',   border: 'border-rose-100'   },
-  NANNY:       { label: 'Nanny',        Icon: Baby,        bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-100' },
-  CAREGIVER:   { label: 'Caregiver',    Icon: Heart,       bg: 'bg-teal-50',   text: 'text-teal-700',   border: 'border-teal-100'   },
+  NURSE:       { labelKey: 'serviceTypes.nurse',       Icon: Stethoscope, bg: 'bg-blue-50',   text: 'text-blue-700',   border: 'border-blue-100'   },
+  HOME_NURSING:{ labelKey: 'serviceTypes.homeNursing', Icon: Heart,       bg: 'bg-rose-50',   text: 'text-rose-700',   border: 'border-rose-100'   },
+  NANNY:       { labelKey: 'serviceTypes.nanny',       Icon: Baby,        bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-100' },
+  CAREGIVER:   { labelKey: 'serviceTypes.caregiver',   Icon: Heart,       bg: 'bg-teal-50',   text: 'text-teal-700',   border: 'border-teal-100'   },
 };
 
-const ActiveBookingCard = ({ booking }) => {
+const ActiveBookingCard = ({ booking, t }) => {
   const isPendingTermination = booking.status === 'PENDING_TERMINATION';
   const serviceType = booking.service_type?.toUpperCase();
-  const svcConfig = SERVICE_TYPE_CONFIG[serviceType] || {
-    label: booking.service_type || 'Service',
-    Icon: Activity,
-    bg: 'bg-slate-50', text: 'text-slate-600', border: 'border-slate-200',
-  };
+  const matchedConfig = SERVICE_TYPE_CONFIG[serviceType];
+  const svcConfig = matchedConfig
+    ? { ...matchedConfig, label: t(matchedConfig.labelKey) }
+    : {
+      label: booking.service_type || t('bookingCard.serviceFallback'),
+      Icon: Activity,
+      bg: 'bg-slate-50', text: 'text-slate-600', border: 'border-slate-200',
+    };
   const { Icon: SvcIcon } = svcConfig;
 
-  const patientName = booking.patient_name || 'Patient';
+  const patientName = booking.patient_name || t('bookingCard.patientFallback');
   const clientName  = booking.client_name  || '—';
   const location    = booking.location_address || booking.patient_address || null;
   const dailyRate   = booking.daily_rate ? `LKR ${Number(booking.daily_rate).toLocaleString()}/day` : null;
@@ -440,7 +453,7 @@ const ActiveBookingCard = ({ booking }) => {
       {isPendingTermination && (
         <div className="flex items-center gap-2 mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
           <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
-          <p className="text-xs font-medium text-amber-800">Termination pending — this assignment may be ending soon.</p>
+          <p className="text-xs font-medium text-amber-800">{t('bookingCard.terminationPending')}</p>
         </div>
       )}
 
@@ -453,7 +466,7 @@ const ActiveBookingCard = ({ booking }) => {
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
               <h4 className="text-base font-semibold text-slate-900 leading-tight">{patientName}</h4>
-              <p className="text-xs text-slate-500 mt-0.5">Client: {clientName}</p>
+              <p className="text-xs text-slate-500 mt-0.5">{t('bookingCard.clientLabel')} {clientName}</p>
             </div>
             <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${svcConfig.bg} ${svcConfig.text} ${svcConfig.border}`}>
               <SvcIcon className="h-3 w-3" />

@@ -164,7 +164,7 @@ exports.listAdminUsers = async (req, res) => {
        FROM internal_staff ist
        JOIN users u ON u.user_id = ist.user_id
        LEFT JOIN staff_permissions sp ON sp.user_id = u.user_id
-       WHERE ist.role IN ('COORDINATOR', 'ACCOUNTS')
+       WHERE ist.role IN ('COORDINATOR', 'ACCOUNTS', 'SALES')
        GROUP BY u.user_id, ist.full_name, u.mobile_number, u.role
        ORDER BY ist.full_name`
     );

@@ -1,14 +1,122 @@
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
 const { IN_CATEGORIES, OUT_CATEGORIES, MANUAL_CATEGORIES, flowOf } = require('../utils/transactionFlow');
+const { generateTransactionsPdf } = require('../utils/transactionsPdf');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VALID_PAYMENT_METHODS = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE', 'ONLINE_GATEWAY', 'OTHER'];
 const VALID_FLOWS = ['IN', 'OUT', 'NEUTRAL'];
 
+// Hard cap when a caller asks for every matching row (limit=all, used by
+// exports) — protects against an unbounded response if a filter combination
+// somehow matches the entire table.
+const EXPORT_ROW_LIMIT = 5000;
+
 function extractActorRole(role) {
   const raw = Array.isArray(role) ? role[0] : role;
   return typeof raw === 'string' ? raw.replace(/\{|\}/g, '').split(',')[0].trim() : String(raw);
+}
+
+const TRANSACTION_SELECT_COLUMNS = `
+  t.transaction_id,
+  t.transaction_code,
+  t.category,
+  t.transaction_type,
+  t.amount,
+  t.payment_method,
+  t.status,
+  t.notes,
+  t.reference_number,
+  t.cheque_number,
+  t.cheque_date,
+  t.receipt_url,
+  t.is_manual,
+  t.external_party,
+  COALESCE(t.transaction_date, t.created_at::date) AS transaction_date,
+  t.created_at,
+  t.client_id,
+  t.staff_profile_id,
+  t.booking_id,
+  cp.full_name          AS client_name,
+  sp.full_name          AS staff_name,
+  pp.full_name          AS patient_name,
+  b.service_type        AS booking_service_type,
+  ba.account_nickname   AS bank_account_nickname,
+  ba.bank_name          AS bank_name,
+  recorder.full_name    AS recorded_by_name
+`;
+
+const TRANSACTION_JOINS = `
+  FROM transactions t
+  LEFT JOIN client_profiles cp ON cp.client_profile_id = t.client_id
+  LEFT JOIN staff_profiles sp ON sp.staff_profile_id = t.staff_profile_id
+  LEFT JOIN bookings b ON b.booking_id = t.booking_id
+  LEFT JOIN patient_profiles pp ON pp.patient_id = b.patient_id
+  LEFT JOIN bank_accounts ba ON ba.account_id = t.bank_account_id
+  LEFT JOIN staff_profiles recorder ON recorder.user_id = COALESCE(t.created_by, t.verified_by)
+`;
+
+// Shared WHERE-clause builder for the transactions ledger — used by both the
+// paginated list endpoint and the PDF/Excel export (which needs every
+// matching row, not just one page).
+function buildTransactionFilters(query) {
+  const { category, flow, payment_method, status, source, search, from_date, to_date } = query;
+
+  const conditions = [];
+  const params = [];
+
+  if (category) {
+    params.push(category);
+    conditions.push(`t.category = $${params.length}`);
+  }
+  if (flow && VALID_FLOWS.includes(flow)) {
+    if (flow === 'IN') {
+      params.push(IN_CATEGORIES);
+      conditions.push(`t.category::text = ANY($${params.length}::text[])`);
+    } else if (flow === 'OUT') {
+      params.push(OUT_CATEGORIES);
+      conditions.push(`t.category::text = ANY($${params.length}::text[])`);
+    } else {
+      params.push([...IN_CATEGORIES, ...OUT_CATEGORIES]);
+      conditions.push(`NOT (t.category::text = ANY($${params.length}::text[]))`);
+    }
+  }
+  if (payment_method) {
+    params.push(payment_method);
+    conditions.push(`t.payment_method = $${params.length}`);
+  }
+  if (status) {
+    params.push(status);
+    conditions.push(`t.status = $${params.length}`);
+  }
+  if (source === 'MANUAL') {
+    conditions.push(`t.is_manual = TRUE`);
+  } else if (source === 'SYSTEM') {
+    conditions.push(`COALESCE(t.is_manual, FALSE) = FALSE`);
+  }
+  if (from_date) {
+    params.push(from_date);
+    conditions.push(`COALESCE(t.transaction_date, t.created_at::date) >= $${params.length}`);
+  }
+  if (to_date) {
+    params.push(to_date);
+    conditions.push(`COALESCE(t.transaction_date, t.created_at::date) <= $${params.length}`);
+  }
+  if (search) {
+    params.push(`%${search}%`);
+    const p = params.length;
+    conditions.push(`(
+      cp.full_name ILIKE $${p}
+      OR sp.full_name ILIKE $${p}
+      OR t.external_party ILIKE $${p}
+      OR t.reference_number ILIKE $${p}
+      OR t.notes ILIKE $${p}
+      OR pp.full_name ILIKE $${p}
+    )`);
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  return { whereClause, params };
 }
 
 // =========================================================
@@ -17,121 +125,33 @@ function extractActorRole(role) {
 // =========================================================
 const getAllTransactions = async (req, res) => {
   try {
-    const {
-      category,
-      flow, // 'IN' | 'OUT' | 'NEUTRAL' — derived from category, not the stored transaction_type
-      payment_method,
-      status,
-      source, // 'MANUAL' | 'SYSTEM'
-      search,
-      from_date,
-      to_date,
-      page = 1,
-      limit = 25,
-    } = req.query;
+    const { page = 1, limit = 25 } = req.query;
 
+    // limit=all bypasses pagination entirely (used by the Excel export, which
+    // needs every filtered row up-front) — still hard-capped for safety.
+    const fetchAll = limit === 'all';
     const pageNum = Math.max(1, parseInt(page) || 1);
-    const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 25));
-    const offset = (pageNum - 1) * limitNum;
+    const limitNum = fetchAll ? EXPORT_ROW_LIMIT : Math.min(100, Math.max(1, parseInt(limit) || 25));
+    const offset = fetchAll ? 0 : (pageNum - 1) * limitNum;
 
-    const conditions = [];
-    const params = [];
+    const { whereClause, params } = buildTransactionFilters(req.query);
+    const joins = TRANSACTION_JOINS;
 
-    if (category) {
-      params.push(category);
-      conditions.push(`t.category = $${params.length}`);
-    }
-    if (flow && VALID_FLOWS.includes(flow)) {
-      if (flow === 'IN') {
-        params.push(IN_CATEGORIES);
-        conditions.push(`t.category::text = ANY($${params.length}::text[])`);
-      } else if (flow === 'OUT') {
-        params.push(OUT_CATEGORIES);
-        conditions.push(`t.category::text = ANY($${params.length}::text[])`);
-      } else {
-        params.push([...IN_CATEGORIES, ...OUT_CATEGORIES]);
-        conditions.push(`NOT (t.category::text = ANY($${params.length}::text[]))`);
-      }
-    }
-    if (payment_method) {
-      params.push(payment_method);
-      conditions.push(`t.payment_method = $${params.length}`);
-    }
-    if (status) {
-      params.push(status);
-      conditions.push(`t.status = $${params.length}`);
-    }
-    if (source === 'MANUAL') {
-      conditions.push(`t.is_manual = TRUE`);
-    } else if (source === 'SYSTEM') {
-      conditions.push(`COALESCE(t.is_manual, FALSE) = FALSE`);
-    }
-    if (from_date) {
-      params.push(from_date);
-      conditions.push(`COALESCE(t.transaction_date, t.created_at::date) >= $${params.length}`);
-    }
-    if (to_date) {
-      params.push(to_date);
-      conditions.push(`COALESCE(t.transaction_date, t.created_at::date) <= $${params.length}`);
-    }
-    if (search) {
-      params.push(`%${search}%`);
-      const p = params.length;
-      conditions.push(`(
-        cp.full_name ILIKE $${p}
-        OR sp.full_name ILIKE $${p}
-        OR t.external_party ILIKE $${p}
-        OR t.reference_number ILIKE $${p}
-        OR t.notes ILIKE $${p}
-        OR pp.full_name ILIKE $${p}
-      )`);
-    }
-
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-    const joins = `
-      FROM transactions t
-      LEFT JOIN client_profiles cp ON cp.client_profile_id = t.client_id
-      LEFT JOIN staff_profiles sp ON sp.staff_profile_id = t.staff_profile_id
-      LEFT JOIN bookings b ON b.booking_id = t.booking_id
-      LEFT JOIN patient_profiles pp ON pp.patient_id = b.patient_id
-      LEFT JOIN bank_accounts ba ON ba.account_id = t.bank_account_id
-      LEFT JOIN staff_profiles recorder ON recorder.user_id = COALESCE(t.created_by, t.verified_by)
-    `;
-
-    const listQuery = `
-      SELECT
-        t.transaction_id,
-        t.transaction_code,
-        t.category,
-        t.transaction_type,
-        t.amount,
-        t.payment_method,
-        t.status,
-        t.notes,
-        t.reference_number,
-        t.cheque_number,
-        t.cheque_date,
-        t.receipt_url,
-        t.is_manual,
-        t.external_party,
-        COALESCE(t.transaction_date, t.created_at::date) AS transaction_date,
-        t.created_at,
-        t.client_id,
-        t.staff_profile_id,
-        t.booking_id,
-        cp.full_name          AS client_name,
-        sp.full_name          AS staff_name,
-        pp.full_name          AS patient_name,
-        b.service_type        AS booking_service_type,
-        ba.account_nickname   AS bank_account_nickname,
-        ba.bank_name          AS bank_name,
-        recorder.full_name    AS recorded_by_name
-      ${joins}
-      ${whereClause}
-      ORDER BY t.created_at DESC
-      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
-    `;
+    const listQuery = fetchAll
+      ? `
+        SELECT ${TRANSACTION_SELECT_COLUMNS}
+        ${joins}
+        ${whereClause}
+        ORDER BY t.created_at DESC
+        LIMIT ${EXPORT_ROW_LIMIT}
+      `
+      : `
+        SELECT ${TRANSACTION_SELECT_COLUMNS}
+        ${joins}
+        ${whereClause}
+        ORDER BY t.created_at DESC
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+      `;
 
     // Money In / Out totals are derived from the category, not the stored
     // transaction_type column (which is semantically inconsistent across the app).
@@ -147,7 +167,7 @@ const getAllTransactions = async (req, res) => {
     `;
 
     const [listResult, summaryResult] = await Promise.all([
-      db.query(listQuery, [...params, limitNum, offset]),
+      db.query(listQuery, fetchAll ? params : [...params, limitNum, offset]),
       db.query(summaryQuery, [...params, IN_CATEGORIES, OUT_CATEGORIES]),
     ]);
 
@@ -172,6 +192,67 @@ const getAllTransactions = async (req, res) => {
   } catch (err) {
     console.error('getAllTransactions error:', err);
     return res.status(500).json({ status: 'error', message: 'Internal server error while fetching transactions' });
+  }
+};
+
+// =========================================================
+// GET /api/transactions/export/pdf
+// Same filters as the list endpoint, but every matching row (no pagination),
+// rendered as a landscape PDF with the company logo/header.
+// =========================================================
+const exportTransactionsPdf = async (req, res) => {
+  try {
+    const { whereClause, params } = buildTransactionFilters(req.query);
+    const joins = TRANSACTION_JOINS;
+
+    const listQuery = `
+      SELECT ${TRANSACTION_SELECT_COLUMNS}
+      ${joins}
+      ${whereClause}
+      ORDER BY t.created_at DESC
+      LIMIT ${EXPORT_ROW_LIMIT}
+    `;
+
+    const inParam = params.length + 1;
+    const outParam = params.length + 2;
+    const summaryQuery = `
+      SELECT
+        COALESCE(SUM(t.amount) FILTER (WHERE t.category::text = ANY($${inParam}::text[])), 0) AS total_in,
+        COALESCE(SUM(t.amount) FILTER (WHERE t.category::text = ANY($${outParam}::text[])), 0) AS total_out
+      ${joins}
+      ${whereClause}
+    `;
+
+    const [listResult, summaryResult, actorResult] = await Promise.all([
+      db.query(listQuery, params),
+      db.query(summaryQuery, [...params, IN_CATEGORIES, OUT_CATEGORIES]),
+      db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]),
+    ]);
+
+    const summaryRow = summaryResult.rows[0];
+    const transactions = listResult.rows.map(tx => ({ ...tx, _flow: flowOf(tx.category) }));
+
+    const pdfBuffer = await generateTransactionsPdf({
+      transactions,
+      summary: {
+        total_in: parseFloat(summaryRow.total_in),
+        total_out: parseFloat(summaryRow.total_out),
+        net: parseFloat(summaryRow.total_in) - parseFloat(summaryRow.total_out),
+      },
+      filters: req.query,
+      generatedAt: new Date(),
+      generatedBy: actorResult.rows[0]?.full_name || 'Admin',
+    });
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="Transactions_${Date.now()}.pdf"`,
+      'Content-Length': pdfBuffer.length,
+    });
+    return res.status(200).send(pdfBuffer);
+  } catch (err) {
+    console.error('exportTransactionsPdf error:', err);
+    return res.status(500).json({ status: 'error', message: 'Failed to generate transactions PDF' });
   }
 };
 
@@ -331,6 +412,7 @@ const createManualTransaction = async (req, res) => {
 
 module.exports = {
   getAllTransactions,
+  exportTransactionsPdf,
   getTransactionMeta,
   createManualTransaction,
 };

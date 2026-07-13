@@ -7,6 +7,8 @@ import CreateClientProfilePage from './modules/auth/CreateClientProfilePage';
 import StaffPasswordChangePage from './modules/auth/StaffPasswordChangePage';
 import HomeNursingPage from './modules/public/HomeNursingPage';
 import AboutPage from './modules/public/AboutPage';
+import CatalogPage from './modules/public/CatalogPage';
+import ProductDetailPage from './modules/public/ProductDetailPage';
 import VerifyOTPReg from './auth/VerifyOTPReg';
 import { AuthProvider } from './context/AuthContext';
 import HospitalStaffingPage from './modules/public/HospitalStaffingPage';
@@ -96,6 +98,8 @@ import ActiveSessionsPage from './modules/admin/active_sessions/ActiveSessionsPa
 import SalespersonsPage from './modules/admin/salespersons/SalespersonsPage';
 import AdminInvoicesPage from './modules/admin/invoices/AdminInvoicesPage';
 import SalespersonDetailPage from './modules/admin/salespersons/SalespersonDetailPage';
+import ProductsPage from './modules/admin/products/ProductsPage';
+import ClientProducts from './modules/client/ClientProducts';
 
 function App() {
   return (
@@ -106,6 +110,8 @@ function App() {
             {/* Public Routes */}
             <Route path="/" element={<LandingPage />} />
             <Route path="/about" element={<AboutPage />} />
+            <Route path="/products" element={<CatalogPage />} />
+            <Route path="/products/:productId" element={<ProductDetailPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
             <Route path="/create-client-profile" element={<CreateClientProfilePage />} />
@@ -149,6 +155,7 @@ function App() {
               <Route path="/client/patients" element={<ClientPatients />} />
               <Route path="/client/financial" element={<ClientFinancial />} />
               <Route path="/client/reviews" element={<ClientReviews />} />
+              <Route path="/client/products" element={<ClientProducts />} />
             </Route>
             <Route path="/admin/dashboard" element={
               <AdminAuthProvider>
@@ -311,6 +318,11 @@ function App() {
             <Route path="/admin/invoices" element={
               <AdminAuthProvider>
                 <AdminInvoicesPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/products" element={
+              <AdminAuthProvider>
+                <ProductsPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/advance-requests" element={

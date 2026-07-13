@@ -4,6 +4,9 @@ const { logActivity } = require('../utils/activityLogger');
 const { createPaymentReceipt } = require('../services/receiptService');
 const { sendSms } = require('../utils/sms');
 const { sendClientWelcomeNew } = require('../utils/metaWhatsapp');
+const { ensureCombinedInvoice } = require('./quoteController');
+const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
+const { computeRegFeeSplit, settleRegistrationFee } = require('../services/registrationFeeSplit');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -413,61 +416,114 @@ const recordPayment = async (req, res) => {
       `, [quote_id, quotation.total_amount]);
     }
 
-    // Create transaction record for audit trail
-    await client.query(`
-      INSERT INTO transactions (
-        payment_tracking_id,
-        booking_id,
+    // Split off any portion of this payment that crosses the registration-fee
+    // threshold into its own REGISTRATION_FEE transaction (see
+    // services/registrationFeeSplit.js) — computed BEFORE this payment is
+    // recorded anywhere, since it needs the totals as they stood immediately
+    // prior. total_paid_so_far above is exactly that.
+    const regFeeSplit = await computeRegFeeSplit(client, {
+      client_id,
+      quote_id,
+      amount: parseFloat(amount_received),
+      totalPaidBefore: total_paid_so_far,
+    });
+
+    if (regFeeSplit.regFeePortion > 0) {
+      await client.query(`
+        INSERT INTO transactions (
+          payment_tracking_id, booking_id, quote_id, client_id, category, amount,
+          payment_method, bank_account_id, cheque_number, cheque_date, reference_number,
+          receipt_url, verified_by, status, notes, transaction_type, created_at
+        ) VALUES ($1, $2, $3, $4, 'REGISTRATION_FEE', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'CREDIT', NOW())
+        ON CONFLICT (payment_tracking_id) WHERE category = 'REGISTRATION_FEE' DO UPDATE SET
+          booking_id = EXCLUDED.booking_id,
+          quote_id = EXCLUDED.quote_id,
+          client_id = EXCLUDED.client_id,
+          amount = EXCLUDED.amount,
+          payment_method = EXCLUDED.payment_method,
+          bank_account_id = EXCLUDED.bank_account_id,
+          cheque_number = EXCLUDED.cheque_number,
+          cheque_date = EXCLUDED.cheque_date,
+          receipt_url = EXCLUDED.receipt_url,
+          reference_number = EXCLUDED.reference_number,
+          verified_by = EXCLUDED.verified_by,
+          status = EXCLUDED.status,
+          notes = EXCLUDED.notes
+        `, [
+        payment.payment_id,
+        quotation.booking_id || null,
         quote_id,
         client_id,
-        category,
-        amount,
+        regFeeSplit.regFeePortion,
         payment_method,
-        bank_account_id,
-        cheque_number,
-        cheque_date,
-        reference_number,
-        receipt_url,
+        bank_account_id || null,
+        cheque_number || null,
+        cheque_date || null,
+        reference_number || null,
+        paymentSlipUrl,
         verified_by,
-        status,
-        notes,
-        transaction_type,
-        created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
-      ON CONFLICT (payment_tracking_id) DO UPDATE SET
-        booking_id = EXCLUDED.booking_id,
-        quote_id = EXCLUDED.quote_id,
-        client_id = EXCLUDED.client_id,
-        category = EXCLUDED.category,
-        amount = EXCLUDED.amount,
-        payment_method = EXCLUDED.payment_method,
-        bank_account_id = EXCLUDED.bank_account_id,
-        cheque_number = EXCLUDED.cheque_number,
-        cheque_date = EXCLUDED.cheque_date,
-        receipt_url = EXCLUDED.receipt_url,
-        reference_number = EXCLUDED.reference_number,
-        verified_by = EXCLUDED.verified_by,
-        status = EXCLUDED.status,
-        notes = EXCLUDED.notes,
-        transaction_type = EXCLUDED.transaction_type
-      `, [
-      payment.payment_id,
-      quotation.booking_id || null,
-      quote_id,
-      client_id,
-      transactionCategory,
-      amount_received,
-      payment_method,
-      bank_account_id || null,
-      cheque_number || null,
-      cheque_date || null,
-      reference_number || null,
-      paymentSlipUrl,
-      verified_by,
-      'COMPLETED',
-      notes || null,
-      'CREDIT'
-    ]);
+        'COMPLETED',
+        notes || null,
+      ]);
+    }
+
+    // Create transaction record for the remainder (or the whole amount, if no reg-fee split applied)
+    if (regFeeSplit.remainderAmount > 0) {
+      await client.query(`
+        INSERT INTO transactions (
+          payment_tracking_id,
+          booking_id,
+          quote_id,
+          client_id,
+          category,
+          amount,
+          payment_method,
+          bank_account_id,
+          cheque_number,
+          cheque_date,
+          reference_number,
+          receipt_url,
+          verified_by,
+          status,
+          notes,
+          transaction_type,
+          created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
+        ON CONFLICT (payment_tracking_id) WHERE category != 'REGISTRATION_FEE' DO UPDATE SET
+          booking_id = EXCLUDED.booking_id,
+          quote_id = EXCLUDED.quote_id,
+          client_id = EXCLUDED.client_id,
+          category = EXCLUDED.category,
+          amount = EXCLUDED.amount,
+          payment_method = EXCLUDED.payment_method,
+          bank_account_id = EXCLUDED.bank_account_id,
+          cheque_number = EXCLUDED.cheque_number,
+          cheque_date = EXCLUDED.cheque_date,
+          receipt_url = EXCLUDED.receipt_url,
+          reference_number = EXCLUDED.reference_number,
+          verified_by = EXCLUDED.verified_by,
+          status = EXCLUDED.status,
+          notes = EXCLUDED.notes,
+          transaction_type = EXCLUDED.transaction_type
+        `, [
+        payment.payment_id,
+        quotation.booking_id || null,
+        quote_id,
+        client_id,
+        transactionCategory,
+        regFeeSplit.remainderAmount,
+        payment_method,
+        bank_account_id || null,
+        cheque_number || null,
+        cheque_date || null,
+        reference_number || null,
+        paymentSlipUrl,
+        verified_by,
+        'COMPLETED',
+        notes || null,
+        'CREDIT'
+      ]);
+    }
 
     // Fetch bank account details if provided
     let bank_account = null;
@@ -484,6 +540,28 @@ const recordPayment = async (req, res) => {
     }
 
     const remaining_balance = quotation.total_amount - new_total;
+
+    // Registration fee as a quote line item (see ModularQuoteBuilder's "Add
+    // Registration Fee") is treated as the first "bucket" any payment on this
+    // quote fills — once cumulative verified payments reach that item's own
+    // amount, the client's registration is considered settled even if the
+    // rest of the quote (service charges) isn't fully paid yet. Idempotent:
+    // only fires while reg_fee_status isn't already PAID/WAIVED. Reuses the
+    // regFeeItem already looked up by computeRegFeeSplit above rather than
+    // querying quote_line_items again.
+    let registrationFeeSettled = false;
+    try {
+      if (regFeeSplit.regFeeItem && new_total >= parseFloat(regFeeSplit.regFeeItem.amount)) {
+        registrationFeeSettled = await settleRegistrationFee(client, {
+          client_id,
+          regFeeItem: regFeeSplit.regFeeItem,
+          verified_by,
+          creditSalespersonForRegistration,
+        });
+      }
+    } catch (regFeeErr) {
+      console.error('Registration fee settlement check failed (recordPayment):', regFeeErr.message);
+    }
 
     await client.query('COMMIT');
 
@@ -554,6 +632,14 @@ const recordPayment = async (req, res) => {
       }
     })();
 
+    // Generate the combined Invoice PDF (this quote + its linked PRODUCT
+    // quote, if any) the first time any payment lands against it — no-op if
+    // one already exists. Delivery alongside the receipt is a separate,
+    // admin-triggered action (see receiptController.sendReceiptWhatsApp).
+    ensureCombinedInvoice(quote_id).catch((e) =>
+      console.error('[Invoice] Generation error (recordPayment):', e.message)
+    );
+
     await safeLog({
       actorUserId: req.user?.user_id,
       actorName: await getActorName(req.user?.user_id).catch(() => 'Admin'),
@@ -596,7 +682,8 @@ const recordPayment = async (req, res) => {
         total_paid: new_total,
         remaining_balance: remaining_balance,
         percent_paid: ((new_total / quotation.total_amount) * 100).toFixed(2)
-      }
+      },
+      registration_fee_settled: registrationFeeSettled
     });
   } catch (error) {
     try {
@@ -1608,13 +1695,58 @@ const walletPayoffBooking = async (req, res) => {
       [booking_id]
     );
 
-    await pgClient.query(
-      `INSERT INTO transactions (
-         client_id, booking_id, quote_id, category, amount, payment_method,
-         verified_by, status, notes, transaction_type, created_at
-       ) VALUES ($1, $2, $3, 'BOOKING_PAYMENT', $4, 'WALLET', $5, 'COMPLETED', $6, 'CREDIT', NOW())`,
-      [booking.client_id, booking_id, booking.quote_id || null, parsedAmount, verified_by, paymentNote]
-    );
+    // Split off any portion of this payoff that crosses the registration-fee
+    // threshold — the overdue amount being cleared can include a
+    // REGISTRATION_FEE DEBIT charge (see bookingController.js's
+    // convertToBooking), so this payment path can settle a reg fee too, same
+    // as the ordinary recordPayment flow. totalPaid (booking.amount_paid,
+    // fetched above before this payoff was applied) is the correct "total
+    // paid so far" ledger here since booking_payment_tracking — not
+    // payment_tracking — is this booking's canonical payment record.
+    const regFeeSplit = booking.quote_id
+      ? await computeRegFeeSplit(pgClient, {
+          client_id: booking.client_id,
+          quote_id: booking.quote_id,
+          amount: parsedAmount,
+          totalPaidBefore: totalPaid,
+        })
+      : { regFeePortion: 0, remainderAmount: parsedAmount, regFeeItem: null };
+
+    if (regFeeSplit.regFeePortion > 0) {
+      await pgClient.query(
+        `INSERT INTO transactions (
+           client_id, booking_id, quote_id, category, amount, payment_method,
+           verified_by, status, notes, transaction_type, created_at
+         ) VALUES ($1, $2, $3, 'REGISTRATION_FEE', $4, 'WALLET', $5, 'COMPLETED', $6, 'CREDIT', NOW())`,
+        [booking.client_id, booking_id, booking.quote_id || null, regFeeSplit.regFeePortion, verified_by, paymentNote]
+      );
+    }
+
+    if (regFeeSplit.remainderAmount > 0) {
+      await pgClient.query(
+        `INSERT INTO transactions (
+           client_id, booking_id, quote_id, category, amount, payment_method,
+           verified_by, status, notes, transaction_type, created_at
+         ) VALUES ($1, $2, $3, 'BOOKING_PAYMENT', $4, 'WALLET', $5, 'COMPLETED', $6, 'CREDIT', NOW())`,
+        [booking.client_id, booking_id, booking.quote_id || null, regFeeSplit.remainderAmount, verified_by, paymentNote]
+      );
+    }
+
+    if (regFeeSplit.regFeeItem) {
+      const newTotalPaid = totalPaid + parsedAmount;
+      if (newTotalPaid >= parseFloat(regFeeSplit.regFeeItem.amount)) {
+        try {
+          await settleRegistrationFee(pgClient, {
+            client_id: booking.client_id,
+            regFeeItem: regFeeSplit.regFeeItem,
+            verified_by,
+            creditSalespersonForRegistration,
+          });
+        } catch (regFeeErr) {
+          console.error('Registration fee settlement check failed (walletPayoffBooking):', regFeeErr.message);
+        }
+      }
+    }
 
     await pgClient.query(
       `INSERT INTO transactions (

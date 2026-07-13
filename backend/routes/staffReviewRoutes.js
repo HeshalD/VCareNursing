@@ -22,6 +22,8 @@ router.delete('/:review_id', staffReviewController.deleteReview);
 router.get('/unreviewed-bookings', restrictTo('SUPER_ADMIN'), staffReviewController.getUnreviewedBookings);
 router.post('/send-review-request', restrictTo('SUPER_ADMIN'), staffReviewController.sendReviewRequest);
 router.patch('/:review_id/visibility', restrictTo('SUPER_ADMIN'), staffReviewController.toggleReviewVisibility);
+router.get('/admin/reviewable/:client_id', restrictTo('SUPER_ADMIN'), staffReviewController.getReviewableBookingsForClient);
+router.post('/admin/create', restrictTo('SUPER_ADMIN'), staffReviewController.adminCreateReview);
 router.get('/', restrictTo('SUPER_ADMIN'), staffReviewController.getAllReviews);
 
 module.exports = router;

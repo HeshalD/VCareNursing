@@ -1,0 +1,45 @@
+{
+  "loading": "පැතිකඩ පූරණය වෙමින්...",
+  "header": {
+    "eyebrow": "සේවා සපයන්නාගේ පිවිසුම",
+    "title": "පැතිකඩ"
+  },
+  "verificationBanner": {
+    "verified": "ඔබේ පැතිකඩ සත්‍යාපනය කර ඇත.",
+    "pending": "ඔබේ පැතිකඩ සත්‍යාපනය සඳහා අපේක්ෂිතව පවතී."
+  },
+  "profileCard": {
+    "profileImageAlt": "පැතිකඩ",
+    "defaultDesignation": "කාර්ය මණ්ඩල සාමාජිකයා",
+    "locationPending": "ස්ථානය තවම සඳහන් කර නැත",
+    "memberSince": "{{year}} සිට සාමාජිකයෙකි",
+    "offline": "නොබැඳි"
+  },
+  "professionalSummary": {
+    "title": "වෘත්තීය සාරාංශය",
+    "subtitle": "මෙය සරල ගනුදෙනුකරු පැතිකඩ ප්‍රදර්ශනයට සමානය.",
+    "empty": "තවම වෘත්තීය සාරාංශයක් එක් කර නොමැත."
+  },
+  "documents": {
+    "title": "ලේඛන සහ සහතික",
+    "subtitle": "උඩුගත කළ ලේඛන සරල ගැලරියක දිස්වේ.",
+    "imageAlt": "ලේඛනය",
+    "empty": "තවම ලේඛන කිසිවක් උඩුගත කර නොමැත."
+  },
+  "accountDetails": {
+    "title": "ගිණුම් විස්තර",
+    "subtitle": "සත්‍යාපනය සහ ලබා ගත හැකි බව.",
+    "verificationLabel": "සත්‍යාපනය",
+    "verificationPending": "අපේක්ෂිතයි",
+    "availabilityLabel": "ලබා ගත හැකි බව",
+    "offline": "නොබැඳි"
+  },
+  "contactInfo": {
+    "title": "සම්බන්ධතා තොරතුරු",
+    "subtitle": "ගිණුමේ සම්බන්ධතා විස්තර.",
+    "emailLabel": "විද්‍යුත් තැපැල් ලිපිනය",
+    "emailNotProvided": "සපයා නොමැත",
+    "mobileLabel": "ජංගම දුරකථන අංකය",
+    "mobileNotAdded": "එක් කර නොමැත"
+  }
+}

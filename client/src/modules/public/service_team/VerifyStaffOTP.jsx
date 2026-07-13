@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import { Lock, ChevronLeft, Phone, MessageSquare } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import Navbar from '../../../components/layout/Navbar';
 import apiClient from '../../../api/api';
+import LanguageToggle from '../../../i18n/LanguageToggle';
 
 const VerifyStaffOTP = () => {
+  const { t } = useTranslation('verifyStaffOtp');
   const navigate = useNavigate();
   const location = useLocation();
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
@@ -40,7 +43,7 @@ const VerifyStaffOTP = () => {
   };
 
   const maskMobile = (number) => {
-    if (!number) return 'your registered number';
+    if (!number) return t('defaultMobilePlaceholder');
     const clean = number.replace(/\s/g, '');
     return clean.slice(0, 3) + '****' + clean.slice(-3);
   };
@@ -83,13 +86,13 @@ const VerifyStaffOTP = () => {
     setError('');
     const otpValue = otp.join('');
     if (otpValue.length !== 6) {
-      setError('Please enter all 6 digits.');
+      setError(t('errors.incompleteOtp'));
       return;
     }
     try {
       setIsLoading(true);
       const response = await apiClient.verifyStaffApplicationOtp(applicationId, otpValue);
-      setSuccess('Phone verified! Redirecting...');
+      setSuccess(t('success.verified'));
       setTimeout(() => {
         navigate('/worker-registration-success', {
           state: {
@@ -104,7 +107,7 @@ const VerifyStaffOTP = () => {
         });
       }, 1500);
     } catch (err) {
-      setError(err.message || 'Invalid or expired OTP. Please try again.');
+      setError(err.message || t('errors.invalidOtp'));
     } finally {
       setIsLoading(false);
     }
@@ -118,10 +121,10 @@ const VerifyStaffOTP = () => {
       await apiClient.resendStaffApplicationOtp(applicationId);
       setTimeLeft(300);
       setOtp(['', '', '', '', '', '']);
-      setSuccess('A new code has been sent to your phone.');
+      setSuccess(t('success.resent'));
       document.getElementById('staff-otp-0')?.focus();
     } catch (err) {
-      setError(err.message || 'Failed to resend code.');
+      setError(err.message || t('errors.resendFailed'));
     } finally {
       setIsLoading(false);
     }
@@ -131,7 +134,10 @@ const VerifyStaffOTP = () => {
     <div className="min-h-screen bg-slate-50 flex flex-col">
       <Navbar />
 
-      <div className="flex-grow flex items-center justify-center pt-24 pb-12 px-4">
+      <div className="flex-grow flex flex-col items-center justify-center pt-24 pb-12 px-4">
+        <div className="w-full max-w-md flex justify-end mb-3">
+          <LanguageToggle />
+        </div>
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -149,11 +155,11 @@ const VerifyStaffOTP = () => {
                 className="flex items-center gap-1.5 text-indigo-300 hover:text-white text-sm mb-6 transition-colors"
               >
                 <ChevronLeft className="w-4 h-4" />
-                Back to application
+                {t('backToApplication')}
               </button>
-              <h1 className="text-2xl font-bold text-white mb-2">Verify Your Phone</h1>
+              <h1 className="text-2xl font-bold text-white mb-2">{t('title')}</h1>
               <p className="text-indigo-200 text-sm">
-                We've sent a 6-digit code to your SMS at{' '}
+                {t('subtitlePrefix')}{' '}
                 <span className="font-semibold text-white">{maskMobile(mobileNumber)}</span>
               </p>
             </div>
@@ -163,7 +169,7 @@ const VerifyStaffOTP = () => {
           <div className="flex gap-3 px-8 pt-6">
             <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 border border-indigo-200 rounded-full">
               <Phone className="w-3.5 h-3.5 text-indigo-600" />
-              <span className="text-xs font-medium text-indigo-700">SMS</span>
+              <span className="text-xs font-medium text-indigo-700">{t('smsBadge')}</span>
             </div>
           </div>
 
@@ -172,7 +178,7 @@ const VerifyStaffOTP = () => {
             {/* OTP inputs */}
             <div>
               <label className="text-sm font-semibold text-slate-600 block mb-3">
-                Enter 6-digit code
+                {t('otpLabel')}
               </label>
               <div className="flex justify-between gap-1.5 sm:gap-2" onPaste={handlePaste}>
                 {otp.map((digit, index) => (
@@ -198,7 +204,7 @@ const VerifyStaffOTP = () => {
             {/* Timer + Resend */}
             <div className="flex items-center justify-between text-sm">
               <p className="text-slate-500">
-                Code expires in{' '}
+                {t('codeExpiresIn')}{' '}
                 <span className={`font-semibold ${timeLeft < 60 ? 'text-red-600' : 'text-slate-800'}`}>
                   {formatTime(timeLeft)}
                 </span>
@@ -209,7 +215,7 @@ const VerifyStaffOTP = () => {
                 disabled={timeLeft > 0 || isLoading}
                 className="text-indigo-600 font-medium hover:text-indigo-800 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors"
               >
-                {timeLeft > 0 ? `Resend in ${formatTime(timeLeft)}` : 'Resend code'}
+                {timeLeft > 0 ? t('resendIn', { time: formatTime(timeLeft) }) : t('resendCode')}
               </button>
             </div>
 
@@ -242,18 +248,18 @@ const VerifyStaffOTP = () => {
               {isLoading ? (
                 <>
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  Verifying...
+                  {t('verifying')}
                 </>
               ) : (
                 <>
                   <Lock className="w-5 h-5" />
-                  Verify &amp; Submit Application
+                  {t('submitButton')}
                 </>
               )}
             </button>
 
             <p className="text-xs text-center text-slate-400">
-              Didn't receive a code? Check your SMS inbox.
+              {t('noCodeReceived')}
             </p>
           </form>
         </motion.div>

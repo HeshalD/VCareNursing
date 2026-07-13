@@ -12,7 +12,7 @@ const ROLE_OPTIONS = [
   { value: 'SALES', label: 'Sales' },
   { value: 'STORE_MANAGER', label: 'Store Manager' },
 ];
-const LOGIN_ROLES = new Set(['COORDINATOR', 'ACCOUNTS']);
+const LOGIN_ROLES = new Set(['COORDINATOR', 'ACCOUNTS', 'SALES']);
 const STATUS_OPTIONS = ['Active', 'Inactive', 'On Leave'];
 const STATUS_TABS = ['All', 'Active', 'Inactive', 'On Leave'];
 
@@ -182,11 +182,11 @@ const InternalStaffPage = () => {
     }
     if (isAdd && isLoginRole) {
       if (!form.phone.trim()) {
-        setFormError('Phone is required for COORDINATOR and ACCOUNTS roles (used as login mobile number).');
+        setFormError('Phone is required for COORDINATOR, ACCOUNTS, and SALES roles (used as login mobile number).');
         return;
       }
       if (!form.password.trim()) {
-        setFormError('Password is required for COORDINATOR and ACCOUNTS roles.');
+        setFormError('Password is required for COORDINATOR, ACCOUNTS, and SALES roles.');
         return;
       }
     }

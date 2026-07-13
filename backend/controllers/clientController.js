@@ -4,6 +4,7 @@ const { logActivity } = require('../utils/activityLogger');
 const { sendRegFeeNotice, sendRegFeeInvoice, sendClientWelcomeNew } = require('../utils/metaWhatsapp');
 const { sendSms } = require('../utils/sms');
 const { generateAndUploadRegFeeInvoice } = require('../utils/regFeeInvoicePdf');
+const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const html_to_pdf = require('html-pdf-node');
 const dailyInvoiceTemplate = require('../templates/dailyInvoiceTemplate');
 
@@ -377,6 +378,7 @@ exports.getAdminClientDetail = async (req, res) => {
          sr.active_quote_id,
          sr.service_request_code,
          b.booking_code,
+         pq.quote_id as product_quote_id,
          COALESCE((
            SELECT SUM(pt.amount_received)
            FROM payment_tracking pt
@@ -385,6 +387,7 @@ exports.getAdminClientDetail = async (req, res) => {
        FROM quotations q
        JOIN service_requests sr ON q.request_id = sr.request_id
        LEFT JOIN bookings b ON q.booking_id = b.booking_id
+       LEFT JOIN quotations pq ON pq.linked_quote_id = q.quote_id AND pq.quote_type = 'PRODUCT'
        WHERE sr.client_id = $1
        ORDER BY q.created_at DESC`,
       [client_id]
@@ -1268,8 +1271,13 @@ exports.proxyCreateClient = async (req, res) => {
 // 5. Get all clients
 exports.getAllClients = async (req, res) => {
   try {
+    const salespersonId = req.user?.salesperson_id;
+    const salesFilter = salespersonId
+      ? 'WHERE cp.client_profile_id IN (SELECT client_id FROM client_salesperson_assignments WHERE salesperson_id = $1)'
+      : '';
     const clientsRes = await db.query(
-      'SELECT cp.*, u.email, u.mobile_number, u.created_at as user_created_at FROM client_profiles cp JOIN users u ON cp.user_id = u.user_id ORDER BY cp.created_at DESC'
+      `SELECT cp.*, u.email, u.mobile_number, u.created_at as user_created_at FROM client_profiles cp JOIN users u ON cp.user_id = u.user_id ${salesFilter} ORDER BY cp.created_at DESC`,
+      salespersonId ? [salespersonId] : []
     );
 
     res.status(200).json({
@@ -1617,7 +1625,7 @@ exports.sendRegFeeInvoice = async (req, res) => {
 // Admin: manually update reg_fee_status to PAID or WAIVED.
 exports.updateRegFeeStatus = async (req, res) => {
   const { client_id } = req.params;
-  const { status } = req.body;
+  const { status, salesperson_id } = req.body;
 
   const allowed = ['PENDING', 'PAID', 'WAIVED'];
   if (!allowed.includes(status)) {
@@ -1637,12 +1645,19 @@ exports.updateRegFeeStatus = async (req, res) => {
     }
     const wasAlreadyPaid = current.rows[0].reg_fee_status === 'PAID';
 
+    // PAID starts the 365-day membership countdown; PENDING/WAIVED clear it
+    // (WAIVED has no payment to anchor an expiry to, so it just stays exempt).
+    const isPaidNow = status === 'PAID';
+    const paidAt = isPaidNow ? new Date() : null;
+    const expiresAt = isPaidNow ? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) : null;
+
     const updated = await db.query(
       `UPDATE client_profiles
-       SET reg_fee_status = $1, is_registration_fee_paid = $2
-       WHERE client_profile_id = $3
-       RETURNING reg_fee_status, is_registration_fee_paid`,
-      [status, feePaid, client_id]
+       SET reg_fee_status = $1, is_registration_fee_paid = $2,
+           reg_fee_paid_at = $3, reg_fee_expires_at = $4
+       WHERE client_profile_id = $5
+       RETURNING reg_fee_status, is_registration_fee_paid, reg_fee_expires_at`,
+      [status, feePaid, paidAt, expiresAt, client_id]
     );
 
     if (updated.rows.length === 0) {
@@ -1656,7 +1671,7 @@ exports.updateRegFeeStatus = async (req, res) => {
       try {
         await db.query(
           `INSERT INTO transactions (client_id, category, amount, transaction_type, status, notes)
-           VALUES ($1, 'CLIENT_PAYMENT', $2, 'CREDIT', 'COMPLETED', 'Registration fee payment (marked paid by admin)')`,
+           VALUES ($1, 'REGISTRATION_FEE', $2, 'CREDIT', 'COMPLETED', 'Registration fee payment (marked paid by admin)')`,
           [client_id, current.rows[0].reg_fee_amount]
         );
       } catch (txErr) {
@@ -1670,6 +1685,20 @@ exports.updateRegFeeStatus = async (req, res) => {
         );
       } catch (invErr) {
         console.error('Failed to sync registration fee invoice status:', invErr.message);
+      }
+
+      // Credit the salesperson who brought this registration in, if one was picked.
+      // Idempotent + non-fatal: a credit failure shouldn't block the payment confirmation.
+      if (salesperson_id) {
+        try {
+          await creditSalespersonForRegistration(db, {
+            client_id,
+            salesperson_id,
+            assigned_by: req.user.user_id,
+          });
+        } catch (creditErr) {
+          console.error('Failed to credit salesperson for registration:', creditErr.message);
+        }
       }
     }
 
@@ -1703,6 +1732,7 @@ exports.updateRegFeeStatus = async (req, res) => {
 // Distinct from updateRegFeeStatus so the audit trail captures the receipt-review action separately.
 exports.verifyRegFeePayment = async (req, res) => {
   const { client_id } = req.params;
+  const { salesperson_id } = req.body;
 
   try {
     const clientResult = await db.query(
@@ -1725,9 +1755,10 @@ exports.verifyRegFeePayment = async (req, res) => {
 
     const updated = await db.query(
       `UPDATE client_profiles
-       SET reg_fee_status = 'PAID', is_registration_fee_paid = true
+       SET reg_fee_status = 'PAID', is_registration_fee_paid = true,
+           reg_fee_paid_at = NOW(), reg_fee_expires_at = NOW() + INTERVAL '365 days'
        WHERE client_profile_id = $1
-       RETURNING reg_fee_status, is_registration_fee_paid`,
+       RETURNING reg_fee_status, is_registration_fee_paid, reg_fee_expires_at`,
       [client_id]
     );
 
@@ -1736,7 +1767,7 @@ exports.verifyRegFeePayment = async (req, res) => {
     try {
       await db.query(
         `INSERT INTO transactions (client_id, category, amount, transaction_type, status, receipt_url, notes)
-         VALUES ($1, 'CLIENT_PAYMENT', $2, 'CREDIT', 'COMPLETED', $3, 'Registration fee payment (receipt verified)')`,
+         VALUES ($1, 'REGISTRATION_FEE', $2, 'CREDIT', 'COMPLETED', $3, 'Registration fee payment (receipt verified)')`,
         [client_id, client.reg_fee_amount, client.reg_fee_receipt_url || null]
       );
     } catch (txErr) {
@@ -1750,6 +1781,18 @@ exports.verifyRegFeePayment = async (req, res) => {
       );
     } catch (invErr) {
       console.error('Failed to sync registration fee invoice status:', invErr.message);
+    }
+
+    if (salesperson_id) {
+      try {
+        await creditSalespersonForRegistration(db, {
+          client_id,
+          salesperson_id,
+          assigned_by: req.user.user_id,
+        });
+      } catch (creditErr) {
+        console.error('Failed to credit salesperson for registration:', creditErr.message);
+      }
     }
 
     try {
@@ -2072,7 +2115,8 @@ exports.getAllRegFeeInvoices = async (req, res) => {
     const [rows, countResult] = await Promise.all([
       db.query(
         `SELECT crfi.invoice_id, crfi.invoice_code, crfi.amount, crfi.pdf_url, crfi.status, crfi.created_at,
-                cp.client_profile_id, cp.full_name AS client_name
+                cp.client_profile_id, cp.full_name AS client_name,
+                cp.reg_fee_status AS membership_status, cp.reg_fee_expires_at AS membership_expires_at
          FROM client_reg_fee_invoices crfi
          LEFT JOIN client_profiles cp ON crfi.client_id = cp.client_profile_id
          ${where}

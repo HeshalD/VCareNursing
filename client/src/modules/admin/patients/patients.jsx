@@ -1,14 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Users, Search, Plus, Pencil, Trash2, X, ChevronDown, ChevronRight,
-  HeartPulse, Phone, User, Shield, AlertCircle, Loader2,
-  CheckCircle, ChevronLeft, ExternalLink
+  Users, Search, Plus, Pencil, Trash2, X, ChevronRight,
+  User, Shield, AlertCircle, Loader2,
+  CheckCircle, ChevronLeft, ExternalLink, HeartPulse,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
-
 
 const fmt = (v) =>
   v ? new Date(v).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
@@ -33,19 +32,62 @@ const GENDER_OPTIONS = [
 
 const genderLabel = (g) => GENDER_OPTIONS.find((o) => o.value === g)?.label || '—';
 
-// ─── Small reusable components ──────────────────────────────────────────────
+const LIMIT = 20;
 
+// ─── Design tokens (shared across admin pages) ───────────────────────────────
 
-const Field = ({ label, value }) => (
-  <div>
-    <p className="text-xs text-slate-400 uppercase tracking-wide font-semibold mb-0.5">{label}</p>
-    <p className="text-sm text-slate-800">{value || '—'}</p>
+const inputCls = (hasError) =>
+  `w-full px-3 py-2 text-sm border rounded-lg outline-none focus:ring-2 focus:border-blue-500 transition-colors ${
+    hasError
+      ? 'border-red-400 bg-red-50 focus:ring-red-100'
+      : 'border-slate-300 bg-white text-slate-800 placeholder-slate-400 focus:ring-blue-100'
+  }`;
+const primaryBtnCls = 'inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+const iconBtnCls = 'inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
+
+const SectionHeader = ({ title }) => (
+  <div className="px-5 pt-5 pb-2.5 border-b border-slate-100">
+    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{title}</p>
   </div>
 );
 
-// ─── Care Profile Form Modal ─────────────────────────────────────────────────
+const Field = ({ label, required, error, children }) => (
+  <div>
+    <label className="block text-xs font-medium text-slate-600 mb-1">
+      {label}{required && <span className="text-red-500 ml-0.5">*</span>}
+    </label>
+    {children}
+    {error && <p className="text-xs text-red-600 mt-1">{error}</p>}
+  </div>
+);
 
-const PatientModal = ({ mode, initial, clients, onClose, onSave, saving }) => {
+// ─── Proxy mode toggle — same switch used on service_requests.jsx ───────────
+
+const ProxyModeToggle = ({ active, onToggle }) => (
+  <div className="flex items-center gap-2 px-3 py-1.5 border border-slate-200 bg-white rounded-lg">
+    <Shield className={`w-3.5 h-3.5 ${active ? 'text-emerald-600' : 'text-slate-400'}`} />
+    <span className={`text-sm font-medium ${active ? 'text-emerald-700' : 'text-slate-500'}`}>Proxy Mode</span>
+    <button
+      type="button"
+      onClick={onToggle}
+      role="switch"
+      aria-checked={active}
+      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+        active ? 'bg-emerald-500' : 'bg-slate-200'
+      }`}
+    >
+      <span
+        className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm ring-0 transition-transform duration-200 ease-in-out ${
+          active ? 'translate-x-5' : 'translate-x-1'
+        }`}
+      />
+    </button>
+  </div>
+);
+
+// ─── Add / Edit Care Profile drawer ──────────────────────────────────────────
+
+const PatientDrawer = ({ mode, initial, clients, onClose, onSave, saving }) => {
   const [form, setForm] = useState(initial || EMPTY_FORM);
   const [errors, setErrors] = useState({});
 
@@ -70,158 +112,135 @@ const PatientModal = ({ mode, initial, clients, onClose, onSave, saving }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
-          <h2 className="text-lg font-bold text-slate-900">
-            {mode === 'add' ? 'Add New Care Profile' : 'Edit Care Profile'}
+    <div className="fixed inset-0 z-50 flex">
+      <div className="flex-1 bg-black/30" onClick={onClose} />
+
+      <div className="w-full max-w-md bg-white flex flex-col shadow-2xl overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 flex-shrink-0">
+          <h2 className="text-sm font-semibold text-slate-900">
+            {mode === 'add' ? 'Add Care Profile' : 'Edit Care Profile'}
           </h2>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500">
-            <X className="w-5 h-5" />
+          <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors">
+            <X className="w-4 h-4" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
+        <form onSubmit={handleSubmit} id="patient-drawer-form" className="flex-1 overflow-y-auto">
           {mode === 'add' && (
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Client (Payer) <span className="text-red-500">*</span>
-              </label>
-              <select
-                value={form.client_id}
-                onChange={(e) => set('client_id', e.target.value)}
-                className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 ${
-                  errors.client_id ? 'border-red-400' : 'border-slate-300'
-                }`}
-              >
-                <option value="">— Select client —</option>
-                {clients.map((c) => (
-                  <option key={c.client_profile_id} value={c.client_profile_id}>
-                    {c.full_name}
-                  </option>
-                ))}
-              </select>
-              {errors.client_id && <p className="text-xs text-red-500 mt-1">{errors.client_id}</p>}
-            </div>
+            <>
+              <SectionHeader title="Client" />
+              <div className="px-5 pt-4 pb-2">
+                <Field label="Client (Payer)" required error={errors.client_id}>
+                  <select
+                    value={form.client_id}
+                    onChange={(e) => set('client_id', e.target.value)}
+                    className={inputCls(!!errors.client_id)}
+                  >
+                    <option value="">— Select client —</option>
+                    {clients.map((c) => (
+                      <option key={c.client_profile_id} value={c.client_profile_id}>{c.full_name}</option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+            </>
           )}
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Full Name <span className="text-red-500">*</span>
-              </label>
+          <SectionHeader title="Personal Information" />
+          <div className="px-5 pt-4 pb-2 space-y-3">
+            <Field label="Full Name" required error={errors.full_name}>
               <input
                 type="text"
                 value={form.full_name}
                 onChange={(e) => set('full_name', e.target.value)}
-                className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 ${
-                  errors.full_name ? 'border-red-400' : 'border-slate-300'
-                }`}
+                className={inputCls(!!errors.full_name)}
               />
-              {errors.full_name && <p className="text-xs text-red-500 mt-1">{errors.full_name}</p>}
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Age" required error={errors.age}>
+                <input
+                  type="number" min="0" max="150"
+                  value={form.age}
+                  onChange={(e) => set('age', e.target.value)}
+                  className={inputCls(!!errors.age)}
+                />
+              </Field>
+              <Field label="Gender">
+                <select value={form.gender || ''} onChange={(e) => set('gender', e.target.value)} className={inputCls(false)}>
+                  <option value="">— Select —</option>
+                  {GENDER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </Field>
             </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Age <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="number"
-                min="0"
-                max="150"
-                value={form.age}
-                onChange={(e) => set('age', e.target.value)}
-                className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 ${
-                  errors.age ? 'border-red-400' : 'border-slate-300'
-                }`}
-              />
-              {errors.age && <p className="text-xs text-red-500 mt-1">{errors.age}</p>}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Gender</label>
-              <select
-                value={form.gender || ''}
-                onChange={(e) => set('gender', e.target.value)}
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white"
-              >
-                <option value="">— Select —</option>
-                {GENDER_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="col-span-2">
-              <label className="block text-sm font-medium text-slate-700 mb-1">Relationship to Client</label>
+            <Field label="Relationship to Client">
               <input
                 type="text"
                 placeholder="e.g. Friend, Parent"
                 value={form.relationship_to_client}
                 onChange={(e) => set('relationship_to_client', e.target.value)}
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                className={inputCls(false)}
               />
-            </div>
+            </Field>
+          </div>
 
-            <div className="col-span-2">
-              <label className="block text-sm font-medium text-slate-700 mb-1">Medical Condition</label>
+          <SectionHeader title="Care Details" />
+          <div className="px-5 pt-4 pb-2 space-y-3">
+            <Field label="Medical Condition">
               <textarea
                 rows={2}
                 value={form.medical_condition}
                 onChange={(e) => set('medical_condition', e.target.value)}
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 resize-none"
+                className={`${inputCls(false)} resize-none`}
               />
-            </div>
-
-            <div className="col-span-2">
-              <label className="block text-sm font-medium text-slate-700 mb-1">Residential Address</label>
+            </Field>
+            <Field label="Residential Address">
               <input
                 type="text"
                 value={form.residential_address}
                 onChange={(e) => set('residential_address', e.target.value)}
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                className={inputCls(false)}
               />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Emergency Contact Name</label>
-              <input
-                type="text"
-                value={form.emergency_contact_name}
-                onChange={(e) => set('emergency_contact_name', e.target.value)}
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Emergency Contact No.</label>
-              <input
-                type="tel"
-                value={form.emergency_contact_number}
-                onChange={(e) => set('emergency_contact_number', e.target.value)}
-                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-              />
-            </div>
+            </Field>
           </div>
 
-          <div className="flex justify-end gap-3 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 rounded-lg border border-slate-300 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-4 py-2 rounded-lg bg-teal-600 text-white text-sm font-medium hover:bg-teal-700 disabled:opacity-60 flex items-center gap-2"
-            >
-              {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-              {mode === 'add' ? 'Add Care Profile' : 'Save Changes'}
-            </button>
+          <SectionHeader title="Emergency Contact" />
+          <div className="px-5 pt-4 pb-6 space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Contact Name">
+                <input
+                  type="text"
+                  value={form.emergency_contact_name}
+                  onChange={(e) => set('emergency_contact_name', e.target.value)}
+                  className={inputCls(false)}
+                />
+              </Field>
+              <Field label="Contact Number">
+                <input
+                  type="tel"
+                  value={form.emergency_contact_number}
+                  onChange={(e) => set('emergency_contact_number', e.target.value)}
+                  className={inputCls(false)}
+                />
+              </Field>
+            </div>
           </div>
         </form>
+
+        <div className="flex items-center gap-2 px-5 py-4 border-t border-slate-200 bg-slate-50 flex-shrink-0">
+          <button type="button" onClick={onClose}
+            className="flex-1 px-4 py-2 border border-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-100 transition-colors">
+            Cancel
+          </button>
+          <button
+            type="submit"
+            form="patient-drawer-form"
+            disabled={saving}
+            className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+            {mode === 'add' ? 'Add Care Profile' : 'Save Changes'}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -235,18 +254,18 @@ const DeleteModal = ({ patient, onClose, onConfirm, deleting }) => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6">
         <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+          <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center flex-shrink-0">
             <Trash2 className="w-5 h-5 text-red-600" />
           </div>
           <div>
-            <h2 className="text-base font-bold text-slate-900">Delete Care Profile</h2>
-            <p className="text-sm text-slate-500">This action cannot be undone.</p>
+            <h2 className="text-sm font-semibold text-slate-900">Delete Care Profile</h2>
+            <p className="text-xs text-slate-500 mt-0.5">This action cannot be undone.</p>
           </div>
         </div>
-        <p className="text-sm text-slate-700 mb-4">
-          Are you sure you want to delete <span className="font-semibold">{patient.full_name}</span>?
+        <p className="text-sm text-slate-600 mb-4">
+          Are you sure you want to delete <span className="font-semibold text-slate-800">{patient.full_name}</span>?
           Care Profiles with active bookings cannot be deleted.
         </p>
         <label className="block text-xs font-medium text-slate-600 mb-1.5">
@@ -258,19 +277,19 @@ const DeleteModal = ({ patient, onClose, onConfirm, deleting }) => {
           onChange={(e) => setConfirmText(e.target.value)}
           placeholder={patient.full_name}
           autoFocus
-          className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-6 focus:outline-none focus:ring-2 focus:ring-red-500"
+          className={`${inputCls(false)} mb-6`}
         />
-        <div className="flex justify-end gap-3">
+        <div className="flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-lg border border-slate-300 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
             disabled={deleting || !nameMatches}
-            className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
             Delete
@@ -281,131 +300,94 @@ const DeleteModal = ({ patient, onClose, onConfirm, deleting }) => {
   );
 };
 
-// ─── Patient Row ─────────────────────────────────────────────────────────────
+// ─── Nested table: client row → care-profile sub-table ──────────────────────
 
-const PatientRow = ({ patient, proxyMode, onEdit, onDelete, onView }) => {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
-      <button
-        onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors text-left"
-      >
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-8 h-8 rounded-full bg-teal-100 flex items-center justify-center flex-shrink-0">
-            <User className="w-4 h-4 text-teal-700" />
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <p className="text-sm font-semibold text-slate-900 truncate">{patient.full_name}</p>
-              {patient.patient_code && (
-                <span className="text-xs font-mono text-slate-400">{patient.patient_code}</span>
-              )}
-            </div>
-            <p className="text-xs text-slate-500">
-              {patient.age ? `Age ${patient.age}` : 'Age —'}
-              {patient.gender ? ` · ${genderLabel(patient.gender)}` : ''}
-              {patient.relationship_to_client ? ` · ${patient.relationship_to_client}` : ''}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-          <button
-            onClick={(e) => { e.stopPropagation(); onView(patient); }}
-            className="p-1.5 rounded-lg hover:bg-teal-50 text-slate-400 hover:text-teal-600 transition-colors"
-            title="View Profile"
-          >
-            <ExternalLink className="w-4 h-4" />
-          </button>
-          {proxyMode && (
-            <div className="flex items-center gap-1">
-              <button
-                onClick={(e) => { e.stopPropagation(); onEdit(patient); }}
-                className="p-1.5 rounded-lg hover:bg-blue-50 text-slate-400 hover:text-blue-600 transition-colors"
-                title="Edit"
-              >
-                <Pencil className="w-4 h-4" />
-              </button>
-              <button
-                onClick={(e) => { e.stopPropagation(); onDelete(patient); }}
-                className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600 transition-colors"
-                title="Delete"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
-          )}
-          {expanded ? (
-            <ChevronDown className="w-4 h-4 text-slate-400" />
-          ) : (
-            <ChevronRight className="w-4 h-4 text-slate-400" />
-          )}
-        </div>
-      </button>
-
-      {expanded && (
-        <div className="px-4 pb-4 pt-1 bg-slate-50 border-t border-slate-100 grid grid-cols-2 gap-4">
-          <Field label="Gender" value={genderLabel(patient.gender)} />
-          <Field label="Medical Condition" value={patient.medical_condition} />
-          <Field label="Residential Address" value={patient.residential_address} />
-          <Field label="Emergency Contact" value={patient.emergency_contact_name} />
-          <Field label="Emergency No." value={patient.emergency_contact_number} />
-          <Field label="Registered On" value={fmt(patient.created_at)} />
-        </div>
-      )}
-    </div>
-  );
-};
-
-// ─── Client Group ────────────────────────────────────────────────────────────
-
-const ClientGroup = ({ clientName, clientMobile, patients, proxyMode, onEdit, onDelete, onView }) => {
-  const [open, setOpen] = useState(true);
+const ClientRow = ({ clientName, clientMobile, patients, proxyMode, onEdit, onDelete, onView, colSpan }) => {
+  const [open, setOpen] = useState(false);
 
   return (
-    <div className="mb-6">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 mb-3 group"
-      >
-        {open ? (
-          <ChevronDown className="w-4 h-4 text-slate-400" />
-        ) : (
-          <ChevronRight className="w-4 h-4 text-slate-400" />
-        )}
-        <span className="text-sm font-bold text-slate-700 group-hover:text-teal-700 transition-colors">
-          {clientName || 'Unknown Client'}
-        </span>
-        {clientMobile && (
-          <span className="text-xs text-slate-400 flex items-center gap-1">
-            <Phone className="w-3 h-3" /> {clientMobile}
-          </span>
-        )}
-        <span className="ml-1 text-xs text-slate-400 bg-slate-100 rounded-full px-2 py-0.5">
-          {patients.length} care profile{patients.length !== 1 ? 's' : ''}
-        </span>
-      </button>
+    <>
+      <tr onClick={() => setOpen((v) => !v)} className="cursor-pointer hover:bg-slate-50 transition-colors">
+        <td className="px-4 py-3">
+          <div className="flex items-center gap-2.5">
+            <ChevronRight className={`w-3.5 h-3.5 text-slate-300 shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
+            <div className="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0">
+              <User className="w-3.5 h-3.5 text-slate-400" />
+            </div>
+            <span className="font-semibold text-slate-900">{clientName || 'Unknown Client'}</span>
+          </div>
+        </td>
+        <td className="px-4 py-3 text-slate-500">{clientMobile || '—'}</td>
+        <td className="px-4 py-3 text-right text-slate-500 tabular-nums">{patients.length}</td>
+      </tr>
 
       {open && (
-        <div className="space-y-2 pl-6">
-          {patients.map((p) => (
-            <PatientRow
-              key={p.patient_id}
-              patient={p}
-              proxyMode={proxyMode}
-              onEdit={onEdit}
-              onDelete={onDelete}
-              onView={onView}
-            />
-          ))}
-        </div>
+        <tr>
+          <td colSpan={colSpan} className="bg-slate-50 px-4 py-3">
+            <div className="border border-slate-200 rounded-lg overflow-hidden bg-white">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50">
+                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Care Profile</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Age / Gender</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Relationship</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Medical Condition</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Emergency Contact</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Registered</th>
+                    <th className="px-4 py-2.5" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {patients.map((p) => (
+                    <tr key={p.patient_id} className="hover:bg-slate-50 transition-colors">
+                      <td className="px-4 py-2.5">
+                        <p className="font-medium text-slate-900 leading-tight">{p.full_name}</p>
+                        {p.patient_code && <p className="text-xs text-slate-400 font-mono">{p.patient_code}</p>}
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">
+                        {p.age ? `${p.age}` : '—'}{p.gender ? ` · ${genderLabel(p.gender)}` : ''}
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-500">{p.relationship_to_client || '—'}</td>
+                      <td className="px-4 py-2.5 text-slate-500 max-w-[200px] truncate" title={p.medical_condition}>
+                        {p.medical_condition || '—'}
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-500">
+                        {p.emergency_contact_name || '—'}
+                        {p.emergency_contact_number && <span className="block text-xs text-slate-400">{p.emergency_contact_number}</span>}
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">{fmt(p.created_at)}</td>
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center justify-end gap-0.5">
+                          <button onClick={() => onView(p)} title="View Profile" className={iconBtnCls}>
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </button>
+                          {proxyMode && (
+                            <>
+                              <button onClick={() => onEdit(p)} title="Edit" className={iconBtnCls}>
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => onDelete(p)}
+                                title="Delete"
+                                className="inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </td>
+        </tr>
       )}
-    </div>
+    </>
   );
 };
-
-const LIMIT = 20;
 
 // ─── Pagination controls ─────────────────────────────────────────────────────
 
@@ -425,30 +407,28 @@ const Pagination = ({ page, totalPages, total, limit, onPage }) => {
   const end   = Math.min(page * limit, total);
 
   return (
-    <div className="flex items-center justify-between mt-8 pt-4 border-t border-slate-200">
-      <p className="text-sm text-slate-500">
-        Showing <strong className="text-slate-700">{start}–{end}</strong> of{' '}
-        <strong className="text-slate-700">{total}</strong> care profiles
+    <div className="border-t border-slate-100 px-4 py-2.5 flex items-center justify-between">
+      <p className="text-xs text-slate-400">
+        Showing <span className="font-medium text-slate-600">{start}–{end}</span> of{' '}
+        <span className="font-medium text-slate-600">{total}</span> care profiles
       </p>
       <div className="flex items-center gap-1">
         <button
           onClick={() => onPage(page - 1)}
           disabled={page === 1}
-          className="p-2 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-500 hover:bg-slate-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          <ChevronLeft className="w-4 h-4" />
+          <ChevronLeft className="w-3.5 h-3.5" />
         </button>
         {pages.map((p, i) =>
           p === '…' ? (
-            <span key={`ellipsis-${i}`} className="px-2 text-slate-400 text-sm">…</span>
+            <span key={`ellipsis-${i}`} className="px-1.5 text-slate-400 text-xs">…</span>
           ) : (
             <button
               key={p}
               onClick={() => onPage(p)}
-              className={`w-8 h-8 rounded-lg text-sm font-medium transition-colors ${
-                p === page
-                  ? 'bg-teal-600 text-white'
-                  : 'border border-slate-200 text-slate-600 hover:bg-slate-50'
+              className={`w-7 h-7 rounded-lg text-xs font-medium transition-colors ${
+                p === page ? 'bg-slate-900 text-white' : 'border border-slate-200 text-slate-600 hover:bg-slate-50'
               }`}
             >
               {p}
@@ -458,9 +438,9 @@ const Pagination = ({ page, totalPages, total, limit, onPage }) => {
         <button
           onClick={() => onPage(page + 1)}
           disabled={page === totalPages}
-          className="p-2 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-500 hover:bg-slate-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          <ChevronRight className="w-4 h-4" />
+          <ChevronRight className="w-3.5 h-3.5" />
         </button>
       </div>
     </div>
@@ -487,8 +467,8 @@ export default function PatientsPage() {
   const [proxyMode, setProxyMode] = useState(false);
   const debounceRef = useRef(null);
 
-  // Modal state
-  const [addModal, setAddModal] = useState(false);
+  // Drawer / modal state
+  const [addDrawer, setAddDrawer] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -550,7 +530,7 @@ export default function PatientsPage() {
     try {
       await apiClient.createPatient({ ...form, age: Number(form.age) });
       showToast('Care Profile added successfully');
-      setAddModal(false);
+      setAddDrawer(false);
       loadPatients(page, search);
     } catch (err) {
       showToast(err.message || 'Failed to add care profile', 'error');
@@ -594,11 +574,27 @@ export default function PatientsPage() {
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <AdminLayout title="Care Profiles" subtitle="All registered care profiles, grouped by client">
+    <AdminLayout
+      title="Care Profiles"
+      subtitle={`${pagination.total} care profile${pagination.total !== 1 ? 's' : ''} across all clients`}
+      actions={
+        canProxy && (
+          <div className="flex items-center gap-2">
+            <ProxyModeToggle active={proxyMode} onToggle={() => setProxyMode((v) => !v)} />
+            {proxyMode && (
+              <button onClick={() => setAddDrawer(true)} className={primaryBtnCls}>
+                <Plus className="w-4 h-4" />
+                Add Care Profile
+              </button>
+            )}
+          </div>
+        )
+      }
+    >
       {/* Toast */}
       {toast && (
         <div
-          className={`fixed top-5 right-5 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-medium flex items-center gap-2 transition-all ${
+          className={`fixed top-5 right-5 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium flex items-center gap-2 ${
             toast.type === 'error' ? 'bg-red-600 text-white' : 'bg-emerald-600 text-white'
           }`}
         >
@@ -607,124 +603,85 @@ export default function PatientsPage() {
         </div>
       )}
 
-      <div className="p-6 max-w-4xl mx-auto">
-        {/* Header controls */}
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-6">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search by care profile name, client, condition, or address…"
-              value={searchInput}
-              onChange={(e) => handleSearchChange(e.target.value)}
-              className="w-full pl-9 pr-4 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white"
-            />
-          </div>
+      {/* Toolbar */}
+      <div className="relative mb-4">
+        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <input
+          type="text"
+          placeholder="Search by care profile name, client, condition, or address…"
+          value={searchInput}
+          onChange={(e) => handleSearchChange(e.target.value)}
+          className={`${inputCls(false)} pl-8 max-w-md`}
+        />
+      </div>
 
-          <div className="flex items-center gap-2">
-            {canProxy && (
-              <>
-                <button
-                  onClick={() => setProxyMode((v) => !v)}
-                  className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-sm font-medium transition-all ${
-                    proxyMode
-                      ? 'bg-violet-600 text-white border-violet-600 shadow-md'
-                      : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
-                  }`}
-                >
-                  <Shield className="w-4 h-4" />
-                  {proxyMode ? 'Proxy On' : 'Proxy Mode'}
-                </button>
-                {proxyMode && (
-                  <button
-                    onClick={() => setAddModal(true)}
-                    className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-teal-600 text-white text-sm font-medium hover:bg-teal-700 shadow-sm"
-                  >
-                    <Plus className="w-4 h-4" />
-                    Add Care Profile
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Stats bar */}
-        <div className="flex items-center gap-4 mb-6 text-sm text-slate-500">
-          <span className="flex items-center gap-1.5">
-            <Users className="w-4 h-4 text-teal-600" />
-            <strong className="text-slate-800">{pagination.total}</strong> care profile{pagination.total !== 1 ? 's' : ''} total
-          </span>
-          {proxyMode && (
-            <span className="ml-auto flex items-center gap-1.5 text-violet-600 font-semibold">
-              <Shield className="w-3.5 h-3.5" /> Proxy mode active
-            </span>
-          )}
-        </div>
-
-        {/* Content */}
+      {/* Nested table */}
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
         {loading ? (
-          <div className="flex items-center justify-center py-24">
-            <Loader2 className="w-8 h-8 animate-spin text-teal-600" />
+          <div className="flex items-center justify-center h-64">
+            <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
           </div>
         ) : error ? (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
-            <AlertCircle className="w-10 h-10 text-red-400 mb-3" />
-            <p className="text-slate-600 font-medium">{error}</p>
-            <button
-              onClick={() => loadPatients(page, search)}
-              className="mt-4 px-4 py-2 rounded-lg bg-teal-600 text-white text-sm font-medium hover:bg-teal-700"
-            >
-              Retry
-            </button>
+          <div className="flex flex-col items-center justify-center py-16 gap-3">
+            <AlertCircle className="w-8 h-8 text-slate-300" />
+            <p className="text-sm text-slate-500">{error}</p>
+            <button onClick={() => loadPatients(page, search)} className={primaryBtnCls}>Retry</button>
           </div>
         ) : Object.keys(grouped).length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
-            <HeartPulse className="w-10 h-10 text-slate-300 mb-3" />
-            <p className="text-slate-500 font-medium">
+          <div className="flex flex-col items-center justify-center py-16 gap-2">
+            <HeartPulse className="w-8 h-8 text-slate-200" />
+            <p className="text-sm text-slate-400">
               {search ? 'No care profiles match your search.' : 'No care profiles registered yet.'}
             </p>
           </div>
         ) : (
           <>
-            {Object.entries(grouped).map(([key, group]) => (
-              <ClientGroup
-                key={key}
-                clientName={group.clientName}
-                clientMobile={group.clientMobile}
-                patients={group.patients}
-                proxyMode={proxyMode}
-                onEdit={(p) => setEditTarget(p)}
-                onDelete={(p) => setDeleteTarget(p)}
-                onView={(p) => navigate(`/admin/patients/${p.patient_id}/detail`)}
-              />
-            ))}
-            <Pagination
-              page={page}
-              totalPages={totalPages}
-              total={pagination.total}
-              limit={LIMIT}
-              onPage={setPage}
-            />
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50">
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Client</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Mobile</th>
+                    <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Care Profiles</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {Object.entries(grouped).map(([key, group]) => (
+                    <ClientRow
+                      key={key}
+                      colSpan={3}
+                      clientName={group.clientName}
+                      clientMobile={group.clientMobile}
+                      patients={group.patients}
+                      proxyMode={proxyMode}
+                      onEdit={(p) => setEditTarget(p)}
+                      onDelete={(p) => setDeleteTarget(p)}
+                      onView={(p) => navigate(`/admin/patients/${p.patient_id}/detail`)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination page={page} totalPages={totalPages} total={pagination.total} limit={LIMIT} onPage={setPage} />
           </>
         )}
       </div>
 
-      {/* Add Modal */}
-      {addModal && (
-        <PatientModal
+      {/* Add Drawer */}
+      {addDrawer && (
+        <PatientDrawer
           mode="add"
           initial={EMPTY_FORM}
           clients={clients}
-          onClose={() => setAddModal(false)}
+          onClose={() => setAddDrawer(false)}
           onSave={handleAdd}
           saving={saving}
         />
       )}
 
-      {/* Edit Modal */}
+      {/* Edit Drawer */}
       {editTarget && (
-        <PatientModal
+        <PatientDrawer
           mode="edit"
           initial={{
             full_name: editTarget.full_name || '',

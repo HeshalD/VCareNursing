@@ -1,9 +1,12 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { CheckCircle2, Upload, Eye, FileText, AlertCircle, Loader2, ShieldCheck } from 'lucide-react';
 import apiClient from '../../../api/api';
+import LanguageToggle from '../../../i18n/LanguageToggle';
 
 const DocCard = ({ title, description, url, fieldName, onUpload, uploading }) => {
+  const { t } = useTranslation('staffDocumentUpload');
   const inputRef = useRef(null);
   const [localError, setLocalError] = useState('');
 
@@ -12,7 +15,7 @@ const DocCard = ({ title, description, url, fieldName, onUpload, uploading }) =>
     if (!file) return;
     const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'];
     if (!allowed.includes(file.type)) {
-      setLocalError('Only JPG, PNG or PDF files are accepted.');
+      setLocalError(t('errors.fileTypeError'));
       return;
     }
     setLocalError('');
@@ -33,8 +36,8 @@ const DocCard = ({ title, description, url, fieldName, onUpload, uploading }) =>
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
             {url
-              ? <span className="text-xs font-semibold text-emerald-700 bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-full">Uploaded</span>
-              : <span className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">Required</span>
+              ? <span className="text-xs font-semibold text-emerald-700 bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-full">{t('docCard.uploaded')}</span>
+              : <span className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">{t('docCard.required')}</span>
             }
           </div>
           <p className="text-xs text-slate-500 mt-0.5">{description}</p>
@@ -54,7 +57,7 @@ const DocCard = ({ title, description, url, fieldName, onUpload, uploading }) =>
             rel="noopener noreferrer"
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-emerald-200 bg-white text-emerald-700 text-xs font-medium hover:bg-emerald-50 transition-all"
           >
-            <Eye className="w-3.5 h-3.5" /> View
+            <Eye className="w-3.5 h-3.5" /> {t('docCard.view')}
           </a>
         )}
         <button
@@ -71,7 +74,7 @@ const DocCard = ({ title, description, url, fieldName, onUpload, uploading }) =>
             ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
             : <Upload className="w-3.5 h-3.5" />
           }
-          {uploading ? 'Uploading...' : url ? 'Replace' : 'Upload'}
+          {uploading ? t('docCard.uploading') : url ? t('docCard.replace') : t('docCard.upload')}
         </button>
         <input
           ref={inputRef}
@@ -86,6 +89,7 @@ const DocCard = ({ title, description, url, fieldName, onUpload, uploading }) =>
 };
 
 const StaffDocumentUploadPage = () => {
+  const { t } = useTranslation('staffDocumentUpload');
   const { token } = useParams();
 
   const [loading, setLoading] = useState(true);
@@ -105,7 +109,7 @@ const StaffDocumentUploadPage = () => {
         setGramaNiladhariUrl(d.grama_niladhari_url);
         setPoliceReportUrl(d.police_report_url);
       } catch (err) {
-        setError(err.message || 'This upload link is invalid or has expired.');
+        setError(err.message || t('errors.invalidLink'));
       } finally {
         setLoading(false);
       }
@@ -124,7 +128,7 @@ const StaffDocumentUploadPage = () => {
       setGramaNiladhariUrl(d.grama_niladhari_url);
       setPoliceReportUrl(d.police_report_url);
     } catch (err) {
-      setUploadError(err.message || 'Upload failed. Please try again.');
+      setUploadError(err.message || t('errors.uploadFailed'));
     } finally {
       setUploading(prev => ({ ...prev, [fieldName]: false }));
     }
@@ -145,7 +149,7 @@ const StaffDocumentUploadPage = () => {
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
         <div className="max-w-sm w-full bg-white rounded-2xl border border-red-200 p-8 text-center shadow-sm">
           <AlertCircle className="w-10 h-10 text-red-400 mx-auto mb-3" />
-          <h2 className="text-base font-bold text-slate-900 mb-1">Link Not Valid</h2>
+          <h2 className="text-base font-bold text-slate-900 mb-1">{t('errors.linkNotValid')}</h2>
           <p className="text-sm text-slate-500">{error}</p>
         </div>
       </div>
@@ -160,10 +164,11 @@ const StaffDocumentUploadPage = () => {
           <div className="p-2 bg-indigo-600 rounded-xl">
             <ShieldCheck className="w-5 h-5 text-white" />
           </div>
-          <div>
-            <p className="text-xs text-slate-500 leading-none">VCare Nursing</p>
-            <p className="text-sm font-bold text-slate-900 leading-tight">Document Upload Portal</p>
+          <div className="flex-1">
+            <p className="text-xs text-slate-500 leading-none">{t('header.appName')}</p>
+            <p className="text-sm font-bold text-slate-900 leading-tight">{t('header.portalTitle')}</p>
           </div>
+          <LanguageToggle />
         </div>
       </div>
 
@@ -171,11 +176,10 @@ const StaffDocumentUploadPage = () => {
         {/* Welcome */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
           <h1 className="text-lg font-bold text-slate-900">
-            Hello, {staffName}
+            {t('welcome.greeting', { name: staffName })}
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            To complete your registration with VCare Nursing, please upload the two documents below.
-            You can upload them in any order and return to this link at any time.
+            {t('welcome.instructions')}
           </p>
         </div>
 
@@ -184,9 +188,9 @@ const StaffDocumentUploadPage = () => {
           <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5 flex items-center gap-3">
             <CheckCircle2 className="w-6 h-6 text-emerald-600 flex-shrink-0" />
             <div>
-              <p className="text-sm font-semibold text-emerald-800">All documents submitted!</p>
+              <p className="text-sm font-semibold text-emerald-800">{t('allDone.title')}</p>
               <p className="text-xs text-emerald-700 mt-0.5">
-                Our team will review your documents and get in touch with you shortly.
+                {t('allDone.desc')}
               </p>
             </div>
           </div>
@@ -203,16 +207,16 @@ const StaffDocumentUploadPage = () => {
         {/* Document cards */}
         <div className="space-y-4">
           <DocCard
-            title="Grama Niladhari Report"
-            description="An official report issued by your Grama Niladhari officer confirming your residency. JPG, PNG or PDF accepted."
+            title={t('documents.gramaNiladhari.title')}
+            description={t('documents.gramaNiladhari.description')}
             url={gramaNiladhariUrl}
             fieldName="grama_niladhari"
             onUpload={handleUpload}
             uploading={uploading.grama_niladhari}
           />
           <DocCard
-            title="Police Report"
-            description="A clearance certificate issued by your local police station. JPG, PNG or PDF accepted."
+            title={t('documents.policeReport.title')}
+            description={t('documents.policeReport.description')}
             url={policeReportUrl}
             fieldName="police_report"
             onUpload={handleUpload}
@@ -221,7 +225,7 @@ const StaffDocumentUploadPage = () => {
         </div>
 
         <p className="text-center text-xs text-slate-400 pb-6">
-          If you have any questions please contact the VCare Nursing office directly.
+          {t('footer.contact')}
         </p>
       </div>
     </div>

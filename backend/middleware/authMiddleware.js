@@ -55,6 +55,51 @@ exports.requirePermission = (permissionKey) => async (req, res, next) => {
   }
 };
 
+// LAYER 4 (SALES-only): resolve the caller's internal_staff id so list endpoints
+// can filter down to "their own" bookings/clients. No-op for every other role.
+exports.attachSalesScope = async (req, res, next) => {
+  try {
+    const roles = _parseRoles(req.user.role);
+    if (roles.includes('SALES')) {
+      const result = await db.query('SELECT id FROM internal_staff WHERE user_id = $1', [req.user.user_id]);
+      req.user.salesperson_id = result.rows[0]?.id || null;
+    }
+    next();
+  } catch (err) {
+    console.error('attachSalesScope error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+// Restricts a :paramName-keyed route to a SALES caller's own assignment row in
+// `table` (matched on a column of the same name as paramName). No-op for every
+// other role, since only SALES accounts get scoped to "their own" records.
+exports.requireOwnSalesRecord = (paramName, table) => async (req, res, next) => {
+  try {
+    const roles = _parseRoles(req.user.role);
+    if (!roles.includes('SALES')) return next();
+
+    const staffRes = await db.query('SELECT id FROM internal_staff WHERE user_id = $1', [req.user.user_id]);
+    const salespersonId = staffRes.rows[0]?.id;
+    if (!salespersonId) {
+      return res.status(403).json({ message: 'Permission Denied: You do not have access to this action.' });
+    }
+    req.user.salesperson_id = salespersonId;
+
+    const check = await db.query(
+      `SELECT 1 FROM ${table} WHERE ${paramName} = $1 AND salesperson_id = $2 LIMIT 1`,
+      [req.params[paramName], salespersonId]
+    );
+    if (!check.rows.length) {
+      return res.status(403).json({ message: 'Permission Denied: not one of your assigned records.' });
+    }
+    next();
+  } catch (err) {
+    console.error('requireOwnSalesRecord error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
 // Sessions for device-bound logins are checked on every request so a revoked
 // device or a force-logout takes effect immediately, not just at next login.
 const LAST_SEEN_THROTTLE_MS = 60 * 1000;

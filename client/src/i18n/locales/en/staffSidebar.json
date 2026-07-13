@@ -1,0 +1,17 @@
+{
+  "nav": {
+    "dashboard": "Dashboard",
+    "earnings": "Earnings",
+    "bookings": "Bookings",
+    "myProfile": "My Profile",
+    "requestChange": "Request Change",
+    "requestLeave": "Request Leave"
+  },
+  "providerPortal": {
+    "title": "Provider Portal",
+    "subtitle": "Go to client view →"
+  },
+  "signOut": "Sign Out",
+  "openMenu": "Open menu",
+  "closeMenu": "Close menu"
+}

@@ -62,7 +62,7 @@ const ActiveSessionsPage = () => {
       {toast && (
         <div
           className={`fixed top-6 right-6 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium animate-fade-in ${
-            toast.type === 'error' ? 'bg-red-600 text-white' : 'bg-green-600 text-white'
+            toast.type === 'error' ? 'bg-red-600 text-white' : 'bg-emerald-600 text-white'
           }`}
         >
           {toast.msg}
@@ -113,40 +113,36 @@ const ActiveSessionsPage = () => {
           ) : (
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-100 bg-slate-50 text-slate-500 text-xs uppercase tracking-wide font-semibold">
-                  <th className="text-left px-5 py-3">Staff Member</th>
-                  <th className="text-left px-5 py-3">Device</th>
-                  <th className="text-left px-5 py-3">Status</th>
-                  <th className="text-left px-5 py-3">IP Address</th>
-                  <th className="text-left px-5 py-3">Last Seen</th>
-                  <th className="text-right px-5 py-3">Actions</th>
+                <tr className="border-b border-slate-200 bg-slate-50">
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Staff Member</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Device</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">IP Address</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Last Seen</th>
+                  <th className="px-4 py-3" />
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-slate-100">
                 {filteredSessions.map((s) => (
-                  <tr key={s.device_row_id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                    <td className="px-5 py-4 font-medium text-slate-900">{s.staff_name || '—'}</td>
-                    <td className="px-5 py-4 text-slate-600">{s.device_label || '—'}</td>
-                    <td className="px-5 py-4">
-                      <span
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
-                          s.is_active ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-500'
-                        }`}
-                      >
-                        <span className={`w-1.5 h-1.5 rounded-full ${s.is_active ? 'bg-green-500' : 'bg-slate-400'}`} />
+                  <tr key={s.device_row_id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-4 py-3 font-semibold text-slate-900">{s.staff_name || '—'}</td>
+                    <td className="px-4 py-3 text-slate-600">{s.device_label || '—'}</td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${s.is_active ? 'text-emerald-700' : 'text-slate-500'}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${s.is_active ? 'bg-emerald-500' : 'bg-slate-400'}`} />
                         {s.is_active ? 'Active' : 'Inactive'}
                       </span>
                     </td>
-                    <td className="px-5 py-4 text-slate-500">{s.ip_address || '—'}</td>
-                    <td className="px-5 py-4 text-slate-500">
+                    <td className="px-4 py-3 text-slate-500">{s.ip_address || '—'}</td>
+                    <td className="px-4 py-3 text-slate-500 whitespace-nowrap">
                       {s.last_seen_at ? new Date(s.last_seen_at).toLocaleString('en-GB') : '—'}
                     </td>
-                    <td className="px-5 py-4 text-right">
+                    <td className="px-4 py-3 text-right">
                       {s.is_active ? (
                         <button
                           onClick={() => handleForceLogout(s.session_id)}
                           disabled={loggingOutId === s.session_id}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition-colors disabled:opacity-50"
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           <LogOut className="w-3.5 h-3.5" />
                           {loggingOutId === s.session_id ? 'Logging out…' : 'Force Logout'}

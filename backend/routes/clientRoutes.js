@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const clientController = require('../controllers/clientController');
 const bookingNotesController = require('../controllers/bookingNotesController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, attachSalesScope, requireOwnSalesRecord } = require('../middleware/authMiddleware');
 const { uploadPaymentReceipt } = require('../middleware/uploadMiddleware');
 
 // All routes below require login
@@ -18,8 +18,8 @@ router.get('/service-history/:client_id', clientController.getClientServiceHisto
 // Admin: enriched booking history for dashboard
 router.get('/:client_id/bookings', protect, restrictTo('SUPER_ADMIN'), clientController.getAdminClientBookings);
 router.get('/:client_id/bookings-paginated', protect, restrictTo('SUPER_ADMIN'), clientController.getAdminClientBookingsPaginated);
-router.get('/:client_id/notes', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingNotesController.getClientNotes);
-router.post('/:client_id/notes', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingNotesController.addClientNote);
+router.get('/:client_id/notes', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'SALES'), requireOwnSalesRecord('client_id', 'client_salesperson_assignments'), bookingNotesController.getClientNotes);
+router.post('/:client_id/notes', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'SALES'), requireOwnSalesRecord('client_id', 'client_salesperson_assignments'), bookingNotesController.addClientNote);
 router.patch('/:client_id/notes/:note_id', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingNotesController.updateClientNote);
 router.delete('/:client_id/notes/:note_id', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), bookingNotesController.deleteClientNote);
 router.get('/:client_id/detail', restrictTo('SUPER_ADMIN'), clientController.getAdminClientDetail);
@@ -61,6 +61,6 @@ router.patch('/update-me', clientController.updateMe);
 router.delete('/delete-me', clientController.deleteMe);
 
 // bookings endpoints
-router.get('/', protect, restrictTo('SUPER_ADMIN'), clientController.getAllClients);
+router.get('/', protect, restrictTo('SUPER_ADMIN', 'SALES'), attachSalesScope, clientController.getAllClients);
 
 module.exports = router;

@@ -1,0 +1,43 @@
+{
+  "hero": {
+    "title": "Application Submitted",
+    "description": "Your caregiver application has been successfully submitted. Our team will review it and get back to you within 3-5 business days.",
+    "referenceLabel": "Application Reference"
+  },
+  "applicantInfo": {
+    "title": "Your Application Details",
+    "personalInfo": "Personal Information",
+    "nameLabel": "Name",
+    "mobileLabel": "Mobile",
+    "applicationInfo": "Application Information",
+    "rolesLabel": "Roles",
+    "statusLabel": "Status",
+    "statusValue": "Under Review",
+    "dateLabel": "Date"
+  },
+  "nextSteps": {
+    "title": "What Happens Next?",
+    "steps": [
+      {
+        "title": "Application Review",
+        "description": "Our team will review your qualifications and documents."
+      },
+      {
+        "title": "Confirmation",
+        "description": "We'll contact you with a confirmation or rejection based on your application."
+      },
+      {
+        "title": "Onboarding",
+        "description": "Successful candidates will be onboarded and trained."
+      }
+    ]
+  },
+  "contact": {
+    "title": "Questions About Your Application?",
+    "description": "For inquiries about your application status, please contact our HR team."
+  },
+  "actions": {
+    "viewServiceTeam": "View Service Team",
+    "backToHome": "Back to Home"
+  }
+}

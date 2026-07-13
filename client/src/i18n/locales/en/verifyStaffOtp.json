@@ -1,0 +1,23 @@
+{
+  "backToApplication": "Back to application",
+  "title": "Verify Your Phone",
+  "subtitlePrefix": "We've sent a 6-digit code to your SMS at",
+  "defaultMobilePlaceholder": "your registered number",
+  "smsBadge": "SMS",
+  "otpLabel": "Enter 6-digit code",
+  "codeExpiresIn": "Code expires in",
+  "resendIn": "Resend in {{time}}",
+  "resendCode": "Resend code",
+  "verifying": "Verifying...",
+  "submitButton": "Verify & Submit Application",
+  "noCodeReceived": "Didn't receive a code? Check your SMS inbox.",
+  "errors": {
+    "incompleteOtp": "Please enter all 6 digits.",
+    "invalidOtp": "Invalid or expired OTP. Please try again.",
+    "resendFailed": "Failed to resend code."
+  },
+  "success": {
+    "verified": "Phone verified! Redirecting...",
+    "resent": "A new code has been sent to your phone."
+  }
+}

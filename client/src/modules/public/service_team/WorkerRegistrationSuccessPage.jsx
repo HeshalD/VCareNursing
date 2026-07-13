@@ -1,9 +1,11 @@
 import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import { CheckCircle, ArrowRight, Phone, Mail, Calendar, Briefcase, Home, FileText, User } from 'lucide-react';
 import Navbar from '../../../components/layout/Navbar';
 import Footer from '../../../components/layout/Footer';
+import LanguageToggle from '../../../i18n/LanguageToggle';
 
 const CONTACT_NUMBERS = [
   { label: '+94 (77) 393 9112', href: 'tel:+94773939112' },
@@ -14,29 +16,19 @@ const CONTACT_NUMBERS = [
 
 const CONTACT_EMAIL = 'info@vcarenursing.com';
 
-const NEXT_STEPS = [
-  {
-    icon: FileText,
-    title: 'Application Review',
-    description: 'Our team will review your qualifications and documents.',
-  },
-  {
-    icon: Phone,
-    title: 'Confirmation',
-    description: "We'll contact you with a confirmation or rejection based on your application.",
-  },
-  {
-    icon: Briefcase,
-    title: 'Onboarding',
-    description: 'Successful candidates will be onboarded and trained.',
-  },
-];
+const NEXT_STEP_ICONS = [FileText, Phone, Briefcase];
 
 const WorkerRegistrationSuccessPage = () => {
+  const { t } = useTranslation('workerRegistrationSuccess');
   const navigate = useNavigate();
   const location = useLocation();
 
   const { applicationData } = location.state || {};
+
+  const nextSteps = t('nextSteps.steps', { returnObjects: true }).map((step, i) => ({
+    ...step,
+    icon: NEXT_STEP_ICONS[i],
+  }));
 
   const handleGoHome = () => {
     navigate('/');
@@ -49,6 +41,10 @@ const WorkerRegistrationSuccessPage = () => {
   return (
     <div className="min-h-screen bg-slate-50">
       <Navbar />
+
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pt-24 flex justify-end">
+        <LanguageToggle />
+      </div>
 
       {/* Hero */}
       <div className="relative overflow-hidden">
@@ -77,7 +73,7 @@ const WorkerRegistrationSuccessPage = () => {
             transition={{ delay: 0.3, duration: 0.6 }}
             className="text-3xl md:text-5xl font-bold text-white mb-4"
           >
-            Application Submitted
+            {t('hero.title')}
           </motion.h1>
           <motion.p
             initial={{ opacity: 0, y: 12 }}
@@ -85,8 +81,7 @@ const WorkerRegistrationSuccessPage = () => {
             transition={{ delay: 0.4, duration: 0.6 }}
             className="text-lg text-indigo-100 max-w-2xl mx-auto"
           >
-            Your caregiver application has been successfully submitted. Our team will review it and
-            get back to you within 3-5 business days.
+            {t('hero.description')}
           </motion.p>
 
           {applicationData?.application_code && (
@@ -97,7 +92,7 @@ const WorkerRegistrationSuccessPage = () => {
               className="mt-8 inline-flex flex-col items-center bg-white/10 border border-white/20 backdrop-blur-sm rounded-2xl px-6 py-4"
             >
               <p className="text-xs font-semibold uppercase tracking-widest text-indigo-200">
-                Application Reference
+                {t('hero.referenceLabel')}
               </p>
               <p className="font-mono text-2xl font-bold text-white mt-1">
                 {applicationData.application_code}
@@ -130,34 +125,34 @@ const WorkerRegistrationSuccessPage = () => {
               <div className="w-9 h-9 bg-indigo-50 rounded-lg flex items-center justify-center">
                 <Briefcase className="w-[18px] h-[18px] text-indigo-600" />
               </div>
-              Your Application Details
+              {t('applicantInfo.title')}
             </h2>
             <div className="grid md:grid-cols-2 gap-8">
               <div>
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-4">
-                  Personal Information
+                  {t('applicantInfo.personalInfo')}
                 </h3>
                 <div className="space-y-3.5">
                   <div className="flex items-center gap-3">
                     <User className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                    <span className="text-sm text-slate-500 w-14 flex-shrink-0">Name</span>
+                    <span className="text-sm text-slate-500 w-14 flex-shrink-0">{t('applicantInfo.nameLabel')}</span>
                     <span className="font-medium text-slate-900">{applicationData.full_name}</span>
                   </div>
                   <div className="flex items-center gap-3">
                     <Phone className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                    <span className="text-sm text-slate-500 w-14 flex-shrink-0">Mobile</span>
+                    <span className="text-sm text-slate-500 w-14 flex-shrink-0">{t('applicantInfo.mobileLabel')}</span>
                     <span className="font-medium text-slate-900">{applicationData.mobile_number}</span>
                   </div>
                 </div>
               </div>
               <div>
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-4">
-                  Application Information
+                  {t('applicantInfo.applicationInfo')}
                 </h3>
                 <div className="space-y-3.5">
                   <div className="flex items-start gap-3">
                     <Briefcase className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />
-                    <span className="text-sm text-slate-500 w-14 flex-shrink-0 mt-0.5">Roles</span>
+                    <span className="text-sm text-slate-500 w-14 flex-shrink-0 mt-0.5">{t('applicantInfo.rolesLabel')}</span>
                     <div className="flex flex-wrap gap-1.5 min-w-0">
                       {(Array.isArray(applicationData.applied_roles)
                         ? applicationData.applied_roles
@@ -174,14 +169,14 @@ const WorkerRegistrationSuccessPage = () => {
                   </div>
                   <div className="flex items-center gap-3">
                     <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                    <span className="text-sm text-slate-500 w-14 flex-shrink-0">Status</span>
+                    <span className="text-sm text-slate-500 w-14 flex-shrink-0">{t('applicantInfo.statusLabel')}</span>
                     <span className="px-2.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-100 rounded-full text-xs font-semibold">
-                      Under Review
+                      {t('applicantInfo.statusValue')}
                     </span>
                   </div>
                   <div className="flex items-center gap-3">
                     <Calendar className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                    <span className="text-sm text-slate-500 w-14 flex-shrink-0">Date</span>
+                    <span className="text-sm text-slate-500 w-14 flex-shrink-0">{t('applicantInfo.dateLabel')}</span>
                     <span className="font-medium text-slate-900">
                       {new Date().toLocaleDateString('en-GB')}
                     </span>
@@ -199,10 +194,10 @@ const WorkerRegistrationSuccessPage = () => {
           transition={{ delay: 0.3 }}
           className="bg-white rounded-2xl shadow-lg border border-slate-100 p-8 mb-8"
         >
-          <h2 className="text-xl font-bold text-slate-900 mb-8">What Happens Next?</h2>
+          <h2 className="text-xl font-bold text-slate-900 mb-8">{t('nextSteps.title')}</h2>
           <div className="grid md:grid-cols-3 gap-8 relative">
             <div className="hidden md:block absolute top-6 left-[16.5%] right-[16.5%] h-px bg-slate-200" />
-            {NEXT_STEPS.map((step, index) => (
+            {nextSteps.map((step, index) => (
               <div key={index} className="relative flex flex-col items-center text-center md:text-left md:items-start">
                 <div className="w-12 h-12 bg-indigo-600 rounded-full flex items-center justify-center flex-shrink-0 mb-4 relative z-10 ring-4 ring-white">
                   <step.icon className="w-5 h-5 text-white" />
@@ -221,9 +216,9 @@ const WorkerRegistrationSuccessPage = () => {
           transition={{ delay: 0.4 }}
           className="bg-indigo-900 rounded-2xl p-8 mb-8 text-white"
         >
-          <h3 className="font-bold text-lg mb-1.5">Questions About Your Application?</h3>
+          <h3 className="font-bold text-lg mb-1.5">{t('contact.title')}</h3>
           <p className="text-indigo-200 text-sm mb-6">
-            For inquiries about your application status, please contact our HR team.
+            {t('contact.description')}
           </p>
           <div className="grid sm:grid-cols-2 gap-3">
             {CONTACT_NUMBERS.map((c) => (
@@ -257,14 +252,14 @@ const WorkerRegistrationSuccessPage = () => {
             onClick={handleViewApplications}
             className="flex items-center justify-center gap-2 px-8 py-4 bg-amber-600 text-white rounded-full font-bold text-lg hover:bg-amber-700 transition-all shadow-lg shadow-amber-500/20"
           >
-            View Service Team <ArrowRight className="w-5 h-5" />
+            {t('actions.viewServiceTeam')} <ArrowRight className="w-5 h-5" />
           </button>
           <button
             onClick={handleGoHome}
             className="flex items-center justify-center gap-2 px-8 py-4 bg-white border-2 border-slate-200 text-slate-700 rounded-full font-bold text-lg hover:border-slate-900 hover:text-slate-900 transition-all"
           >
             <Home className="w-5 h-5" />
-            Back to Home
+            {t('actions.backToHome')}
           </button>
         </motion.div>
       </div>

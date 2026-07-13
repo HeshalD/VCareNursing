@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Calendar, User, Activity, Clock, MapPin, Phone,
   AlertCircle, CheckCircle, Stethoscope, Baby, Heart,
@@ -31,16 +32,18 @@ const formatTime = t => {
 };
 
 const STATUS_META = {
-  active: { bg: '#f0fdf4', color: '#166534', border: '#bbf7d0', label: 'Active' },
-  pending_termination: { bg: '#fffbeb', color: '#92400e', border: '#fde68a', label: 'Pending Termination' },
-  terminated: { bg: '#fef2f2', color: '#991b1b', border: '#fecaca', label: 'Terminated' },
-  completed: { bg: '#eff6ff', color: '#1d4ed8', border: '#bfdbfe', label: 'Completed' },
-  cancelled: { bg: '#f1f5f9', color: '#64748b', border: '#e2e8f0', label: 'Cancelled' },
+  active: { bg: '#f0fdf4', color: '#166534', border: '#bbf7d0', labelKey: 'statusBadge.active' },
+  pending_termination: { bg: '#fffbeb', color: '#92400e', border: '#fde68a', labelKey: 'statusBadge.pendingTermination' },
+  terminated: { bg: '#fef2f2', color: '#991b1b', border: '#fecaca', labelKey: 'statusBadge.terminated' },
+  completed: { bg: '#eff6ff', color: '#1d4ed8', border: '#bfdbfe', labelKey: 'statusBadge.completed' },
+  cancelled: { bg: '#f1f5f9', color: '#64748b', border: '#e2e8f0', labelKey: 'statusBadge.cancelled' },
 };
 
 const StatusBadge = ({ status }) => {
+  const { t } = useTranslation('workerBookings');
   const key = status?.toLowerCase();
-  const m = STATUS_META[key] || { bg: '#f1f5f9', color: '#64748b', border: '#e2e8f0', label: status };
+  const m = STATUS_META[key] || { bg: '#f1f5f9', color: '#64748b', border: '#e2e8f0', labelKey: null };
+  const label = m.labelKey ? t(m.labelKey) : status;
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 4,
@@ -48,7 +51,7 @@ const StatusBadge = ({ status }) => {
       background: m.bg, color: m.color, border: `1px solid ${m.border}`,
       borderRadius: 9999, padding: '3px 10px',
     }}>
-      {m.label}
+      {label}
     </span>
   );
 };
@@ -61,6 +64,7 @@ const getServiceTypeIcon = (serviceType) => {
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 const WorkerBookings = () => {
+  const { t } = useTranslation('workerBookings');
   const { user } = useAuth();
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -87,7 +91,7 @@ const WorkerBookings = () => {
   const fetchStaffProfile = async () => {
     try {
       if (!user?.id) {
-        setError('User not authenticated');
+        setError(t('errors.userNotAuthenticated'));
         setLoading(false);
         return;
       }
@@ -95,12 +99,12 @@ const WorkerBookings = () => {
       if (response?.data?.staff_profile_id) {
         setStaffProfileId(response.data.staff_profile_id);
       } else {
-        setError('Staff profile not found');
+        setError(t('errors.staffProfileNotFound'));
         setLoading(false);
       }
     } catch (err) {
       console.error('Error fetching staff profile:', err);
-      setError('Failed to load staff profile');
+      setError(t('errors.loadStaffProfileFailed'));
       setLoading(false);
     }
   };
@@ -116,14 +120,14 @@ const WorkerBookings = () => {
       } else if (response.status === 'success') {
         bookingsData = response.data || [];
       } else {
-        setError(response.message || 'Failed to load bookings');
+        setError(response.message || t('errors.loadBookingsFailed'));
         setLoading(false);
         return;
       }
       setBookings(bookingsData);
     } catch (err) {
       console.error('Error fetching bookings:', err);
-      setError(err.message || 'Unknown error');
+      setError(err.message || t('errors.unknownError'));
     } finally {
       setLoading(false);
     }
@@ -182,7 +186,7 @@ const WorkerBookings = () => {
                 gap: '0.5rem'
               }}
             >
-              <RefreshCw size={16} /> Retry
+              <RefreshCw size={16} /> {t('retry')}
             </button>
           </div>
         </main>
@@ -198,10 +202,10 @@ const WorkerBookings = () => {
           {/* Header */}
           <div style={{ marginBottom: '1.5rem' }}>
             <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#1f2937', marginBottom: '0.5rem' }}>
-              My Assignments
+              {t('header.title')}
             </h1>
             <p style={{ color: '#6b7280' }}>
-              View all your current and past patient assignments
+              {t('header.subtitle')}
             </p>
           </div>
 
@@ -219,7 +223,7 @@ const WorkerBookings = () => {
               border: '1px solid #e5e7eb',
               boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
             }}>
-              <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.25rem' }}>Total Assignments</div>
+              <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.25rem' }}>{t('stats.total')}</div>
               <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#1f2937' }}>{bookings.length}</div>
             </div>
             <div style={{
@@ -229,7 +233,7 @@ const WorkerBookings = () => {
               border: '1px solid #e5e7eb',
               boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
             }}>
-              <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.25rem' }}>Active</div>
+              <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.25rem' }}>{t('stats.active')}</div>
               <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#166534' }}>
                 {bookings.filter(b => b.status?.toLowerCase() === 'active').length}
               </div>
@@ -241,7 +245,7 @@ const WorkerBookings = () => {
               border: '1px solid #e5e7eb',
               boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
             }}>
-              <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.25rem' }}>Completed</div>
+              <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.25rem' }}>{t('stats.completed')}</div>
               <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#1d4ed8' }}>
                 {bookings.filter(b => b.status?.toLowerCase() === 'completed').length}
               </div>
@@ -271,10 +275,10 @@ const WorkerBookings = () => {
             }}>
               <Activity size={48} style={{ color: '#9ca3af', marginBottom: '1rem' }} />
               <h3 style={{ fontSize: '1.125rem', fontWeight: 600, color: '#374151', marginBottom: '0.5rem' }}>
-                No assignments yet
+                {t('emptyState.title')}
               </h3>
               <p style={{ color: '#6b7280' }}>
-                You don&apos;t have any patient assignments at the moment.
+                {t('emptyState.description')}
               </p>
             </div>
           ) : (
@@ -322,7 +326,7 @@ const WorkerBookings = () => {
                       <div style={{ flex: 1 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
                           <span style={{ fontWeight: 600, color: '#1f2937' }}>
-                            {booking.patient_name || booking.patient_full_name || 'Unknown Care Profile'}
+                            {booking.patient_name || booking.patient_full_name || t('card.unknownCareProfile')}
                           </span>
                           <StatusBadge status={booking.status} />
                         </div>
@@ -333,12 +337,12 @@ const WorkerBookings = () => {
 
                       <div style={{ textAlign: 'right' }}>
                         <div style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '0.25rem' }}>
-                          Started {formatDate(booking.start_date)}
-                          {formatTime(booking.service_start_time) && ` at ${formatTime(booking.service_start_time)}`}
+                          {t('card.started', { date: formatDate(booking.start_date) })}
+                          {formatTime(booking.service_start_time) && ` ${t('card.at', { time: formatTime(booking.service_start_time) })}`}
                         </div>
                         {booking.scheduled_end_time && (
                           <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>
-                            Ends {formatDate(booking.scheduled_end_time)}
+                            {t('card.ends', { date: formatDate(booking.scheduled_end_time) })}
                           </div>
                         )}
                       </div>
@@ -352,7 +356,7 @@ const WorkerBookings = () => {
                         {/* Patient Info */}
                         <div style={{ marginBottom: '1.5rem' }}>
                           <h4 style={{ fontSize: '0.875rem', fontWeight: 600, color: '#374151', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <User size={16} /> Care Profile Information
+                            <User size={16} /> {t('sections.careProfileInfo')}
                           </h4>
                           <div style={{
                             background: '#f9fafb',
@@ -363,19 +367,19 @@ const WorkerBookings = () => {
                             gap: '0.75rem'
                           }}>
                             <div>
-                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Full Name</div>
+                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{t('fields.fullName')}</div>
                               <div style={{ fontWeight: 500, color: '#1f2937' }}>{booking.patient_name || booking.patient_full_name || '—'}</div>
                             </div>
                             <div>
-                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Age</div>
-                              <div style={{ fontWeight: 500, color: '#1f2937' }}>{booking.patient_age || '—'} years</div>
+                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{t('fields.age')}</div>
+                              <div style={{ fontWeight: 500, color: '#1f2937' }}>{booking.patient_age ? t('fields.ageYears', { age: booking.patient_age }) : '—'}</div>
                             </div>
                             <div>
-                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Gender</div>
+                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{t('fields.gender')}</div>
                               <div style={{ fontWeight: 500, color: '#1f2937' }}>{booking.patient_gender || '—'}</div>
                             </div>
                             <div>
-                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Medical Condition</div>
+                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{t('fields.medicalCondition')}</div>
                               <div style={{ fontWeight: 500, color: '#1f2937' }}>{booking.medical_condition || '—'}</div>
                             </div>
                           </div>
@@ -384,7 +388,7 @@ const WorkerBookings = () => {
                         {/* Client Info */}
                         <div style={{ marginBottom: '1.5rem' }}>
                           <h4 style={{ fontSize: '0.875rem', fontWeight: 600, color: '#374151', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <Phone size={16} /> Client Contact
+                            <Phone size={16} /> {t('sections.clientContact')}
                           </h4>
                           <div style={{
                             background: '#f9fafb',
@@ -395,15 +399,15 @@ const WorkerBookings = () => {
                             gap: '0.75rem'
                           }}>
                             <div>
-                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Client Name</div>
+                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{t('fields.clientName')}</div>
                               <div style={{ fontWeight: 500, color: '#1f2937' }}>{booking.client_name || booking.payer_name || '—'}</div>
                             </div>
                             <div>
-                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Mobile</div>
+                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{t('fields.mobile')}</div>
                               <div style={{ fontWeight: 500, color: '#1f2937' }}>{booking.client_mobile || booking.payer_mobile || '—'}</div>
                             </div>
                             <div>
-                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Emergency Contact</div>
+                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{t('fields.emergencyContact')}</div>
                               <div style={{ fontWeight: 500, color: '#1f2937' }}>
                                 {booking.emergency_contact_name ? `${booking.emergency_contact_name} (${booking.emergency_contact_number})` : '—'}
                               </div>
@@ -414,7 +418,7 @@ const WorkerBookings = () => {
                         {/* Location */}
                         <div style={{ marginBottom: '1.5rem' }}>
                           <h4 style={{ fontSize: '0.875rem', fontWeight: 600, color: '#374151', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <MapPin size={16} /> Service Location
+                            <MapPin size={16} /> {t('sections.serviceLocation')}
                           </h4>
                           <div style={{
                             background: '#f9fafb',
@@ -426,7 +430,7 @@ const WorkerBookings = () => {
                             </div>
                             {booking.gps_coordinates && (
                               <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
-                                GPS: {booking.gps_coordinates.x}, {booking.gps_coordinates.y}
+                                {t('fields.gps', { lat: booking.gps_coordinates.x, lng: booking.gps_coordinates.y })}
                               </div>
                             )}
                           </div>
@@ -435,7 +439,7 @@ const WorkerBookings = () => {
                         {/* Financial Details */}
                         <div style={{ marginBottom: '1.5rem' }}>
                           <h4 style={{ fontSize: '0.875rem', fontWeight: 600, color: '#374151', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <DollarSign size={16} /> Assignment Details
+                            <DollarSign size={16} /> {t('sections.assignmentDetails')}
                           </h4>
                           <div style={{
                             background: '#f9fafb',
@@ -446,20 +450,20 @@ const WorkerBookings = () => {
                             gap: '0.75rem'
                           }}>
                             <div>
-                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Start Time</div>
+                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{t('fields.startTime')}</div>
                               <div style={{ fontWeight: 500, color: '#1f2937' }}>{formatTime(booking.service_start_time) || '—'}</div>
                             </div>
                             <div>
-                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Daily Rate</div>
+                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{t('fields.dailyRate')}</div>
                               <div style={{ fontWeight: 500, color: '#1f2937' }}>LKR{booking.daily_rate || '—'}</div>
                             </div>
                             <div>
-                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>Duration</div>
-                              <div style={{ fontWeight: 500, color: '#1f2937' }}>{booking.duration_days || '—'} days</div>
+                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{t('fields.duration')}</div>
+                              <div style={{ fontWeight: 500, color: '#1f2937' }}>{booking.duration_days ? t('fields.durationDays', { days: booking.duration_days }) : '—'}</div>
                             </div>
                             <div>
-                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>OT Rate</div>
-                              <div style={{ fontWeight: 500, color: '#1f2937' }}>LKR{booking.ot_rate || '500'}/hr</div>
+                              <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{t('fields.otRate')}</div>
+                              <div style={{ fontWeight: 500, color: '#1f2937' }}>{t('fields.otRatePerHour', { rate: `LKR${booking.ot_rate || '500'}` })}</div>
                             </div>
                           </div>
                         </div>
@@ -468,7 +472,7 @@ const WorkerBookings = () => {
                         {booking.service_remarks && (
                           <div style={{ marginBottom: '1rem' }}>
                             <h4 style={{ fontSize: '0.875rem', fontWeight: 600, color: '#374151', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                              <FileText size={16} /> Special Remarks
+                              <FileText size={16} /> {t('sections.specialRemarks')}
                             </h4>
                             <div style={{
                               background: '#fffbeb',
@@ -495,14 +499,14 @@ const WorkerBookings = () => {
                             <AlertTriangle size={20} style={{ color: '#ef4444', flexShrink: 0 }} />
                             <div>
                               <div style={{ fontWeight: 600, color: '#991b1b' }}>
-                                Termination {booking.termination_status}
+                                {t('termination.title', { status: booking.termination_status })}
                               </div>
                               <div style={{ fontSize: '0.875rem', color: '#b91c1c' }}>
-                                Requested end: {formatDateLong(booking.requested_end_date)}
+                                {t('termination.requestedEnd', { date: formatDateLong(booking.requested_end_date) })}
                               </div>
                               {booking.termination_reason && (
                                 <div style={{ fontSize: '0.875rem', color: '#b91c1c', marginTop: '0.25rem' }}>
-                                  Reason: {booking.termination_reason}
+                                  {t('termination.reason', { reason: booking.termination_reason })}
                                 </div>
                               )}
                             </div>

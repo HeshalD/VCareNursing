@@ -71,8 +71,8 @@ exports.createReview = async (req, res) => {
       if (bookingCheck.rows.length === 0) {
         return res.status(403).json({ message: "Booking not found or does not belong to this client" });
       }
-      if (!['COMPLETED', 'TERMINATED'].includes(bookingCheck.rows[0].status)) {
-        return res.status(400).json({ message: "You can only review completed or terminated bookings" });
+      if (!['ACTIVE', 'COMPLETED', 'TERMINATED'].includes(bookingCheck.rows[0].status)) {
+        return res.status(400).json({ message: "You can only review active, completed, or terminated bookings" });
       }
       const dupCheck = await db.pool.query(
         'SELECT review_id FROM staff_reviews WHERE booking_id = $1 AND client_profile_id = $2',
@@ -627,7 +627,43 @@ exports.getReviewsByClientId = async (req, res) => {
   }
 };
 
-// Get completed/terminated bookings this client can still review
+// Shared by the client's own "reviewable bookings" list and the admin
+// manual-review picker below — active/completed/terminated bookings for a
+// given client that don't already have a review attached.
+async function fetchReviewableBookingsForClient(clientId) {
+  const result = await db.pool.query(
+    `SELECT
+       b.booking_id,
+       b.service_type,
+       b.service_model,
+       b.start_date,
+       b.status,
+       sp.full_name as staff_name,
+       sp.staff_profile_id,
+       sp.designation
+     FROM bookings b
+     LEFT JOIN LATERAL (
+       SELECT bsa.staff_profile_id
+       FROM booking_staff_assignments bsa
+       WHERE bsa.booking_id = b.booking_id
+       ORDER BY bsa.assigned_on DESC
+       LIMIT 1
+     ) last_bsa ON true
+     LEFT JOIN staff_profiles sp ON COALESCE(b.assigned_staff_id, last_bsa.staff_profile_id) = sp.staff_profile_id
+     WHERE b.client_id = $1
+       AND b.status IN ('ACTIVE', 'COMPLETED', 'TERMINATED')
+       AND NOT EXISTS (
+         SELECT 1 FROM staff_reviews sr
+         WHERE sr.booking_id = b.booking_id AND sr.client_profile_id = $1
+       )
+       AND COALESCE(b.assigned_staff_id, last_bsa.staff_profile_id) IS NOT NULL
+     ORDER BY b.start_date DESC`,
+    [clientId]
+  );
+  return result.rows;
+}
+
+// Get active/completed/terminated bookings this client can still review
 exports.getReviewableBookings = async (req, res) => {
   const user_id = req.user?.user_id;
   try {
@@ -640,16 +676,52 @@ exports.getReviewableBookings = async (req, res) => {
     }
     const clientId = clientRes.rows[0].client_profile_id;
 
-    const result = await db.pool.query(
-      `SELECT
-         b.booking_id,
-         b.service_type,
-         b.service_model,
-         b.start_date,
-         b.status,
-         sp.full_name as staff_name,
-         sp.staff_profile_id,
-         sp.designation
+    const rows = await fetchReviewableBookingsForClient(clientId);
+    res.status(200).json({ status: 'success', data: rows });
+  } catch (error) {
+    console.error('Error fetching reviewable bookings:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+// Admin: same reviewable-bookings list, but for an arbitrary client — powers
+// the "Add Review" picker on the admin reviews page (phone-call reviews).
+exports.getReviewableBookingsForClient = async (req, res) => {
+  const { client_id } = req.params;
+  try {
+    const clientRes = await db.pool.query(
+      'SELECT client_profile_id FROM client_profiles WHERE client_profile_id = $1',
+      [client_id]
+    );
+    if (clientRes.rows.length === 0) {
+      return res.status(404).json({ message: 'Client profile not found' });
+    }
+
+    const rows = await fetchReviewableBookingsForClient(client_id);
+    res.status(200).json({ status: 'success', data: rows });
+  } catch (error) {
+    console.error('Error fetching reviewable bookings for client:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+// Admin: manually log a review on a client's behalf — e.g. after calling the
+// client and getting verbal feedback. Booking/staff are re-derived from the
+// booking row server-side so the client-supplied staff_profile_id can't be spoofed.
+exports.adminCreateReview = async (req, res) => {
+  const { client_id, booking_id, rating, review_text } = req.body;
+
+  if (!client_id || !booking_id || !rating || !review_text) {
+    return res.status(400).json({ message: 'Missing required fields: client_id, booking_id, rating, review_text' });
+  }
+  if (rating < 1 || rating > 5) {
+    return res.status(400).json({ message: 'Rating must be between 1 and 5' });
+  }
+
+  try {
+    const bookingRes = await db.pool.query(
+      `SELECT b.booking_id, b.status, b.client_id,
+              COALESCE(b.assigned_staff_id, last_bsa.staff_profile_id) as staff_profile_id
        FROM bookings b
        LEFT JOIN LATERAL (
          SELECT bsa.staff_profile_id
@@ -658,21 +730,58 @@ exports.getReviewableBookings = async (req, res) => {
          ORDER BY bsa.assigned_on DESC
          LIMIT 1
        ) last_bsa ON true
-       LEFT JOIN staff_profiles sp ON COALESCE(b.assigned_staff_id, last_bsa.staff_profile_id) = sp.staff_profile_id
-       WHERE b.client_id = $1
-         AND b.status IN ('COMPLETED', 'TERMINATED')
-         AND NOT EXISTS (
-           SELECT 1 FROM staff_reviews sr
-           WHERE sr.booking_id = b.booking_id AND sr.client_profile_id = $1
-         )
-         AND COALESCE(b.assigned_staff_id, last_bsa.staff_profile_id) IS NOT NULL
-       ORDER BY b.start_date DESC`,
-      [clientId]
+       WHERE b.booking_id = $1 AND b.client_id = $2`,
+      [booking_id, client_id]
     );
+    if (bookingRes.rows.length === 0) {
+      return res.status(404).json({ message: 'Booking not found for this client' });
+    }
+    const booking = bookingRes.rows[0];
+    if (!['ACTIVE', 'COMPLETED', 'TERMINATED'].includes(booking.status)) {
+      return res.status(400).json({ message: 'You can only review active, completed, or terminated bookings' });
+    }
+    if (!booking.staff_profile_id) {
+      return res.status(400).json({ message: 'This booking has no assigned staff to review' });
+    }
 
-    res.status(200).json({ status: 'success', data: result.rows });
+    const dupCheck = await db.pool.query(
+      'SELECT review_id FROM staff_reviews WHERE booking_id = $1 AND client_profile_id = $2',
+      [booking_id, client_id]
+    );
+    if (dupCheck.rows.length > 0) {
+      return res.status(409).json({ message: 'This booking already has a review' });
+    }
+
+    const actorNameResult = await db.pool.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+    const actorName = actorNameResult.rows[0]?.full_name || 'Admin';
+
+    const result = await db.pool.query(
+      `INSERT INTO staff_reviews (staff_profile_id, client_profile_id, rating, review_text, booking_id, submitted_by_admin, submitted_by_name)
+       VALUES ($1, $2, $3, $4, $5, TRUE, $6)
+       RETURNING *`,
+      [booking.staff_profile_id, client_id, rating, review_text, booking_id, actorName]
+    );
+    const newReview = result.rows[0];
+    await updateStaffRating(booking.staff_profile_id);
+
+    try {
+      const actorRole = Array.isArray(req.user.role) ? req.user.role[0] : req.user.role;
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName,
+        actorRole: typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole),
+        actionType: 'REVIEW_ADDED_BY_ADMIN',
+        entityType: 'STAFF_REVIEW',
+        entityId: String(newReview.review_id),
+        details: { booking_id, client_id, staff_profile_id: booking.staff_profile_id, rating },
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (non-fatal):', logErr);
+    }
+
+    res.status(201).json({ message: 'Review created successfully', review: newReview });
   } catch (error) {
-    console.error('Error fetching reviewable bookings:', error);
+    console.error('Error creating admin review:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 };

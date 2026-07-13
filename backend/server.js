@@ -31,8 +31,13 @@ const salespersonRoutes = require('./routes/salespersonRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const staffDocUploadRoutes = require('./routes/staffDocUploadRoutes');
 const clientReceiptUploadRoutes = require('./routes/clientReceiptUploadRoutes');
+const walkInCustomerRoutes = require('./routes/walkInCustomerRoutes');
+const invoiceRoutes = require('./routes/invoiceRoutes');
+const rentalRoutes = require('./routes/rentalRoutes');
 
 const startDailyInvoicing = require('./cron/dailyInvoicing');
+const startRentalInvoicing = require('./cron/rentalInvoicing');
+const startRegFeeExpiry = require('./cron/regFeeExpiry');
 
 const VERIFY_TOKEN = "nursing_verify_token";
 
@@ -56,6 +61,12 @@ const app = express();
 
 // Start the daily invoicing cron job
 startDailyInvoicing();
+
+// Start the monthly recurring rental invoicing cron job
+startRentalInvoicing();
+
+// Start the registration-fee (membership) 365-day expiry cron job
+startRegFeeExpiry();
 
 // Middleware
 // CORS setup – only permit origins configured via env or development host.
@@ -130,6 +141,9 @@ app.use('/api/salespersons', salespersonRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/staff', staffDocUploadRoutes);
 app.use('/api/client-receipt-upload', clientReceiptUploadRoutes);
+app.use('/api/walk-in-customers', walkInCustomerRoutes);
+app.use('/api/product-invoices', invoiceRoutes);
+app.use('/api/rentals', rentalRoutes);
 
 // Health check endpoint for Render
 app.get('/health', (req, res) => {

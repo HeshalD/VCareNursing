@@ -902,6 +902,55 @@ async function runMigration() {
   `);
 
   // =========================================================
+  // SALESPERSON CREDITING — CLIENT REGISTRATIONS
+  // Separate metric from booking crediting above: a salesperson's "sales" for
+  // reporting is the count of client registrations (reg fee payments) they
+  // brought in, not booking revenue. Credited once, permanently, the first time
+  // a client's registration fee is confirmed PAID with a salesperson attached.
+  // The "current" salesperson (who manages the client until reassigned by
+  // someone with higher authority) is a mutable pointer, same is_current/
+  // is_origin pattern as booking_salesperson_assignments.
+  // =========================================================
+
+  await db.query(`
+    ALTER TABLE internal_staff
+    ADD COLUMN IF NOT EXISTS registrations_brought_count INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS registrations_total_amount DECIMAL(14,2) NOT NULL DEFAULT 0
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS client_salesperson_assignments (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      client_id UUID NOT NULL REFERENCES client_profiles(client_profile_id) ON DELETE CASCADE,
+      salesperson_id UUID NOT NULL REFERENCES internal_staff(id),
+      credited_amount DECIMAL(14,2) NOT NULL DEFAULT 0,
+      is_current BOOLEAN NOT NULL DEFAULT TRUE,
+      is_origin BOOLEAN NOT NULL DEFAULT FALSE,
+      action VARCHAR(20) NOT NULL DEFAULT 'CREDITED',
+      switch_reason TEXT,
+      assigned_by UUID REFERENCES users(user_id),
+      assigned_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_client_sales_one_current
+    ON client_salesperson_assignments(client_id) WHERE is_current
+  `);
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_client_sales_one_origin
+    ON client_salesperson_assignments(client_id) WHERE is_origin
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_client_sales_salesperson
+    ON client_salesperson_assignments(salesperson_id)
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_client_sales_client
+    ON client_salesperson_assignments(client_id)
+  `);
+
+  // =========================================================
   // STAFF CHANGE REQUESTS
   // =========================================================
 
@@ -1041,6 +1090,14 @@ async function runMigration() {
     ADD COLUMN IF NOT EXISTS gender gender_enum
   `);
 
+  // Links a service request to an existing patient_profiles row (e.g. proxy requests
+  // made against a client's existing care profile). When set, booking conversion must
+  // reuse this patient instead of creating a new patient_profiles row.
+  await db.query(`
+    ALTER TABLE service_requests
+    ADD COLUMN IF NOT EXISTS patient_id UUID REFERENCES patient_profiles(patient_id)
+  `);
+
   // =========================================================
   // MODULAR QUOTATION TABLES
   // =========================================================
@@ -1073,6 +1130,330 @@ async function runMigration() {
       is_preset_item BOOLEAN DEFAULT false,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     );
+  `);
+
+  // =========================================================
+  // PRODUCTS / RENTALS / WALK-IN CUSTOMERS (Phase 1)
+  // Catalog of sellable/rentable items, independent of any booking.
+  // Quotations can now target a client or a walk-in customer directly
+  // (quote_type = 'PRODUCT') instead of only a service_request lead
+  // (quote_type = 'SERVICE', the original/default behaviour).
+  // =========================================================
+
+  await db.query(`
+    DO $$ BEGIN
+      CREATE TYPE product_type_enum AS ENUM ('ITEM', 'RENTAL');
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  await db.query(`
+    ALTER TABLE products
+    ADD COLUMN IF NOT EXISTS product_type product_type_enum NOT NULL DEFAULT 'ITEM'
+  `);
+
+  // Walk-in customers: people who buy/rent a product but never create a
+  // login account. Kept separate from client_profiles (which requires a
+  // users row with mobile/password) rather than forcing fake credentials.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS walk_in_customers (
+      walk_in_customer_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      full_name VARCHAR(255) NOT NULL,
+      mobile_number VARCHAR(20),
+      address TEXT,
+      created_by UUID REFERENCES users(user_id),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // Loosen quotations so a PRODUCT-type quote can target a client/walk-in
+  // customer directly, with no service_request lead involved. Existing
+  // SERVICE-type quotes (quote_type defaults to 'SERVICE') are unaffected —
+  // request_id stays populated for those exactly as before; validity is
+  // enforced in the controller, not a DB CHECK, to keep this additive.
+  await db.query(`ALTER TABLE quotations ALTER COLUMN request_id DROP NOT NULL`);
+  await db.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS quote_type VARCHAR(20) NOT NULL DEFAULT 'SERVICE'`);
+  await db.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS client_id UUID REFERENCES client_profiles(client_profile_id)`);
+  await db.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS walk_in_customer_id UUID REFERENCES walk_in_customers(walk_in_customer_id)`);
+
+  // Self-reference so a companion PRODUCT quotation (built alongside a
+  // SERVICE quote in ModularQuoteBuilder's Products & Rentals section — see
+  // ensureProductQuoteCreated) can point back to the SERVICE quote it was
+  // created with. Lets service_request_summary.jsx show that companion
+  // quote's items even though it has no request_id of its own.
+  await db.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS linked_quote_id UUID REFERENCES quotations(quote_id)`);
+
+  // Optional link from a quote line item back to the catalog product it
+  // was pulled from (free-text description/qty/price stay editable as before).
+  await db.query(`ALTER TABLE quote_line_items ADD COLUMN IF NOT EXISTS product_id UUID REFERENCES products(product_id)`);
+
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'PRODUCT_SALE';
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  // Generic invoice record for anything that isn't a booking daily-invoice
+  // or a registration-fee invoice (both of which keep their existing tables).
+  // Phase 1 only ever writes category = 'PRODUCT' here; rental categories
+  // are reserved for a later phase so this table doesn't need revisiting.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS invoices (
+      invoice_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      invoice_code VARCHAR(20) UNIQUE,
+      category VARCHAR(30) NOT NULL,
+      client_id UUID REFERENCES client_profiles(client_profile_id),
+      walk_in_customer_id UUID REFERENCES walk_in_customers(walk_in_customer_id),
+      quote_id UUID REFERENCES quotations(quote_id),
+      amount NUMERIC(12,2) NOT NULL,
+      status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+      due_date DATE,
+      transaction_id UUID REFERENCES transactions(transaction_id),
+      pdf_url TEXT,
+      created_by UUID REFERENCES users(user_id),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      paid_at TIMESTAMP WITH TIME ZONE
+    );
+  `);
+
+  await db.query(`CREATE SEQUENCE IF NOT EXISTS invoice_code_seq START 1`);
+  await db.query(`
+    ALTER TABLE invoices
+    ALTER COLUMN invoice_code SET DEFAULT 'INV-' || LPAD(nextval('invoice_code_seq')::text, 6, '0')
+  `);
+
+  // A combined Invoice document for a SERVICE quote (and its linked PRODUCT
+  // quote, if any — e.g. daily-rate charges + a rental + its deposit) — one
+  // invoice covering everything the client was quoted, generated the first
+  // time any payment is recorded against either portion (see
+  // quoteController.ensureCombinedInvoice). Distinct from the Quotation PDF
+  // (sent pre-acceptance) and the Receipt PDF (sent per-payment); reuses the
+  // same invoice_code_seq as the standalone `invoices` table for one
+  // consistent numbering sequence.
+  await db.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS invoice_code VARCHAR(20)`);
+  await db.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS invoice_pdf_url TEXT`);
+  await db.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS invoice_generated_at TIMESTAMP WITH TIME ZONE`);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_invoices_category ON invoices(category);
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_invoices_client_id ON invoices(client_id);
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_quotations_quote_type ON quotations(quote_type);
+  `);
+
+  // Lets an individual PRODUCT-quote line item that references a RENTAL
+  // product carry its own proposed billing terms, so each rental item on a
+  // quote can be reviewed by the client on the PDF *before* anything is
+  // committed, then converted straight into its own real rental_agreement on
+  // acceptance (see quoteController.acceptProductQuote / rentalController's
+  // shared createRentalAgreementCore). Deliberately per-line-item, not
+  // per-quotation, so a single quote can propose several rental items (each
+  // with different billing terms) alongside ordinary one-off purchases.
+  await db.query(`ALTER TABLE quote_line_items ADD COLUMN IF NOT EXISTS rental_billing_type VARCHAR(20)`);
+  await db.query(`ALTER TABLE quote_line_items ADD COLUMN IF NOT EXISTS rental_start_date DATE`);
+  await db.query(`ALTER TABLE quote_line_items ADD COLUMN IF NOT EXISTS rental_end_date DATE`);
+  await db.query(`ALTER TABLE quote_line_items ADD COLUMN IF NOT EXISTS deposit_amount NUMERIC(12,2) NOT NULL DEFAULT 0`);
+
+  // Superseded by the quote_line_items columns above — this feature never
+  // shipped with the quote-level columns in use, so it's safe to drop them
+  // outright rather than leave dead/confusing duplicates around.
+  await db.query(`ALTER TABLE quotations DROP COLUMN IF EXISTS rental_billing_type`);
+  await db.query(`ALTER TABLE quotations DROP COLUMN IF EXISTS rental_start_date`);
+  await db.query(`ALTER TABLE quotations DROP COLUMN IF EXISTS rental_end_date`);
+  await db.query(`ALTER TABLE quotations DROP COLUMN IF EXISTS deposit_amount`);
+
+  // =========================================================
+  // RENTALS / DEPOSITS (Phase 2)
+  // A RENTAL-type product (see product_type_enum above) is backed by one or
+  // more physical rental_units. Renting one out creates a rental_agreement,
+  // which bills either as a single ONE_TIME invoice for a fixed period, or
+  // as a RECURRING invoice generated monthly by cron/rentalInvoicing.js.
+  // Both invoice kinds land in the existing generic `invoices` table.
+  // =========================================================
+
+  await db.query(`
+    DO $$ BEGIN
+      CREATE TYPE rental_unit_status_enum AS ENUM ('AVAILABLE', 'RENTED', 'MAINTENANCE');
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  await db.query(`
+    DO $$ BEGIN
+      CREATE TYPE rental_billing_type_enum AS ENUM ('ONE_TIME', 'RECURRING');
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  await db.query(`
+    DO $$ BEGIN
+      CREATE TYPE rental_agreement_status_enum AS ENUM ('ACTIVE', 'COMPLETED', 'CANCELLED');
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  await db.query(`
+    DO $$ BEGIN
+      CREATE TYPE deposit_status_enum AS ENUM ('HELD', 'REFUNDED', 'FORFEITED');
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'RENTAL_PAYMENT';
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'DEPOSIT_REFUND';
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  // One row per physical rentable unit (e.g. a specific wheelchair). Deliberately
+  // separate from products.stock_quantity, which is a flat display-only counter
+  // used for ITEM products and doesn't track individual units or availability.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS rental_units (
+      unit_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      product_id UUID NOT NULL REFERENCES products(product_id) ON DELETE CASCADE,
+      unit_code VARCHAR(50),
+      status rental_unit_status_enum NOT NULL DEFAULT 'AVAILABLE',
+      notes TEXT,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_rental_units_product_id ON rental_units(product_id);
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_rental_units_status ON rental_units(status);
+  `);
+
+  // Optional specific physical unit chosen for a RENTAL line item at quote
+  // time (e.g. "BED-002" rather than just "Medical Bed"). Nullable — if left
+  // unset, acceptProductQuote/createRentalAgreementCore auto-picks the first
+  // AVAILABLE unit for the product, same as before this column existed.
+  await db.query(`ALTER TABLE quote_line_items ADD COLUMN IF NOT EXISTS unit_id UUID REFERENCES rental_units(unit_id)`);
+
+  // Registration fee as a first-class SERVICE quote line item (item_type stays
+  // 'CHARGE' so it prints on the client's PDF like any other charge — see
+  // estimateTemplate). is_registration_fee lets paymentTrackingController
+  // detect it unambiguously (replacing the old fragile description-string
+  // match) and treat it as the first "bucket" any payment on the quote fills —
+  // once cumulative payments reach this item's amount, client_profiles.reg_fee_status
+  // flips to PAID and the 365-day membership clock starts. salesperson_id is
+  // assignable per item so that same moment can credit a salesperson's
+  // registrations_brought_count — purely internal, never rendered on the PDF.
+  await db.query(`ALTER TABLE quote_line_items ADD COLUMN IF NOT EXISTS is_registration_fee BOOLEAN NOT NULL DEFAULT false`);
+  await db.query(`ALTER TABLE quote_line_items ADD COLUMN IF NOT EXISTS salesperson_id UUID REFERENCES internal_staff(id)`);
+
+  // One-time cleanup: registration fee is no longer a generic preset — it's
+  // its own dedicated "Add Registration Fee" action in ModularQuoteBuilder.
+  await db.query(`DELETE FROM quote_preset_items WHERE name = 'Registration Fee'`);
+  // Same cleanup for transport fee — no longer seeded as a default preset either.
+  await db.query(`DELETE FROM quote_preset_items WHERE name = 'Transport Fee'`);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS rental_agreements (
+      rental_agreement_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      unit_id UUID NOT NULL REFERENCES rental_units(unit_id),
+      product_id UUID NOT NULL REFERENCES products(product_id),
+      client_id UUID REFERENCES client_profiles(client_profile_id),
+      walk_in_customer_id UUID REFERENCES walk_in_customers(walk_in_customer_id),
+      quote_id UUID REFERENCES quotations(quote_id),
+      billing_type rental_billing_type_enum NOT NULL,
+      rate NUMERIC(12,2) NOT NULL,
+      start_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      end_date DATE,
+      next_invoice_date DATE,
+      deposit_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      status rental_agreement_status_enum NOT NULL DEFAULT 'ACTIVE',
+      notes TEXT,
+      created_by UUID REFERENCES users(user_id),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      returned_at TIMESTAMP WITH TIME ZONE
+    );
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_rental_agreements_status ON rental_agreements(status);
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_rental_agreements_client_id ON rental_agreements(client_id);
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_rental_agreements_next_invoice_date ON rental_agreements(next_invoice_date);
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS deposits (
+      deposit_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      rental_agreement_id UUID NOT NULL REFERENCES rental_agreements(rental_agreement_id) ON DELETE CASCADE,
+      amount NUMERIC(12,2) NOT NULL,
+      status deposit_status_enum NOT NULL DEFAULT 'HELD',
+      collected_transaction_id UUID REFERENCES transactions(transaction_id),
+      refund_transaction_id UUID REFERENCES transactions(transaction_id),
+      held_at TIMESTAMP WITH TIME ZONE,
+      refunded_at TIMESTAMP WITH TIME ZONE,
+      notes TEXT,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_deposits_rental_agreement_id ON deposits(rental_agreement_id);
+  `);
+
+  // Standalone deposits: a refundable deposit the company holds independent
+  // of any rental item (e.g. a general security deposit on a quote). These
+  // deposits have no rental_agreement_id — they're linked to the quote and
+  // recipient directly instead, and originate from a 'DEPOSIT'-type
+  // quote_line_items row (see quoteController.createModularQuotation /
+  // invoiceController.recordInvoicePayment).
+  await db.query(`ALTER TABLE deposits ALTER COLUMN rental_agreement_id DROP NOT NULL`);
+  await db.query(`ALTER TABLE deposits ADD COLUMN IF NOT EXISTS quote_id UUID REFERENCES quotations(quote_id)`);
+  await db.query(`ALTER TABLE deposits ADD COLUMN IF NOT EXISTS client_id UUID REFERENCES client_profiles(client_profile_id)`);
+  await db.query(`ALTER TABLE deposits ADD COLUMN IF NOT EXISTS walk_in_customer_id UUID REFERENCES walk_in_customers(walk_in_customer_id)`);
+  await db.query(`ALTER TABLE deposits ADD COLUMN IF NOT EXISTS description VARCHAR(255)`);
+  await db.query(`ALTER TABLE deposits ADD COLUMN IF NOT EXISTS source_line_item_id UUID REFERENCES quote_line_items(line_item_id)`);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_deposits_quote_id ON deposits(quote_id);
+  `);
+
+  // Extend the generic invoices table (Phase 1) so it can also carry rental
+  // invoices: category = 'RENTAL_ONE_TIME' | 'RENTAL_RECURRING'.
+  await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS rental_agreement_id UUID REFERENCES rental_agreements(rental_agreement_id)`);
+  await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS billing_period_start DATE`);
+  await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS billing_period_end DATE`);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_invoices_rental_agreement_id ON invoices(rental_agreement_id);
+  `);
+
+  // One recurring invoice per billing period per agreement — lets the monthly
+  // cron re-run safely (ON CONFLICT DO NOTHING) without ever double-billing.
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_rental_recurring_invoice
+    ON invoices (rental_agreement_id, billing_period_start)
+    WHERE category = 'RENTAL_RECURRING'
   `);
 
   // =========================================================
@@ -1162,9 +1543,26 @@ async function runMigration() {
     ON booking_payment_tracking(status);
   `);
 
+  // A single payment event can now produce two transaction rows — one
+  // REGISTRATION_FEE row for the portion that crosses the reg-fee threshold,
+  // one for the remainder under the original category (see
+  // services/registrationFeeSplit.js) — so payment_tracking_id can no longer
+  // be globally unique on its own. Two partial unique indexes instead: at
+  // most one non-reg-fee ("primary") row and at most one REGISTRATION_FEE
+  // row per payment_tracking_id, preserving the original upsert/idempotency
+  // guarantee for both. ON CONFLICT clauses must specify the matching WHERE
+  // predicate to target one of these (see paymentTrackingController.js,
+  // bookingController.js).
+  await db.query(`DROP INDEX IF EXISTS idx_transactions_payment_tracking_id`);
   await db.query(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_payment_tracking_id
-    ON transactions(payment_tracking_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_payment_tracking_id_primary
+    ON transactions(payment_tracking_id)
+    WHERE category != 'REGISTRATION_FEE';
+  `);
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_payment_tracking_id_regfee
+    ON transactions(payment_tracking_id)
+    WHERE category = 'REGISTRATION_FEE';
   `);
 
   await db.query(`
@@ -1856,6 +2254,22 @@ async function runMigration() {
   await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_receipt_token_expires_at TIMESTAMPTZ`);
   await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_receipt_url TEXT`);
 
+  // Phase 3: 365-day membership expiry. reg_fee_paid_at anchors the countdown
+  // (set whenever reg_fee_status transitions to PAID); reg_fee_expires_at is the
+  // denormalized paid_at + 365 days, kept alongside it purely so the expiry cron
+  // (cron/regFeeExpiry.js) and admin UI can query/display it directly without
+  // recomputing the interval every time. WAIVED clients are exempt — there's no
+  // payment to anchor an expiry to, so they're left permanent until an admin
+  // changes it manually.
+  await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_paid_at TIMESTAMPTZ`);
+  await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_expires_at TIMESTAMPTZ`);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_client_profiles_reg_fee_expires_at
+    ON client_profiles(reg_fee_expires_at)
+    WHERE reg_fee_status = 'PAID';
+  `);
+
   // Persistent record of every registration fee invoice PDF ever sent, so admins
   // can re-download past invoices instead of losing the link on resend (the old
   // flow only stored the PDF URL transiently in the WhatsApp message/activity log).
@@ -1900,6 +2314,10 @@ async function runMigration() {
   // Widen emergency contact columns to support pipe-separated multiple contacts
   await db.query(`ALTER TABLE patient_profiles ALTER COLUMN emergency_contact_name TYPE TEXT`);
   await db.query(`ALTER TABLE patient_profiles ALTER COLUMN emergency_contact_number TYPE TEXT`);
+
+  // Reviews an admin logs on a client's behalf (e.g. after calling the client for feedback).
+  await db.query(`ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS submitted_by_admin BOOLEAN NOT NULL DEFAULT FALSE`);
+  await db.query(`ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS submitted_by_name VARCHAR(255)`);
 
   // =========================================================
   // SEED DEFAULT PRESET ITEMS
@@ -1953,28 +2371,12 @@ async function seedQuotePresetItems() {
 
     const presets = [
       {
-        name: 'Registration Fee',
-        item_type: 'CHARGE',
-        description: 'One-time registration fee for new clients',
-        default_quantity: 1,
-        default_unit_price: 10000.00,
-        sort_order: 1
-      },
-      {
         name: 'Daily Care Rate',
         item_type: 'CHARGE',
         description: 'Daily nursing/caretaker service rate',
         default_quantity: 7,
         default_unit_price: 0,
         sort_order: 2
-      },
-      {
-        name: 'Transport Fee',
-        item_type: 'CHARGE',
-        description: 'Daily transport allowance for staff',
-        default_quantity: 1,
-        default_unit_price: 1000.00,
-        sort_order: 3
       }
     ];
 

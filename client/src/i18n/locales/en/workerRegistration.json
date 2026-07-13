@@ -1,0 +1,229 @@
+{
+  "sidebar": {
+    "title": "Join VCare",
+    "subtitle": "Complete your profile to start receiving job offers.",
+    "steps": [
+      { "title": "Personal" },
+      { "title": "NIC Details" },
+      { "title": "Location" },
+      { "title": "Professional" },
+      { "title": "Confirm" }
+    ],
+    "quote": "\"Highest paying healthcare platform in Sri Lanka.\""
+  },
+  "mobileHeader": {
+    "stepOf": "Step {{current}} of {{total}}"
+  },
+  "common": {
+    "fromAccount": "From account",
+    "optional": "(Optional)",
+    "changePhoto": "Change Photo"
+  },
+  "step1": {
+    "title": "Personal Details",
+    "autoComplete": {
+      "welcome": "Welcome back!",
+      "message": "Some fields have been pre-filled from your account. You can modify them if needed."
+    },
+    "fullName": {
+      "label": "Name With Initials",
+      "placeholder": "e.g. Saman Kumara"
+    },
+    "email": {
+      "label": "Email Address",
+      "placeholder": "e.g. saman@example.com"
+    },
+    "mobile": {
+      "label": "Mobile Number",
+      "placeholder": "e.g. 0771234567"
+    },
+    "gender": {
+      "label": "Gender",
+      "placeholder": "Select gender",
+      "options": {
+        "MALE": "Male",
+        "FEMALE": "Female",
+        "OTHER": "Other"
+      }
+    },
+    "dob": {
+      "label": "Date of Birth",
+      "placeholder": "DD/MM/YYYY"
+    },
+    "appliedRoles": {
+      "label": "Applied Roles",
+      "roles": {
+        "CARETAKER": { "label": "Caretaker", "description": "Provides day-to-day personal care and support for elderly or ill patients." },
+        "NURSING_ASSISTANT": { "label": "Nursing Assistant", "description": "Assists nurses with basic patient care under supervision." },
+        "NURSE": { "label": "Professional Nurse", "description": "Registered nurse providing clinical care and medication management." },
+        "PHYSIOTHERAPIST": { "label": "Physiotherapist", "description": "Delivers physical rehabilitation and mobility therapy." },
+        "NANNY": { "label": "Nanny", "description": "Cares for and supervises children in the home." },
+        "COUNSELLOR": { "label": "Counsellor", "description": "Offers emotional and psychological support to patients and families." }
+      },
+      "selectedPrefix": "Selected: "
+    },
+    "livingIn": "Willing to live in with client"
+  },
+  "step2": {
+    "title": "NIC Details",
+    "nicNumber": {
+      "label": "NIC Number",
+      "placeholder": "e.g. 123456789V or 123456789012"
+    },
+    "nicFront": {
+      "label": "NIC Front Photo",
+      "removeTitle": "Remove NIC front photo",
+      "uploadPrompt": "Click to upload NIC front",
+      "uploadHint": "JPG, PNG (Max 2MB)"
+    },
+    "nicBack": {
+      "label": "NIC Back Photo",
+      "removeTitle": "Remove NIC back photo",
+      "uploadPrompt": "Click to upload NIC back",
+      "uploadHint": "JPG, PNG (Max 2MB)"
+    }
+  },
+  "step3": {
+    "title": "Location Details",
+    "province": {
+      "label": "Province",
+      "placeholder": "Select Province",
+      "options": {
+        "western": "Western",
+        "central": "Central",
+        "eastern": "Eastern",
+        "north central": "North Central",
+        "northen": "Nothern",
+        "nothern western": "Nothern Western",
+        "sabaragamuwa": "Sabaragamuwa",
+        "southern": "Southern",
+        "uva": "Uva"
+      }
+    },
+    "city": {
+      "label": "City",
+      "placeholder": "e.g. Colombo"
+    },
+    "homeAddress": {
+      "label": "Home Address",
+      "placeholder": "Street address, Zip code"
+    }
+  },
+  "step4": {
+    "title": "Professional Profile",
+    "qualifications": {
+      "label": "Qualifications",
+      "placeholder": "Describe your qualifications, certifications, and relevant training."
+    },
+    "experienceLevel": {
+      "label": "Experience Level",
+      "placeholder": "Select experience level",
+      "options": {
+        "BEGINNER": "Beginner",
+        "1_YEAR": "1 Year",
+        "2_YEARS": "2 Years",
+        "3_YEARS": "3 Years",
+        "4_YEARS": "4 Years",
+        "5_YEARS": "5 Years",
+        "MORE_THAN_5_YEARS": "More than 5 Years"
+      }
+    },
+    "documents": {
+      "label": "Upload Certificates / CV",
+      "uploadPrompt": "Click to upload documents",
+      "uploadHint": "PDF, JPG, PNG (Max 5MB)",
+      "removeTitle": "Remove document",
+      "typePdf": "PDF",
+      "typeImage": "Image",
+      "typeOther": "Document",
+      "filesUploaded": "{{count}} file(s) uploaded"
+    },
+    "profilePicture": {
+      "label": "Profile Picture",
+      "uploadPrompt": "Click to upload profile picture",
+      "uploadHint": "JPG, PNG (Max 2MB)",
+      "removeTitle": "Remove profile picture",
+      "defaultSelectedText": "Profile picture selected"
+    }
+  },
+  "step5": {
+    "title": "Confirm Details",
+    "notProvided": "Not provided",
+    "genderPrefix": "Gender: ",
+    "dobPrefix": "Date of Birth: ",
+    "locationFallback": "Location",
+    "addressFallback": "No address provided",
+    "livingInConfirmed": "Willing to live in with client",
+    "rolesFallback": "No Roles Selected",
+    "qualificationsFallback": "No qualifications provided",
+    "documentsTitle": "Documents",
+    "documentsCount": "{{count}} document(s) uploaded",
+    "documentsFallback": "No documents uploaded",
+    "profilePictureUploaded": "Profile picture uploaded",
+    "missing": {
+      "title": "Required fields missing",
+      "intro": "The following fields are required to submit your application:",
+      "footer": "Please go back and complete these fields to submit your application.",
+      "fields": {
+        "fullName": "Full Name",
+        "mobileNumber": "Mobile Number",
+        "nicNumber": "NIC Number",
+        "nicFront": "NIC Front Photo",
+        "nicBack": "NIC Back Photo",
+        "appliedRoles": "Applied Roles",
+        "qualifications": "Qualifications",
+        "homeAddress": "Home Address",
+        "location": "Location",
+        "gender": "Gender",
+        "dob": "Date of Birth",
+        "documents": "Documents",
+        "profilePicture": "Profile Picture"
+      }
+    },
+    "terms": {
+      "title": "Terms & Conditions",
+      "text": "By submitting this application, you agree to VCare's terms of service and privacy policy.",
+      "readFull": "Read full Terms & Conditions (PDF)"
+    },
+    "confirmation": {
+      "textBeforeLink": "I confirm that all the information provided above is accurate and complete, and I have read and agree to the",
+      "linkText": "Terms & Conditions",
+      "contactNotice": "I understand that VCare will contact me within 24 hours regarding my application.",
+      "reviewPrompt": "Please review your details carefully and check the confirmation box to enable submission."
+    }
+  },
+  "buttons": {
+    "back": "Back",
+    "nextStep": "Next Step",
+    "submitting": "Submitting...",
+    "submitApplication": "Submit Application"
+  },
+  "errors": {
+    "fullNameRequired": "Full name is required",
+    "fullNameMin": "Full name must be at least 3 characters",
+    "fullNameMax": "Full name must be less than 50 characters",
+    "emailInvalid": "Valid email address is required",
+    "mobileRequired": "Mobile number is required",
+    "mobileInvalid": "Mobile number must be 10 digits starting with 07",
+    "mobileConflict": "This phone number is already registered as a staff member.",
+    "rolesRequired": "At least one role must be selected",
+    "qualificationsRequired": "Qualifications are required",
+    "qualificationsMin": "Qualifications must be at least 10 characters",
+    "addressRequired": "Home address is required",
+    "addressMin": "Home address must be at least 10 characters",
+    "locationRequired": "Location is required",
+    "genderRequired": "Gender is required",
+    "dobRequired": "Date of birth is required",
+    "dobInvalid": "Enter a valid date as DD/MM/YYYY",
+    "dobFuture": "Date of birth cannot be in the future",
+    "dobMinAge": "You must be at least 18 years old to apply",
+    "dobMaxAge": "Age must be less than 65 years",
+    "documentsRequired": "At least one document must be uploaded",
+    "profilePictureRequired": "Profile picture is required",
+    "nicNumberRequired": "NIC number is required",
+    "nicNumberMin": "NIC number must be at least 5 characters",
+    "nicFrontRequired": "NIC front photo is required",
+    "nicBackRequired": "NIC back photo is required",
+    "submitFailed": "Failed to submit application. Please try again."
+  }
+}

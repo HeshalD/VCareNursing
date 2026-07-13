@@ -193,7 +193,7 @@ const startDailyInvoicing = () => {
               hours_served, entry_mode, salary_status, salary_amount,
               salary_transaction_id, decided_by_name, decided_at
             ) VALUES ($1, $2, $3, $4, 24, 'AUTO', 'PAID', $5, $6, 'SYSTEM (auto — LIVE_IN)', NOW())
-            ON CONFLICT (assignment_id, service_date) DO NOTHING`,
+            ON CONFLICT (assignment_id, service_date) WHERE shift_slot_id IS NULL DO NOTHING`,
             [assignment.booking_id, assignment.assignment_id, assignment.staff_profile_id, today, salaryAmount, salaryTransactionId]
           );
 
@@ -224,7 +224,7 @@ const startDailyInvoicing = () => {
             `INSERT INTO booking_daily_invoices (
               booking_id, service_date, entry_mode, status, amount, transaction_id, decided_by_name, decided_at
             ) VALUES ($1, $2, 'AUTO', 'INVOICED', $3, $4, 'SYSTEM (auto — LIVE_IN)', NOW())
-            ON CONFLICT (booking_id, service_date) DO NOTHING`,
+            ON CONFLICT (booking_id, service_date) WHERE shift_slot_id IS NULL DO NOTHING`,
             [bookingId, today, amount, transactionId]
           );
 

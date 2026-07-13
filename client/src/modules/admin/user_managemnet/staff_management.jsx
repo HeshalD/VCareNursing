@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Search, UserCircle, ChevronRight, Loader2, Plus } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import useAutoRefresh from '../../../hooks/useAutoRefresh';
 
 const ROLE_LABELS = {
   CARETAKER: 'Caretaker',
@@ -71,18 +72,21 @@ const StaffManagement = () => {
 
   useEffect(() => { fetchWorkers(); }, []);
 
-  const fetchWorkers = async () => {
+  const fetchWorkers = async ({ silent = false } = {}) => {
     try {
-      setLoading(true);
-      setError(null);
+      if (!silent) setLoading(true);
+      if (!silent) setError(null);
       const response = await apiClient.getAllStaff();
       setWorkers(response.data || []);
     } catch (err) {
-      setError('Failed to load staff');
+      if (!silent) setError('Failed to load staff');
+      else console.error('StaffManagement silent refresh error:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
+
+  useAutoRefresh(() => fetchWorkers({ silent: true }), { intervalMs: 5000 });
 
   const filtered = workers.filter(w => {
     const status = (w.current_status || '').toLowerCase();

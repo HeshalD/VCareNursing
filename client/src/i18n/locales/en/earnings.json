@@ -1,0 +1,100 @@
+{
+  "loading": "Loading earnings...",
+  "errors": {
+    "staffNotFound": "Staff profile not found.",
+    "loadFailed": "Failed to load earnings data.",
+    "invalidAmount": "Please enter a valid amount.",
+    "submitFailed": "Failed to submit advance request."
+  },
+  "success": {
+    "advanceSubmitted": "Advance request submitted successfully."
+  },
+  "staffFallbackName": "Staff Member",
+  "verification": {
+    "verified": "Verified",
+    "pending": "Pending verification"
+  },
+  "header": {
+    "portalLabel": "Provider Portal",
+    "title": "Earnings",
+    "subtitle": "Track your current balance, view your full earnings ledger, and manage advance requests."
+  },
+  "ledgerTypes": {
+    "earned": "Earned",
+    "advance": "Advance",
+    "deduction": "Deduction",
+    "payout": "Payout"
+  },
+  "ledgerDescriptions": {
+    "dailySalary": "Daily Salary",
+    "careProfile": "Care Profile: ",
+    "salaryAdvance": "Salary Advance",
+    "approvedBy": "Approved by: ",
+    "manualDeduction": "Manual deduction",
+    "payout": "Payout",
+    "via": "via",
+    "to": "To: "
+  },
+  "summaryCards": {
+    "currentBalance": { "label": "Current Balance", "sub": "Unpaid earnings owed to you" },
+    "totalEarned": { "label": "Total Earned", "sub": "Sum of all salary credits" },
+    "totalPaidOut": { "label": "Total Paid Out", "sub": "Sum of all payouts recorded" },
+    "walletBalance": { "label": "Wallet Balance", "sub": "Threshold: {{amount}}" }
+  },
+  "calcExplanation": {
+    "boldCurrentBalance": "Current Balance",
+    "text1": " = Total Earned − Total Paid Out. The ledger below shows every event that contributed to this balance, with a running total after each entry so you can trace exactly how it was built.",
+    "boldWalletBalance": "Wallet Balance",
+    "text2": " is a separate advance-eligible balance.",
+    "boldAdvances": "Advances",
+    "text3": " are issued from the wallet and shown in their own section below."
+  },
+  "ledger": {
+    "title": "Earnings & Payouts Ledger",
+    "subtitle": "Chronological record with running balance",
+    "legend": { "earning": "Earning", "payout": "Payout", "advance": "Advance" },
+    "empty": "No transactions recorded yet.",
+    "table": {
+      "dateTime": "Date & Time",
+      "type": "Type",
+      "description": "Description",
+      "amount": "Amount",
+      "runningBalance": "Running Balance"
+    },
+    "pagination": {
+      "pageInfo": "Page {{page}} of {{totalPages}} ({{count}} entries)",
+      "previous": "Previous",
+      "next": "Next"
+    }
+  },
+  "advanceRequests": {
+    "title": "Advance Requests",
+    "stats": "{{approved}} approved · {{pending}} pending · This month: {{amount}}",
+    "requestButton": "Request Advance",
+    "table": {
+      "amount": "Amount",
+      "status": "Status",
+      "requested": "Requested",
+      "actioned": "Actioned"
+    },
+    "empty": "No advance requests yet.",
+    "advanceRequestLabel": "Advance request"
+  },
+  "statusMeta": {
+    "approved": "Approved",
+    "pending": "Pending",
+    "rejected": "Rejected"
+  },
+  "modal": {
+    "title": "Request Advance",
+    "subtitle": "Enter the amount you need to withdraw.",
+    "closeAriaLabel": "Close modal",
+    "walletBalanceLabel": "Wallet Balance",
+    "amountLabel": "Amount (LKR)",
+    "amountPlaceholder": "e.g. 5000",
+    "minBalanceNote": "Minimum wallet balance required: {{amount}}.",
+    "cancel": "Cancel",
+    "submit": "Submit Request",
+    "submitting": "Submitting..."
+  }
+}

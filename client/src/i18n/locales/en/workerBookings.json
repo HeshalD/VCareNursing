@@ -1,0 +1,65 @@
+{
+  "errors": {
+    "userNotAuthenticated": "User not authenticated",
+    "staffProfileNotFound": "Staff profile not found",
+    "loadStaffProfileFailed": "Failed to load staff profile",
+    "loadBookingsFailed": "Failed to load bookings",
+    "unknownError": "Unknown error"
+  },
+  "retry": "Retry",
+  "header": {
+    "title": "My Assignments",
+    "subtitle": "View all your current and past patient assignments"
+  },
+  "stats": {
+    "total": "Total Assignments",
+    "active": "Active",
+    "completed": "Completed"
+  },
+  "statusBadge": {
+    "active": "Active",
+    "pendingTermination": "Pending Termination",
+    "terminated": "Terminated",
+    "completed": "Completed",
+    "cancelled": "Cancelled"
+  },
+  "emptyState": {
+    "title": "No assignments yet",
+    "description": "You don't have any patient assignments at the moment."
+  },
+  "card": {
+    "unknownCareProfile": "Unknown Care Profile",
+    "started": "Started {{date}}",
+    "at": "at {{time}}",
+    "ends": "Ends {{date}}"
+  },
+  "sections": {
+    "careProfileInfo": "Care Profile Information",
+    "clientContact": "Client Contact",
+    "serviceLocation": "Service Location",
+    "assignmentDetails": "Assignment Details",
+    "specialRemarks": "Special Remarks"
+  },
+  "fields": {
+    "fullName": "Full Name",
+    "age": "Age",
+    "ageYears": "{{age}} years",
+    "gender": "Gender",
+    "medicalCondition": "Medical Condition",
+    "clientName": "Client Name",
+    "mobile": "Mobile",
+    "emergencyContact": "Emergency Contact",
+    "gps": "GPS: {{lat}}, {{lng}}",
+    "startTime": "Start Time",
+    "dailyRate": "Daily Rate",
+    "duration": "Duration",
+    "durationDays": "{{days}} days",
+    "otRate": "OT Rate",
+    "otRatePerHour": "{{rate}}/hr"
+  },
+  "termination": {
+    "title": "Termination {{status}}",
+    "requestedEnd": "Requested end: {{date}}",
+    "reason": "Reason: {{reason}}"
+  }
+}

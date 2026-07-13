@@ -1,0 +1,39 @@
+{
+  "dayUnit_one": "දිනය",
+  "dayUnit_other": "දින",
+  "status": {
+    "pending": "සමාලෝචනයේ",
+    "approved": "අනුමතයි",
+    "rejected": "ප්‍රතික්ෂේපයි"
+  },
+  "header": {
+    "title": "නිවාඩු ඉල්ලීම",
+    "subtitle": "දින පරාසයක් සඳහා නිවාඩු ඉල්ලීමක් ඉදිරිපත් කරන්න."
+  },
+  "form": {
+    "sectionLabel": "නව නිවාඩු ඉල්ලීම",
+    "startDateLabel": "ආරම්භක දිනය",
+    "endDateLabel": "අවසන් දිනය",
+    "daysCoveredPrefix": "මෙම ඉල්ලීම ආවරණය කරන්නේ",
+    "reasonLabel": "හේතුව (අත්‍යවශ්‍ය නොවේ)",
+    "reasonPlaceholder": "ඔබට නිවාඩු අවශ්‍ය වන්නේ ඇයිදැයි අපට දන්වන්න…",
+    "submitSuccess": "ඔබේ නිවාඩු ඉල්ලීම ඉදිරිපත් කර ඇති අතර එය සමාලෝචනය සඳහා පොරොත්තුවෙන් පවතී.",
+    "submitButton": "ඉල්ලීම ඉදිරිපත් කරන්න",
+    "submitting": "ඉදිරිපත් කරමින්…"
+  },
+  "errors": {
+    "missingDates": "කරුණාකර ආරම්භක සහ අවසන් දින දෙකම තෝරන්න.",
+    "invalidRange": "අවසන් දිනය ආරම්භක දිනයට පෙර විය නොහැක.",
+    "submitFailed": "නිවාඩු ඉල්ලීම ඉදිරිපත් කිරීමට අසමත් විය."
+  },
+  "history": {
+    "sectionLabel": "මගේ නිවාඩු ඉල්ලීම්",
+    "empty": "ඔබ තවම කිසිදු නිවාඩු ඉල්ලීමක් සිදු කර නොමැත.",
+    "daysCount_one": "(දින {{count}}ක්)",
+    "daysCount_other": "(දින {{count}}ක්)",
+    "rejectedReason": "හේතුව: {{reason}}",
+    "requestedOn": "ඉල්ලූ දිනය {{date}}",
+    "showingCount_one": "ඉල්ලීම් {{count}}ක් පෙන්වමින්",
+    "showingCount_other": "ඉල්ලීම් {{count}}ක් පෙන්වමින්"
+  }
+}

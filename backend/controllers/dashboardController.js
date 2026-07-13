@@ -15,7 +15,7 @@ const CATEGORY_LABELS = {
   CHILD_CARE: 'Child Care',
 };
 
-const REVENUE_CATEGORIES = ['CLIENT_PAYMENT', 'BOOKING_PAYMENT', 'WALLET_TOPUP'];
+const REVENUE_CATEGORIES = ['CLIENT_PAYMENT', 'BOOKING_PAYMENT', 'WALLET_TOPUP', 'REGISTRATION_FEE'];
 const ACTIVE_BOOKING_STATUSES = ['ACTIVE', 'OVERDUE'];
 // A request stops being "in the pipeline" once it's done, cancelled, or already turned into a booking.
 const OPEN_REQUEST_STATUSES_EXCLUDED = ['COMPLETED', 'CANCELLED', 'BOOKING_CREATED'];
@@ -78,6 +78,7 @@ const getDashboardOverview = async (req, res) => {
          FROM transactions t
          LEFT JOIN bookings b ON b.booking_id = t.booking_id
          WHERE t.category::text = ANY($1::text[])
+           AND t.transaction_type = 'CREDIT'
            AND t.created_at >= $2
            AND ($3::text[] IS NULL OR b.service_type = ANY($3::text[]))`,
         [REVENUE_CATEGORIES, startOfThisMonth, serviceTypes]
@@ -87,6 +88,7 @@ const getDashboardOverview = async (req, res) => {
          FROM transactions t
          LEFT JOIN bookings b ON b.booking_id = t.booking_id
          WHERE t.category::text = ANY($1::text[])
+           AND t.transaction_type = 'CREDIT'
            AND t.created_at >= $2 AND t.created_at < $3
            AND ($4::text[] IS NULL OR b.service_type = ANY($4::text[]))`,
         [REVENUE_CATEGORIES, startOfLastMonth, startOfThisMonth, serviceTypes]

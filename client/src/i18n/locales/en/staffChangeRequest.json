@@ -1,0 +1,87 @@
+{
+  "loading": "Loading...",
+  "header": {
+    "eyebrow": "Provider Portal",
+    "title": "Request a Change",
+    "sidebarTitle": "Request Change",
+    "description": "Submit changes to your profile or bank account details. All requests are reviewed by our team before being applied."
+  },
+  "requestTypes": [
+    { "label": "Profile Update", "description": "Request changes to your personal details" },
+    { "label": "Add Bank Account", "description": "Add a new bank account for salary payments" },
+    { "label": "Edit Bank Account", "description": "Update details on an existing bank account" },
+    { "label": "Remove Bank Account", "description": "Deactivate an existing bank account" }
+  ],
+  "profileFields": {
+    "fullName": "Full Name",
+    "homeAddress": "Home Address",
+    "location": "City / Location",
+    "gender": "Gender",
+    "dateOfBirth": "Date of Birth",
+    "willingToLiveIn": "Willing to Live In",
+    "qualifications": "Qualifications",
+    "nicNumber": "NIC Number"
+  },
+  "selectPlaceholder": "Select {{label}}",
+  "yes": "Yes",
+  "no": "No",
+  "status": {
+    "pending": "Pending",
+    "underReview": "Under Review",
+    "approved": "Approved",
+    "rejected": "Rejected"
+  },
+  "requestDetails": {
+    "noFieldDetails": "No field details recorded.",
+    "empty": "(empty)",
+    "bankAddFields": {
+      "accountHolder": "Account Holder",
+      "bank": "Bank",
+      "branch": "Branch",
+      "accountNumber": "Account Number",
+      "currency": "Currency"
+    },
+    "removeText": "Requested deactivation of bank account.",
+    "removeTextWithId": "Requested deactivation of bank account (ID: {{id}})."
+  },
+  "profileForm": {
+    "documentNote": "To update your profile picture or NIC documents, please contact the admin directly."
+  },
+  "bankAddForm": {
+    "accountHolderName": "Account Holder Name",
+    "accountHolderPlaceholder": "Full name on bank account",
+    "bankName": "Bank Name",
+    "bankNamePlaceholder": "e.g. Commercial Bank",
+    "branchName": "Branch Name",
+    "branchNamePlaceholder": "e.g. Nugegoda Branch",
+    "accountNumber": "Account Number",
+    "accountNumberPlaceholder": "Account number"
+  },
+  "bankSelect": {
+    "noAccounts": "No active bank accounts found on your profile.",
+    "selectAccount": "Select Bank Account",
+    "newValuesNote": "New Values (leave blank to keep unchanged)",
+    "removeWarning": "This will submit a request to deactivate the selected account. It will only be removed after admin approval."
+  },
+  "errors": {
+    "noChanges": "No changes detected. Please modify at least one field.",
+    "bankAddRequired": "Account holder name, bank name, and account number are required.",
+    "selectAccountToEdit": "Please select a bank account to edit.",
+    "fillAtLeastOneField": "Please fill in at least one field to change.",
+    "selectAccountToRemove": "Please select a bank account to remove.",
+    "submitFailed": "Failed to submit request. Please try again."
+  },
+  "submitSuccess": "Request submitted successfully. Our team will review it shortly.",
+  "submitButton": {
+    "submitting": "Submitting…",
+    "submit": "Submit Request"
+  },
+  "history": {
+    "title": "My Requests",
+    "subtitle": "Track the status of your submitted change requests.",
+    "empty": "No change requests submitted yet.",
+    "submittedOn": "Submitted {{date}}",
+    "reviewer": "Reviewer: {{name}}",
+    "changeDetails": "Change Details"
+  }
+}

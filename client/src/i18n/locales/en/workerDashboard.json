@@ -1,0 +1,95 @@
+{
+  "loading": "Loading your dashboard...",
+  "header": {
+    "portalLabel": "Provider Portal",
+    "greeting": "Hello, {{name}}",
+    "welcomeMessage": "Welcome back to your professional portal. Track your status, balance, and current assignments.",
+    "profileAlt": "Profile",
+    "staffMemberFallback": "Staff Member"
+  },
+  "roles": {
+    "nurse": "Certified Nurse",
+    "caregiver": "Professional Caregiver",
+    "coordinator": "Care Coordinator",
+    "default": "Healthcare Professional"
+  },
+  "availability": {
+    "availableTitle": "Available for shifts",
+    "unavailableTitle": "Currently unavailable",
+    "availableDesc": "You are visible to coordinators for assignment.",
+    "unavailableDesc": "You will not receive new shift assignments.",
+    "markUnavailable": "Mark unavailable",
+    "markAvailable": "Mark available"
+  },
+  "verification": {
+    "verifiedTitle": "Profile verified successfully",
+    "rejectedTitle": "Application rejected",
+    "pendingTitle": "Application under review",
+    "verifiedDesc": "Your profile has been verified and you can start accepting shifts.",
+    "rejectedDesc": "Your application was not approved at this time.",
+    "pendingDesc": "Your profile is currently under review by our team.",
+    "verifiedBadge": "Verified",
+    "rejectedBadge": "Rejected",
+    "pendingBadge": "Pending Verification"
+  },
+  "documents": {
+    "title": "Required Documents",
+    "complete": "Complete",
+    "actionRequired": "Action required",
+    "description": "Upload your Grama Niladhari Report and Police Report to complete your registration.",
+    "gramaNiladhari": "Grama Niladhari Report",
+    "policeReport": "Police Report",
+    "uploaded": "Uploaded",
+    "pending": "Pending",
+    "view": "View",
+    "uploadButton": "Upload Documents"
+  },
+  "stats": {
+    "wallet": {
+      "title": "Wallet Balance",
+      "description": "Available for advances and adjustments"
+    },
+    "completedShifts": {
+      "title": "Completed Shifts",
+      "descriptionOne": "1 assignment completed",
+      "descriptionOther": "{{count}} assignments completed"
+    },
+    "rating": {
+      "title": "Rating",
+      "descriptionReviewOne": "Based on {{count}} review",
+      "descriptionReviewOther": "Based on {{count}} reviews",
+      "descriptionNoReviews": "No reviews yet"
+    }
+  },
+  "changeRequest": {
+    "title": "Need to update your details?",
+    "description": "Submit a request to change your profile or bank account information.",
+    "button": "Request a Change"
+  },
+  "leaveRequest": {
+    "title": "Planning some time off?",
+    "description": "Request leave for a date range and track the status of your requests.",
+    "button": "Request Leave"
+  },
+  "activeShifts": {
+    "title": "Active Shifts",
+    "subtitleCountOne": "You have {{count}} active assignment.",
+    "subtitleCountOther": "You have {{count}} active assignments.",
+    "subtitleDefault": "Your current work assignments.",
+    "viewAll": "View all",
+    "emptyTitle": "No active shifts",
+    "emptyDesc": "Your current assignments will appear here once you are assigned to a booking."
+  },
+  "bookingCard": {
+    "terminationPending": "Termination pending — this assignment may be ending soon.",
+    "clientLabel": "Client:",
+    "patientFallback": "Patient",
+    "serviceFallback": "Service"
+  },
+  "serviceTypes": {
+    "nurse": "Nurse",
+    "homeNursing": "Home Nursing",
+    "nanny": "Nanny",
+    "caregiver": "Caregiver"
+  }
+}

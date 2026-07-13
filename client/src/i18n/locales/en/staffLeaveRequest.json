@@ -1,0 +1,39 @@
+{
+  "dayUnit_one": "day",
+  "dayUnit_other": "days",
+  "status": {
+    "pending": "Pending",
+    "approved": "Approved",
+    "rejected": "Rejected"
+  },
+  "header": {
+    "title": "Request Leave",
+    "subtitle": "Submit a leave request for a range of dates."
+  },
+  "form": {
+    "sectionLabel": "New Leave Request",
+    "startDateLabel": "Start Date",
+    "endDateLabel": "End Date",
+    "daysCoveredPrefix": "This request covers",
+    "reasonLabel": "Reason (optional)",
+    "reasonPlaceholder": "Let us know why you need time off…",
+    "submitSuccess": "Your leave request has been submitted and is pending review.",
+    "submitButton": "Submit Request",
+    "submitting": "Submitting…"
+  },
+  "errors": {
+    "missingDates": "Please select both a start and end date.",
+    "invalidRange": "End date cannot be before start date.",
+    "submitFailed": "Failed to submit leave request."
+  },
+  "history": {
+    "sectionLabel": "My Leave Requests",
+    "empty": "You have not made any leave requests yet.",
+    "daysCount_one": "({{count}} day)",
+    "daysCount_other": "({{count}} days)",
+    "rejectedReason": "Reason: {{reason}}",
+    "requestedOn": "Requested {{date}}",
+    "showingCount_one": "Showing {{count}} request",
+    "showingCount_other": "Showing {{count}} requests"
+  }
+}

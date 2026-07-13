@@ -11,9 +11,9 @@ const { upload } = require('../config/cloudinaryConfig');
  * @access  Private (Admin/Coordinator)
  */
 router.post(
-    '/create', 
-    protect, 
-    restrictTo('SUPER_ADMIN', 'COORDINATOR'), 
+    '/create',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'SALES'),
     quoteController.createQuotation
 );
 
@@ -23,16 +23,16 @@ router.post(
  * @access  Private (Admin/Coordinator)
  */
 router.get(
-    '/request/:requestId', 
-    protect, 
-    restrictTo('SUPER_ADMIN', 'COORDINATOR'), 
+    '/request/:requestId',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'SALES'),
     quoteController.getQuoteByRequest
 );
 
 router.get(
     '/request/:requestId/list',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'SALES'),
     quoteController.getQuotesByRequest
 );
 
@@ -42,9 +42,9 @@ router.get(
  * @access  Private (Admin/Coordinator)
  */
 router.post(
-    '/send-pdf/:quote_id', 
-    protect, 
-    restrictTo('SUPER_ADMIN', 'COORDINATOR'), 
+    '/send-pdf/:quote_id',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'SALES'),
     quoteController.generateAndSendPDF
 );
 
@@ -104,7 +104,7 @@ router.delete(
 router.post(
     '/create-modular',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'SALES'),
     quoteController.createModularQuotation
 );
 
@@ -135,8 +135,111 @@ router.get('/:quote_id/details', protect, quoteController.getQuoteWithLineItems)
 router.put(
     '/:quote_id/line-items',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'SALES'),
     quoteController.updateQuoteLineItems
+);
+
+// ==================== PRODUCT QUOTE ROUTES ====================
+// quote_type = 'PRODUCT' quotes target a client_id/walk_in_customer_id
+// directly instead of a service_request lead — see createModularQuotation.
+
+/**
+ * @route   POST /api/quotes/product/request
+ * @desc    Client-portal: express interest in a catalog product (creates a DRAFT quote)
+ * @access  Private (any authenticated client) — must be registered before
+ *          GET /product/:quote_id below, or "request" would be swallowed as a quote_id.
+ */
+router.post('/product/request', protect, quoteController.submitProductInterest);
+
+/**
+ * @route   GET /api/quotes/product/list
+ * @desc    List PRODUCT-type quotations, optionally filtered by client/walk-in/status
+ * @access  Private (Admin/Coordinator/Accounts)
+ */
+router.get(
+    '/product/list',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    quoteController.listProductQuotes
+);
+
+/**
+ * @route   GET /api/quotes/product/:quote_id
+ * @desc    Get a PRODUCT-type quotation with its line items
+ * @access  Private (Admin/Coordinator/Accounts)
+ */
+router.get(
+    '/product/:quote_id',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    quoteController.getProductQuoteWithLineItems
+);
+
+/**
+ * @route   POST /api/quotes/product/:quote_id/generate-pdf
+ * @desc    Generate a product quote PDF and return its URL (no WhatsApp send)
+ * @access  Private (Admin/Coordinator/Accounts)
+ */
+router.post(
+    '/product/:quote_id/generate-pdf',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    quoteController.generateProductQuotePdf
+);
+
+/**
+ * @route   POST /api/quotes/product/:quote_id/send
+ * @desc    Generate a product quote PDF and send it to the client/walk-in via WhatsApp
+ * @access  Private (Admin/Coordinator/Accounts)
+ */
+router.post(
+    '/product/:quote_id/send',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    quoteController.sendProductQuotePDF
+);
+
+/**
+ * @route   POST /api/quotes/product/:quote_id/accept
+ * @desc    Accept a product quote — creates a rental_agreement + invoice for
+ *          each rental line item (using its own quoted billing terms) and a
+ *          single generic invoice for any remaining non-rental items. This is
+ *          the one accept action for any PRODUCT quote, rental or not.
+ * @access  Private (Admin/Coordinator/Accounts)
+ */
+router.post(
+    '/product/:quote_id/accept',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    quoteController.acceptProductQuote
+);
+
+// ==================== COMBINED INVOICE ROUTES ====================
+// The merged Invoice (SERVICE quote + any linked PRODUCT quote) generated
+// once either portion is paid in full — see quoteController.ensureCombinedInvoice.
+
+/**
+ * @route   GET /api/quotes/invoices/list
+ * @desc    List every SERVICE quote that has had a combined Invoice generated
+ * @access  Private (Admin/Coordinator/Accounts)
+ */
+router.get(
+    '/invoices/list',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    quoteController.listCombinedInvoices
+);
+
+/**
+ * @route   POST /api/quotes/:quote_id/send-invoice
+ * @desc    (Re)send the combined Invoice PDF to the client/payer via WhatsApp
+ * @access  Private (Admin/Coordinator/Accounts)
+ */
+router.post(
+    '/:quote_id/send-invoice',
+    protect,
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    quoteController.sendCombinedInvoice
 );
 
 // ==================== PAYMENT TRACKING ROUTES ====================

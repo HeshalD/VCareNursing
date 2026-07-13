@@ -1,0 +1,65 @@
+{
+  "errors": {
+    "userNotAuthenticated": "පරිශීලක සත්‍යාපනය සිදු නොවී ඇත",
+    "staffProfileNotFound": "කාර්ය මණ්ඩල පැතිකඩ හමු නොවීය",
+    "loadStaffProfileFailed": "කාර්ය මණ්ඩල පැතිකඩ පූරණය කිරීමට අසමත් විය",
+    "loadBookingsFailed": "පැවරුම් පූරණය කිරීමට අසමත් විය",
+    "unknownError": "නොදන්නා දෝෂයකි"
+  },
+  "retry": "නැවත උත්සාහ කරන්න",
+  "header": {
+    "title": "මගේ පැවරුම්",
+    "subtitle": "ඔබගේ වර්තමාන සහ පසුගිය රෝගී පැවරුම් සියල්ල බලන්න"
+  },
+  "stats": {
+    "total": "මුළු පැවරුම්",
+    "active": "සක්‍රීයයි",
+    "completed": "සම්පූර්ණයි"
+  },
+  "statusBadge": {
+    "active": "සක්‍රීයයි",
+    "pendingTermination": "අවසන් කිරීම අපේක්ෂිතයි",
+    "terminated": "අවසන් කර ඇත",
+    "completed": "සම්පූර්ණයි",
+    "cancelled": "අවලංගු කර ඇත"
+  },
+  "emptyState": {
+    "title": "තවම පැවරුම් නොමැත",
+    "description": "දැනට ඔබට කිසිදු රෝගී පැවරුමක් නොමැත."
+  },
+  "card": {
+    "unknownCareProfile": "නොදන්නා රැකවරණ පැතිකඩ",
+    "started": "ආරම්භ විය {{date}}",
+    "at": "{{time}} ට",
+    "ends": "අවසන් වේ {{date}}"
+  },
+  "sections": {
+    "careProfileInfo": "රැකවරණ පැතිකඩ තොරතුරු",
+    "clientContact": "සේවාලාභී සම්බන්ධතාවය",
+    "serviceLocation": "සේවා ස්ථානය",
+    "assignmentDetails": "පැවරුම් විස්තර",
+    "specialRemarks": "විශේෂ සටහන්"
+  },
+  "fields": {
+    "fullName": "සම්පූර්ණ නම",
+    "age": "වයස",
+    "ageYears": "වයස අවුරුදු {{age}}",
+    "gender": "ස්ත්‍රී/පුරුෂ භාවය",
+    "medicalCondition": "වෛද්‍ය තත්ත්වය",
+    "clientName": "සේවාලාභී නම",
+    "mobile": "ජංගම දුරකථනය",
+    "emergencyContact": "හදිසි සම්බන්ධතාවය",
+    "gps": "GPS: {{lat}}, {{lng}}",
+    "startTime": "ආරම්භක වේලාව",
+    "dailyRate": "දෛනික ගාස්තුව",
+    "duration": "කාලසීමාව",
+    "durationDays": "දින {{days}}",
+    "otRate": "අතිකාල ගාස්තුව",
+    "otRatePerHour": "{{rate}}/පැයට"
+  },
+  "termination": {
+    "title": "අවසන් කිරීම {{status}}",
+    "requestedEnd": "ඉල්ලූ අවසන් දිනය: {{date}}",
+    "reason": "හේතුව: {{reason}}"
+  }
+}
