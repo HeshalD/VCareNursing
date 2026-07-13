@@ -6,11 +6,13 @@ import {
 	Trash2,
 	RefreshCw,
 	X,
-	FileSpreadsheet,
-	AlertTriangle
+	AlertTriangle,
+	ChevronRight,
+	Wallet,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { categoryBadge, relatedTo, flowAmountClass, flowSign } from '../../../constants/transactionCategories';
 
 const initialFormState = {
 	account_nickname: '',
@@ -26,6 +28,60 @@ const initialFormState = {
 const formatMoney = (value) => {
 	const amount = parseFloat(value || 0);
 	return `LKR ${amount.toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
+
+const TX_STATUS_CONFIG = {
+	COMPLETED: { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Completed' },
+	PENDING: { dot: 'bg-amber-400', text: 'text-amber-700', label: 'Pending' },
+	REJECTED: { dot: 'bg-red-400', text: 'text-red-700', label: 'Rejected' },
+};
+
+const StatusDot = ({ status }) => {
+	const cfg = TX_STATUS_CONFIG[status] || { dot: 'bg-slate-400', text: 'text-slate-600', label: status || '—' };
+	return (
+		<span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
+			<span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
+			{cfg.label}
+		</span>
+	);
+};
+
+const inputCls = 'w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-800 placeholder-slate-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-colors';
+const primaryBtnCls = 'inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+const ghostBtnCls = 'inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors';
+const iconBtnCls = 'inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors';
+
+const SectionHeader = ({ title }) => (
+	<div className="px-5 pt-5 pb-2.5 border-b border-slate-100">
+		<p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{title}</p>
+	</div>
+);
+
+const Field = ({ label, required, children }) => (
+	<div>
+		<label className="block text-xs font-medium text-slate-600 mb-1">
+			{label}{required && <span className="text-red-500 ml-0.5">*</span>}
+		</label>
+		{children}
+	</div>
+);
+
+// Small stat tile used in the account detail panel — keeps every summary number
+// (transaction counts, balances, reconciliation status) in one glanceable row
+// instead of splitting them across two separate panels.
+const StatTile = ({ label, value, tone = 'slate' }) => {
+	const tones = {
+		slate: 'text-slate-900',
+		emerald: 'text-emerald-700',
+		amber: 'text-amber-700',
+		blue: 'text-blue-700',
+	};
+	return (
+		<div className="bg-white border border-slate-200 rounded-xl p-3.5">
+			<p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{label}</p>
+			<p className={`mt-1 text-base font-semibold ${tones[tone]}`}>{value}</p>
+		</div>
+	);
 };
 
 const BankAccounts = () => {
@@ -53,6 +109,7 @@ const BankAccounts = () => {
 	const [reconciliationReport, setReconciliationReport] = useState(null);
 
 	const accountCount = useMemo(() => accounts.length, [accounts]);
+	const detailLoading = transactionsLoading || reconciliationLoading;
 
 	const loadAccounts = async () => {
 		try {
@@ -189,11 +246,23 @@ const BankAccounts = () => {
 	};
 
 	const handleViewAccount = async (account) => {
+		if (selectedAccount?.account_id === account.account_id) {
+			setSelectedAccount(null);
+			return;
+		}
 		setSelectedAccount(account);
 		setTransactionsFilters({ start_date: '', end_date: '', status: '' });
 		await Promise.all([
 			loadTransactionsForAccount(account, { start_date: '', end_date: '', status: '' }),
 			loadReconciliationForAccount(account)
+		]);
+	};
+
+	const refreshDetail = async () => {
+		if (!selectedAccount) return;
+		await Promise.all([
+			loadTransactionsForAccount(selectedAccount),
+			loadReconciliationForAccount(selectedAccount)
 		]);
 	};
 
@@ -209,413 +278,339 @@ const BankAccounts = () => {
 			subtitle="Manage receiving accounts, inspect account transactions, and review reconciliation summaries."
 			actions={
 				<div className="flex items-center gap-2">
-					<button
-						onClick={loadAccounts}
-						className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-					>
+					<button onClick={loadAccounts} title="Refresh" className={iconBtnCls}>
 						<RefreshCw className="h-4 w-4" />
-						Refresh
 					</button>
-					<button
-						onClick={handleOpenCreate}
-						className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
-					>
+					<button onClick={handleOpenCreate} className={primaryBtnCls}>
 						<Plus className="h-4 w-4" />
 						New Account
 					</button>
 				</div>
 			}
 		>
-			{error && (
-				<div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>
-			)}
+			<div className="space-y-5">
+				{error && (
+					<div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">{error}</div>
+				)}
 
-			{successMessage && (
-				<div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-700">{successMessage}</div>
-			)}
+				{successMessage && (
+					<div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-700">{successMessage}</div>
+				)}
 
-			{showForm && (
-				<div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-					<div className="mb-4 flex items-center justify-between">
-						<h2 className="text-base font-semibold text-slate-900">
-							{editingAccount ? 'Edit Bank Account' : 'Create Bank Account'}
-						</h2>
-						<button
-							onClick={resetForm}
-							className="rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
-							aria-label="Close"
-						>
-							<X className="h-4 w-4" />
-						</button>
+				{/* ── Accounts list ────────────────────────────────────────────── */}
+				<div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+					<div className="border-b border-slate-100 px-5 py-3.5">
+						<h2 className="text-sm font-semibold text-slate-900">Active Bank Accounts</h2>
+						<p className="text-xs text-slate-400 mt-0.5">Click a row to view its transactions and reconciliation status.</p>
 					</div>
 
-					<form onSubmit={handleSubmit} className="grid grid-cols-1 gap-4 md:grid-cols-2">
-						<label className="space-y-1 text-sm">
-							<span className="font-medium text-slate-700">Account Nickname</span>
-							<input
-								required
-								value={formData.account_nickname}
-								onChange={(e) => setFormData({ ...formData, account_nickname: e.target.value })}
-								className="w-full rounded-lg border border-slate-200 px-3 py-2 outline-none focus:border-blue-500"
-							/>
-						</label>
+					{loading ? (
+						<div className="flex items-center justify-center h-40">
+							<div className="text-sm text-slate-400">Loading bank accounts…</div>
+						</div>
+					) : accounts.length === 0 ? (
+						<div className="flex flex-col items-center gap-2 py-16 text-slate-400">
+							<Landmark className="h-8 w-8" />
+							<p className="text-sm">No active bank accounts found.</p>
+						</div>
+					) : (
+						<div className="overflow-x-auto">
+							<table className="w-full text-sm">
+								<thead>
+									<tr className="border-b border-slate-200 bg-slate-50">
+										<th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Account</th>
+										<th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Bank</th>
+										<th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Holder</th>
+										<th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Currency</th>
+										<th className="text-right px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Opening Balance</th>
+										<th className="text-right px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Current Balance</th>
+										<th className="px-5 py-3" />
+									</tr>
+								</thead>
+								<tbody className="divide-y divide-slate-100">
+									{accounts.map((account) => {
+										const isSelected = selectedAccount?.account_id === account.account_id;
+										return (
+											<tr
+												key={account.account_id}
+												onClick={() => handleViewAccount(account)}
+												className={`cursor-pointer transition-colors ${isSelected ? 'bg-blue-50/60' : 'hover:bg-slate-50'}`}
+											>
+												<td className="px-5 py-3">
+													<p className="font-semibold text-slate-900 leading-tight">{account.account_nickname}</p>
+													<p className="text-xs text-slate-400 font-mono">{account.account_number}</p>
+												</td>
+												<td className="px-5 py-3 text-slate-600">
+													{account.bank_name}
+													{account.branch_name && <span className="block text-xs text-slate-400">{account.branch_name}</span>}
+												</td>
+												<td className="px-5 py-3 text-slate-600">{account.account_holder_name}</td>
+												<td className="px-5 py-3 text-slate-600">{account.currency}</td>
+												<td className="px-5 py-3 text-right text-slate-500">{formatMoney(account.opening_balance)}</td>
+												<td className="px-5 py-3 text-right font-medium text-slate-900">{formatMoney(account.current_balance ?? account.opening_balance)}</td>
+												<td className="px-5 py-3">
+													<div className="flex items-center justify-end gap-0.5" onClick={(e) => e.stopPropagation()}>
+														<button onClick={() => handleOpenEdit(account)} title="Edit account" className={iconBtnCls}>
+															<Pencil className="h-3.5 w-3.5" />
+														</button>
+														<button
+															onClick={() => handleDeactivate(account)}
+															title="Deactivate account"
+															className="inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+														>
+															<Trash2 className="h-3.5 w-3.5" />
+														</button>
+														<ChevronRight className={`w-4 h-4 ml-1 transition-transform ${isSelected ? 'rotate-90 text-blue-500' : 'text-slate-300'}`} />
+													</div>
+												</td>
+											</tr>
+										);
+									})}
+								</tbody>
+							</table>
+						</div>
+					)}
+				</div>
 
-						<label className="space-y-1 text-sm">
-							<span className="font-medium text-slate-700">Account Number</span>
-							<input
-								required
-								value={formData.account_number}
-								onChange={(e) => setFormData({ ...formData, account_number: e.target.value })}
-								className="w-full rounded-lg border border-slate-200 px-3 py-2 outline-none focus:border-blue-500"
-							/>
-						</label>
+				{/* ── Selected account detail ──────────────────────────────────── */}
+				{selectedAccount && (
+					<div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+						<div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-3.5">
+							<div>
+								<h3 className="text-sm font-semibold text-slate-900">
+									{selectedAccount.account_nickname}
+									<span className="ml-2 font-mono text-xs font-normal text-slate-400">{selectedAccount.account_number}</span>
+								</h3>
+								<p className="text-xs text-slate-400 mt-0.5">Transactions and reconciliation status for this account</p>
+							</div>
+							<div className="flex items-center gap-1 shrink-0">
+								<button onClick={refreshDetail} title="Refresh" className={iconBtnCls}>
+									<RefreshCw className={`h-4 w-4 ${detailLoading ? 'animate-spin' : ''}`} />
+								</button>
+								<button onClick={() => setSelectedAccount(null)} title="Close" className={iconBtnCls}>
+									<X className="h-4 w-4" />
+								</button>
+							</div>
+						</div>
 
-						<label className="space-y-1 text-sm">
-							<span className="font-medium text-slate-700">Account Holder Name</span>
-							<input
-								required
-								value={formData.account_holder_name}
-								onChange={(e) => setFormData({ ...formData, account_holder_name: e.target.value })}
-								className="w-full rounded-lg border border-slate-200 px-3 py-2 outline-none focus:border-blue-500"
-							/>
-						</label>
+						<div className="p-5 space-y-4">
+							{/* One merged summary row — replaces two separate stat panels that used to repeat the same numbers */}
+							<div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+								<StatTile label="Transactions" value={transactionsSummary?.transaction_count ?? '—'} />
+								<StatTile label="Completed" value={formatMoney(transactionsSummary?.total_completed)} tone="emerald" />
+								<StatTile label="Pending" value={formatMoney(transactionsSummary?.total_pending)} tone="amber" />
+								<StatTile label="Closing Balance" value={formatMoney(reconciliationReport?.summary?.closing_balance)} tone="blue" />
+								<StatTile
+									label="Reconciliation"
+									value={reconciliationReport?.summary?.reconciliation_status?.replace(/_/g, ' ') || (reconciliationLoading ? '…' : '—')}
+								/>
+							</div>
 
-						<label className="space-y-1 text-sm">
-							<span className="font-medium text-slate-700">Bank Name</span>
-							<input
-								required
-								value={formData.bank_name}
-								onChange={(e) => setFormData({ ...formData, bank_name: e.target.value })}
-								className="w-full rounded-lg border border-slate-200 px-3 py-2 outline-none focus:border-blue-500"
-							/>
-						</label>
-
-						<label className="space-y-1 text-sm">
-							<span className="font-medium text-slate-700">Branch Name</span>
-							<input
-								value={formData.branch_name}
-								onChange={(e) => setFormData({ ...formData, branch_name: e.target.value })}
-								className="w-full rounded-lg border border-slate-200 px-3 py-2 outline-none focus:border-blue-500"
-							/>
-						</label>
-
-						<label className="space-y-1 text-sm">
-							<span className="font-medium text-slate-700">Currency</span>
-							<input
-								value={formData.currency}
-								onChange={(e) => setFormData({ ...formData, currency: e.target.value.toUpperCase() })}
-								className="w-full rounded-lg border border-slate-200 px-3 py-2 uppercase outline-none focus:border-blue-500"
-							/>
-						</label>
-
-						{!editingAccount && (
-							<>
-								<label className="space-y-1 text-sm">
-									<span className="font-medium text-slate-700">Opening Balance</span>
-									<input
-										type="number"
-										step="0.01"
-										value={formData.opening_balance}
-										onChange={(e) => setFormData({ ...formData, opening_balance: e.target.value })}
-										className="w-full rounded-lg border border-slate-200 px-3 py-2 outline-none focus:border-blue-500"
-									/>
-								</label>
-
-								<label className="space-y-1 text-sm">
-									<span className="font-medium text-slate-700">Opening Balance Date</span>
+							{/* Filters — flat inline toolbar */}
+							<form onSubmit={applyTransactionFilters} className="flex flex-wrap items-end gap-3">
+								<Field label="From">
 									<input
 										type="date"
-										value={formData.opening_balance_date}
-										onChange={(e) => setFormData({ ...formData, opening_balance_date: e.target.value })}
-										className="w-full rounded-lg border border-slate-200 px-3 py-2 outline-none focus:border-blue-500"
+										value={transactionsFilters.start_date}
+										onChange={(e) => setTransactionsFilters({ ...transactionsFilters, start_date: e.target.value })}
+										className={inputCls}
 									/>
-								</label>
-							</>
-						)}
+								</Field>
+								<Field label="To">
+									<input
+										type="date"
+										value={transactionsFilters.end_date}
+										onChange={(e) => setTransactionsFilters({ ...transactionsFilters, end_date: e.target.value })}
+										className={inputCls}
+									/>
+								</Field>
+								<Field label="Status">
+									<select
+										value={transactionsFilters.status}
+										onChange={(e) => setTransactionsFilters({ ...transactionsFilters, status: e.target.value })}
+										className={inputCls}
+									>
+										<option value="">All Statuses</option>
+										<option value="COMPLETED">Completed</option>
+										<option value="PENDING">Pending</option>
+										<option value="REJECTED">Rejected</option>
+									</select>
+								</Field>
+								<button type="submit" className={primaryBtnCls}>Apply</button>
+							</form>
 
-						<div className="md:col-span-2 flex items-center gap-2 pt-1">
-							<button
-								type="submit"
-								disabled={submitting}
-								className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-							>
-								{submitting ? 'Saving...' : editingAccount ? 'Save Changes' : 'Create Account'}
-							</button>
-							<button
-								type="button"
-								onClick={resetForm}
-								className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-							>
-								Cancel
-							</button>
+							{/* Transactions table — single source of truth; the reconciliation
+							    panel used to render this exact same data a second time. */}
+							{transactionsLoading ? (
+								<div className="flex items-center justify-center h-32">
+									<div className="text-sm text-slate-400">Loading transactions…</div>
+								</div>
+							) : transactions.length === 0 ? (
+								<div className="flex flex-col items-center justify-center gap-2 py-12 text-slate-400">
+									<Wallet className="w-6 h-6" />
+									<p className="text-sm">No transactions found for this account.</p>
+								</div>
+							) : (
+								<div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+									<div className="overflow-x-auto">
+										<table className="w-full text-sm">
+											<thead>
+												<tr className="border-b border-slate-200 bg-slate-50">
+													<th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Date</th>
+													<th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Party</th>
+													<th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Category</th>
+													<th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Method</th>
+													<th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Reference</th>
+													<th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
+													<th className="text-right px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Amount</th>
+												</tr>
+											</thead>
+											<tbody className="divide-y divide-slate-100">
+												{transactions.map((tx) => {
+													const related = relatedTo(tx);
+													return (
+														<tr key={tx.transaction_id} className="hover:bg-slate-50 transition-colors">
+															<td className="px-4 py-2.5 text-slate-600 whitespace-nowrap">{new Date(tx.created_at).toLocaleString()}</td>
+															<td className="px-4 py-2.5 text-slate-600">
+																<p className="font-medium text-slate-700">{related.primary}</p>
+																{related.secondary && <p className="text-xs text-slate-400">{related.secondary}</p>}
+															</td>
+															<td className="px-4 py-2.5 whitespace-nowrap">{categoryBadge(tx.category)}</td>
+															<td className="px-4 py-2.5 text-slate-600">{tx.payment_method || '—'}</td>
+															<td className="px-4 py-2.5 text-slate-500 font-mono text-xs">{tx.reference_number || '—'}</td>
+															<td className="px-4 py-2.5 whitespace-nowrap"><StatusDot status={tx.status} /></td>
+															<td className={`px-4 py-2.5 text-right font-medium ${flowAmountClass(tx.category, tx.transaction_type)}`}>
+																{flowSign(tx.category, tx.transaction_type)}{formatMoney(tx.amount)}
+															</td>
+														</tr>
+													);
+												})}
+											</tbody>
+										</table>
+									</div>
+								</div>
+							)}
 						</div>
-					</form>
-				</div>
-			)}
-
-			<div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-				<div className="border-b border-slate-200 px-5 py-4">
-					<h2 className="text-base font-semibold text-slate-900">Active Bank Accounts ({accountCount})</h2>
-				</div>
-
-				{loading ? (
-					<div className="p-5 text-sm text-slate-500">Loading bank accounts...</div>
-				) : accounts.length === 0 ? (
-					<div className="flex flex-col items-center gap-2 p-8 text-slate-500">
-						<Landmark className="h-8 w-8" />
-						<p className="text-sm">No active bank accounts found.</p>
 					</div>
-				) : (
-					<div className="overflow-x-auto">
-						<table className="min-w-full text-sm">
-							<thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-								<tr>
-									<th className="px-5 py-3">Nickname</th>
-									<th className="px-5 py-3">Bank</th>
-									<th className="px-5 py-3">Account Number</th>
-									<th className="px-5 py-3">Holder</th>
-									<th className="px-5 py-3">Currency</th>
-									<th className="px-5 py-3 text-right">Opening Balance</th>
-									<th className="px-5 py-3 text-right">Actions</th>
-								</tr>
-							</thead>
-							<tbody>
-								{accounts.map((account) => (
-									<tr key={account.account_id} className="border-t border-slate-100">
-										<td className="px-5 py-3 font-medium text-slate-900">{account.account_nickname}</td>
-										<td className="px-5 py-3 text-slate-700">{account.bank_name}</td>
-										<td className="px-5 py-3 text-slate-700">{account.account_number}</td>
-										<td className="px-5 py-3 text-slate-700">{account.account_holder_name}</td>
-										<td className="px-5 py-3 text-slate-700">{account.currency}</td>
-										<td className="px-5 py-3 text-right text-slate-700">{formatMoney(account.opening_balance)}</td>
-										<td className="px-5 py-3">
-											<div className="flex items-center justify-end gap-2">
-												<button
-													onClick={() => handleViewAccount(account)}
-													className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-												>
-													View
-												</button>
-												<button
-													onClick={() => handleOpenEdit(account)}
-													className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-												>
-													<Pencil className="h-3.5 w-3.5" /> Edit
-												</button>
-												<button
-													onClick={() => handleDeactivate(account)}
-													className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
-												>
-													<Trash2 className="h-3.5 w-3.5" /> Deactivate
-												</button>
-											</div>
-										</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
+				)}
+
+				{!selectedAccount && !loading && accounts.length > 0 && (
+					<div className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-slate-600">
+						<AlertTriangle className="mt-0.5 h-4 w-4 text-slate-400 shrink-0" />
+						<p className="text-sm">Select an account from the list above to view its transactions and reconciliation status.</p>
 					</div>
 				)}
 			</div>
 
-			{selectedAccount && (
-				<div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-					<div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:col-span-2">
-						<div className="mb-4 flex items-start justify-between">
-							<div>
-								<h3 className="text-base font-semibold text-slate-900">Transactions</h3>
-								<p className="text-sm text-slate-500">
-									{selectedAccount.account_nickname} ({selectedAccount.account_number})
-								</p>
-							</div>
-							<button
-								onClick={() => loadTransactionsForAccount(selectedAccount)}
-								className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
-							>
-								<RefreshCw className="h-3.5 w-3.5" /> Refresh
+			{/* ── Create / Edit drawer ─────────────────────────────────────────── */}
+			{showForm && (
+				<div className="fixed inset-0 z-50 flex">
+					<div className="flex-1 bg-black/30" onClick={resetForm} />
+
+					<div className="w-full max-w-md bg-white flex flex-col shadow-2xl overflow-hidden">
+						<div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 flex-shrink-0">
+							<h2 className="text-sm font-semibold text-slate-900">
+								{editingAccount ? 'Edit Bank Account' : 'Create Bank Account'}
+							</h2>
+							<button onClick={resetForm} className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors">
+								<X className="w-4 h-4" />
 							</button>
 						</div>
 
-						<form onSubmit={applyTransactionFilters} className="mb-4 grid grid-cols-1 gap-2 md:grid-cols-4">
-							<input
-								type="date"
-								value={transactionsFilters.start_date}
-								onChange={(e) => setTransactionsFilters({ ...transactionsFilters, start_date: e.target.value })}
-								className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
-							/>
-							<input
-								type="date"
-								value={transactionsFilters.end_date}
-								onChange={(e) => setTransactionsFilters({ ...transactionsFilters, end_date: e.target.value })}
-								className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
-							/>
-							<select
-								value={transactionsFilters.status}
-								onChange={(e) => setTransactionsFilters({ ...transactionsFilters, status: e.target.value })}
-								className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
-							>
-								<option value="">All Statuses</option>
-								<option value="COMPLETED">Completed</option>
-								<option value="PENDING">Pending</option>
-								<option value="REJECTED">Rejected</option>
-							</select>
-							<button
-								type="submit"
-								className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
-							>
-								Apply Filters
-							</button>
+						<form onSubmit={handleSubmit} id="bank-account-form" className="flex-1 overflow-y-auto">
+							<SectionHeader title="Account Details" />
+							<div className="px-5 pt-4 pb-2 space-y-3">
+								<Field label="Account Nickname" required>
+									<input
+										required
+										value={formData.account_nickname}
+										onChange={(e) => setFormData({ ...formData, account_nickname: e.target.value })}
+										className={inputCls}
+									/>
+								</Field>
+								<Field label="Account Number" required>
+									<input
+										required
+										value={formData.account_number}
+										onChange={(e) => setFormData({ ...formData, account_number: e.target.value })}
+										className={inputCls}
+									/>
+								</Field>
+								<Field label="Account Holder Name" required>
+									<input
+										required
+										value={formData.account_holder_name}
+										onChange={(e) => setFormData({ ...formData, account_holder_name: e.target.value })}
+										className={inputCls}
+									/>
+								</Field>
+								<div className="grid grid-cols-2 gap-3">
+									<Field label="Bank Name" required>
+										<input
+											required
+											value={formData.bank_name}
+											onChange={(e) => setFormData({ ...formData, bank_name: e.target.value })}
+											className={inputCls}
+										/>
+									</Field>
+									<Field label="Branch Name">
+										<input
+											value={formData.branch_name}
+											onChange={(e) => setFormData({ ...formData, branch_name: e.target.value })}
+											className={inputCls}
+										/>
+									</Field>
+								</div>
+								<Field label="Currency">
+									<input
+										value={formData.currency}
+										onChange={(e) => setFormData({ ...formData, currency: e.target.value.toUpperCase() })}
+										className={`${inputCls} uppercase`}
+									/>
+								</Field>
+							</div>
+
+							{!editingAccount && (
+								<>
+									<SectionHeader title="Opening Balance" />
+									<div className="px-5 pt-4 pb-6 space-y-3">
+										<Field label="Opening Balance">
+											<input
+												type="number"
+												step="0.01"
+												value={formData.opening_balance}
+												onChange={(e) => setFormData({ ...formData, opening_balance: e.target.value })}
+												className={inputCls}
+											/>
+										</Field>
+										<Field label="Opening Balance Date">
+											<input
+												type="date"
+												value={formData.opening_balance_date}
+												onChange={(e) => setFormData({ ...formData, opening_balance_date: e.target.value })}
+												className={inputCls}
+											/>
+										</Field>
+									</div>
+								</>
+							)}
 						</form>
 
-						{transactionsSummary && (
-							<div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-								<div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-									<p className="text-xs text-slate-500">Transactions</p>
-									<p className="text-base font-semibold text-slate-900">{transactionsSummary.transaction_count}</p>
-								</div>
-								<div className="rounded-xl border border-slate-200 bg-green-50 p-3">
-									<p className="text-xs text-green-700">Completed</p>
-									<p className="text-base font-semibold text-green-800">{formatMoney(transactionsSummary.total_completed)}</p>
-								</div>
-								<div className="rounded-xl border border-slate-200 bg-amber-50 p-3">
-									<p className="text-xs text-amber-700">Pending</p>
-									<p className="text-base font-semibold text-amber-800">{formatMoney(transactionsSummary.total_pending)}</p>
-								</div>
-							</div>
-						)}
-
-						{transactionsLoading ? (
-							<p className="text-sm text-slate-500">Loading transactions...</p>
-						) : transactions.length === 0 ? (
-							<p className="text-sm text-slate-500">No transactions found for this account.</p>
-						) : (
-							<div className="overflow-x-auto">
-								<table className="min-w-full text-sm">
-									<thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-										<tr>
-											<th className="px-4 py-2">Date</th>
-											<th className="px-4 py-2">Client</th>
-											<th className="px-4 py-2">Category</th>
-											<th className="px-4 py-2">Method</th>
-											<th className="px-4 py-2">Reference</th>
-											<th className="px-4 py-2">Status</th>
-											<th className="px-4 py-2 text-right">Amount</th>
-										</tr>
-									</thead>
-									<tbody>
-										{transactions.map((tx) => (
-											<tr key={tx.transaction_id} className="border-t border-slate-100">
-												<td className="px-4 py-2 text-slate-700">{new Date(tx.created_at).toLocaleString()}</td>
-												<td className="px-4 py-2 text-slate-700">{tx.client_name || '-'}</td>
-												<td className="px-4 py-2 text-slate-700">{tx.category}</td>
-												<td className="px-4 py-2 text-slate-700">{tx.payment_method || '-'}</td>
-												<td className="px-4 py-2 text-slate-700">{tx.reference_number || '-'}</td>
-												<td className="px-4 py-2">
-													<span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700">
-														{tx.status}
-													</span>
-												</td>
-												<td className="px-4 py-2 text-right font-medium text-slate-900">{formatMoney(tx.amount)}</td>
-											</tr>
-										))}
-									</tbody>
-								</table>
-							</div>
-						)}
-					</div>
-
-					<div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-						<div className="mb-3 flex items-center gap-2">
-							<FileSpreadsheet className="h-4 w-4 text-slate-600" />
-							<h3 className="text-base font-semibold text-slate-900">Reconciliation</h3>
+						<div className="flex items-center gap-2 px-5 py-4 border-t border-slate-200 bg-slate-50 flex-shrink-0">
+							<button type="button" onClick={resetForm}
+								className="flex-1 px-4 py-2 border border-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-100 transition-colors">
+								Cancel
+							</button>
+							<button
+								type="submit"
+								form="bank-account-form"
+								disabled={submitting}
+								className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+							>
+								{submitting ? 'Saving…' : editingAccount ? 'Save Changes' : 'Create Account'}
+							</button>
 						</div>
-
-						{reconciliationLoading ? (
-							<p className="text-sm text-slate-500">Loading reconciliation...</p>
-						) : !reconciliationReport ? (
-							<div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
-								No reconciliation report loaded.
-							</div>
-						) : (
-							<div className="space-y-3">
-								<div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-									<p className="text-xs text-slate-500">Opening Balance</p>
-									<p className="text-base font-semibold text-slate-900">
-										{formatMoney(reconciliationReport.summary?.opening_balance)}
-									</p>
-								</div>
-								<div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-									<p className="text-xs text-slate-500">Total Deposits</p>
-									<p className="text-base font-semibold text-slate-900">
-										{formatMoney(reconciliationReport.summary?.total_deposits)}
-									</p>
-								</div>
-								<div className="rounded-xl border border-green-200 bg-green-50 p-3">
-									<p className="text-xs text-green-700">Closing Balance</p>
-									<p className="text-base font-semibold text-green-800">
-										{formatMoney(reconciliationReport.summary?.closing_balance)}
-									</p>
-								</div>
-								<div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-									<p className="text-xs text-slate-500">Transaction Count</p>
-									<p className="text-base font-semibold text-slate-900">
-										{reconciliationReport.summary?.transaction_count || 0}
-									</p>
-								</div>
-								<div className="rounded-xl border border-blue-200 bg-blue-50 p-3">
-									<p className="text-xs text-blue-700">Status</p>
-									<p className="text-base font-semibold text-blue-800">
-										{reconciliationReport.summary?.reconciliation_status || 'READY_FOR_REVIEW'}
-									</p>
-								</div>
-
-								<div className="pt-1">
-									<h4 className="mb-2 text-sm font-semibold text-slate-800">Reconciliation Details</h4>
-
-									{reconciliationReport.transactions?.length ? (
-										<div className="max-h-80 overflow-auto rounded-lg border border-slate-200">
-											<table className="min-w-full text-xs">
-												<thead className="bg-slate-50 text-left uppercase tracking-wide text-slate-500">
-													<tr>
-														<th className="px-3 py-2">Date</th>
-														<th className="px-3 py-2">Category</th>
-														<th className="px-3 py-2">Method</th>
-														<th className="px-3 py-2 text-right">Amount</th>
-													</tr>
-												</thead>
-												<tbody>
-													{reconciliationReport.transactions.map((item) => (
-														<tr key={item.transaction_id} className="border-t border-slate-100">
-															<td className="px-3 py-2 text-slate-700">{new Date(item.date).toLocaleString()}</td>
-															<td className="px-3 py-2 text-slate-700">{item.category || '-'}</td>
-															<td className="px-3 py-2 text-slate-700">{item.payment_method || '-'}</td>
-															<td className="px-3 py-2 text-right font-medium text-slate-900">{formatMoney(item.amount)}</td>
-														</tr>
-													))}
-												</tbody>
-											</table>
-										</div>
-									) : (
-										<p className="text-xs text-slate-500">No transaction entries in the reconciliation report.</p>
-									)}
-								</div>
-							</div>
-						)}
-
-						<button
-							onClick={() => loadReconciliationForAccount(selectedAccount)}
-							className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-						>
-							<RefreshCw className="h-4 w-4" /> Refresh Reconciliation
-						</button>
 					</div>
-				</div>
-			)}
-
-			{!selectedAccount && !loading && accounts.length > 0 && (
-				<div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-800">
-					<AlertTriangle className="mt-0.5 h-4 w-4" />
-					<p className="text-sm">Select an account from the list to view transactions and reconciliation details.</p>
 				</div>
 			)}
 		</AdminLayout>

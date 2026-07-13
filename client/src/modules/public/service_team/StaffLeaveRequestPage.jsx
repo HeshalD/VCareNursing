@@ -1,24 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import {
-  CalendarOff, CheckCircle, Clock, XCircle, Send, AlertCircle, CalendarDays,
+  CalendarOff, CheckCircle, Send, CalendarDays, Loader2,
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import apiClient from '../../../api/api';
 import { useAuth } from '../../../context/AuthContext';
 import StaffSidebar from './StaffSidebar';
 
 const STATUS_CONFIG = {
-  PENDING: { label: 'Pending', color: 'bg-amber-50 text-amber-700 border-amber-200', icon: Clock },
-  APPROVED: { label: 'Approved', color: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: CheckCircle },
-  REJECTED: { label: 'Rejected', color: 'bg-rose-50 text-rose-700 border-rose-200', icon: XCircle },
+  PENDING:  { dot: 'bg-amber-400',   text: 'text-amber-700',   labelKey: 'status.pending' },
+  APPROVED: { dot: 'bg-emerald-500', text: 'text-emerald-700', labelKey: 'status.approved' },
+  REJECTED: { dot: 'bg-red-400',     text: 'text-red-700',     labelKey: 'status.rejected' },
 };
 
-const StatusBadge = ({ status }) => {
+const StatusBadge = ({ status, t }) => {
   const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.PENDING;
-  const Icon = cfg.icon;
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${cfg.color}`}>
-      <Icon className="w-3 h-3" />
-      {cfg.label}
+    <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
+      {t(cfg.labelKey)}
     </span>
   );
 };
@@ -34,7 +34,11 @@ const dayCount = (start, end) => {
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
+const inputCls =
+  'w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-800 placeholder-slate-400 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-colors';
+
 const StaffLeaveRequestPage = () => {
+  const { t } = useTranslation('staffLeaveRequest');
   const { user, loading: authLoading } = useAuth();
 
   const [staffData, setStaffData] = useState(null);
@@ -85,11 +89,11 @@ const StaffLeaveRequestPage = () => {
     setSubmitSuccess(false);
 
     if (!startDate || !endDate) {
-      setSubmitError('Please select both a start and end date.');
+      setSubmitError(t('errors.missingDates'));
       return;
     }
     if (invalidRange) {
-      setSubmitError('End date cannot be before start date.');
+      setSubmitError(t('errors.invalidRange'));
       return;
     }
 
@@ -103,7 +107,7 @@ const StaffLeaveRequestPage = () => {
       await fetchLeaves();
     } catch (err) {
       console.error('requestLeave error:', err);
-      setSubmitError(err.message || 'Failed to submit leave request.');
+      setSubmitError(err.message || t('errors.submitFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -112,131 +116,145 @@ const StaffLeaveRequestPage = () => {
   if (authLoading || dataLoading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600" />
+        <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
       </div>
     );
   }
 
   return (
     <div className="flex flex-col md:flex-row h-screen bg-slate-50">
-      <StaffSidebar staffProfileId={staffData?.staff_profile_id} title="Request Leave" />
+      <StaffSidebar staffProfileId={staffData?.staff_profile_id} title={t('header.title')} />
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-4xl mx-auto px-6 md:px-8 py-6 md:py-8 space-y-6">
           {/* Header */}
           <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-50 text-blue-600">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600 flex-shrink-0">
               <CalendarOff className="w-5 h-5" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-slate-900">Request Leave</h1>
-              <p className="text-sm text-slate-500">Submit a leave request for a range of dates.</p>
+              <h1 className="text-lg font-bold text-slate-900">{t('header.title')}</h1>
+              <p className="text-sm text-slate-500">{t('header.subtitle')}</p>
             </div>
           </div>
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="rounded-2xl border border-slate-200 bg-white shadow-sm p-6 space-y-5">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Start date</label>
-                <input
-                  type="date"
-                  value={startDate}
-                  min={todayISO()}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">End date</label>
-                <input
-                  type="date"
-                  value={endDate}
-                  min={startDate || todayISO()}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
+          <form onSubmit={handleSubmit} className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            <div className="px-5 pt-5 pb-2.5 border-b border-slate-100">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{t('form.sectionLabel')}</p>
             </div>
 
-            {computedDays > 0 && !invalidRange && (
-              <div className="flex items-center gap-2 text-sm text-slate-600">
-                <CalendarDays className="w-4 h-4 text-slate-400" />
-                <span>This request covers <span className="font-semibold text-slate-900">{computedDays}</span> day{computedDays === 1 ? '' : 's'}.</span>
+            <div className="px-5 pt-4 pb-5 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    {t('form.startDateLabel')}<span className="text-red-500 ml-0.5">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={startDate}
+                    min={todayISO()}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className={inputCls}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    {t('form.endDateLabel')}<span className="text-red-500 ml-0.5">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={endDate}
+                    min={startDate || todayISO()}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className={inputCls}
+                  />
+                </div>
               </div>
-            )}
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Reason (optional)</label>
-              <textarea
-                rows={3}
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="Let us know why you need time off..."
-                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
-              />
+              {computedDays > 0 && !invalidRange && (
+                <div className="flex items-center gap-2 text-sm text-slate-600">
+                  <CalendarDays className="w-4 h-4 text-slate-400" />
+                  <span>{t('form.daysCoveredPrefix')} <span className="font-semibold text-slate-900">{computedDays}</span> {t('dayUnit', { count: computedDays })}.</span>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">{t('form.reasonLabel')}</label>
+                <textarea
+                  rows={3}
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder={t('form.reasonPlaceholder')}
+                  className={`${inputCls} resize-none`}
+                />
+              </div>
+
+              {submitError && (
+                <div className="px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg">
+                  {submitError}
+                </div>
+              )}
+              {submitSuccess && (
+                <div className="flex items-center gap-2 px-4 py-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-lg">
+                  <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                  {t('form.submitSuccess')}
+                </div>
+              )}
             </div>
 
-            {submitError && (
-              <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                {submitError}
-              </div>
-            )}
-            {submitSuccess && (
-              <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                <CheckCircle className="w-4 h-4 flex-shrink-0" />
-                Your leave request has been submitted and is pending review.
-              </div>
-            )}
-
-            <div className="flex justify-end">
+            <div className="flex justify-end px-5 py-4 border-t border-slate-200 bg-slate-50">
               <button
                 type="submit"
                 disabled={submitting}
-                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {submitting ? (
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
                   <Send className="w-4 h-4" />
                 )}
-                Submit Request
+                {submitting ? t('form.submitting') : t('form.submitButton')}
               </button>
             </div>
           </form>
 
           {/* History */}
-          <section className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-            <div className="border-b border-slate-200 px-6 py-4">
-              <h3 className="text-base font-semibold text-slate-900">My Leave Requests</h3>
+          <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            <div className="px-5 pt-5 pb-2.5 border-b border-slate-100">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{t('history.sectionLabel')}</p>
             </div>
             <div className="divide-y divide-slate-100">
               {myLeaves.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-slate-400">
-                  <CalendarOff className="w-8 h-8 mb-2 text-slate-300" />
-                  <p className="text-sm">You have not made any leave requests yet.</p>
+                <div className="text-center py-16 text-slate-400 text-sm">
+                  {t('history.empty')}
                 </div>
               ) : (
                 myLeaves.map((lv) => (
-                  <div key={lv.leave_id} className="px-6 py-4 flex items-start justify-between gap-4">
+                  <div key={lv.leave_id} className="px-5 py-4 flex items-start justify-between gap-4 hover:bg-slate-50 transition-colors">
                     <div className="min-w-0">
                       <p className="text-sm font-semibold text-slate-900">
                         {fmtDate(lv.start_date)} → {fmtDate(lv.end_date)}
                         <span className="ml-2 text-xs font-medium text-slate-400">
-                          ({dayCount(lv.start_date, lv.end_date)} day{dayCount(lv.start_date, lv.end_date) === 1 ? '' : 's'})
+                          {t('history.daysCount', { count: dayCount(lv.start_date, lv.end_date) })}
                         </span>
                       </p>
                       {lv.reason && <p className="text-sm text-slate-500 mt-0.5">{lv.reason}</p>}
                       {lv.status === 'REJECTED' && lv.rejected_reason && (
-                        <p className="text-xs text-rose-600 mt-1">Reason: {lv.rejected_reason}</p>
+                        <p className="text-xs text-red-600 mt-1">{t('history.rejectedReason', { reason: lv.rejected_reason })}</p>
                       )}
-                      <p className="text-xs text-slate-400 mt-1">Requested {fmtDate(lv.requested_at)}</p>
+                      <p className="text-xs text-slate-400 mt-1">{t('history.requestedOn', { date: fmtDate(lv.requested_at) })}</p>
                     </div>
-                    <StatusBadge status={lv.status} />
+                    <StatusBadge status={lv.status} t={t} />
                   </div>
                 ))
               )}
             </div>
+
+            {myLeaves.length > 0 && (
+              <div className="border-t border-slate-100 px-5 py-2.5 text-xs text-slate-400">
+                {t('history.showingCount', { count: myLeaves.length })}
+              </div>
+            )}
           </section>
         </div>
       </main>

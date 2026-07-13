@@ -147,8 +147,8 @@ module.exports = (data) => {
             <img src="https://tuvh2lxa24zjyv7p.public.blob.vercel-storage.com/VCareLogo.png" class="logo" alt="VCare Logo" />
           </div>
           <div class="header-right">
-            <h1>Estimate</h1>
-            <div class="est-number"># ${data.estimate_number}</div>
+            <h1>${data.document_label || 'Estimate'}</h1>
+            <div class="est-number"># ${data.document_number || data.estimate_number}</div>
           </div>
         </div>
 
@@ -168,7 +168,7 @@ module.exports = (data) => {
             <div class="bill-to-name">${data.payer_name}</div>
           </div>
           <div class="estimate-date">
-            Estimate Date : <span>${formattedDate}</span>
+            ${data.document_label || 'Estimate'} Date : <span>${formattedDate}</span>
           </div>
         </div>
 

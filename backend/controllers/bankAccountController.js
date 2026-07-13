@@ -13,23 +13,26 @@ function extractActorRole(role) {
 const getAllBankAccounts = async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT 
-        account_id,
-        account_nickname,
-        account_number,
-        account_holder_name,
-        bank_name,
-        branch_name,
-        is_active,
-        currency,
-        opening_balance,
-        opening_balance_date,
-        created_at,
-        updated_at,
-        created_by
-      FROM bank_accounts
-      WHERE is_active = true
-      ORDER BY created_at DESC
+      SELECT
+        ba.account_id,
+        ba.account_nickname,
+        ba.account_number,
+        ba.account_holder_name,
+        ba.bank_name,
+        ba.branch_name,
+        ba.is_active,
+        ba.currency,
+        ba.opening_balance,
+        ba.opening_balance_date,
+        ba.created_at,
+        ba.updated_at,
+        ba.created_by,
+        ba.opening_balance + COALESCE(SUM(t.amount) FILTER (WHERE t.status = 'COMPLETED'), 0) AS current_balance
+      FROM bank_accounts ba
+      LEFT JOIN transactions t ON t.bank_account_id = ba.account_id
+      WHERE ba.is_active = true
+      GROUP BY ba.account_id
+      ORDER BY ba.created_at DESC
     `);
 
     res.status(200).json({
@@ -490,7 +493,7 @@ const getAccountTransactions = async (req, res) => {
 
     // Build query for transactions
     let query = `
-      SELECT 
+      SELECT
         t.transaction_id,
         t.amount,
         t.payment_method,
@@ -500,10 +503,14 @@ const getAccountTransactions = async (req, res) => {
         t.verified_by,
         t.quote_id,
         t.client_id,
+        t.staff_profile_id,
         t.category,
-        cp.full_name as client_name
+        t.external_party,
+        cp.full_name as client_name,
+        sp.full_name as staff_name
       FROM transactions t
       LEFT JOIN client_profiles cp ON t.client_id = cp.client_profile_id
+      LEFT JOIN staff_profiles sp ON t.staff_profile_id = sp.staff_profile_id
       WHERE t.bank_account_id = $1
     `;
 

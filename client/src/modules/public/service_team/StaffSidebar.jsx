@@ -1,22 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   LayoutDashboard, User, DollarSign, LogOut, Briefcase, Calendar, FilePen, CalendarOff,
   Menu, X
 } from 'lucide-react';
 import logoUrl from '../../../assets/Logo/VCareLogo.png';
 import { useAuth } from '../../../context/AuthContext';
+import LanguageToggle from '../../../i18n/LanguageToggle';
 
 const NAV_ITEMS = [
-  { icon: LayoutDashboard, label: 'Dashboard', to: '/services/provider-dashboard' },
-  { icon: DollarSign, label: 'Earnings', to: '/services/earnings' },
-  { icon: Calendar, label: 'Bookings', to: '/services/bookings' },
-  { icon: User, label: 'My Profile', to: '/services/my-profile' },
-  { icon: FilePen, label: 'Request Change', to: '/services/change-request' },
-  { icon: CalendarOff, label: 'Request Leave', to: '/services/leave-request' },
+  { icon: LayoutDashboard, labelKey: 'nav.dashboard', to: '/services/provider-dashboard' },
+  { icon: DollarSign, labelKey: 'nav.earnings', to: '/services/earnings' },
+  { icon: Calendar, labelKey: 'nav.bookings', to: '/services/bookings' },
+  { icon: User, labelKey: 'nav.myProfile', to: '/services/my-profile' },
+  { icon: FilePen, labelKey: 'nav.requestChange', to: '/services/change-request' },
+  { icon: CalendarOff, labelKey: 'nav.requestLeave', to: '/services/leave-request' },
 ];
 
-const NavItem = ({ icon: Icon, label, to, active, onClick }) => {
+const NavItem = ({ icon: Icon, labelKey, to, active, onClick }) => {
+  const { t } = useTranslation('staffSidebar');
   return (
     <Link
       to={to}
@@ -28,28 +31,32 @@ const NavItem = ({ icon: Icon, label, to, active, onClick }) => {
       }`}
     >
       <Icon className="w-5 h-5 flex-shrink-0" />
-      <span className="truncate">{label}</span>
+      <span className="truncate">{t(labelKey)}</span>
     </Link>
   );
 };
 
-const ProviderPortalCard = ({ onClick }) => (
-  <Link
-    to="/"
-    onClick={onClick}
-    className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3 hover:bg-blue-50 transition-colors group"
-  >
-    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-50 text-blue-600 group-hover:bg-blue-100">
-      <Briefcase className="w-5 h-5" />
-    </div>
-    <div className="min-w-0">
-      <p className="text-sm font-semibold text-slate-900">Provider Portal</p>
-      <p className="text-xs text-blue-600 truncate">Go to client view →</p>
-    </div>
-  </Link>
-);
+const ProviderPortalCard = ({ onClick }) => {
+  const { t } = useTranslation('staffSidebar');
+  return (
+    <Link
+      to="/"
+      onClick={onClick}
+      className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3 hover:bg-blue-50 transition-colors group"
+    >
+      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-50 text-blue-600 group-hover:bg-blue-100">
+        <Briefcase className="w-5 h-5" />
+      </div>
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-slate-900">{t('providerPortal.title')}</p>
+        <p className="text-xs text-blue-600 truncate">{t('providerPortal.subtitle')}</p>
+      </div>
+    </Link>
+  );
+};
 
 const StaffSidebar = ({ staffProfileId, title }) => {
+  const { t } = useTranslation('staffSidebar');
   const location = useLocation();
   const navigate = useNavigate();
   const { logout } = useAuth();
@@ -75,13 +82,16 @@ const StaffSidebar = ({ staffProfileId, title }) => {
           <img src={logoUrl} alt="VCare Nursing" className="h-8 w-auto object-contain" />
         </Link>
         {title && <span className="text-sm font-semibold text-slate-700 truncate px-2">{title}</span>}
-        <button
-          onClick={() => setMobileOpen(true)}
-          className="p-2 -mr-2 rounded-lg text-slate-600 hover:bg-slate-50"
-          aria-label="Open menu"
-        >
-          <Menu className="w-5 h-5" />
-        </button>
+        <div className="flex items-center gap-2">
+          <LanguageToggle />
+          <button
+            onClick={() => setMobileOpen(true)}
+            className="p-2 -mr-2 rounded-lg text-slate-600 hover:bg-slate-50"
+            aria-label={t('openMenu')}
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+        </div>
       </div>
 
       {/* Mobile drawer */}
@@ -96,7 +106,7 @@ const StaffSidebar = ({ staffProfileId, title }) => {
               <button
                 onClick={closeDrawer}
                 className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-50"
-                aria-label="Close menu"
+                aria-label={t('closeMenu')}
               >
                 <X className="w-5 h-5" />
               </button>
@@ -117,7 +127,7 @@ const StaffSidebar = ({ staffProfileId, title }) => {
             <div className="p-3 border-t border-slate-200">
               <button onClick={handleLogout} className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-all w-full">
                 <LogOut className="w-5 h-5 flex-shrink-0" />
-                <span>Sign Out</span>
+                <span>{t('signOut')}</span>
               </button>
             </div>
           </aside>
@@ -132,8 +142,9 @@ const StaffSidebar = ({ staffProfileId, title }) => {
           </Link>
         </div>
 
-        <div className="px-5 py-4 border-b border-slate-100">
+        <div className="px-5 py-4 border-b border-slate-100 space-y-3">
           <ProviderPortalCard />
+          <LanguageToggle className="w-full justify-center" />
         </div>
 
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
@@ -149,7 +160,7 @@ const StaffSidebar = ({ staffProfileId, title }) => {
         <div className="p-3 border-t border-slate-200 space-y-1">
           <button onClick={handleLogout} className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 transition-all w-full">
             <LogOut className="w-5 h-5 flex-shrink-0" />
-            <span>Sign Out</span>
+            <span>{t('signOut')}</span>
           </button>
         </div>
       </aside>

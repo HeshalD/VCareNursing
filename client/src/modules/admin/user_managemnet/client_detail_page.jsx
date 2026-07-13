@@ -36,6 +36,8 @@ import {
   Receipt,
   ArrowLeftRight,
   Upload,
+  Package,
+  RotateCcw,
 } from 'lucide-react';
 
 const NOTE_TYPE_META = {
@@ -46,11 +48,14 @@ const NOTE_TYPE_META = {
 };
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { RefundDepositModal } from '../products/ProductsPage';
 import AdminDirectBookingDrawer from '../bookings/AdminDirectBookingDrawer';
 import RegFeeDrawer from './RegFeeDrawer';
 import CreateQuotationDrawer from './CreateQuotationDrawer';
+import CreateProductInvoiceDrawer from './CreateProductInvoiceDrawer';
 import RecordPaymentDrawer from './RecordPaymentDrawer';
 import AddCareProfileDrawer from './AddCareProfileDrawer';
+import { AddRequestDrawer as AddServiceRequestDrawer } from '../service_requests/proxy_service_request';
 
 const money = new Intl.NumberFormat('en-LK', {
   style: 'currency',
@@ -59,6 +64,36 @@ const money = new Intl.NumberFormat('en-LK', {
 });
 
 const formatMoney = (value) => money.format(Number(value || 0));
+
+// Mirrors backend quoteController.expandProductLineItemsForDisplay: a rental
+// item's billing cadence (and specific unit, if chosen) is appended to its
+// description, and its own deposit is shown as a separate line right after
+// it — same shape the merged PDF and ModularQuoteBuilder's preview show.
+const expandProductLineItems = (items) => {
+  const out = [];
+  for (const li of items || []) {
+    if (li.rental_billing_type) {
+      const billingLabel = li.rental_billing_type === 'RECURRING' ? 'Billed monthly' : 'One-time, fixed period';
+      const unitLabel = li.unit_code ? ` — Unit ${li.unit_code}` : '';
+      out.push({ ...li, description: `${li.description}${unitLabel} (${billingLabel})`, isProductItem: true });
+
+      const depositAmt = parseFloat(li.deposit_amount) || 0;
+      if (depositAmt > 0) {
+        out.push({
+          line_item_id: `${li.line_item_id}-deposit`,
+          description: `Refundable Deposit for ${li.description} (fully refundable on return)`,
+          quantity: 1,
+          unit_price: depositAmt,
+          amount: depositAmt,
+          isProductItem: true,
+        });
+      }
+    } else {
+      out.push({ ...li, isProductItem: true });
+    }
+  }
+  return out;
+};
 
 const TX_PAGE_SIZE = 10;
 
@@ -184,6 +219,21 @@ const ClientDetailPage = () => {
   const [regFeeInvoices, setRegFeeInvoices] = useState([]);
   const [regFeeInvoicesLoading, setRegFeeInvoicesLoading] = useState(false);
 
+  const [productQuotes, setProductQuotes] = useState([]);
+  const [productQuotesLoading, setProductQuotesLoading] = useState(false);
+  const [productInvoices, setProductInvoices] = useState([]);
+  const [productInvoicesLoading, setProductInvoicesLoading] = useState(false);
+  const [rentedItems, setRentedItems] = useState([]);
+  const [rentedItemsLoading, setRentedItemsLoading] = useState(false);
+  const [productQuotePdfBusy, setProductQuotePdfBusy] = useState('');
+  const [deposits, setDeposits] = useState([]);
+  const [depositsLoading, setDepositsLoading] = useState(false);
+  const [depositError, setDepositError] = useState('');
+  const [busyDepositId, setBusyDepositId] = useState('');
+  const [forfeitDepositTarget, setForfeitDepositTarget] = useState(null);
+  const [forfeitDepositNotes, setForfeitDepositNotes] = useState('');
+  const [refundDepositTarget, setRefundDepositTarget] = useState(null);
+
   const [editingBilling, setEditingBilling] = useState(false);
   const [billingForm, setBillingForm] = useState({ company_name: '', honorific: '' });
   const [billingLoading, setBillingLoading] = useState(false);
@@ -199,6 +249,13 @@ const ClientDetailPage = () => {
   const [quotePdfBusy, setQuotePdfBusy] = useState('');
   const [showQuoteDrawer, setShowQuoteDrawer] = useState(false);
   const [editingQuoteId, setEditingQuoteId] = useState(null);
+  const [showProductInvoiceDrawer, setShowProductInvoiceDrawer] = useState(false);
+  const [showServiceRequestDrawer, setShowServiceRequestDrawer] = useState(false);
+
+  // Per-quote line items (service quote's own + a companion PRODUCT quote's,
+  // if one exists — see fetchQuoteLineItems / expandProductLineItems above).
+  const [quoteItemsMap, setQuoteItemsMap] = useState({});
+  const [quoteItemsLoading, setQuoteItemsLoading] = useState(false);
 
   const [regFeeLoading, setRegFeeLoading] = useState(false);
   const [regFeeError, setRegFeeError] = useState('');
@@ -209,6 +266,14 @@ const ClientDetailPage = () => {
   const [lastInvoicePdfUrl, setLastInvoicePdfUrl] = useState(null);
   const [uploadingRegFeeReceipt, setUploadingRegFeeReceipt] = useState(false);
   const regFeeReceiptInputRef = useRef(null);
+
+  // Salesperson who brought/manages this client's registration (separate metric from booking crediting).
+  const [salespersonsList, setSalespersonsList] = useState([]);
+  const [clientSalesperson, setClientSalesperson] = useState(null); // { current, origin, history }
+  const [salespersonForCredit, setSalespersonForCredit] = useState(''); // picked before Mark Paid / Verify Payment
+  const [switchSalespersonId, setSwitchSalespersonId] = useState('');
+  const [salespersonActionLoading, setSalespersonActionLoading] = useState(false);
+  const [salespersonError, setSalespersonError] = useState('');
 
   const [showAddPatient, setShowAddPatient] = useState(false);
   const [linkedStaffProfileId, setLinkedStaffProfileId] = useState(null);
@@ -312,12 +377,26 @@ const ClientDetailPage = () => {
       }
     };
 
+    const loadSalespersonInfo = async () => {
+      try {
+        const [listRes, currentRes] = await Promise.all([
+          apiClient.getSalespersons(),
+          apiClient.getClientSalesperson(clientId).catch(() => null),
+        ]);
+        setSalespersonsList(Array.isArray(listRes?.data) ? listRes.data : []);
+        if (currentRes) setClientSalesperson(currentRes.data);
+      } catch {
+        // non-fatal
+      }
+    };
+
     if (clientId) {
       loadDetail();
       loadTransactions();
       loadNotes();
       fetchReceipts();
       loadBankAccounts();
+      loadSalespersonInfo();
     }
   }, [clientId]);
 
@@ -354,6 +433,91 @@ const ClientDetailPage = () => {
     }
   };
 
+  const fetchProductQuotes = async () => {
+    if (!clientId) return;
+    try {
+      setProductQuotesLoading(true);
+      const res = await apiClient.getProductQuotes({ client_id: clientId });
+      setProductQuotes(Array.isArray(res?.data) ? res.data : []);
+    } catch {
+      // non-fatal
+    } finally {
+      setProductQuotesLoading(false);
+    }
+  };
+
+  const fetchProductInvoices = async () => {
+    if (!clientId) return;
+    try {
+      setProductInvoicesLoading(true);
+      const res = await apiClient.getProductInvoices({ client_id: clientId });
+      setProductInvoices(Array.isArray(res?.data) ? res.data : []);
+    } catch {
+      // non-fatal
+    } finally {
+      setProductInvoicesLoading(false);
+    }
+  };
+
+  const fetchRentedItems = async () => {
+    if (!clientId) return;
+    try {
+      setRentedItemsLoading(true);
+      const res = await apiClient.getRentalAgreements({ client_id: clientId, status: 'ACTIVE' });
+      setRentedItems(Array.isArray(res?.data) ? res.data : []);
+    } catch {
+      // non-fatal
+    } finally {
+      setRentedItemsLoading(false);
+    }
+  };
+
+  // Every refundable deposit ever held against this client — both per-rental
+  // deposits (tied to a rental_agreement) and standalone deposits (a
+  // DEPOSIT-type line item on a quote, independent of any rental item), in
+  // every status (HELD/REFUNDED/FORFEITED), not just the currently-held ones
+  // already summarized on the Currently Rented Items rows above.
+  const fetchDeposits = async () => {
+    if (!clientId) return;
+    try {
+      setDepositsLoading(true);
+      const res = await apiClient.getDeposits({ client_id: clientId });
+      setDeposits(Array.isArray(res?.data) ? res.data : []);
+    } catch {
+      // non-fatal
+    } finally {
+      setDepositsLoading(false);
+    }
+  };
+
+  const handleForfeitDepositRow = async () => {
+    setBusyDepositId(forfeitDepositTarget.deposit_id);
+    setDepositError('');
+    try {
+      await apiClient.forfeitDeposit(forfeitDepositTarget.deposit_id, forfeitDepositNotes || undefined);
+      setForfeitDepositTarget(null);
+      setForfeitDepositNotes('');
+      fetchDeposits();
+    } catch (err) {
+      setDepositError(err.message || 'Failed to forfeit deposit');
+    } finally {
+      setBusyDepositId('');
+    }
+  };
+
+  const handleDownloadProductQuotePdf = async (quoteId) => {
+    setProductQuotePdfBusy(quoteId);
+    try {
+      const res = await apiClient.generateProductQuotePdf(quoteId);
+      const url = res?.pdf_url || res?.data?.pdf_url;
+      if (url) window.open(url, '_blank', 'noopener');
+    } catch (err) {
+      setError(err.message || 'Failed to generate quotation PDF');
+    } finally {
+      setProductQuotePdfBusy('');
+    }
+  };
+
   const fetchBookingsPag = async ({ active_page: ap = activeBkPage, recent_page: rp = recentBkPage, search: s = bookingSearch } = {}) => {
     if (!clientId) return;
     try {
@@ -367,9 +531,52 @@ const ClientDetailPage = () => {
     }
   };
 
+  // Line items aren't included in the quote summary the client-detail
+  // endpoint returns — fetch each quotation's own detail, plus its companion
+  // PRODUCT quote's items (products/rentals added via ModularQuoteBuilder's
+  // Products & Rentals section, linked via quotations.linked_quote_id — see
+  // clientController.getAdminClientDetail), so the Quotes tab can show every
+  // line item and the true combined total, matching what's actually sent.
+  const fetchQuoteLineItems = async () => {
+    if (recentQuotes.length === 0) return;
+    try {
+      setQuoteItemsLoading(true);
+      const entries = await Promise.all(
+        recentQuotes.map(async (q) => {
+          try {
+            const detail = await apiClient.getQuoteWithLineItems(q.quote_id);
+            const line_items = Array.isArray(detail?.data?.line_items) ? detail.data.line_items : [];
+            let product_line_items = [];
+            let product_total = 0;
+            if (q.product_quote_id) {
+              try {
+                const productDetail = await apiClient.getProductQuote(q.product_quote_id);
+                product_line_items = expandProductLineItems(productDetail?.data?.line_items);
+                product_total = product_line_items.reduce((s, li) => s + (parseFloat(li.amount) || 0), 0);
+              } catch { /* non-critical */ }
+            }
+            return [q.quote_id, {
+              line_items,
+              product_line_items,
+              product_total,
+              combined_total: Number(q.total_amount || 0) + product_total,
+            }];
+          } catch {
+            return [q.quote_id, { line_items: [], product_line_items: [], product_total: 0, combined_total: Number(q.total_amount || 0) }];
+          }
+        })
+      );
+      setQuoteItemsMap(Object.fromEntries(entries));
+    } finally {
+      setQuoteItemsLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (activeSection === 'bookings') fetchBookingsPag();
     if (activeSection === 'invoices') { fetchClientInvoices(); fetchRegFeeInvoices(); }
+    if (activeSection === 'products') { fetchProductQuotes(); fetchProductInvoices(); fetchRentedItems(); fetchDeposits(); }
+    if (activeSection === 'quotes') fetchQuoteLineItems();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSection]);
 
@@ -521,12 +728,22 @@ const ClientDetailPage = () => {
     }
   };
 
+  const reloadClientSalesperson = async () => {
+    try {
+      const res = await apiClient.getClientSalesperson(clientId);
+      setClientSalesperson(res.data);
+    } catch {
+      // non-fatal
+    }
+  };
+
   const handleRegFeeStatusUpdate = async (status) => {
     setRegFeeLoading(true);
     setRegFeeError('');
     try {
-      await apiClient.updateRegFeeStatus(clientId, status);
+      await apiClient.updateRegFeeStatus(clientId, status, status === 'PAID' ? (salespersonForCredit || null) : null);
       await refreshAfterPaymentChange();
+      if (status === 'PAID' && salespersonForCredit) await reloadClientSalesperson();
     } catch (err) {
       setRegFeeError(err.message || 'Failed to update registration fee status.');
     } finally {
@@ -538,12 +755,28 @@ const ClientDetailPage = () => {
     setRegFeeLoading(true);
     setRegFeeError('');
     try {
-      await apiClient.verifyRegFeePayment(clientId);
+      await apiClient.verifyRegFeePayment(clientId, salespersonForCredit || null);
       await refreshAfterPaymentChange();
+      if (salespersonForCredit) await reloadClientSalesperson();
     } catch (err) {
       setRegFeeError(err.message || 'Failed to verify registration fee payment.');
     } finally {
       setRegFeeLoading(false);
+    }
+  };
+
+  const handleSwitchClientSalesperson = async () => {
+    if (!switchSalespersonId) return;
+    setSalespersonActionLoading(true);
+    setSalespersonError('');
+    try {
+      await apiClient.switchClientSalesperson(clientId, switchSalespersonId);
+      setSwitchSalespersonId('');
+      await reloadClientSalesperson();
+    } catch (err) {
+      setSalespersonError(err.message || 'Failed to switch salesperson.');
+    } finally {
+      setSalespersonActionLoading(false);
     }
   };
 
@@ -693,10 +926,14 @@ const ClientDetailPage = () => {
     }
   };
 
-  const handleDownloadQuotePdf = async (quoteId, estimateNumber) => {
+  // productQuoteId folds the companion PRODUCT quote's items (products/
+  // rentals added via ModularQuoteBuilder's Products & Rentals section) into
+  // this same PDF server-side (see quoteController.mergeProductQuoteIntoData)
+  // — without it, only the service quote's own charges would be included.
+  const handleDownloadQuotePdf = async (quoteId, estimateNumber, productQuoteId) => {
     setQuotePdfBusy(quoteId);
     try {
-      const res = await apiClient.generateQuotePdf(quoteId);
+      const res = await apiClient.generateQuotePdf(quoteId, productQuoteId);
       const url = res?.pdf_url || res?.data?.pdf_url;
       if (url) {
         const link = document.createElement('a');
@@ -733,6 +970,7 @@ const ClientDetailPage = () => {
     { id: 'bookings',  label: 'Bookings',       icon: CalendarDays },
     { id: 'invoices',  label: 'Invoices',       icon: Receipt },
     { id: 'quotes',    label: 'Quotes',         icon: FileText },
+    { id: 'products',  label: 'Products',       icon: Package },
     { id: 'staff',     label: 'Staff',          icon: Briefcase },
     { id: 'reviews',   label: 'Reviews',        icon: Star },
     { id: 'patients',  label: 'Care Profiles',  icon: HeartPulse },
@@ -1280,6 +1518,9 @@ const ClientDetailPage = () => {
               const effectiveStatus = hasPaid ? 'ACCEPTED' : (quote.status || 'SENT');
               const isBusy = quoteStatusBusy === quote.quote_id;
               const canAction = !hasPaid && !['ACCEPTED', 'REJECTED'].includes(quote.status);
+              const quoteItems = quoteItemsMap[quote.quote_id];
+              const combinedTotal = quoteItems ? quoteItems.combined_total : Number(quote.total_amount || 0);
+              const allItems = quoteItems ? [...quoteItems.line_items, ...quoteItems.product_line_items] : [];
 
               return (
                 <ExpandableRow
@@ -1288,7 +1529,7 @@ const ClientDetailPage = () => {
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
                       <span className="font-semibold text-gray-900 text-sm">{quote.estimate_number || 'Quotation'}</span>
                       <StatusBadge status={effectiveStatus} />
-                      <span className="font-bold text-gray-800 text-sm">{formatMoney(quote.total_amount)}</span>
+                      <span className="font-bold text-gray-800 text-sm">{formatMoney(combinedTotal)}</span>
                       {quote.qty_days && <span className="text-sm text-gray-500">{quote.qty_days} days</span>}
                       {quote.service_request_code && (
                         <span className="text-xs text-gray-400 font-mono">{quote.service_request_code}</span>
@@ -1311,7 +1552,7 @@ const ClientDetailPage = () => {
                       <InfoRow label="Service Request" value={quote.service_request_code || quote.request_id || '-'} />
                       <InfoRow label="Booking" value={quote.booking_code || 'â€”'} />
                       <InfoRow label="Status" value={effectiveStatus} />
-                      <InfoRow label="Total Amount" value={formatMoney(quote.total_amount)} />
+                      <InfoRow label="Total Amount" value={formatMoney(combinedTotal)} />
                       <InfoRow label="Amount Paid" value={formatMoney(quote.total_paid)} />
                       <InfoRow label="Daily Rate" value={formatMoney(quote.daily_rate)} />
                       <InfoRow label="Days" value={quote.qty_days || '-'} />
@@ -1320,6 +1561,51 @@ const ClientDetailPage = () => {
                       <InfoRow label="Estimate Date" value={formatDate(quote.estimate_date)} />
                       <InfoRow label="Created" value={formatDate(quote.created_at)} />
                     </div>
+
+                    {/* Quotation items — the service quote's own charges/discounts,
+                        plus a companion PRODUCT quote's items (products/rentals/
+                        deposits added via ModularQuoteBuilder), if one exists. These
+                        are two separate quotation records merged into one PDF/message
+                        when sent (see quoteController.mergeProductQuoteIntoData). */}
+                    {quoteItemsLoading && !quoteItems ? (
+                      <div className="flex items-center gap-2 border-t border-gray-100 pt-4 text-xs text-gray-400">
+                        <Loader2 className="h-3 w-3 animate-spin" /> Loading line items…
+                      </div>
+                    ) : allItems.length > 0 && (
+                      <div className="border-t border-gray-100 pt-4">
+                        <div className="overflow-x-auto rounded-md border border-gray-200">
+                          <table className="min-w-full divide-y divide-gray-100 text-xs">
+                            <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                              <tr>
+                                <th className="px-3 py-2 text-left">Item &amp; Description</th>
+                                <th className="px-3 py-2 text-right w-16">Qty</th>
+                                <th className="px-3 py-2 text-right w-24">Rate</th>
+                                <th className="px-3 py-2 text-right w-28">Amount</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100 bg-white">
+                              {allItems.map((li) => {
+                                const isDiscount = li.item_type === 'DISCOUNT';
+                                const amount = Math.abs(parseFloat(li.amount) || 0);
+                                return (
+                                  <tr key={li.line_item_id}>
+                                    <td className={`px-3 py-2 ${li.isProductItem ? 'text-purple-700' : 'text-gray-700'}`}>
+                                      {li.description}
+                                      {isDiscount && <span className="ml-1.5 text-[10px] text-gray-400">(Discount)</span>}
+                                    </td>
+                                    <td className="px-3 py-2 text-right text-gray-500 tabular-nums">{parseFloat(li.quantity) || 1}</td>
+                                    <td className="px-3 py-2 text-right text-gray-500 tabular-nums">{formatMoney(li.unit_price)}</td>
+                                    <td className={`px-3 py-2 text-right font-medium tabular-nums ${isDiscount ? 'text-red-600' : li.isProductItem ? 'text-purple-800' : 'text-gray-800'}`}>
+                                      {isDiscount ? `(${formatMoney(amount)})` : formatMoney(amount)}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
 
                     {canAction && (
                       <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 pt-4">
@@ -1362,7 +1648,7 @@ const ClientDetailPage = () => {
                     <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 pt-4">
                       <button
                         type="button"
-                        onClick={() => handleDownloadQuotePdf(quote.quote_id, quote.estimate_number)}
+                        onClick={() => handleDownloadQuotePdf(quote.quote_id, quote.estimate_number, quote.product_quote_id)}
                         disabled={quotePdfBusy === quote.quote_id}
                         className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-60"
                       >
@@ -1385,6 +1671,316 @@ const ClientDetailPage = () => {
             })}
           </SectionList>
         );
+
+      case 'products': {
+        const PRODUCT_QUOTE_STATUS_COLORS = {
+          SENT:     'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200',
+          ACCEPTED: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
+          REJECTED: 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200',
+        };
+        const PRODUCT_INVOICE_STATUS_COLORS = {
+          PENDING: 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200',
+          PAID:    'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
+        };
+        const DEPOSIT_STATUS_COLORS = {
+          HELD:      'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200',
+          REFUNDED:  'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
+          FORFEITED: 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200',
+        };
+        return (
+          <div className="space-y-6">
+            {/* Product Quotations */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">Product Quotations</h3>
+              {productQuotesLoading ? (
+                <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading product quotations…
+                </div>
+              ) : productQuotes.length === 0 ? (
+                <EmptyState title="No product quotations found" />
+              ) : (
+                <div className="overflow-x-auto rounded-md border border-gray-200">
+                  <table className="min-w-full divide-y divide-gray-100 text-sm">
+                    <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                      <tr>
+                        <th className="px-4 py-3 text-left">Estimate No.</th>
+                        <th className="px-4 py-3 text-left">Status</th>
+                        <th className="px-4 py-3 text-right">Total</th>
+                        <th className="px-4 py-3 text-right">Deposit</th>
+                        <th className="px-4 py-3 text-left">Created</th>
+                        <th className="px-4 py-3 text-left">Download</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 bg-white">
+                      {productQuotes.map((q) => (
+                        <tr key={q.quote_id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-4 py-3 font-semibold text-gray-900 whitespace-nowrap">{q.estimate_number}</td>
+                          <td className="px-4 py-3">
+                            <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${PRODUCT_QUOTE_STATUS_COLORS[q.status] || 'bg-gray-100 text-gray-600'}`}>
+                              {q.status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(q.total_amount)}</td>
+                          <td className="px-4 py-3 text-right text-gray-600 whitespace-nowrap">
+                            {Number(q.total_deposit_amount || 0) > 0 ? formatMoney(q.total_deposit_amount) : '—'}
+                          </td>
+                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{formatDate(q.created_at)}</td>
+                          <td className="px-4 py-3">
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadProductQuotePdf(q.quote_id)}
+                              disabled={productQuotePdfBusy === q.quote_id}
+                              className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+                            >
+                              {productQuotePdfBusy === q.quote_id
+                                ? <Loader2 className="h-3 w-3 animate-spin" />
+                                : <Download className="h-3 w-3" />}
+                              Download
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Product Invoices */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">Product Invoices</h3>
+              {productInvoicesLoading ? (
+                <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading product invoices…
+                </div>
+              ) : productInvoices.length === 0 ? (
+                <EmptyState title="No product invoices found" />
+              ) : (
+                <div className="overflow-x-auto rounded-md border border-gray-200">
+                  <table className="min-w-full divide-y divide-gray-100 text-sm">
+                    <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                      <tr>
+                        <th className="px-4 py-3 text-left">Invoice Code</th>
+                        <th className="px-4 py-3 text-left">Category</th>
+                        <th className="px-4 py-3 text-left">Status</th>
+                        <th className="px-4 py-3 text-right">Amount</th>
+                        <th className="px-4 py-3 text-left">Created</th>
+                        <th className="px-4 py-3 text-left">Paid</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 bg-white">
+                      {productInvoices.map((inv) => (
+                        <tr key={inv.invoice_id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-4 py-3 font-mono text-xs text-gray-600 whitespace-nowrap">{inv.invoice_code}</td>
+                          <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{inv.category}</td>
+                          <td className="px-4 py-3">
+                            <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${PRODUCT_INVOICE_STATUS_COLORS[inv.status] || 'bg-gray-100 text-gray-600'}`}>
+                              {inv.status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(inv.amount)}</td>
+                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{formatDate(inv.created_at)}</td>
+                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{inv.paid_at ? formatDate(inv.paid_at) : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <p className="mt-2 text-[11px] text-gray-400">Payments are recorded from the Products page.</p>
+            </div>
+
+            {/* Currently Rented Items */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">Currently Rented Items</h3>
+              {rentedItemsLoading ? (
+                <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading rented items…
+                </div>
+              ) : rentedItems.length === 0 ? (
+                <EmptyState title="No items currently rented" />
+              ) : (
+                <div className="overflow-x-auto rounded-md border border-gray-200">
+                  <table className="min-w-full divide-y divide-gray-100 text-sm">
+                    <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                      <tr>
+                        <th className="px-4 py-3 text-left">Product</th>
+                        <th className="px-4 py-3 text-left">Item Code</th>
+                        <th className="px-4 py-3 text-left">Billing</th>
+                        <th className="px-4 py-3 text-right">Rate</th>
+                        <th className="px-4 py-3 text-left">Start Date</th>
+                        <th className="px-4 py-3 text-left">End Date</th>
+                        <th className="px-4 py-3 text-left">Deposit</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 bg-white">
+                      {rentedItems.map((ra) => (
+                        <tr key={ra.rental_agreement_id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-4 py-3 font-semibold text-gray-900 whitespace-nowrap">{ra.product_name}</td>
+                          <td className="px-4 py-3 font-mono text-xs text-gray-600 whitespace-nowrap">{ra.unit_code}</td>
+                          <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                            {ra.billing_type === 'RECURRING' ? 'Monthly' : 'One-time'}
+                          </td>
+                          <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(ra.rate)}</td>
+                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{formatDate(ra.start_date)}</td>
+                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{ra.end_date ? formatDate(ra.end_date) : '—'}</td>
+                          <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                            {ra.deposit_status
+                              ? <span className="rounded px-1.5 py-0.5 text-[11px] font-semibold bg-purple-50 text-purple-700 ring-1 ring-inset ring-purple-200">{ra.deposit_status} · {formatMoney(ra.deposit_collected_amount)}</span>
+                              : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Refundable Deposits — every deposit ever held against this
+                client, in any status, both per-rental (tied to a rental_agreement)
+                and standalone (a DEPOSIT-type line item on a quote, independent
+                of any rental item). Unlike the Deposit column on Currently
+                Rented Items above (which only shows the currently-held state
+                for active rentals), this covers the full history. */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">Refundable Deposits</h3>
+              {depositError && (
+                <div className="mb-3 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {depositError}
+                </div>
+              )}
+              {depositsLoading ? (
+                <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading deposits…
+                </div>
+              ) : deposits.length === 0 ? (
+                <EmptyState title="No deposits held for this client" />
+              ) : (
+                <div className="overflow-x-auto rounded-md border border-gray-200">
+                  <table className="min-w-full divide-y divide-gray-100 text-sm">
+                    <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                      <tr>
+                        <th className="px-4 py-3 text-left">Held Since</th>
+                        <th className="px-4 py-3 text-left">Product / Description</th>
+                        <th className="px-4 py-3 text-right">Amount</th>
+                        <th className="px-4 py-3 text-left">Status</th>
+                        <th className="px-4 py-3 text-left">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 bg-white">
+                      {deposits.map((d) => {
+                        const busy = busyDepositId === d.deposit_id;
+                        return (
+                          <tr key={d.deposit_id} className="hover:bg-gray-50 transition-colors">
+                            <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{formatDate(d.held_at)}</td>
+                            <td className="px-4 py-3">
+                              {d.product_name ? (
+                                <>
+                                  <span className="font-semibold text-gray-900">{d.product_name}</span>
+                                  <span className="block text-[11px] text-gray-400">{d.unit_code || '—'}</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700">General Deposit</span>
+                                  <span className="block text-[11px] text-gray-400">{d.description || '—'}{d.estimate_number ? ` · ${d.estimate_number}` : ''}</span>
+                                </>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(d.amount)}</td>
+                            <td className="px-4 py-3">
+                              <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${DEPOSIT_STATUS_COLORS[d.status] || 'bg-gray-100 text-gray-600'}`}>
+                                {d.status}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              {d.status === 'HELD' ? (
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => setRefundDepositTarget(d)}
+                                    className="inline-flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                                  >
+                                    <RotateCcw className="h-3 w-3" /> Refund
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => setForfeitDepositTarget(d)}
+                                    className="inline-flex items-center gap-1 rounded border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-100 disabled:opacity-50"
+                                  >
+                                    Forfeit
+                                  </button>
+                                </div>
+                              ) : d.status === 'REFUNDED' ? (
+                                <span className="text-emerald-600 text-xs font-medium">Refunded {formatDate(d.refunded_at)}</span>
+                              ) : (
+                                <span className="text-gray-400 text-xs">Forfeited{d.notes ? ` — ${d.notes}` : ''}</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {forfeitDepositTarget && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                <div className="w-full max-w-sm rounded-lg bg-white shadow-xl">
+                  <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
+                    <h3 className="text-sm font-semibold text-gray-800">Forfeit Deposit — {formatMoney(forfeitDepositTarget.amount)}</h3>
+                    <button type="button" onClick={() => setForfeitDepositTarget(null)} className="text-gray-400 hover:text-gray-600">
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="px-5 py-4 space-y-3">
+                    <p className="text-xs text-gray-500">
+                      The deposit stays with the company — no refund transaction is created. This cannot be undone from here.
+                    </p>
+                    <textarea
+                      rows={2}
+                      placeholder="Reason (optional)"
+                      value={forfeitDepositNotes}
+                      onChange={(e) => setForfeitDepositNotes(e.target.value)}
+                      className="w-full rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setForfeitDepositTarget(null)}
+                        className="rounded border border-gray-200 bg-white px-4 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busyDepositId === forfeitDepositTarget.deposit_id}
+                        onClick={handleForfeitDepositRow}
+                        className="inline-flex items-center gap-1.5 rounded bg-red-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                      >
+                        {busyDepositId === forfeitDepositTarget.deposit_id && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                        Confirm Forfeit
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {refundDepositTarget && (
+              <RefundDepositModal
+                deposit={refundDepositTarget}
+                onClose={() => setRefundDepositTarget(null)}
+                onRefunded={() => { setRefundDepositTarget(null); fetchDeposits(); }}
+              />
+            )}
+          </div>
+        );
+      }
 
       case 'staff':
         return recentAssignments.length === 0 ? (
@@ -1904,7 +2500,46 @@ const ClientDetailPage = () => {
                         <p className="text-sm font-medium text-gray-700">{formatDateTime(clientProfile.reg_fee_invoiced_at)}</p>
                       </div>
                     )}
+                    <div>
+                      <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1">Managed By</p>
+                      <p className="text-sm font-medium text-gray-700">
+                        {clientSalesperson?.current?.salesperson_name || 'Unassigned'}
+                      </p>
+                    </div>
                   </div>
+
+                  {salespersonsList.length > 0 && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <select
+                        value={switchSalespersonId}
+                        onChange={(e) => setSwitchSalespersonId(e.target.value)}
+                        className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
+                      >
+                        <option value="">
+                          {clientSalesperson?.current ? '— Reassign to —' : '— No salesperson assigned —'}
+                        </option>
+                        {salespersonsList
+                          .filter((sp) => sp.id !== clientSalesperson?.current?.salesperson_id)
+                          .map((sp) => (
+                            <option key={sp.id} value={sp.id}>{sp.full_name}</option>
+                          ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={handleSwitchClientSalesperson}
+                        disabled={!switchSalespersonId || !clientSalesperson?.current || salespersonActionLoading}
+                        title={!clientSalesperson?.current ? 'Pick a salesperson below when confirming payment first' : ''}
+                        className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                      >
+                        {salespersonActionLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                        Reassign
+                      </button>
+                    </div>
+                  )}
+
+                  {salespersonError && (
+                    <p className="mt-2 text-xs text-red-600">{salespersonError}</p>
+                  )}
 
                   {regFeeError && (
                     <p className="mt-3 text-xs text-red-600">{regFeeError}</p>
@@ -1926,6 +2561,18 @@ const ClientDetailPage = () => {
                   {canViewReceipt && (
                     <div className="mt-4 rounded-md border border-violet-200 bg-violet-50 p-3">
                       <p className="text-xs font-semibold text-violet-700 mb-2">Receipt submitted â€” review before verifying</p>
+                      {!clientSalesperson?.origin && salespersonsList.length > 0 && (
+                        <select
+                          value={salespersonForCredit}
+                          onChange={(e) => setSalespersonForCredit(e.target.value)}
+                          className="mb-2 px-2.5 py-1.5 text-xs border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
+                        >
+                          <option value="">Credit registration to salesperson (optional)</option>
+                          {salespersonsList.map((sp) => (
+                            <option key={sp.id} value={sp.id}>{sp.full_name}</option>
+                          ))}
+                        </select>
+                      )}
                       <div className="flex flex-wrap items-center gap-2">
                         <a
                           href={clientProfile.reg_fee_receipt_url}
@@ -1975,6 +2622,21 @@ const ClientDetailPage = () => {
 
                   {!isSettled && canSendInvoice && (
                     <div className="mt-4 space-y-3 border-t border-gray-100 pt-4">
+                      {!clientSalesperson?.origin && salespersonsList.length > 0 && (
+                        <div>
+                          <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 block mb-1">Credit Registration To (optional)</label>
+                          <select
+                            value={salespersonForCredit}
+                            onChange={(e) => setSalespersonForCredit(e.target.value)}
+                            className="w-full sm:w-64 px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
+                          >
+                            <option value="">â€” No salesperson â€”</option>
+                            {salespersonsList.map((sp) => (
+                              <option key={sp.id} value={sp.id}>{sp.full_name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                       <div className="grid gap-3 sm:grid-cols-2">
                         <div>
                           <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 block mb-1">Fee Amount (LKR)</label>
@@ -2338,7 +3000,8 @@ const ClientDetailPage = () => {
                   { label: 'Record Registration Fee', action: () => { setShowRegFeeDrawer(true); setActionsOpen(false); } },
                   { label: 'Create Quotation',      action: () => { setEditingQuoteId(null); setShowQuoteDrawer(true); setActionsOpen(false); } },
                   { label: 'Create Booking',        action: () => { setShowDirectBooking(true); setActionsOpen(false); } },
-                  { label: 'Create Service Invoice', action: () => { setActionsOpen(false); } },
+                  { label: 'Create Service Request', action: () => { setShowServiceRequestDrawer(true); setActionsOpen(false); } },
+                  { label: 'Create Product Invoice', action: () => { setShowProductInvoiceDrawer(true); setActionsOpen(false); } },
                   { label: 'Add Care Profiles',     action: () => { setActiveSection('patients'); setShowAddPatient(true); setActionsOpen(false); } },
                   { label: 'Add Note',              action: () => { setActiveSection('notes'); setActionsOpen(false); } },
                 ].map(({ label, action }) => (
@@ -2495,6 +3158,31 @@ const ClientDetailPage = () => {
         clientId={clientId}
         clientProfile={clientProfile}
         quoteId={editingQuoteId}
+        onSuccess={async () => {
+          const refreshed = await apiClient.getAdminClientDetail(clientId);
+          setDetail(refreshed.data || null);
+        }}
+      />
+
+      <CreateProductInvoiceDrawer
+        open={showProductInvoiceDrawer}
+        onClose={() => setShowProductInvoiceDrawer(false)}
+        clientId={clientId}
+        clientProfile={clientProfile}
+        onSuccess={async () => {
+          const refreshed = await apiClient.getAdminClientDetail(clientId);
+          setDetail(refreshed.data || null);
+        }}
+      />
+
+      <AddServiceRequestDrawer
+        open={showServiceRequestDrawer}
+        onClose={() => setShowServiceRequestDrawer(false)}
+        presetClient={{
+          client_profile_id: clientId,
+          full_name: clientProfile.full_name,
+          mobile_number: clientProfile.mobile_number,
+        }}
         onSuccess={async () => {
           const refreshed = await apiClient.getAdminClientDetail(clientId);
           setDetail(refreshed.data || null);

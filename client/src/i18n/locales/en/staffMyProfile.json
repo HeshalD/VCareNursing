@@ -1,0 +1,45 @@
+{
+  "loading": "Loading profile...",
+  "header": {
+    "eyebrow": "Provider Portal",
+    "title": "Profile"
+  },
+  "verificationBanner": {
+    "verified": "Your profile is verified.",
+    "pending": "Your profile is pending verification."
+  },
+  "profileCard": {
+    "profileImageAlt": "Profile",
+    "defaultDesignation": "Staff Member",
+    "locationPending": "Location Pending",
+    "memberSince": "Member since {{year}}",
+    "offline": "OFFLINE"
+  },
+  "professionalSummary": {
+    "title": "Professional Summary",
+    "subtitle": "This mirrors the cleaner client profile presentation.",
+    "empty": "No professional summary added yet."
+  },
+  "documents": {
+    "title": "Documents & Certifications",
+    "subtitle": "Uploaded documents remain visible in a simple gallery.",
+    "imageAlt": "Document",
+    "empty": "No documents uploaded yet."
+  },
+  "accountDetails": {
+    "title": "Account Details",
+    "subtitle": "Verification and availability.",
+    "verificationLabel": "Verification",
+    "verificationPending": "PENDING",
+    "availabilityLabel": "Availability",
+    "offline": "OFFLINE"
+  },
+  "contactInfo": {
+    "title": "Contact Info",
+    "subtitle": "Account contact details.",
+    "emailLabel": "Email Address",
+    "emailNotProvided": "Not provided",
+    "mobileLabel": "Mobile Number",
+    "mobileNotAdded": "Not added"
+  }
+}

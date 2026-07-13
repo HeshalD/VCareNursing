@@ -2,8 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import {
-  CalendarOff, CheckCircle, XCircle, Clock, Search, Filter, AlertTriangle,
-  ArrowLeftRight, CalendarDays, User, Users,
+  CheckCircle, XCircle, Search, AlertTriangle,
+  ArrowLeftRight, CalendarDays, User, Loader2, X,
 } from 'lucide-react';
 
 const fmt = (d) =>
@@ -16,21 +16,23 @@ const dayCount = (start, end) => {
 };
 
 const STATUS_CONFIG = {
-  PENDING: { label: 'Pending', badge: 'bg-amber-100 text-amber-800 border-amber-200', icon: Clock },
-  APPROVED: { label: 'Approved', badge: 'bg-emerald-100 text-emerald-800 border-emerald-200', icon: CheckCircle },
-  REJECTED: { label: 'Rejected', badge: 'bg-rose-100 text-rose-800 border-rose-200', icon: XCircle },
+  PENDING:  { dot: 'bg-amber-400',   text: 'text-amber-700',   label: 'Pending' },
+  APPROVED: { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Approved' },
+  REJECTED: { dot: 'bg-red-400',     text: 'text-red-700',     label: 'Rejected' },
 };
 
 const StatusBadge = ({ status }) => {
   const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.PENDING;
-  const Icon = cfg.icon;
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${cfg.badge}`}>
-      <Icon className="w-3 h-3" />
+    <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
       {cfg.label}
     </span>
   );
 };
+
+const STATUS_TABS = ['All', 'Pending', 'Approved', 'Rejected'];
+const TAB_TO_STATUS = { Pending: 'PENDING', Approved: 'APPROVED', Rejected: 'REJECTED' };
 
 const LeaveRequests = () => {
   const [leaves, setLeaves] = useState([]);
@@ -75,10 +77,15 @@ const LeaveRequests = () => {
   };
 
   const counts = useMemo(() => ({
-    PENDING: leaves.filter((l) => l.status === 'PENDING').length,
-    APPROVED: leaves.filter((l) => l.status === 'APPROVED').length,
-    REJECTED: leaves.filter((l) => l.status === 'REJECTED').length,
+    All: leaves.length,
+    Pending: leaves.filter((l) => l.status === 'PENDING').length,
+    Approved: leaves.filter((l) => l.status === 'APPROVED').length,
+    Rejected: leaves.filter((l) => l.status === 'REJECTED').length,
   }), [leaves]);
+
+  const activeTab = statusFilter === 'all'
+    ? 'All'
+    : STATUS_TABS.find((t) => TAB_TO_STATUS[t] === statusFilter) || 'All';
 
   const filteredLeaves = leaves.filter((l) => {
     const matchesSearch =
@@ -217,9 +224,9 @@ const LeaveRequests = () => {
 
   if (loading) {
     return (
-      <AdminLayout title="Leave Requests" subtitle="Loading...">
+      <AdminLayout title="Leave Requests" subtitle="Loading…">
         <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600" />
+          <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
         </div>
       </AdminLayout>
     );
@@ -227,11 +234,8 @@ const LeaveRequests = () => {
 
   if (error) {
     return (
-      <AdminLayout title="Leave Requests" subtitle="Error occurred">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3">
-          <XCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
-          <span className="text-red-800 text-sm">{error}</span>
-        </div>
+      <AdminLayout title="Leave Requests">
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>
       </AdminLayout>
     );
   }
@@ -239,72 +243,52 @@ const LeaveRequests = () => {
   return (
     <AdminLayout
       title="Leave Requests"
-      subtitle={`${filteredLeaves.length} request${filteredLeaves.length !== 1 ? 's' : ''} — staff time-off requests`}
+      subtitle="Review and process staff time-off requests."
     >
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-        {([
-          ['PENDING', 'Pending', 'text-amber-600 border-amber-200'],
-          ['APPROVED', 'Approved', 'text-emerald-600 border-emerald-200'],
-          ['REJECTED', 'Rejected', 'text-rose-600 border-rose-200'],
-        ]).map(([key, label, cls]) => {
-          const isActive = statusFilter === key;
-          return (
+      {/* Toolbar */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
+        <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-1 w-fit flex-wrap">
+          {STATUS_TABS.map((tab) => (
             <button
-              key={key}
-              onClick={() => setStatusFilter(isActive ? 'all' : key)}
-              className={`bg-white rounded-lg border p-4 text-left transition-all hover:shadow-sm ${
-                isActive ? `ring-2 ${cls} border-transparent` : 'border-slate-200 hover:border-slate-300'
+              key={tab}
+              onClick={() => setStatusFilter(tab === 'All' ? 'all' : TAB_TO_STATUS[tab])}
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                activeTab === tab
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700'
               }`}
             >
-              <p className={`text-3xl font-bold ${cls.split(' ')[0]}`}>{counts[key]}</p>
-              <p className="text-sm text-slate-500 mt-1">{label}</p>
+              {tab}
+              <span className="ml-1.5 tabular-nums text-slate-400">{counts[tab]}</span>
             </button>
-          );
-        })}
-      </div>
+          ))}
+        </div>
 
-      {/* Search + Filter */}
-      <div className="bg-white rounded-lg border border-slate-200 p-4 mb-4 flex flex-col md:flex-row gap-3">
-        <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+        <div className="relative sm:ml-auto">
+          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             type="text"
-            placeholder="Search by staff name or code..."
+            placeholder="Search by staff name or code…"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="pl-8 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none w-64"
           />
-        </div>
-        <div className="flex items-center gap-2">
-          <Filter className="w-4 h-4 text-slate-400" />
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="all">All</option>
-            <option value="PENDING">Pending</option>
-            <option value="APPROVED">Approved</option>
-            <option value="REJECTED">Rejected</option>
-          </select>
         </div>
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
         {filteredLeaves.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 gap-3">
-            <CalendarOff className="w-10 h-10 text-slate-300" />
-            <p className="text-slate-500 text-sm">No leave requests found</p>
+          <div className="text-center py-16 text-slate-400 text-sm">
+            No leave requests match your filters.
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-slate-50 border-b border-slate-200">
-                <tr>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50">
                   {['Staff', 'Dates', 'Days', 'Reason', 'Requested', 'Status', ''].map((h) => (
-                    <th key={h} className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                    <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">
                       {h}
                     </th>
                   ))}
@@ -313,21 +297,21 @@ const LeaveRequests = () => {
               <tbody className="divide-y divide-slate-100">
                 {filteredLeaves.map((leave) => (
                   <tr key={leave.leave_id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-6 py-4">
-                      <p className="text-sm font-semibold text-slate-900">{leave.full_name || '—'}</p>
-                      <p className="text-xs text-slate-500 mt-0.5 font-mono">{leave.staff_code || ''}</p>
+                    <td className="px-4 py-3">
+                      <p className="font-semibold text-slate-900 leading-tight">{leave.full_name || '—'}</p>
+                      <p className="text-xs text-slate-400 mt-0.5 font-mono">{leave.staff_code || ''}</p>
                     </td>
-                    <td className="px-6 py-4 text-sm text-slate-700">
+                    <td className="px-4 py-3 text-slate-700 whitespace-nowrap">
                       {fmt(leave.start_date)} <span className="text-slate-400">→</span> {fmt(leave.end_date)}
                     </td>
-                    <td className="px-6 py-4 text-sm text-slate-700">{dayCount(leave.start_date, leave.end_date)}</td>
-                    <td className="px-6 py-4 text-sm text-slate-600 max-w-xs truncate">{leave.reason || '—'}</td>
-                    <td className="px-6 py-4 text-sm text-slate-500">{fmt(leave.requested_at)}</td>
-                    <td className="px-6 py-4"><StatusBadge status={leave.status} /></td>
-                    <td className="px-6 py-4 text-right pr-6">
+                    <td className="px-4 py-3 text-slate-700 tabular-nums">{dayCount(leave.start_date, leave.end_date)}</td>
+                    <td className="px-4 py-3 text-slate-600 max-w-xs truncate">{leave.reason || '—'}</td>
+                    <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmt(leave.requested_at)}</td>
+                    <td className="px-4 py-3 whitespace-nowrap"><StatusBadge status={leave.status} /></td>
+                    <td className="px-4 py-3 text-right">
                       <button
                         onClick={() => openReview(leave)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-blue-600 border border-slate-200 rounded-lg hover:bg-blue-50 hover:border-blue-200 transition-colors"
                       >
                         {leave.status === 'PENDING' ? 'Review' : 'View'}
                       </button>
@@ -338,30 +322,41 @@ const LeaveRequests = () => {
             </table>
           </div>
         )}
+
+        {filteredLeaves.length > 0 && (
+          <div className="border-t border-slate-100 px-4 py-2.5 text-xs text-slate-400">
+            Showing {filteredLeaves.length} of {leaves.length} request{leaves.length !== 1 ? 's' : ''}
+          </div>
+        )}
       </div>
 
       {/* Review modal */}
       {reviewLeave && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={closeReview} />
-          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg border border-slate-200 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="px-6 py-5 border-b border-slate-200 flex items-start justify-between">
+          <div className="absolute inset-0 bg-black/30" onClick={closeReview} />
+          <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-lg border border-slate-200 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-slate-200 flex items-start justify-between gap-3">
               <div>
-                <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+                <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
                   <User className="w-4 h-4 text-slate-400" />
                   {reviewLeave.full_name}
                 </h2>
-                <p className="text-xs text-slate-500 mt-1">
+                <p className="text-xs text-slate-400 mt-1">
                   {fmt(reviewLeave.start_date)} → {fmt(reviewLeave.end_date)} · {dayCount(reviewLeave.start_date, reviewLeave.end_date)} day(s)
                 </p>
               </div>
-              <StatusBadge status={reviewLeave.status} />
+              <div className="flex items-center gap-3 flex-shrink-0">
+                <StatusBadge status={reviewLeave.status} />
+                <button onClick={closeReview} className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
-            <div className="px-6 py-5 space-y-4">
+            <div className="px-5 py-4 space-y-4">
               {reviewLeave.reason && (
                 <div>
-                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Reason</p>
+                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Reason</p>
                   <p className="text-sm text-slate-700">{reviewLeave.reason}</p>
                 </div>
               )}
@@ -372,7 +367,7 @@ const LeaveRequests = () => {
                   <span className="font-medium text-slate-900">{reviewLeave.reviewed_by_name || 'Admin'}</span>
                   {reviewLeave.reviewed_at ? ` on ${fmt(reviewLeave.reviewed_at)}` : ''}.
                   {reviewLeave.status === 'REJECTED' && reviewLeave.rejected_reason && (
-                    <span className="block mt-1 text-rose-600">Reason: {reviewLeave.rejected_reason}</span>
+                    <span className="block mt-1 text-red-600">Reason: {reviewLeave.rejected_reason}</span>
                   )}
                 </div>
               )}
@@ -380,20 +375,20 @@ const LeaveRequests = () => {
               {/* Conflicts list (only for pending, when not picking a replacement) */}
               {reviewLeave.status === 'PENDING' && !swapConflict && (
                 <div>
-                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Assignments in this range</p>
+                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Assignments in this range</p>
                   {conflictsLoading ? (
                     <div className="flex items-center gap-2 text-sm text-slate-500 py-2">
-                      <div className="w-4 h-4 border-2 border-slate-300 border-t-transparent rounded-full animate-spin" />
-                      Checking assignments...
+                      <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
+                      Checking assignments…
                     </div>
                   ) : conflicts.length === 0 ? (
-                    <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-700">
+                    <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-800">
                       <CheckCircle className="w-4 h-4 flex-shrink-0" />
                       No assignments in this range — safe to approve.
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800">
+                      <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
                         <AlertTriangle className="w-4 h-4 flex-shrink-0" />
                         This staff member is assigned to {conflicts.length} booking{conflicts.length === 1 ? '' : 's'} in this range. Consider scheduling a replacement swap before approving.
                       </div>
@@ -403,21 +398,21 @@ const LeaveRequests = () => {
                           <div key={c.assignment_id} className="rounded-lg border border-slate-200 p-3 flex items-start justify-between gap-3">
                             <div className="min-w-0">
                               <p className="text-sm font-semibold text-slate-900">{c.client_name || '—'}</p>
-                              <p className="text-xs text-slate-500 mt-0.5">{c.patient_name || ''} · {c.service_type || ''}</p>
+                              <p className="text-xs text-slate-400 mt-0.5">{c.patient_name || ''} · {c.service_type || ''}</p>
                               <p className="text-xs text-slate-400 mt-0.5">
                                 <CalendarDays className="w-3 h-3 inline mr-1" />
                                 {fmt(c.service_start_date)} → {c.service_end_date ? fmt(c.service_end_date) : 'Ongoing'}
                               </p>
                             </div>
                             {swappedTo ? (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 rounded-lg flex-shrink-0">
+                              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 flex-shrink-0">
                                 <CheckCircle className="w-3.5 h-3.5" />
                                 Swap → {swappedTo}
                               </span>
                             ) : (
                               <button
                                 onClick={() => openSwap(c)}
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors flex-shrink-0"
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-blue-600 border border-slate-200 rounded-lg hover:bg-blue-50 hover:border-blue-200 transition-colors flex-shrink-0"
                                 title="Schedule a replacement swap"
                               >
                                 <ArrowLeftRight className="w-3.5 h-3.5" />
@@ -436,7 +431,7 @@ const LeaveRequests = () => {
               {reviewLeave.status === 'PENDING' && swapConflict && (
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
+                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
                       Replacement for {swapConflict.client_name || 'booking'}
                     </p>
                     <button onClick={closeSwap} className="text-xs font-semibold text-slate-500 hover:text-slate-700">← Back</button>
@@ -446,33 +441,31 @@ const LeaveRequests = () => {
                   </p>
 
                   <div className="relative mb-3">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
                       type="text"
                       autoFocus
-                      placeholder="Search staff by name, designation, or code..."
+                      placeholder="Search staff by name, designation, or code…"
                       value={candidateSearch}
                       onChange={(e) => setCandidateSearch(e.target.value)}
-                      className="w-full pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full pl-8 pr-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-800 placeholder-slate-400 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-colors"
                     />
                   </div>
 
                   {swapError && (
-                    <div className="flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700 mb-3">
-                      <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                    <div className="px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg mb-3">
                       {swapError}
                     </div>
                   )}
 
                   {candidatesLoading ? (
                     <div className="flex items-center gap-2 text-sm text-slate-500 py-4 justify-center">
-                      <div className="w-4 h-4 border-2 border-slate-300 border-t-transparent rounded-full animate-spin" />
-                      Loading staff...
+                      <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
+                      Loading staff…
                     </div>
                   ) : filteredCandidates.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-8 text-slate-400 gap-2">
-                      <Users className="w-7 h-7 text-slate-300" />
-                      <p className="text-sm">No staff match your search.</p>
+                    <div className="text-center py-8 text-slate-400 text-sm">
+                      No staff match your search.
                     </div>
                   ) : (
                     <div className="max-h-72 overflow-y-auto space-y-1.5 pr-1">
@@ -485,7 +478,7 @@ const LeaveRequests = () => {
                         >
                           <div className="min-w-0">
                             <p className="text-sm font-semibold text-slate-900 truncate">{s.full_name}</p>
-                            <p className="text-xs text-slate-500 mt-0.5">
+                            <p className="text-xs text-slate-400 mt-0.5">
                               {s.designation || '—'}{s.staff_code ? ` · ${s.staff_code}` : ''}
                             </p>
                             {s.unavailable && (
@@ -500,9 +493,9 @@ const LeaveRequests = () => {
                             <button
                               onClick={() => confirmSwap(s)}
                               disabled={swapBusy}
-                              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex-shrink-0"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-500 transition-colors disabled:opacity-50 flex-shrink-0"
                             >
-                              {swapBusy ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : 'Select'}
+                              {swapBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Select'}
                             </button>
                           )}
                         </div>
@@ -515,26 +508,26 @@ const LeaveRequests = () => {
               {/* Reject reason input */}
               {rejectMode && (
                 <div>
-                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Rejection reason</label>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Rejection reason</label>
                   <textarea
                     rows={3}
                     value={rejectReason}
                     onChange={(e) => setRejectReason(e.target.value)}
-                    placeholder="Let the staff member know why this was rejected..."
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                    placeholder="Let the staff member know why this was rejected…"
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-800 placeholder-slate-400 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-colors resize-none"
                   />
                 </div>
               )}
             </div>
 
             {reviewLeave.status === 'PENDING' && !swapConflict && (
-              <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-200">
+              <div className="flex items-center gap-2 px-5 py-4 border-t border-slate-200 bg-slate-50">
                 {!rejectMode ? (
                   <>
                     <button
                       onClick={() => setRejectMode(true)}
                       disabled={busy}
-                      className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-rose-700 bg-rose-50 rounded-lg hover:bg-rose-100 transition-colors disabled:opacity-50"
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2 border border-slate-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 hover:border-red-200 transition-colors disabled:opacity-50"
                     >
                       <XCircle className="w-4 h-4" />
                       Reject
@@ -542,9 +535,9 @@ const LeaveRequests = () => {
                     <button
                       onClick={handleApprove}
                       disabled={busy}
-                      className="inline-flex items-center gap-2 px-5 py-2 text-white text-sm font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500 transition-colors disabled:opacity-50"
                     >
-                      {busy ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                      {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
                       Approve
                     </button>
                   </>
@@ -553,16 +546,16 @@ const LeaveRequests = () => {
                     <button
                       onClick={() => setRejectMode(false)}
                       disabled={busy}
-                      className="px-4 py-2 text-sm font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+                      className="flex-1 px-4 py-2 border border-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-100 transition-colors"
                     >
                       Back
                     </button>
                     <button
                       onClick={handleReject}
                       disabled={busy}
-                      className="inline-flex items-center gap-2 px-5 py-2 text-white text-sm font-semibold rounded-lg bg-rose-600 hover:bg-rose-700 transition-colors disabled:opacity-50"
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-500 transition-colors disabled:opacity-50"
                     >
-                      {busy ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <XCircle className="w-4 h-4" />}
+                      {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
                       Confirm Rejection
                     </button>
                   </>

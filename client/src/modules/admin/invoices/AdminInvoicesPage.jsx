@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Loader2, X, Filter, ExternalLink, Receipt, Check, AlertCircle, Download,
+  Loader2, X, Receipt, Check, AlertCircle, Download, Send,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -14,26 +14,123 @@ const formatDate = (v) => {
   return isNaN(d) ? '—' : d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 };
 
-const STATUS_COLORS = {
-  INVOICED: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
-  SKIPPED:  'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200',
-  PENDING:  'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200',
+const STATUS_CONFIG = {
+  INVOICED: { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Invoiced' },
+  SKIPPED:  { dot: 'bg-red-400',     text: 'text-red-700',     label: 'Skipped' },
+  PENDING:  { dot: 'bg-amber-400',   text: 'text-amber-700',   label: 'Pending' },
 };
 
-const REG_FEE_STATUS_COLORS = {
-  SENT: 'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200',
-  PAID: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
+const REG_FEE_STATUS_CONFIG = {
+  SENT: { dot: 'bg-blue-400',    text: 'text-blue-700',    label: 'Sent' },
+  PAID: { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Paid' },
+};
+
+// Client's *current* membership state (client_profiles.reg_fee_status) — distinct
+// from the invoice-row status above, which is this particular invoice's own
+// SENT/PAID state and can lag behind if membership has since expired (Phase 3
+// 365-day reset) or been overridden by an admin.
+const MEMBERSHIP_STATUS_CONFIG = {
+  PAID:             { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Paid' },
+  PENDING:          { dot: 'bg-amber-400',   text: 'text-amber-700',   label: 'Pending' },
+  INVOICED:         { dot: 'bg-blue-400',    text: 'text-blue-700',    label: 'Invoiced' },
+  RECEIPT_UPLOADED: { dot: 'bg-violet-400',  text: 'text-violet-700',  label: 'Receipt Submitted' },
+  WAIVED:           { dot: 'bg-slate-400',   text: 'text-slate-600',   label: 'Waived' },
+};
+
+// Product/rental invoices (backend/controllers/invoiceController.js) — a
+// generic invoices table distinct from the daily-invoice/reg-fee tables above.
+const PRODUCT_INVOICE_STATUS_CONFIG = {
+  PENDING:   { dot: 'bg-amber-400',   text: 'text-amber-700',   label: 'Pending' },
+  OVERDUE:   { dot: 'bg-red-500',     text: 'text-red-700',     label: 'Overdue' },
+  PAID:      { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Paid' },
+  CANCELLED: { dot: 'bg-slate-400',   text: 'text-slate-600',   label: 'Cancelled' },
+};
+
+const StatusDot = ({ status, config }) => {
+  const cfg = config[status] || { dot: 'bg-slate-400', text: 'text-slate-600', label: status || '—' };
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
+      {cfg.label}
+    </span>
+  );
 };
 
 const PAGE_SIZE = 50;
 
+// Two unrelated systems share this page: daily booking-attendance charges
+// (Pending/History) vs. everything else invoice-shaped (reg fee, product/
+// rental, combined quotation). Grouping + per-tab title/subtitle makes that
+// split visible instead of implying one unified "invoices" list.
+const TAB_GROUPS = [
+  {
+    label: 'Daily Attendance',
+    tabs: [
+      { id: 'pending', label: 'Pending' },
+      { id: 'all', label: 'History' },
+    ],
+  },
+  {
+    label: 'Other Invoices',
+    tabs: [
+      { id: 'reg-fee', label: 'Registration Fee' },
+      { id: 'products', label: 'Product & Rental' },
+      { id: 'combined', label: 'Combined' },
+    ],
+  },
+];
+
+const TAB_META = {
+  pending: {
+    title: 'Daily Attendance — Pending',
+    subtitle: 'Approve or reject each service day\'s attendance charge before it becomes an invoice.',
+  },
+  all: {
+    title: 'Daily Attendance — History',
+    subtitle: 'Every daily attendance charge, invoiced or skipped.',
+  },
+  'reg-fee': {
+    title: 'Registration Fee Invoices',
+    subtitle: 'One-time client registration/membership fee invoices.',
+  },
+  products: {
+    title: 'Product & Rental Invoices',
+    subtitle: 'Invoices generated from the Products catalog — purchases, rentals, and deposits.',
+  },
+  combined: {
+    title: 'Combined Invoices',
+    subtitle: 'The merged service + product Invoice generated once a quotation is paid in full.',
+  },
+};
+
+const inputCls = 'rounded-lg border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100';
+const primaryBtnCls = 'inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-blue-500 transition-colors';
+// Icon-only row action — the minimal equivalent of the reference table's trailing chevron.
+const iconBtnCls = 'inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
+const approveBtnCls = 'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+const rejectBtnCls = 'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+const linkCls = 'text-blue-600 hover:underline';
+
 export default function AdminInvoicesPage() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState('pending'); // 'pending' | 'all' | 'reg-fee'
+  const [tab, setTab] = useState('pending'); // 'pending' | 'all' | 'reg-fee' | 'products' | 'combined'
+
+  // ── Combined (quotation) invoices state ────────────────────────────────────
+  const [combinedInvoices, setCombinedInvoices] = useState([]);
+  const [combinedLoading, setCombinedLoading] = useState(false);
+  const [combinedError, setCombinedError] = useState('');
+  const [sendingInvoiceId, setSendingInvoiceId] = useState('');
+  const [sentInvoiceId, setSentInvoiceId] = useState('');
 
   // ── Registration fee invoices state ────────────────────────────────────────
   const [regFeeInvoices, setRegFeeInvoices] = useState([]);
   const [regFeeLoading, setRegFeeLoading] = useState(false);
+
+  // ── Product/rental invoices state ──────────────────────────────────────────
+  const [productInvoices, setProductInvoices] = useState([]);
+  const [productInvoicesLoading, setProductInvoicesLoading] = useState(false);
+  const [productInvoiceStatusFilter, setProductInvoiceStatusFilter] = useState('');
+  const [downloadingProductInvoiceId, setDownloadingProductInvoiceId] = useState('');
 
   // ── Pending queue state ────────────────────────────────────────────────────
   const [pending, setPending] = useState([]);
@@ -118,10 +215,69 @@ export default function AdminInvoicesPage() {
     }
   }, []);
 
+  // ── Product/rental invoices fetch ──────────────────────────────────────────
+  const fetchProductInvoices = useCallback(async (overrides = {}) => {
+    setProductInvoicesLoading(true);
+    try {
+      const status = overrides.status !== undefined ? overrides.status : productInvoiceStatusFilter;
+      const filters = {};
+      if (status) filters.status = status;
+      const res = await apiClient.getProductInvoices(filters);
+      setProductInvoices(Array.isArray(res?.data) ? res.data : []);
+    } catch {
+      setProductInvoices([]);
+    } finally {
+      setProductInvoicesLoading(false);
+    }
+  }, [productInvoiceStatusFilter]);
+
+  const handleDownloadProductInvoice = async (inv) => {
+    setDownloadingProductInvoiceId(inv.invoice_id);
+    try {
+      const res = await apiClient.getProductInvoicePdf(inv.invoice_id);
+      if (res?.pdf_url) window.open(res.pdf_url, '_blank', 'noopener');
+    } catch (err) {
+      setDownloadError(err.message || 'Failed to generate invoice PDF.');
+    } finally {
+      setDownloadingProductInvoiceId('');
+    }
+  };
+
+  // ── Combined (quotation) invoices fetch ────────────────────────────────────
+  const fetchCombinedInvoices = useCallback(async () => {
+    setCombinedLoading(true);
+    setCombinedError('');
+    try {
+      const res = await apiClient.getCombinedInvoices();
+      setCombinedInvoices(Array.isArray(res?.data) ? res.data : []);
+    } catch (err) {
+      setCombinedError(err.message || 'Failed to load combined invoices');
+      setCombinedInvoices([]);
+    } finally {
+      setCombinedLoading(false);
+    }
+  }, []);
+
+  const handleSendCombinedInvoice = async (inv) => {
+    setSendingInvoiceId(inv.quote_id);
+    setCombinedError('');
+    setSentInvoiceId('');
+    try {
+      await apiClient.sendCombinedInvoice(inv.quote_id);
+      setSentInvoiceId(inv.quote_id);
+    } catch (err) {
+      setCombinedError(err.message || 'Failed to send invoice');
+    } finally {
+      setSendingInvoiceId('');
+    }
+  };
+
   useEffect(() => { fetchPending(); }, [fetchPending]);
   useEffect(() => { if (tab === 'all') fetchInvoices(); }, [tab]); // eslint-disable-line
   useEffect(() => { if (tab === 'all') fetchInvoices(); }, [page]); // eslint-disable-line
   useEffect(() => { if (tab === 'reg-fee') fetchRegFeeInvoices(); }, [tab]); // eslint-disable-line
+  useEffect(() => { if (tab === 'products') fetchProductInvoices(); }, [tab]); // eslint-disable-line
+  useEffect(() => { if (tab === 'combined') fetchCombinedInvoices(); }, [tab]); // eslint-disable-line
 
   // ── Decide (approve / reject) ──────────────────────────────────────────────
   const handleDecide = async (inv, approve) => {
@@ -176,38 +332,42 @@ export default function AdminInvoicesPage() {
   };
   const hasFilters = statusFilter || dateFrom || dateTo || bookingIdFilter;
 
+  const tabCounts = { pending: pending.length };
+
   return (
     <AdminLayout
-      title="Daily Invoices"
-      subtitle="Approve pending charges and review all daily invoice records"
+      title={TAB_META[tab].title}
+      subtitle={TAB_META[tab].subtitle}
     >
       <div className="space-y-5">
-        {/* Tabs */}
-        <div className="flex gap-1 rounded-lg bg-gray-100 p-1 w-fit">
-          {[
-            { id: 'pending', label: 'Pending Approvals', count: pending.length },
-            { id: 'all',     label: 'All Invoices' },
-            { id: 'reg-fee', label: 'Registration Fees' },
-          ].map(({ id, label, count }) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setTab(id)}
-              className={`flex items-center gap-1.5 rounded-md px-4 py-1.5 text-sm font-medium transition-all ${
-                tab === id
-                  ? 'bg-white text-gray-900 shadow-sm'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              {label}
-              {count != null && count > 0 && (
-                <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                  tab === id ? 'bg-amber-100 text-amber-700' : 'bg-gray-200 text-gray-600'
-                }`}>
-                  {count}
-                </span>
-              )}
-            </button>
+        {/* Tabs, grouped by which underlying system they belong to */}
+        <div className="flex flex-wrap items-start gap-4">
+          {TAB_GROUPS.map((group, idx) => (
+            <div key={group.label} className={`flex items-center gap-2 ${idx > 0 ? 'border-l border-slate-200 pl-4' : ''}`}>
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">{group.label}</span>
+              <div className="flex gap-0.5 rounded-lg bg-slate-100 p-1">
+                {group.tabs.map(({ id, label }) => {
+                  const count = tabCounts[id];
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setTab(id)}
+                      className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                        tab === id
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      {label}
+                      {count != null && count > 0 && (
+                        <span className="ml-1.5 tabular-nums text-slate-400">{count}</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           ))}
         </div>
 
@@ -227,35 +387,35 @@ export default function AdminInvoicesPage() {
               </div>
             )}
 
-            <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
               {pendingLoading ? (
-                <div className="flex items-center justify-center gap-2 py-16 text-sm text-gray-500">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading pending invoices…
+                <div className="flex items-center justify-center h-64">
+                  <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
                 </div>
               ) : pending.length === 0 ? (
-                <div className="flex flex-col items-center justify-center gap-3 py-16 text-gray-400">
+                <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-400">
                   <Check className="h-8 w-8 text-emerald-400" />
-                  <p className="text-sm font-medium text-gray-500">No pending invoices — all caught up!</p>
+                  <p className="text-sm font-medium text-slate-500">No pending invoices — all caught up!</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-100 text-sm">
-                    <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
-                      <tr>
-                        <th className="px-4 py-3 text-left">Date</th>
-                        <th className="px-4 py-3 text-left">Client</th>
-                        <th className="px-4 py-3 text-left">Booking</th>
-                        <th className="px-4 py-3 text-left">Shift</th>
-                        <th className="px-4 py-3 text-right">Amount (LKR)</th>
-                        <th className="px-4 py-3 text-left">Actions</th>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50">
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Date</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Client</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Booking</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Shift</th>
+                        <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Amount (LKR)</th>
+                        <th className="px-4 py-3" />
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-100 bg-white">
+                    <tbody className="divide-y divide-slate-100">
                       {pending.map((inv) => {
                         const busy = decidingId === inv.daily_invoice_id;
                         return (
-                          <tr key={inv.daily_invoice_id} className="hover:bg-amber-50/40 transition-colors">
-                            <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">
+                          <tr key={inv.daily_invoice_id} className="hover:bg-slate-50 transition-colors">
+                            <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
                               {formatDate(inv.service_date)}
                             </td>
                             <td className="px-4 py-3">
@@ -263,10 +423,9 @@ export default function AdminInvoicesPage() {
                                 <button
                                   type="button"
                                   onClick={() => navigate(`/admin/users/${inv.client_profile_id}/detail`)}
-                                  className="text-blue-600 hover:underline font-medium inline-flex items-center gap-1"
+                                  className={linkCls}
                                 >
                                   {inv.client_name}
-                                  <ExternalLink className="h-3 w-3 text-gray-400" />
                                 </button>
                               ) : '—'}
                             </td>
@@ -274,15 +433,15 @@ export default function AdminInvoicesPage() {
                               <button
                                 type="button"
                                 onClick={() => navigate(`/admin/bookings/${inv.booking_id}/detail`)}
-                                className="text-blue-600 hover:underline font-medium"
+                                className={linkCls}
                               >
                                 {inv.booking_code || inv.booking_id?.slice(0, 8)}
                               </button>
                               {inv.service_type && (
-                                <span className="ml-1.5 text-gray-400 text-xs">({inv.service_type})</span>
+                                <span className="ml-1.5 text-slate-400 text-xs">({inv.service_type})</span>
                               )}
                             </td>
-                            <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
+                            <td className="px-4 py-3 text-slate-500 whitespace-nowrap">
                               {inv.shift_label || (inv.shift_number ? `Shift ${inv.shift_number}` : '—')}
                             </td>
                             <td className="px-4 py-3 text-right">
@@ -298,26 +457,16 @@ export default function AdminInvoicesPage() {
                                   }))
                                 }
                                 disabled={busy}
-                                className="w-32 rounded border border-gray-200 bg-white px-2 py-1 text-right text-sm font-semibold text-gray-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:opacity-50"
+                                className="w-28 rounded-lg border border-slate-300 bg-white px-2 py-1 text-right text-sm font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:opacity-50"
                               />
                             </td>
                             <td className="px-4 py-3">
-                              <div className="flex items-center gap-1.5">
-                                <button
-                                  type="button"
-                                  disabled={busy}
-                                  onClick={() => handleDecide(inv, true)}
-                                  className="inline-flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
+                              <div className="flex items-center justify-end gap-0.5">
+                                <button type="button" disabled={busy} onClick={() => handleDecide(inv, true)} className={approveBtnCls}>
                                   {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
                                   Approve
                                 </button>
-                                <button
-                                  type="button"
-                                  disabled={busy}
-                                  onClick={() => handleDecide(inv, false)}
-                                  className="inline-flex items-center gap-1 rounded border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
+                                <button type="button" disabled={busy} onClick={() => handleDecide(inv, false)} className={rejectBtnCls}>
                                   {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
                                   Reject
                                 </button>
@@ -326,11 +475,11 @@ export default function AdminInvoicesPage() {
                                   disabled={downloadingId === inv.daily_invoice_id}
                                   onClick={() => handleDownload(inv)}
                                   title="Download invoice PDF"
-                                  className="inline-flex items-center gap-1 rounded border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  className={iconBtnCls}
                                 >
                                   {downloadingId === inv.daily_invoice_id
-                                    ? <Loader2 className="h-3 w-3 animate-spin" />
-                                    : <Download className="h-3 w-3" />}
+                                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    : <Download className="h-3.5 w-3.5" />}
                                 </button>
                               </div>
                             </td>
@@ -355,111 +504,88 @@ export default function AdminInvoicesPage() {
               <SummaryCard label="Skipped Total" value={formatMoney(totals.rejected)} tone="red" />
             </div>
 
-            {/* Filters */}
-            <div className="rounded-lg border border-gray-200 bg-white p-4">
-              <div className="flex flex-wrap items-end gap-3">
-                <div>
-                  <label className="block text-[11px] font-medium text-gray-500 mb-1">Status</label>
-                  <select
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value)}
-                    className="rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                  >
-                    <option value="">All</option>
-                    <option value="INVOICED">Invoiced</option>
-                    <option value="SKIPPED">Skipped</option>
-                    <option value="PENDING">Pending</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[11px] font-medium text-gray-500 mb-1">Date from</label>
-                  <input
-                    type="date"
-                    value={dateFrom}
-                    onChange={(e) => setDateFrom(e.target.value)}
-                    className="rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-medium text-gray-500 mb-1">Date to</label>
-                  <input
-                    type="date"
-                    value={dateTo}
-                    onChange={(e) => setDateTo(e.target.value)}
-                    className="rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-medium text-gray-500 mb-1">Booking ID</label>
-                  <input
-                    type="text"
-                    placeholder="UUID or partial…"
-                    value={bookingIdFilter}
-                    onChange={(e) => setBookingIdFilter(e.target.value)}
-                    className="rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 w-48"
-                  />
-                </div>
-                <div className="flex gap-2 mt-1">
+            {/* Filters — flat inline toolbar, no boxed card */}
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Status</label>
+                <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={inputCls}>
+                  <option value="">All</option>
+                  <option value="INVOICED">Invoiced</option>
+                  <option value="SKIPPED">Skipped</option>
+                  <option value="PENDING">Pending</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Date from</label>
+                <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Date to</label>
+                <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Booking ID</label>
+                <input
+                  type="text"
+                  placeholder="UUID or partial…"
+                  value={bookingIdFilter}
+                  onChange={(e) => setBookingIdFilter(e.target.value)}
+                  className={`${inputCls} placeholder-slate-400 w-48`}
+                />
+              </div>
+              <div className="flex gap-2">
+                <button type="button" onClick={applyFilters} className={primaryBtnCls}>Apply</button>
+                {hasFilters && (
                   <button
                     type="button"
-                    onClick={applyFilters}
-                    className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-blue-700"
+                    onClick={clearFilters}
+                    className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm font-medium text-slate-500 hover:bg-slate-100 transition-colors"
                   >
-                    <Filter className="h-3.5 w-3.5" /> Apply
+                    <X className="h-3.5 w-3.5" /> Clear
                   </button>
-                  {hasFilters && (
-                    <button
-                      type="button"
-                      onClick={clearFilters}
-                      className="inline-flex items-center gap-1 rounded border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-500 hover:bg-gray-50"
-                    >
-                      <X className="h-3.5 w-3.5" /> Clear
-                    </button>
-                  )}
-                </div>
+                )}
               </div>
             </div>
 
             {/* Table */}
-            <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
               {loading ? (
-                <div className="flex items-center justify-center gap-2 py-16 text-sm text-gray-500">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading invoices…
+                <div className="flex items-center justify-center h-64">
+                  <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
                 </div>
               ) : invoices.length === 0 ? (
-                <div className="flex flex-col items-center justify-center gap-3 py-16 text-gray-400">
+                <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-400">
                   <Receipt className="h-8 w-8" />
                   <p className="text-sm font-medium">No invoices match the current filters</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-100 text-sm">
-                    <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
-                      <tr>
-                        <th className="px-4 py-3 text-left">Date</th>
-                        <th className="px-4 py-3 text-left">Client</th>
-                        <th className="px-4 py-3 text-left">Booking</th>
-                        <th className="px-4 py-3 text-left">Shift</th>
-                        <th className="px-4 py-3 text-left">Status</th>
-                        <th className="px-4 py-3 text-right">Amount</th>
-                        <th className="px-4 py-3 text-left">Decided By</th>
-                        <th className="px-4 py-3 text-left">Notes</th>
-                        <th className="px-4 py-3 text-left">Download</th>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50">
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Date</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Client</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Booking</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Shift</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
+                        <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Amount</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Decided By</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Notes</th>
+                        <th className="px-4 py-3" />
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-100 bg-white">
+                    <tbody className="divide-y divide-slate-100">
                       {invoices.map((inv) => (
-                        <tr key={inv.daily_invoice_id} className="hover:bg-gray-50 transition-colors">
-                          <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{formatDate(inv.service_date)}</td>
+                        <tr key={inv.daily_invoice_id} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{formatDate(inv.service_date)}</td>
                           <td className="px-4 py-3">
                             {inv.client_name ? (
                               <button
                                 type="button"
                                 onClick={() => navigate(`/admin/users/${inv.client_profile_id}/detail`)}
-                                className="text-blue-600 hover:underline font-medium inline-flex items-center gap-1"
+                                className={linkCls}
                               >
                                 {inv.client_name}
-                                <ExternalLink className="h-3 w-3 text-gray-400" />
                               </button>
                             ) : '—'}
                           </td>
@@ -467,39 +593,37 @@ export default function AdminInvoicesPage() {
                             <button
                               type="button"
                               onClick={() => navigate(`/admin/bookings/${inv.booking_id}/detail`)}
-                              className="text-blue-600 hover:underline font-medium"
+                              className={linkCls}
                             >
                               {inv.booking_code || inv.booking_id?.slice(0, 8)}
                             </button>
-                            {inv.service_type && <span className="ml-1.5 text-gray-400 text-xs">({inv.service_type})</span>}
+                            {inv.service_type && <span className="ml-1.5 text-slate-400 text-xs">({inv.service_type})</span>}
                           </td>
-                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
+                          <td className="px-4 py-3 text-slate-500 whitespace-nowrap">
                             {inv.shift_label || (inv.shift_number ? `Shift ${inv.shift_number}` : '—')}
                           </td>
-                          <td className="px-4 py-3">
-                            <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${STATUS_COLORS[inv.status] || 'bg-gray-100 text-gray-600'}`}>
-                              {inv.status}
-                            </span>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <StatusDot status={inv.status} config={STATUS_CONFIG} />
                           </td>
-                          <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">
+                          <td className="px-4 py-3 text-right font-medium text-slate-800 whitespace-nowrap">
                             {inv.amount != null ? formatMoney(inv.amount) : '—'}
                           </td>
-                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
+                          <td className="px-4 py-3 text-slate-500 whitespace-nowrap">
                             {inv.decided_by_name || '—'}
-                            {inv.decided_at && <span className="block text-[11px] text-gray-400">{formatDate(inv.decided_at)}</span>}
+                            {inv.decided_at && <span className="block text-xs text-slate-400">{formatDate(inv.decided_at)}</span>}
                           </td>
-                          <td className="px-4 py-3 text-gray-500 max-w-[160px] truncate">{inv.notes || '—'}</td>
-                          <td className="px-4 py-3">
+                          <td className="px-4 py-3 text-slate-500 max-w-[160px] truncate">{inv.notes || '—'}</td>
+                          <td className="px-4 py-3 text-right">
                             <button
                               type="button"
                               disabled={downloadingId === inv.daily_invoice_id}
                               onClick={() => handleDownload(inv)}
-                              className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                              title="Download invoice PDF"
+                              className={iconBtnCls}
                             >
                               {downloadingId === inv.daily_invoice_id
                                 ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
                                 : <Download className="h-3.5 w-3.5" />}
-                              Download
                             </button>
                           </td>
                         </tr>
@@ -511,8 +635,8 @@ export default function AdminInvoicesPage() {
 
               {/* Pagination */}
               {pagination && pagination.total_pages > 1 && (
-                <div className="flex items-center justify-between border-t border-gray-100 px-4 py-3">
-                  <p className="text-xs text-gray-500">
+                <div className="flex items-center justify-between border-t border-slate-100 px-4 py-2.5">
+                  <p className="text-xs text-slate-400">
                     Page {pagination.page} of {pagination.total_pages} &middot; {pagination.total} total
                   </p>
                   <div className="flex items-center gap-1">
@@ -520,7 +644,7 @@ export default function AdminInvoicesPage() {
                       type="button"
                       disabled={page === 1}
                       onClick={() => setPage((p) => p - 1)}
-                      className="rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       Prev
                     </button>
@@ -528,7 +652,7 @@ export default function AdminInvoicesPage() {
                       type="button"
                       disabled={page === pagination.total_pages}
                       onClick={() => setPage((p) => p + 1)}
-                      className="rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       Next
                     </button>
@@ -541,60 +665,61 @@ export default function AdminInvoicesPage() {
 
         {/* ── REGISTRATION FEES TAB ─────────────────────────────────────────── */}
         {tab === 'reg-fee' && (
-          <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
             {regFeeLoading ? (
-              <div className="flex items-center justify-center gap-2 py-16 text-sm text-gray-500">
-                <Loader2 className="h-4 w-4 animate-spin" /> Loading registration fee invoices…
+              <div className="flex items-center justify-center h-64">
+                <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
               </div>
             ) : regFeeInvoices.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-3 py-16 text-gray-400">
+              <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-400">
                 <Receipt className="h-8 w-8" />
                 <p className="text-sm font-medium">No registration fee invoices sent yet</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-100 text-sm">
-                  <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
-                    <tr>
-                      <th className="px-4 py-3 text-left">Date Sent</th>
-                      <th className="px-4 py-3 text-left">Client</th>
-                      <th className="px-4 py-3 text-left">Invoice Code</th>
-                      <th className="px-4 py-3 text-left">Status</th>
-                      <th className="px-4 py-3 text-right">Amount</th>
-                      <th className="px-4 py-3 text-left">Download</th>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50">
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Date Sent</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Client</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Invoice Code</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Invoice Status</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Membership</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Amount</th>
+                      <th className="px-4 py-3" />
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100 bg-white">
+                  <tbody className="divide-y divide-slate-100">
                     {regFeeInvoices.map((inv) => (
-                      <tr key={inv.invoice_id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{formatDate(inv.created_at)}</td>
+                      <tr key={inv.invoice_id} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{formatDate(inv.created_at)}</td>
                         <td className="px-4 py-3">
                           {inv.client_name ? (
                             <button
                               type="button"
                               onClick={() => navigate(`/admin/users/${inv.client_profile_id}/detail`)}
-                              className="text-blue-600 hover:underline font-medium inline-flex items-center gap-1"
+                              className={linkCls}
                             >
                               {inv.client_name}
-                              <ExternalLink className="h-3 w-3 text-gray-400" />
                             </button>
                           ) : '—'}
                         </td>
-                        <td className="px-4 py-3 font-mono text-xs text-gray-600">{inv.invoice_code}</td>
-                        <td className="px-4 py-3">
-                          <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${REG_FEE_STATUS_COLORS[inv.status] || 'bg-gray-100 text-gray-600'}`}>
-                            {inv.status}
-                          </span>
+                        <td className="px-4 py-3 font-mono text-xs text-slate-500">{inv.invoice_code}</td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <StatusDot status={inv.status} config={REG_FEE_STATUS_CONFIG} />
                         </td>
-                        <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(inv.amount)}</td>
-                        <td className="px-4 py-3">
-                          <a
-                            href={inv.pdf_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
-                          >
-                            <Download className="h-3.5 w-3.5" /> Download
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <StatusDot status={inv.membership_status} config={MEMBERSHIP_STATUS_CONFIG} />
+                          {inv.membership_status === 'PAID' && inv.membership_expires_at && (
+                            <span className="block text-xs text-slate-400 mt-0.5">
+                              Expires {formatDate(inv.membership_expires_at)}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right font-medium text-slate-800 whitespace-nowrap">{formatMoney(inv.amount)}</td>
+                        <td className="px-4 py-3 text-right">
+                          <a href={inv.pdf_url} target="_blank" rel="noreferrer" title="Download invoice PDF" className={iconBtnCls}>
+                            <Download className="h-3.5 w-3.5" />
                           </a>
                         </td>
                       </tr>
@@ -605,17 +730,206 @@ export default function AdminInvoicesPage() {
             )}
           </div>
         )}
+
+        {/* ── PRODUCTS TAB ──────────────────────────────────────────────────── */}
+        {tab === 'products' && (
+          <>
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Status</label>
+                <select
+                  value={productInvoiceStatusFilter}
+                  onChange={(e) => setProductInvoiceStatusFilter(e.target.value)}
+                  className={inputCls}
+                >
+                  <option value="">All</option>
+                  <option value="PENDING">Pending</option>
+                  <option value="OVERDUE">Overdue</option>
+                  <option value="PAID">Paid</option>
+                  <option value="CANCELLED">Cancelled</option>
+                </select>
+              </div>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => fetchProductInvoices()} className={primaryBtnCls}>Apply</button>
+                {productInvoiceStatusFilter && (
+                  <button
+                    type="button"
+                    onClick={() => { setProductInvoiceStatusFilter(''); fetchProductInvoices({ status: '' }); }}
+                    className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm font-medium text-slate-500 hover:bg-slate-100 transition-colors"
+                  >
+                    <X className="h-3.5 w-3.5" /> Clear
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              {productInvoicesLoading ? (
+                <div className="flex items-center justify-center h-64">
+                  <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+                </div>
+              ) : productInvoices.length === 0 ? (
+                <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-400">
+                  <Receipt className="h-8 w-8" />
+                  <p className="text-sm font-medium">No product invoices match the current filters</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50">
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Invoice Code</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Date</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Recipient</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Category</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
+                        <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Amount</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Paid</th>
+                        <th className="px-4 py-3" />
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {productInvoices.map((inv) => (
+                        <tr key={inv.invoice_id} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-3 font-mono text-xs text-slate-500 whitespace-nowrap">{inv.invoice_code}</td>
+                          <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{formatDate(inv.created_at)}</td>
+                          <td className="px-4 py-3">
+                            {inv.client_id ? (
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/admin/users/${inv.client_id}/detail`)}
+                                className={linkCls}
+                              >
+                                {inv.client_name}
+                              </button>
+                            ) : (
+                              <>
+                                {inv.walk_in_name || '—'}
+                                {inv.walk_in_name && <span className="ml-1.5 text-[10px] text-amber-600">(walk-in)</span>}
+                              </>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{inv.category}</td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <StatusDot status={inv.status} config={PRODUCT_INVOICE_STATUS_CONFIG} />
+                          </td>
+                          <td className="px-4 py-3 text-right font-medium text-slate-800 whitespace-nowrap">{formatMoney(inv.amount)}</td>
+                          <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{inv.paid_at ? formatDate(inv.paid_at) : '—'}</td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              type="button"
+                              disabled={downloadingProductInvoiceId === inv.invoice_id}
+                              onClick={() => handleDownloadProductInvoice(inv)}
+                              title="Download invoice PDF"
+                              className={iconBtnCls}
+                            >
+                              {downloadingProductInvoiceId === inv.invoice_id
+                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                : <Download className="h-3.5 w-3.5" />}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            <p className="text-xs text-slate-400">Payments for these invoices are recorded from the Products page.</p>
+          </>
+        )}
+
+        {/* ── QUOTATION INVOICES TAB ────────────────────────────────────────── */}
+        {tab === 'combined' && (
+          <>
+            {combinedError && (
+              <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+                <AlertCircle className="h-4 w-4 shrink-0" /> {combinedError}
+              </div>
+            )}
+            <p className="text-xs text-slate-400">
+              The combined Invoice generated for a quotation (service charges plus any linked products/rentals) once it's paid in full.
+            </p>
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              {combinedLoading ? (
+                <div className="flex items-center justify-center h-64">
+                  <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+                </div>
+              ) : combinedInvoices.length === 0 ? (
+                <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-400">
+                  <Receipt className="h-8 w-8" />
+                  <p className="text-sm font-medium">No quotation invoices generated yet</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50">
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Invoice Code</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Generated</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Estimate #</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Payer</th>
+                        <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Total</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {combinedInvoices.map((inv) => (
+                        <tr key={inv.quote_id} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-3 font-mono text-xs text-slate-500 whitespace-nowrap">{inv.invoice_code}</td>
+                          <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{formatDate(inv.invoice_generated_at)}</td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <button
+                              type="button"
+                              onClick={() => navigate(`/admin/quotations/${inv.quote_id}`)}
+                              className={linkCls}
+                            >
+                              {inv.estimate_number}
+                            </button>
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">
+                            {inv.payer_name || '—'}
+                            {inv.payer_mobile && <span className="block text-xs text-slate-400">{inv.payer_mobile}</span>}
+                          </td>
+                          <td className="px-4 py-3 text-right font-medium text-slate-800 whitespace-nowrap">{formatMoney(inv.total_amount)}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center justify-end gap-0.5">
+                              <a href={inv.invoice_pdf_url} target="_blank" rel="noreferrer" title="Download invoice PDF" className={iconBtnCls}>
+                                <Download className="h-3.5 w-3.5" />
+                              </a>
+                              <button
+                                type="button"
+                                disabled={sendingInvoiceId === inv.quote_id}
+                                onClick={() => handleSendCombinedInvoice(inv)}
+                                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500 transition-colors disabled:opacity-50"
+                              >
+                                {sendingInvoiceId === inv.quote_id
+                                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  : <Send className="h-3.5 w-3.5" />}
+                                {sentInvoiceId === inv.quote_id ? 'Sent!' : 'Send to Client'}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </AdminLayout>
   );
 }
 
 function SummaryCard({ label, value, tone }) {
-  const colors = { slate: 'text-gray-900', emerald: 'text-emerald-600', red: 'text-red-600' };
+  const colors = { slate: 'text-slate-900', emerald: 'text-emerald-600', red: 'text-red-600' };
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
-      <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">{label}</p>
-      <p className={`mt-0.5 text-lg font-semibold ${colors[tone] || 'text-gray-900'}`}>{value}</p>
+    <div className="bg-white border border-slate-200 rounded-xl p-4">
+      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{label}</p>
+      <p className={`mt-0.5 text-lg font-semibold ${colors[tone] || 'text-slate-900'}`}>{value}</p>
     </div>
   );
 }

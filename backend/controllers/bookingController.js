@@ -21,6 +21,8 @@ const {
     executeTermination,
     executeCompletion,
 } = require('../services/scheduledActions');
+const { computeRegFeeSplit, settleRegistrationFee } = require('../services/registrationFeeSplit');
+const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 
 function extractActorRole(role) {
     const raw = Array.isArray(role) ? role[0] : role;
@@ -421,20 +423,27 @@ const convertToBookingInternal = async (req, res) => {
         if (profileCheck.rows.length === 0) {
             const regFeePaid = Number(quoteData.registration_fee) > 0;
             const newProfile = await client.query(
-                `INSERT INTO client_profiles (user_id, full_name, primary_address, is_registration_fee_paid, reg_fee_status)
-                 VALUES ($1, $2, $3, $4, $5) RETURNING client_profile_id`,
-                [userId, reqData.payer_name, reqData.location_address, regFeePaid, regFeePaid ? 'PAID' : 'PENDING']
+                `INSERT INTO client_profiles
+                   (user_id, full_name, primary_address, is_registration_fee_paid, reg_fee_status, reg_fee_paid_at, reg_fee_expires_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING client_profile_id`,
+                [
+                    userId, reqData.payer_name, reqData.location_address, regFeePaid, regFeePaid ? 'PAID' : 'PENDING',
+                    regFeePaid ? new Date() : null,
+                    regFeePaid ? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) : null,
+                ]
             );
             clientProfileId = newProfile.rows[0].client_profile_id;
         } else {
             clientProfileId = profileCheck.rows[0].client_profile_id;
 
-            // If the quote included a registration fee, mark the client profile as fully paid.
+            // If the quote included a registration fee, mark the client profile as fully paid
+            // and start its 365-day membership countdown.
             const clientProfile = profileCheck.rows[0];
             if (!clientProfile.is_registration_fee_paid && Number(quoteData.registration_fee) > 0) {
                 await client.query(
                     `UPDATE client_profiles
-                     SET is_registration_fee_paid = TRUE, reg_fee_status = 'PAID'
+                     SET is_registration_fee_paid = TRUE, reg_fee_status = 'PAID',
+                         reg_fee_paid_at = NOW(), reg_fee_expires_at = NOW() + INTERVAL '365 days'
                      WHERE client_profile_id = $1`,
                     [clientProfileId]
                 );
@@ -616,7 +625,7 @@ const convertToBookingInternal = async (req, res) => {
                    transaction_type,
                    created_at
                                  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'COMPLETED', $14, 'CREDIT', NOW())
-                                 ON CONFLICT (payment_tracking_id) DO UPDATE SET
+                                 ON CONFLICT (payment_tracking_id) WHERE category != 'REGISTRATION_FEE' DO UPDATE SET
                                      client_id = EXCLUDED.client_id,
                                      booking_id = EXCLUDED.booking_id,
                                      quote_id = EXCLUDED.quote_id,
@@ -2298,6 +2307,10 @@ exports.forceStopBooking = async (req, res) => {
 
 exports.getAllBookings = async (req, res) => {
     try {
+        const salespersonId = req.user?.salesperson_id;
+        const salesFilter = salespersonId
+            ? 'WHERE b.booking_id IN (SELECT booking_id FROM booking_salesperson_assignments WHERE salesperson_id = $1)'
+            : '';
         const query = `
             SELECT
                 b.booking_id,
@@ -2356,10 +2369,11 @@ exports.getAllBookings = async (req, res) => {
                 FROM transactions
                 GROUP BY booking_id
             ) bill ON bill.booking_id = b.booking_id
+            ${salesFilter}
             ORDER BY b.created_at DESC
         `;
 
-        const result = await db.query(query);
+        const result = await db.query(query, salespersonId ? [salespersonId] : []);
 
         res.status(200).json({
             status: 'success',
@@ -2421,21 +2435,76 @@ exports.extendBooking = async (req, res) => {
       [newScheduledEndTime, booking_id]
     );
 
-    // Record the payment transaction if amount provided
+    // Record the payment transaction if amount provided. In practice a
+    // booking can only be extended once ACTIVE, meaning its registration fee
+    // is already settled — but resolve/split defensively anyway rather than
+    // assume, since computeRegFeeSplit is a cheap no-op once reg_fee_status
+    // is PAID/WAIVED.
     if (payment_amount && payment_amount > 0) {
-      await client.query(
-        `INSERT INTO transactions (
-          client_id, booking_id, category, transaction_type,
-          amount, payment_method, status, notes
-        ) VALUES ($1, $2, 'CLIENT_PAYMENT', 'CREDIT', $3, $4, 'COMPLETED', $5)`,
-        [
-          booking.client_id,
-          booking_id,
-          payment_amount,
-          payment_method || 'BANK_TRANSFER',
-          notes || `Booking extended by ${additional_days} days`
-        ]
+      const quoteRes = await client.query(
+        `SELECT sr.active_quote_id as quote_id
+           FROM service_requests sr WHERE sr.request_id = $1`,
+        [booking.request_id]
       );
+      const extendQuoteId = quoteRes.rows[0]?.quote_id || null;
+
+      const regFeeSplit = extendQuoteId
+        ? await computeRegFeeSplit(client, {
+            client_id: booking.client_id,
+            quote_id: extendQuoteId,
+            amount: parseFloat(payment_amount),
+            totalPaidBefore: parseFloat(booking.amount_paid || 0),
+          })
+        : { regFeePortion: 0, remainderAmount: payment_amount, regFeeItem: null };
+
+      if (regFeeSplit.regFeePortion > 0) {
+        await client.query(
+          `INSERT INTO transactions (
+            client_id, booking_id, quote_id, category, transaction_type,
+            amount, payment_method, status, notes
+          ) VALUES ($1, $2, $3, 'REGISTRATION_FEE', 'CREDIT', $4, $5, 'COMPLETED', $6)`,
+          [
+            booking.client_id,
+            booking_id,
+            extendQuoteId,
+            regFeeSplit.regFeePortion,
+            payment_method || 'BANK_TRANSFER',
+            notes || `Booking extended by ${additional_days} days`
+          ]
+        );
+      }
+
+      if (regFeeSplit.remainderAmount > 0) {
+        await client.query(
+          `INSERT INTO transactions (
+            client_id, booking_id, category, transaction_type,
+            amount, payment_method, status, notes
+          ) VALUES ($1, $2, 'CLIENT_PAYMENT', 'CREDIT', $3, $4, 'COMPLETED', $5)`,
+          [
+            booking.client_id,
+            booking_id,
+            regFeeSplit.remainderAmount,
+            payment_method || 'BANK_TRANSFER',
+            notes || `Booking extended by ${additional_days} days`
+          ]
+        );
+      }
+
+      if (regFeeSplit.regFeeItem) {
+        const newTotalPaid = parseFloat(booking.amount_paid || 0) + parseFloat(payment_amount);
+        if (newTotalPaid >= parseFloat(regFeeSplit.regFeeItem.amount)) {
+          try {
+            await settleRegistrationFee(client, {
+              client_id: booking.client_id,
+              regFeeItem: regFeeSplit.regFeeItem,
+              verified_by: req.user?.user_id || null,
+              creditSalespersonForRegistration,
+            });
+          } catch (regFeeErr) {
+            console.error('Registration fee settlement check failed (extendBooking):', regFeeErr.message);
+          }
+        }
+      }
     }
 
     await client.query('COMMIT');

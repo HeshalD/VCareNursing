@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, RefreshCw, FileText, CircleDollarSign, ArrowRight,
-  Upload, ExternalLink, Pencil, X, Save, User, Stethoscope,
+  ExternalLink, Pencil, X, Save, User, Stethoscope,
   BadgeCheck, MapPin, CheckCircle2, Plus, Phone, Calendar,
   Heart, Loader2, AlertCircle, Download, ThumbsUp, ThumbsDown, Send,
-  MessageCircle, SendHorizontal,
+  MessageCircle, SendHorizontal, BadgeDollarSign,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import PaymentAllocationModal from '../service_quotes/PaymentAllocationModal';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -61,12 +62,6 @@ const TABS = [
   { key: 'payment',    label: 'Payment' },
 ];
 
-const initialPaymentForm = {
-  amount_received: '', payment_method: 'BANK_TRANSFER',
-  bank_account_id: '', cheque_number: '', cheque_date: '',
-  reference_number: '', notes: '',
-};
-
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 const money = (v) =>
@@ -76,12 +71,81 @@ const fmt = (date) =>
   date ? new Date(date).toLocaleDateString('en-LK', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
 const getQuoteStatus = (q) => {
-  const total = parseFloat(q?.total_amount || 0);
+  const total = parseFloat((q?.combined_total ?? q?.total_amount) || 0);
   const paid  = parseFloat(q?.total_paid   || 0);
   if (paid > total) return 'OVERPAID';
   if (paid === 0)   return 'UNPAID';
   if (paid === total) return 'FULLY_PAID';
   return 'PARTIALLY_PAID';
+};
+
+// Mirrors backend quoteController.expandProductLineItemsForDisplay: a rental
+// item's billing cadence (and specific unit, if chosen) is appended to its
+// description, and its own deposit is shown as a separate line right after
+// it — same shape the merged PDF and ModularQuoteBuilder's preview show.
+const expandProductLineItems = (items) => {
+  const out = [];
+  for (const li of items || []) {
+    if (li.rental_billing_type) {
+      const billingLabel = li.rental_billing_type === 'RECURRING' ? 'Billed monthly' : 'One-time, fixed period';
+      const unitLabel = li.unit_code ? ` — Unit ${li.unit_code}` : '';
+      out.push({ ...li, description: `${li.description}${unitLabel} (${billingLabel})`, isProductItem: true });
+
+      const depositAmt = parseFloat(li.deposit_amount) || 0;
+      if (depositAmt > 0) {
+        out.push({
+          line_item_id: `${li.line_item_id}-deposit`,
+          description: `Refundable Deposit for ${li.description} (fully refundable on return)`,
+          quantity: 1,
+          unit_price: depositAmt,
+          amount: depositAmt,
+          isProductItem: true,
+        });
+      }
+    } else {
+      out.push({ ...li, isProductItem: true });
+    }
+  }
+  return out;
+};
+
+// Registration fee is treated as the first "bucket" any payment against the
+// SERVICE quote fills (see paymentTrackingController.recordPayment) — the
+// threshold basis is the SERVICE-only paid amount (service_paid, i.e.
+// payment_tracking for this quote_id), not the combined service+product figure.
+const getRegFeeInfo = (servicePaid, lineItems) => {
+  const regItem = (lineItems || []).find((li) => li.is_registration_fee);
+  if (!regItem) return null;
+  const amount = parseFloat(regItem.amount) || 0;
+  const paid = parseFloat(servicePaid) || 0;
+  return {
+    amount,
+    allocated: Math.min(paid, amount),
+    remaining: Math.max(amount - paid, 0),
+    settled: paid >= amount,
+  };
+};
+
+const RegFeeAllocationCard = ({ info }) => {
+  if (!info) return null;
+  return (
+    <div className={`mt-3 rounded-lg border px-3 py-2.5 ${info.settled ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
+      <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-800">
+        <BadgeDollarSign className="h-3.5 w-3.5" /> Registration Fee Allocation
+      </div>
+      <div className="mt-1.5 flex items-center justify-between text-xs">
+        <span className="text-slate-600">Allocated from payments</span>
+        <span className="font-medium text-slate-800">{money(info.allocated)} / {money(info.amount)}</span>
+      </div>
+      {info.settled ? (
+        <p className="mt-1 flex items-center gap-1 text-xs font-medium text-emerald-700">
+          <CheckCircle2 className="h-3.5 w-3.5" /> Fully allocated — registration is settled
+        </p>
+      ) : (
+        <p className="mt-1 text-xs font-medium text-amber-700">{money(info.remaining)} remaining before registration is settled</p>
+      )}
+    </div>
+  );
 };
 
 const serviceLabel = (v) =>
@@ -123,10 +187,6 @@ const ServiceRequestSummaryPage = () => {
   const [request, setRequest]           = useState(null);
   const [quotes, setQuotes]             = useState([]);
   const [selectedQuoteId, setSelectedQuoteId] = useState('');
-  const [bankAccounts, setBankAccounts] = useState([]);
-  const [paymentSlipFile, setPaymentSlipFile] = useState(null);
-  const [paymentForm, setPaymentForm]   = useState(initialPaymentForm);
-  const [submitting, setSubmitting]     = useState(false);
   const [proceeding, setProceeding]     = useState(false);
   const [activeTab, setActiveTab]       = useState('details');
   const [editMode, setEditMode]         = useState(false);
@@ -137,37 +197,90 @@ const ServiceRequestSummaryPage = () => {
   const [paymentHistory, setPaymentHistory]         = useState([]);
   const [paymentHistoryLoading, setPaymentHistoryLoading] = useState(false);
   const [paymentSuccess, setPaymentSuccess]         = useState('');
+  const [showPaymentModal, setShowPaymentModal]     = useState(false);
   const [showReceiptPopup, setShowReceiptPopup]     = useState(false);
   const [receiptSendBusy, setReceiptSendBusy]       = useState(false);
+  const [sendingInvoiceQuoteId, setSendingInvoiceQuoteId] = useState('');
+  const [invoiceSentQuoteId, setInvoiceSentQuoteId] = useState('');
 
   const selectedQuote = useMemo(
     () => quotes.find(q => q.quote_id === selectedQuoteId) || quotes[0] || null,
     [quotes, selectedQuoteId]
   );
   const selectedQuoteStatus = selectedQuote ? getQuoteStatus(selectedQuote) : 'UNPAID';
-  const requiresBankAccount = ['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(paymentForm.payment_method);
-  const isCheque            = paymentForm.payment_method === 'CHEQUE';
 
   const fetchData = async () => {
     try {
       setLoading(true);
       setError('');
-      const [reqRes, quoteRes, bankRes] = await Promise.all([
+      const [reqRes, quoteRes] = await Promise.all([
         apiClient.getServiceRequestById(requestId),
         apiClient.getServiceRequestQuoteList(requestId),
-        apiClient.getBankAccounts(),
       ]);
       setRequest(reqRes.data || null);
-      setQuotes(
-        (quoteRes.data || []).map(q => ({
-          ...q,
-          total_paid:       parseFloat(q.total_paid   || 0),
-          total_amount:     parseFloat(q.total_amount || 0),
-          remaining_amount: Math.max(parseFloat(q.total_amount || 0) - parseFloat(q.total_paid || 0), 0),
-          payment_count:    parseInt(q.payment_count  || 0, 10),
-        }))
+      const baseQuotes = (quoteRes.data || []).map(q => ({
+        ...q,
+        total_paid:       parseFloat(q.total_paid   || 0),
+        total_amount:     parseFloat(q.total_amount || 0),
+        payment_count:    parseInt(q.payment_count  || 0, 10),
+      }));
+      // Line items aren't included in the list endpoint — fetch each
+      // quotation's own detail (same endpoint the "Open" link uses) so the
+      // items can be shown inline without an extra click per quotation.
+      // Also pull in the companion PRODUCT quote's items (products/rentals
+      // added via ModularQuoteBuilder's Products & Rentals section — linked
+      // back via quotations.linked_quote_id, see getQuotesByRequest), since
+      // those are a separate quotation record folded into one combined PDF/
+      // total when sent (see quoteController.mergeProductQuoteIntoData) —
+      // the on-screen total/remaining must match that combined figure, not
+      // just the service quote's own total_amount.
+      const withLineItems = await Promise.all(
+        baseQuotes.map(async (q) => {
+          try {
+            const detail = await apiClient.getQuoteWithLineItems(q.quote_id);
+            const line_items = Array.isArray(detail?.data?.line_items) ? detail.data.line_items : [];
+            let product_line_items = [];
+            let product_total = 0;
+            // total_paid from getServiceRequestQuoteList only sums the SERVICE
+            // quote's own payment_tracking rows — the linked PRODUCT quote's
+            // invoice (paid separately via PaymentAllocationModal) lives in
+            // the generic `invoices` table and is never included there. Fold
+            // its paid amount in here so "Paid"/"Remaining" reflect reality.
+            let product_paid = 0;
+            if (q.product_quote_id) {
+              try {
+                const productDetail = await apiClient.getProductQuote(q.product_quote_id);
+                product_line_items = expandProductLineItems(productDetail?.data?.line_items);
+                product_total = product_line_items.reduce((s, li) => s + (parseFloat(li.amount) || 0), 0);
+              } catch { /* non-critical */ }
+              try {
+                const invRes = await apiClient.getProductInvoices({ quote_id: q.product_quote_id });
+                const invoices = Array.isArray(invRes?.data) ? invRes.data : [];
+                product_paid = invoices.filter(i => i.status === 'PAID').reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+              } catch { /* non-critical */ }
+            }
+            const combined_total = q.total_amount + product_total;
+            const combined_paid = q.total_paid + product_paid;
+            return {
+              ...q,
+              line_items,
+              product_line_items,
+              product_total,
+              combined_total,
+              // Registration fee settlement (see paymentTrackingController.
+              // recordPayment) is thresholded against the SERVICE-only paid
+              // amount — preserve it before total_paid below is overwritten
+              // with the combined service+product figure.
+              service_paid: q.total_paid,
+              total_paid: combined_paid,
+              remaining_amount: Math.max(combined_total - combined_paid, 0),
+            };
+          } catch {
+            return { ...q, line_items: [], product_line_items: [], product_total: 0, combined_total: q.total_amount, remaining_amount: Math.max(q.total_amount - q.total_paid, 0) };
+          }
+        })
       );
-      setBankAccounts(bankRes.data || []);
+      setQuotes(withLineItems);
     } catch (err) {
       setError(err.message || 'Failed to load service request');
     } finally {
@@ -238,36 +351,28 @@ const ServiceRequestSummaryPage = () => {
     }
   };
 
-  const handlePaymentSubmit = async (e) => {
-    e.preventDefault();
-    if (!selectedQuote || !request) return;
+  // Fires after PaymentAllocationModal records payment against the service
+  // portion and/or the linked PRODUCT invoice — mirrors handlePaymentSubmit's
+  // post-success steps above.
+  const handlePaymentAllocated = async () => {
+    setShowPaymentModal(false);
+    setPaymentSuccess('Payment recorded successfully.');
+    await fetchData();
+    if (selectedQuote) await fetchPaymentHistory(selectedQuote.quote_id);
+    setShowReceiptPopup(true);
+  };
+
+  const handleSendInvoice = async (quoteId) => {
+    setSendingInvoiceQuoteId(quoteId);
+    setInvoiceSentQuoteId('');
     try {
-      setSubmitting(true);
       setError('');
-      setPaymentSuccess('');
-      await apiClient.recordQuotePayment(
-        selectedQuote.quote_id,
-        {
-          amount_received:  parseFloat(paymentForm.amount_received),
-          payment_method:   paymentForm.payment_method,
-          bank_account_id:  paymentForm.bank_account_id || null,
-          cheque_number:    paymentForm.cheque_number   || null,
-          cheque_date:      paymentForm.cheque_date     || null,
-          reference_number: paymentForm.reference_number || null,
-          notes:            paymentForm.notes || null,
-        },
-        paymentSlipFile
-      );
-      setPaymentForm(initialPaymentForm);
-      setPaymentSlipFile(null);
-      setPaymentSuccess('Payment recorded successfully.');
-      await fetchData();
-      await fetchPaymentHistory(selectedQuote.quote_id);
-      setShowReceiptPopup(true);
+      await apiClient.sendCombinedInvoice(quoteId);
+      setInvoiceSentQuoteId(quoteId);
     } catch (err) {
-      setError(err.message || 'Failed to record payment');
+      setError(err.message || 'Failed to send invoice');
     } finally {
-      setSubmitting(false);
+      setSendingInvoiceQuoteId('');
     }
   };
 
@@ -353,11 +458,15 @@ const ServiceRequestSummaryPage = () => {
     }
   };
 
-  const handleSendQuotePdf = async (quoteId) => {
+  // productQuoteId folds the companion PRODUCT quote's items (products/
+  // rentals added via ModularQuoteBuilder's Products & Rentals section) into
+  // this same PDF/message server-side (see quoteController.mergeProductQuoteIntoData)
+  // — without it, only the service quote's own charges would be included.
+  const handleSendQuotePdf = async (quoteId, productQuoteId) => {
     setQuoteAction(quoteId, 'sending');
     setError('');
     try {
-      await apiClient.sendQuotePDF(quoteId);
+      await apiClient.sendQuotePDF(quoteId, productQuoteId);
       updateQuoteInState(quoteId, { status: 'SENT' });
     } catch (err) {
       setError(err.message || 'Failed to send quotation PDF');
@@ -366,11 +475,11 @@ const ServiceRequestSummaryPage = () => {
     }
   };
 
-  const handleDownloadQuotePdf = async (quoteId) => {
+  const handleDownloadQuotePdf = async (quoteId, productQuoteId) => {
     setQuoteAction(quoteId, 'downloading');
     setError('');
     try {
-      const res = await apiClient.generateQuotePdf(quoteId);
+      const res = await apiClient.generateQuotePdf(quoteId, productQuoteId);
       const url = res?.pdf_url || res?.data?.pdf_url;
       if (url) window.open(url, '_blank', 'noopener,noreferrer');
       else setError('PDF URL not returned by server.');
@@ -860,17 +969,60 @@ const ServiceRequestSummaryPage = () => {
 
                           {/* Money stats */}
                           <div className="mt-3 ml-6 grid grid-cols-3 gap-2">
-                            <QuoteStat label="Total"     value={money(quote.total_amount)} />
+                            <QuoteStat label="Total"     value={money(quote.combined_total)} />
                             <QuoteStat label="Paid"      value={money(quote.total_paid)}          accent="text-emerald-700" />
                             <QuoteStat label="Remaining" value={money(quote.remaining_amount)}     accent="text-amber-700" />
                           </div>
+
+                          <div className="ml-6">
+                            <RegFeeAllocationCard info={getRegFeeInfo(quote.service_paid, quote.line_items)} />
+                          </div>
+
+                          {/* Quotation items — the service quote's own charges/discounts,
+                              plus a companion PRODUCT quote's items (products/rentals/
+                              deposits added via ModularQuoteBuilder), if one exists. These
+                              are two separate quotation records that get merged into one
+                              PDF/message when sent (see quoteController.mergeProductQuoteIntoData). */}
+                          {(quote.line_items?.length > 0 || quote.product_line_items?.length > 0) && (
+                            <div className="mt-3 ml-6 rounded-lg border border-slate-100 overflow-hidden">
+                              <table className="w-full text-xs">
+                                <thead className="bg-slate-50 text-slate-400">
+                                  <tr>
+                                    <th className="text-left font-medium px-3 py-1.5">Item &amp; Description</th>
+                                    <th className="text-right font-medium px-3 py-1.5 w-16">Qty</th>
+                                    <th className="text-right font-medium px-3 py-1.5 w-24">Rate</th>
+                                    <th className="text-right font-medium px-3 py-1.5 w-28">Amount</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-50">
+                                  {[...quote.line_items, ...(quote.product_line_items || [])].map((li) => {
+                                    const isDiscount = li.item_type === 'DISCOUNT';
+                                    const amount = Math.abs(parseFloat(li.amount) || 0);
+                                    return (
+                                      <tr key={li.line_item_id}>
+                                        <td className={`px-3 py-1.5 ${li.isProductItem ? 'text-purple-700' : 'text-slate-700'}`}>
+                                          {li.description}
+                                          {isDiscount && <span className="ml-1.5 text-[10px] text-slate-400">(Discount)</span>}
+                                        </td>
+                                        <td className="px-3 py-1.5 text-right text-slate-500 tabular-nums">{parseFloat(li.quantity) || 1}</td>
+                                        <td className="px-3 py-1.5 text-right text-slate-500 tabular-nums">{money(li.unit_price)}</td>
+                                        <td className={`px-3 py-1.5 text-right font-medium tabular-nums ${isDiscount ? 'text-red-600' : li.isProductItem ? 'text-purple-800' : 'text-slate-800'}`}>
+                                          {isDiscount ? `(${money(amount)})` : money(amount)}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
 
                           {/* Action buttons */}
                           <div className="mt-3 ml-6 flex items-center gap-2 flex-wrap">
                             {/* Send to client */}
                             <button
                               type="button"
-                              onClick={e => { e.stopPropagation(); handleSendQuotePdf(quote.quote_id); }}
+                              onClick={e => { e.stopPropagation(); handleSendQuotePdf(quote.quote_id, quote.product_quote_id); }}
                               disabled={!!actionKey || isRejected}
                               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:border-slate-300 disabled:opacity-50 transition-colors"
                             >
@@ -884,7 +1036,7 @@ const ServiceRequestSummaryPage = () => {
                             {/* Download PDF */}
                             <button
                               type="button"
-                              onClick={e => { e.stopPropagation(); handleDownloadQuotePdf(quote.quote_id); }}
+                              onClick={e => { e.stopPropagation(); handleDownloadQuotePdf(quote.quote_id, quote.product_quote_id); }}
                               disabled={!!actionKey || isRejected}
                               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:border-slate-300 disabled:opacity-50 transition-colors"
                             >
@@ -1000,10 +1152,41 @@ const ServiceRequestSummaryPage = () => {
                           </div>
                         </div>
                         <div className="grid grid-cols-3 gap-3">
-                          <QuoteStat label="Total"     value={money(selectedQuote.total_amount)} />
+                          <QuoteStat label="Total"     value={money(selectedQuote.combined_total)} />
                           <QuoteStat label="Paid"      value={money(selectedQuote.total_paid)}       accent="text-emerald-700" />
                           <QuoteStat label="Remaining" value={money(selectedQuote.remaining_amount)} accent="text-amber-700" />
                         </div>
+
+                        <RegFeeAllocationCard info={getRegFeeInfo(selectedQuote.service_paid, selectedQuote.line_items)} />
+
+                        {/* Combined Invoice — generated the first time either the
+                            service or a linked product portion is paid in full
+                            (see quoteController.ensureCombinedInvoice). Not
+                            present until then. */}
+                        {selectedQuote.invoice_code && (
+                          <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                            <span className="text-xs font-medium text-slate-500">
+                              Invoice <span className="font-mono text-slate-700">{selectedQuote.invoice_code}</span>
+                            </span>
+                            <a
+                              href={selectedQuote.invoice_pdf_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                            >
+                              <Download className="h-3.5 w-3.5" /> Download Invoice
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => handleSendInvoice(selectedQuote.quote_id)}
+                              disabled={sendingInvoiceQuoteId === selectedQuote.quote_id}
+                              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+                            >
+                              {sendingInvoiceQuoteId === selectedQuote.quote_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                              {invoiceSentQuoteId === selectedQuote.quote_id ? 'Sent!' : 'Send to Client'}
+                            </button>
+                          </div>
+                        )}
                       </div>
 
                       {/* Proceed to Booking — always available */}
@@ -1026,7 +1209,7 @@ const ServiceRequestSummaryPage = () => {
                       </div>
                     </div>
 
-                    {/* ── Make Payment form ── */}
+                    {/* ── Make Payment ── */}
                     <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
                       <div className="px-5 py-3.5 border-b border-slate-100 bg-slate-50">
                         <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Make Payment</p>
@@ -1040,100 +1223,16 @@ const ServiceRequestSummaryPage = () => {
                         </div>
                       )}
 
-                      <form onSubmit={handlePaymentSubmit} className="px-5 pb-5 pt-4 space-y-3">
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                          <div>
-                            <label className={labelCls}>Amount Received (LKR) <span className="text-red-500">*</span></label>
-                            <input
-                              required
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={paymentForm.amount_received}
-                              onChange={e => { setPaymentSuccess(''); setPaymentForm({ ...paymentForm, amount_received: e.target.value }); }}
-                              placeholder="0.00"
-                              className={inputCls}
-                            />
-                          </div>
-                          <div>
-                            <label className={labelCls}>Payment Method</label>
-                            <select
-                              value={paymentForm.payment_method}
-                              onChange={e => setPaymentForm({ ...paymentForm, payment_method: e.target.value })}
-                              className={inputCls}
-                            >
-                              <option value="BANK_TRANSFER">Bank Transfer</option>
-                              <option value="CASH_DEPOSIT">Cash Deposit</option>
-                              <option value="CASH">Cash</option>
-                              <option value="CHEQUE">Cheque</option>
-                            </select>
-                          </div>
-                        </div>
-
-                        {requiresBankAccount && (
-                          <div>
-                            <label className={labelCls}>Bank Account <span className="text-red-500">*</span></label>
-                            <select
-                              required
-                              value={paymentForm.bank_account_id}
-                              onChange={e => setPaymentForm({ ...paymentForm, bank_account_id: e.target.value })}
-                              className={inputCls}
-                            >
-                              <option value="">Select bank account</option>
-                              {bankAccounts.map(a => (
-                                <option key={a.account_id} value={a.account_id}>
-                                  {a.account_nickname} ({a.bank_name})
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        )}
-
-                        {isCheque && (
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <label className={labelCls}>Cheque Number <span className="text-red-500">*</span></label>
-                              <input required value={paymentForm.cheque_number} onChange={e => setPaymentForm({ ...paymentForm, cheque_number: e.target.value })} placeholder="Cheque No." className={inputCls} />
-                            </div>
-                            <div>
-                              <label className={labelCls}>Cheque Date <span className="text-red-500">*</span></label>
-                              <input required type="date" value={paymentForm.cheque_date} onChange={e => setPaymentForm({ ...paymentForm, cheque_date: e.target.value })} className={inputCls} />
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                          <div>
-                            <label className={labelCls}>Reference Number</label>
-                            <input value={paymentForm.reference_number} onChange={e => setPaymentForm({ ...paymentForm, reference_number: e.target.value })} placeholder="Optional" className={inputCls} />
-                          </div>
-                          <div>
-                            <label className={labelCls}>Notes</label>
-                            <input value={paymentForm.notes} onChange={e => setPaymentForm({ ...paymentForm, notes: e.target.value })} placeholder="Optional" className={inputCls} />
-                          </div>
-                        </div>
-
-                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 flex items-center gap-3">
-                          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors flex-shrink-0">
-                            <Upload className="h-3.5 w-3.5" />
-                            {paymentSlipFile ? 'Change File' : 'Attach Slip'}
-                            <input type="file" accept="image/*,.pdf,.doc,.docx" className="hidden" onChange={e => setPaymentSlipFile(e.target.files?.[0] || null)} />
-                          </label>
-                          {paymentSlipFile
-                            ? <p className="text-xs text-slate-600 truncate">{paymentSlipFile.name}</p>
-                            : <p className="text-xs text-slate-400">Upload payment slip (image or PDF)</p>
-                          }
-                        </div>
-
+                      <div className="px-5 pb-5 pt-4">
                         <button
-                          type="submit"
-                          disabled={submitting}
-                          className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          type="button"
+                          onClick={() => { setPaymentSuccess(''); setShowPaymentModal(true); }}
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
                         >
-                          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CircleDollarSign className="h-4 w-4" />}
-                          {submitting ? 'Saving…' : 'Record Payment'}
+                          <CircleDollarSign className="h-4 w-4" />
+                          Record Payment
                         </button>
-                      </form>
+                      </div>
                     </div>
 
                     {/* ── Payment history ── */}
@@ -1260,7 +1359,7 @@ const ServiceRequestSummaryPage = () => {
                     <StatusDot status={selectedQuoteStatus} config={QUOTE_STATUS_CONFIG} />
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                    <QuoteStat label="Total"     value={money(selectedQuote.total_amount)} />
+                    <QuoteStat label="Total"     value={money(selectedQuote.combined_total)} />
                     <QuoteStat label="Paid"      value={money(selectedQuote.total_paid)}          accent="text-emerald-700" />
                     <QuoteStat label="Remaining" value={money(selectedQuote.remaining_amount)}     accent="text-amber-700" />
                     <QuoteStat label="Payments"  value={String(selectedQuote.payment_count)} />
@@ -1289,6 +1388,14 @@ const ServiceRequestSummaryPage = () => {
           </div>
         </div>
       </div>
+      {showPaymentModal && selectedQuote && (
+        <PaymentAllocationModal
+          quoteId={selectedQuote.quote_id}
+          onClose={() => setShowPaymentModal(false)}
+          onRecorded={handlePaymentAllocated}
+        />
+      )}
+
       {/* ── Receipt send popup ── */}
       {showReceiptPopup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">

@@ -18,6 +18,7 @@ router.get('/', ctrl.listSalespersons);
 
 // Audit trail for one salesperson
 router.get('/:salesperson_id/bookings', ctrl.getSalespersonBookings);
+router.get('/:salesperson_id/clients', ctrl.getSalespersonClients);
 
 // Per-booking current/origin/history
 router.get('/booking/:booking_id', ctrl.getBookingSalespersonHandler);
@@ -25,5 +26,10 @@ router.get('/booking/:booking_id', ctrl.getBookingSalespersonHandler);
 // Credit (initial) and switch (pointer-only)
 router.post('/booking/:booking_id/credit', ctrl.creditHandler);
 router.put('/booking/:booking_id/switch', ctrl.switchHandler);
+
+// Per-client current/origin/history (registration crediting — separate metric)
+router.get('/client/:client_id', ctrl.getClientSalespersonHandler);
+router.post('/client/:client_id/credit', ctrl.creditClientHandler);
+router.put('/client/:client_id/switch', ctrl.switchClientHandler);
 
 module.exports = router;

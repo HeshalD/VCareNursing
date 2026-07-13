@@ -1,6 +1,6 @@
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
-const { getOverview, getTransactions, getAdvancesSummary, getStaffWalletsSummary, getCreditAlertsSummary, getRevenueChart, getPaymentMethodsChart, getTransactionCategoriesChart } = require('../controllers/financesController');
+const { getOverview, getAdvancesSummary, getStaffWalletsSummary, getCreditAlertsSummary, getRevenueChart, getPaymentMethodsChart, getTransactionCategoriesChart } = require('../controllers/financesController');
 
 const router = express.Router();
 
@@ -10,9 +10,6 @@ router.use(restrictTo('SUPER_ADMIN'));
 
 // GET /api/finances/overview - Get financial overview
 router.get('/overview', getOverview);
-
-// GET /api/finances/transactions - Get paginated transactions with filters
-router.get('/transactions', getTransactions);
 
 // GET /api/finances/advances-summary - Get staff advances summary
 router.get('/advances-summary', getAdvancesSummary);

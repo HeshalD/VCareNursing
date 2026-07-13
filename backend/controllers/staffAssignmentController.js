@@ -487,7 +487,7 @@ exports.assignStaffToBooking = async (req, res) => {
         const staffSms = `Hi ${staff.full_name}, you have been assigned to a new booking.\n\nPatient: ${patient_name || 'N/A'}\nLocation: ${location_address || 'N/A'}\nConditions: ${conditions}\nStart Date: ${formattedDate}${timeLine}\n\nLog in to the staff portal for full details. - VCare Nursing`;
 
         const results = await Promise.allSettled([
-          sendBookingConfirmed(clientMobile, clientName, staff.full_name, formattedDate, formattedTime || '9:00 AM'),
+          sendBookingConfirmed(clientMobile, clientName, staff.full_name, formattedDate, staffProfileUrl),
           sendSms(clientMobile, clientSms),
           ...(staffMobile ? [
             sendStaffNewAssignment(staffMobile, staff.full_name, patient_name || 'N/A', location_address || 'N/A', conditions, staffStartLabel),

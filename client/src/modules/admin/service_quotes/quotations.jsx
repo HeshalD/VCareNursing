@@ -5,7 +5,6 @@ import {
   RefreshCw,
   Plus,
   X,
-  Upload,
   CheckCircle,
   XCircle,
   AlertCircle,
@@ -13,29 +12,16 @@ import {
   Download,
   Loader2,
   Check,
+  Send,
+  BadgeDollarSign,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import PaymentAllocationModal from './PaymentAllocationModal';
 
-const paymentMethodOptions = [
-  'BANK_TRANSFER',
-  'CASH_DEPOSIT',
-  'CASH',
-  'CHEQUE'
-];
-
-const initialPaymentForm = {
-  amount_received: '',
-  payment_method: 'BANK_TRANSFER',
-  bank_account_id: '',
-  cheque_number: '',
-  cheque_date: '',
-  reference_number: '',
-  notes: ''
-};
-
-const statusFilters = ['ALL', 'FULLY_PAID', 'PARTIALLY_PAID', 'UNPAID', 'OVERPAID'];
+const PAYMENT_STATUS_FILTERS = ['ALL', 'FULLY_PAID', 'PARTIALLY_PAID', 'UNPAID', 'OVERPAID'];
+const INVOICE_STATUS_FILTERS = ['ALL', 'INVOICED', 'NOT_INVOICED'];
 
 const getPaymentStatus = (quote) => {
   const total = parseFloat(quote.total_amount || 0);
@@ -47,11 +33,57 @@ const getPaymentStatus = (quote) => {
   return 'PARTIALLY_PAID';
 };
 
-const paymentStatusStyles = {
-  FULLY_PAID: 'bg-green-100 text-green-700 border-green-200',
-  PARTIALLY_PAID: 'bg-amber-100 text-amber-700 border-amber-200',
-  UNPAID: 'bg-slate-100 text-slate-700 border-slate-200',
-  OVERPAID: 'bg-red-100 text-red-700 border-red-200'
+const PAYMENT_STATUS_CONFIG = {
+  FULLY_PAID: { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Fully Paid' },
+  PARTIALLY_PAID: { dot: 'bg-amber-400', text: 'text-amber-700', label: 'Partially Paid' },
+  UNPAID: { dot: 'bg-slate-400', text: 'text-slate-600', label: 'Unpaid' },
+  OVERPAID: { dot: 'bg-red-400', text: 'text-red-700', label: 'Overpaid' },
+};
+
+const QUOTE_STATUS_CONFIG = {
+  ACCEPTED: { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Accepted' },
+  REJECTED: { dot: 'bg-red-400', text: 'text-red-700', label: 'Rejected' },
+  SENT: { dot: 'bg-blue-400', text: 'text-blue-700', label: 'Sent' },
+};
+
+const PAYMENT_RECORD_STATUS_CONFIG = {
+  VERIFIED: { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Verified' },
+  PENDING: { dot: 'bg-amber-400', text: 'text-amber-700', label: 'Pending' },
+  REJECTED: { dot: 'bg-red-400', text: 'text-red-700', label: 'Rejected' },
+};
+
+const StatusDot = ({ config, status, fallbackLabel }) => {
+  const cfg = config[status] || { dot: 'bg-slate-400', text: 'text-slate-600', label: fallbackLabel || status || '—' };
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
+      {cfg.label}
+    </span>
+  );
+};
+
+// Invoiced/not-invoiced is derived purely from whether the combined invoice
+// has been generated yet (quote.invoice_code) — see quoteController.ensureCombinedInvoice.
+const InvoiceStatusDot = ({ invoiceCode }) => (
+  <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${invoiceCode ? 'text-emerald-700' : 'text-slate-500'}`}>
+    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${invoiceCode ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+    {invoiceCode ? 'Invoiced' : 'Not Invoiced'}
+  </span>
+);
+
+const ProgressBar = ({ percent, status }) => {
+  const barColor =
+    status === 'OVERPAID' ? 'bg-red-500' :
+    status === 'FULLY_PAID' ? 'bg-emerald-500' :
+    status === 'PARTIALLY_PAID' ? 'bg-amber-400' : 'bg-slate-300';
+  return (
+    <div className="flex items-center gap-2">
+      <div className="w-16 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+        <div className={`h-full ${barColor}`} style={{ width: `${Math.min(100, Math.max(0, percent))}%` }} />
+      </div>
+      <span className="text-xs text-slate-500 tabular-nums">{percent}%</span>
+    </div>
+  );
 };
 
 const money = (value) =>
@@ -59,6 +91,86 @@ const money = (value) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   })}`;
+
+const SectionHeader = ({ title }) => (
+  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">{title}</p>
+);
+
+const inputCls = 'w-full rounded-lg border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-colors';
+const primaryBtnCls = 'inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+const ghostBtnCls = 'inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+const iconBtnCls = 'inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
+
+// Registration fee is treated as the first "bucket" any payment against the
+// SERVICE quote fills (see paymentTrackingController.recordPayment) — the
+// same threshold basis as service_paid (payment_tracking sum for this
+// quote_id only, not the combined service+product figure).
+const getRegFeeInfo = (servicePaid, lineItems) => {
+  const regItem = (lineItems || []).find((li) => li.is_registration_fee);
+  if (!regItem) return null;
+  const amount = parseFloat(regItem.amount) || 0;
+  const paid = parseFloat(servicePaid) || 0;
+  return {
+    amount,
+    allocated: Math.min(paid, amount),
+    remaining: Math.max(amount - paid, 0),
+    settled: paid >= amount,
+  };
+};
+
+const RegFeeAllocationCard = ({ info }) => {
+  if (!info) return null;
+  return (
+    <div>
+      <SectionHeader title="Registration Fee" />
+      <div className={`rounded-lg border px-3 py-2.5 ${info.settled ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
+        <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
+          <BadgeDollarSign className="h-3.5 w-3.5" /> Allocated from payments
+        </div>
+        <div className="mt-1.5 flex items-center justify-between text-xs">
+          <span className="text-slate-500">{money(info.allocated)} of {money(info.amount)}</span>
+          {info.settled ? (
+            <span className="flex items-center gap-1 font-medium text-emerald-700">
+              <CheckCircle className="h-3.5 w-3.5" /> Settled
+            </span>
+          ) : (
+            <span className="font-medium text-amber-700">{money(info.remaining)} remaining</span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Mirrors backend quoteController.expandProductLineItemsForDisplay: a rental
+// item's billing cadence (and specific unit, if chosen) is appended to its
+// description, and its own deposit is shown as a separate line right after
+// it — same shape the merged PDF and ModularQuoteBuilder's preview show.
+const expandProductLineItems = (items) => {
+  const out = [];
+  for (const li of items || []) {
+    if (li.rental_billing_type) {
+      const billingLabel = li.rental_billing_type === 'RECURRING' ? 'Billed monthly' : 'One-time, fixed period';
+      const unitLabel = li.unit_code ? ` — Unit ${li.unit_code}` : '';
+      out.push({ ...li, description: `${li.description}${unitLabel} (${billingLabel})`, isProductItem: true });
+
+      const depositAmt = parseFloat(li.deposit_amount) || 0;
+      if (depositAmt > 0) {
+        out.push({
+          line_item_id: `${li.line_item_id}-deposit`,
+          description: `Refundable Deposit for ${li.description} (fully refundable on return)`,
+          quantity: 1,
+          unit_price: depositAmt,
+          amount: depositAmt,
+          isProductItem: true,
+        });
+      }
+    } else {
+      out.push({ ...li, isProductItem: true });
+    }
+  }
+  return out;
+};
 
 const QuotationsPage = () => {
   const navigate = useNavigate();
@@ -68,33 +180,31 @@ const QuotationsPage = () => {
 
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [invoiceFilter, setInvoiceFilter] = useState('ALL');
   const [quotations, setQuotations] = useState([]);
   const [selectedQuote, setSelectedQuote] = useState(null);
 
-  const [bankAccounts, setBankAccounts] = useState([]);
-  const [paymentForm, setPaymentForm] = useState(initialPaymentForm);
-  const [paymentSlipFile, setPaymentSlipFile] = useState(null);
-  const [showPaymentForm, setShowPaymentForm] = useState(false);
-  const [submittingPayment, setSubmittingPayment] = useState(false);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
 
   const [paymentsLoading, setPaymentsLoading] = useState(false);
   const [payments, setPayments] = useState([]);
   const [actingPaymentId, setActingPaymentId] = useState(null);
   const [quoteStatusBusy, setQuoteStatusBusy] = useState('');
   const [quotePdfBusy, setQuotePdfBusy] = useState(false);
+  const [sendingInvoice, setSendingInvoice] = useState(false);
+  const [invoiceSent, setInvoiceSent] = useState(false);
 
-  const requiresBankAccount = ['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(paymentForm.payment_method);
-  const isCheque = paymentForm.payment_method === 'CHEQUE';
+  // Line items for the selected quote — the service quote's own charges,
+  // plus a companion PRODUCT quote's items (products/rentals/deposits added
+  // via ModularQuoteBuilder), if one exists. See expandProductLineItems above.
+  const [selectedQuoteItems, setSelectedQuoteItems] = useState(null);
+  const [itemsLoading, setItemsLoading] = useState(false);
 
-  const fetchBankAccounts = async () => {
-    try {
-      const response = await apiClient.getBankAccounts();
-      setBankAccounts(response.data || []);
-    } catch (err) {
-      console.error('Failed to fetch bank accounts', err);
-    }
-  };
-
+  // Lists every quotation for every service request (not just the one
+  // service_requests.active_quote_id currently points to — that only gets
+  // set when a quote is actually sent via "Generate & Send", so a freshly
+  // created or download-only quote would otherwise never appear here, even
+  // though client_detail_page.jsx's history view already shows it).
   const fetchQuotations = async () => {
     try {
       setLoading(true);
@@ -102,33 +212,61 @@ const QuotationsPage = () => {
 
       const requestsRes = await apiClient.getAllServiceRequests();
       const requests = requestsRes.data || [];
-      const quoteCandidates = requests.filter((r) => r.active_quote_id);
+
+      const perRequestLists = await Promise.all(
+        requests.map((request) =>
+          apiClient.getServiceRequestQuoteList(request.request_id).catch(() => ({ data: [] }))
+        )
+      );
 
       const quoteRows = await Promise.all(
-        quoteCandidates.map(async (request) => {
-          const [quoteRes, progressRes] = await Promise.all([
-            apiClient.getServiceRequestQuotes(request.request_id),
-            apiClient.getQuotePaymentProgress(request.active_quote_id)
-          ]);
-
-          const quote = quoteRes.data || {};
-          return {
-            request_id: request.request_id,
-            quote_id: request.active_quote_id,
-            estimate_number: quote.estimate_number || progressRes.estimate_number || '-',
-            payer_name: request.payer_name,
-            payer_mobile: request.payer_mobile,
-            patient_name: request.patient_name,
-            service_type: request.service_type,
-            quote_status: quote.status,
-            total_amount: parseFloat(progressRes.total_amount || quote.total_amount || 0),
-            total_paid: parseFloat(progressRes.total_paid || 0),
-            remaining_amount: parseFloat(progressRes.remaining_amount || 0),
-            percent_paid: progressRes.percent_paid || '0.00',
-            payment_count: progressRes.payment_count || 0,
-            can_assign_staff: !!progressRes.can_assign_staff,
-            created_at: quote.created_at || request.created_at
-          };
+        requests.flatMap((request, idx) => {
+          const quotesForRequest = perRequestLists[idx]?.data || [];
+          return quotesForRequest.map(async (quote) => {
+            const serviceTotal = parseFloat(quote.total_amount || 0);
+            let productTotal = 0;
+            let productPaid = 0;
+            if (quote.product_quote_id) {
+              try {
+                const productDetail = await apiClient.getProductQuote(quote.product_quote_id);
+                productTotal = expandProductLineItems(productDetail?.data?.line_items)
+                  .reduce((s, li) => s + (parseFloat(li.amount) || 0), 0);
+              } catch { /* non-critical */ }
+              // quote.total_paid only sums the SERVICE quote's own
+              // payment_tracking rows — the linked PRODUCT invoice (paid
+              // separately via PaymentAllocationModal) lives in the generic
+              // `invoices` table and is never included there.
+              try {
+                const invRes = await apiClient.getProductInvoices({ quote_id: quote.product_quote_id });
+                const invoices = Array.isArray(invRes?.data) ? invRes.data : [];
+                productPaid = invoices.filter((i) => i.status === 'PAID').reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+              } catch { /* non-critical */ }
+            }
+            const total_amount = serviceTotal + productTotal;
+            const service_paid = parseFloat(quote.total_paid || 0);
+            const total_paid = service_paid + productPaid;
+            return {
+              request_id: request.request_id,
+              quote_id: quote.quote_id,
+              estimate_number: quote.estimate_number || '-',
+              payer_name: quote.payer_name || request.payer_name,
+              payer_mobile: quote.payer_mobile || request.payer_mobile,
+              patient_name: quote.patient_name || request.patient_name,
+              service_type: quote.service_type || request.service_type,
+              quote_status: quote.status,
+              product_quote_id: quote.product_quote_id || null,
+              invoice_code: quote.invoice_code || null,
+              invoice_pdf_url: quote.invoice_pdf_url || null,
+              total_amount,
+              service_paid,
+              total_paid,
+              remaining_amount: Math.max(total_amount - total_paid, 0),
+              percent_paid: total_amount > 0 ? ((total_paid / total_amount) * 100).toFixed(2) : '0.00',
+              payment_count: parseInt(quote.payment_count || 0, 10),
+              can_assign_staff: total_paid > 0,
+              created_at: quote.created_at
+            };
+          });
         })
       );
 
@@ -160,19 +298,45 @@ const QuotationsPage = () => {
     }
   };
 
+  // Note: quote.total_amount here is already the combined (service + product)
+  // total computed in fetchQuotations, so it's used as-is — not added to
+  // product_total again (that would double-count).
+  const fetchSelectedQuoteItems = async (quote) => {
+    try {
+      setItemsLoading(true);
+      const detail = await apiClient.getQuoteWithLineItems(quote.quote_id);
+      const line_items = Array.isArray(detail?.data?.line_items) ? detail.data.line_items : [];
+      let product_line_items = [];
+      const productQuoteId = quote.product_quote_id || detail?.data?.product_quote_id;
+      if (productQuoteId) {
+        try {
+          const productDetail = await apiClient.getProductQuote(productQuoteId);
+          product_line_items = expandProductLineItems(productDetail?.data?.line_items);
+        } catch { /* non-critical */ }
+      }
+      setSelectedQuoteItems({
+        line_items,
+        product_line_items,
+        combined_total: Number(quote.total_amount || 0),
+        product_quote_id: productQuoteId || null,
+      });
+    } catch {
+      setSelectedQuoteItems({ line_items: [], product_line_items: [], combined_total: Number(quote.total_amount || 0), product_quote_id: null });
+    } finally {
+      setItemsLoading(false);
+    }
+  };
+
   const selectQuote = async (quote) => {
     setSelectedQuote(quote);
-    setShowPaymentForm(false);
-    setPaymentForm(initialPaymentForm);
-    setPaymentSlipFile(null);
-    await fetchPayments(quote.quote_id);
+    setShowPaymentModal(false);
+    setSelectedQuoteItems(null);
+    setInvoiceSent(false);
+    await Promise.all([fetchPayments(quote.quote_id), fetchSelectedQuoteItems(quote)]);
   };
 
   useEffect(() => {
-    const init = async () => {
-      await Promise.all([fetchBankAccounts(), fetchQuotations()]);
-    };
-    init();
+    fetchQuotations();
   }, []);
 
   const filteredQuotes = useMemo(() => {
@@ -181,6 +345,13 @@ const QuotationsPage = () => {
       const status = getPaymentStatus(quote);
       const matchesStatus = statusFilter === 'ALL' || status === statusFilter;
       if (!matchesStatus) return false;
+
+      const matchesInvoice =
+        invoiceFilter === 'ALL' ||
+        (invoiceFilter === 'INVOICED' && quote.invoice_code) ||
+        (invoiceFilter === 'NOT_INVOICED' && !quote.invoice_code);
+      if (!matchesInvoice) return false;
+
       if (!q) return true;
 
       return (
@@ -195,53 +366,17 @@ const QuotationsPage = () => {
         .some((value) => String(value).toLowerCase().includes(q))
       );
     });
-  }, [quotations, searchTerm, statusFilter]);
+  }, [quotations, searchTerm, statusFilter, invoiceFilter]);
 
-  const handlePaymentMethodChange = (value) => {
-    setPaymentForm((prev) => ({
-      ...prev,
-      payment_method: value,
-      bank_account_id: ['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(value) ? prev.bank_account_id : '',
-      cheque_number: value === 'CHEQUE' ? prev.cheque_number : '',
-      cheque_date: value === 'CHEQUE' ? prev.cheque_date : ''
-    }));
-  };
+  const invoicedCount = useMemo(() => quotations.filter((q) => q.invoice_code).length, [quotations]);
 
-  const submitPayment = async (e) => {
-    e.preventDefault();
-    if (!selectedQuote) return;
-
-    if (selectedQuote.total_paid >= selectedQuote.total_amount) {
-      setError('This quotation is already fully paid. Additional payment is blocked.');
-      return;
-    }
-
-    try {
-      setSubmittingPayment(true);
-      setError('');
-      setSuccessMessage('');
-
-      const payload = {
-        amount_received: parseFloat(paymentForm.amount_received),
-        payment_method: paymentForm.payment_method,
-        bank_account_id: paymentForm.bank_account_id || null,
-        cheque_number: paymentForm.cheque_number || null,
-        cheque_date: paymentForm.cheque_date || null,
-        reference_number: paymentForm.reference_number || null,
-        notes: paymentForm.notes || null
-      };
-
-      await apiClient.recordQuotePayment(selectedQuote.quote_id, payload, paymentSlipFile);
-      setSuccessMessage('Payment recorded successfully.');
-      setShowPaymentForm(false);
-      setPaymentForm(initialPaymentForm);
-      setPaymentSlipFile(null);
-
+  const handlePaymentRecorded = async () => {
+    setShowPaymentModal(false);
+    setSuccessMessage('Payment recorded successfully.');
+    if (selectedQuote) {
       await Promise.all([fetchQuotations(), fetchPayments(selectedQuote.quote_id)]);
-    } catch (err) {
-      setError(err.message || 'Failed to record payment');
-    } finally {
-      setSubmittingPayment(false);
+    } else {
+      await fetchQuotations();
     }
   };
 
@@ -276,11 +411,15 @@ const QuotationsPage = () => {
     }
   };
 
-  const handleDownloadPdf = async (quoteId, estimateNumber) => {
+  // productQuoteId folds the companion PRODUCT quote's items (products/
+  // rentals added via ModularQuoteBuilder's Products & Rentals section) into
+  // this same PDF server-side (see quoteController.mergeProductQuoteIntoData)
+  // — without it, only the service quote's own charges would be included.
+  const handleDownloadPdf = async (quoteId, estimateNumber, productQuoteId) => {
     setQuotePdfBusy(true);
     try {
       setError('');
-      const res = await apiClient.generateQuotePdf(quoteId);
+      const res = await apiClient.generateQuotePdf(quoteId, productQuoteId);
       const url = res?.pdf_url || res?.data?.pdf_url;
       if (url) {
         const link = document.createElement('a');
@@ -296,6 +435,20 @@ const QuotationsPage = () => {
       setError(err.message || 'Failed to generate PDF');
     } finally {
       setQuotePdfBusy(false);
+    }
+  };
+
+  const handleSendInvoice = async (quoteId) => {
+    setSendingInvoice(true);
+    setInvoiceSent(false);
+    try {
+      setError('');
+      await apiClient.sendCombinedInvoice(quoteId);
+      setInvoiceSent(true);
+    } catch (err) {
+      setError(err.message || 'Failed to send invoice');
+    } finally {
+      setSendingInvoice(false);
     }
   };
 
@@ -324,382 +477,389 @@ const QuotationsPage = () => {
       title="Quotations"
       subtitle="View quotation payment progress, record payments, and verify/reject tracked payments."
       actions={
-        <button
-          onClick={fetchQuotations}
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-        >
-          <RefreshCw className="h-4 w-4" /> Refresh
+        <button onClick={fetchQuotations} title="Refresh" className={iconBtnCls}>
+          <RefreshCw className="h-4 w-4" />
         </button>
       }
     >
-      {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
-      {successMessage && (
-        <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-700">{successMessage}</div>
-      )}
+      <div className="space-y-4">
+        {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">{error}</div>}
+        {successMessage && (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-700">{successMessage}</div>
+        )}
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm lg:col-span-2">
-          <div className="border-b border-slate-200 p-4">
-            <div className="flex flex-col gap-3">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          {/* ── Quotation list ─────────────────────────────────────────────── */}
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden lg:col-span-2">
+            <div className="border-b border-slate-100 p-4 space-y-3">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   placeholder="Search by estimate, payer, care profile, phone, or service"
-                  className="w-full rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500"
+                  className={`${inputCls} pl-8`}
                 />
               </div>
-              <div className="flex flex-wrap gap-2">
-                {statusFilters.map((status) => (
-                  <button
-                    key={status}
-                    onClick={() => setStatusFilter(status)}
-                    className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-                      statusFilter === status
-                        ? 'border-blue-200 bg-blue-100 text-blue-700'
-                        : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    {status === 'ALL' ? 'All' : status.replace('_', ' ')}
-                  </button>
-                ))}
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Payment</span>
+                <div className="flex gap-0.5 rounded-lg bg-slate-100 p-1 flex-wrap">
+                  {PAYMENT_STATUS_FILTERS.map((status) => (
+                    <button
+                      key={status}
+                      onClick={() => setStatusFilter(status)}
+                      className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-all ${
+                        statusFilter === status ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      {status === 'ALL' ? 'All' : status.replace('_', ' ')}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Invoice</span>
+                <div className="flex gap-0.5 rounded-lg bg-slate-100 p-1 flex-wrap">
+                  {INVOICE_STATUS_FILTERS.map((status) => (
+                    <button
+                      key={status}
+                      onClick={() => setInvoiceFilter(status)}
+                      className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-all ${
+                        invoiceFilter === status ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      {status === 'ALL' ? 'All' : status === 'INVOICED' ? 'Invoiced' : 'Not Invoiced'}
+                      {status === 'INVOICED' && <span className="ml-1.5 tabular-nums text-slate-400">{invoicedCount}</span>}
+                      {status === 'NOT_INVOICED' && <span className="ml-1.5 tabular-nums text-slate-400">{quotations.length - invoicedCount}</span>}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
+
+            {loading ? (
+              <div className="flex items-center justify-center h-40">
+                <div className="text-sm text-slate-400">Loading quotations…</div>
+              </div>
+            ) : filteredQuotes.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 py-16 text-slate-400">
+                <FileText className="h-8 w-8" />
+                <p className="text-sm">No quotations found.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50">
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Estimate</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Client</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Total</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Remaining</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Progress</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Payment</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Invoice</th>
+                      <th className="sticky right-0 bg-slate-50 px-4 py-3" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredQuotes.map((quote) => {
+                      const status = getPaymentStatus(quote);
+                      const isSelected = selectedQuote?.quote_id === quote.quote_id;
+                      return (
+                        <tr
+                          key={quote.quote_id}
+                          className={`group cursor-pointer transition-colors ${isSelected ? 'bg-blue-50/60' : 'hover:bg-slate-50'}`}
+                          onClick={() => selectQuote(quote)}
+                        >
+                          <td className="px-4 py-3 font-semibold text-slate-900">{quote.estimate_number}</td>
+                          <td className="px-4 py-3">
+                            <p className="text-slate-700">{quote.payer_name}</p>
+                            <p className="text-xs text-slate-400">{quote.payer_mobile}</p>
+                          </td>
+                          <td className="px-4 py-3 text-right text-slate-700">{money(quote.total_amount)}</td>
+                          <td className="px-4 py-3 text-right font-medium text-slate-800">{money(quote.remaining_amount)}</td>
+                          <td className="px-4 py-3"><ProgressBar percent={Number(quote.percent_paid)} status={status} /></td>
+                          <td className="px-4 py-3 whitespace-nowrap"><StatusDot config={PAYMENT_STATUS_CONFIG} status={status} /></td>
+                          <td className="px-4 py-3 whitespace-nowrap"><InvoiceStatusDot invoiceCode={quote.invoice_code} /></td>
+                          <td className={`sticky right-0 px-4 py-3 text-right shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.08)] transition-colors ${isSelected ? 'bg-blue-50' : 'bg-white group-hover:bg-slate-50'}`}>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); navigate(`/admin/quotations/${quote.quote_id}`); }}
+                              title="View quotation details"
+                              className={iconBtnCls}
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
-          {loading ? (
-            <div className="p-4 text-sm text-slate-500">Loading quotations...</div>
-          ) : filteredQuotes.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 p-8 text-slate-500">
-              <FileText className="h-8 w-8" />
-              <p className="text-sm">No quotations found.</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-                  <tr>
-                    <th className="px-4 py-3">Estimate</th>
-                    <th className="px-4 py-3">Client</th>
-                    <th className="px-4 py-3">Total</th>
-                    <th className="px-4 py-3">Paid</th>
-                    <th className="px-4 py-3">Remaining</th>
-                    <th className="px-4 py-3">Progress</th>
-                    <th className="px-4 py-3">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredQuotes.map((quote) => {
-                    const status = getPaymentStatus(quote);
+          {/* ── Selected quote detail ──────────────────────────────────────── */}
+          <div className="space-y-4">
+            {!selectedQuote ? (
+              <div className="bg-white border border-slate-200 rounded-xl p-4 text-sm text-slate-400">
+                Select a quotation to view payment actions.
+              </div>
+            ) : (
+              <>
+                <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                  {(() => {
+                    const hasPaid = Number(selectedQuote.total_paid || 0) > 0;
+                    const effectiveStatus = hasPaid ? 'ACCEPTED' : (selectedQuote.quote_status || 'SENT');
+                    const isBusy = quoteStatusBusy === selectedQuote.quote_id;
+                    const canAction = !hasPaid && !['ACCEPTED', 'REJECTED'].includes(selectedQuote.quote_status);
+                    const combinedTotal = selectedQuoteItems ? selectedQuoteItems.combined_total : selectedQuote.total_amount;
+                    const remaining = Math.max(combinedTotal - selectedQuote.total_paid, 0);
+                    const paymentStatus = getPaymentStatus(selectedQuote);
 
                     return (
-                      <tr
-                        key={quote.quote_id}
-                        className={`cursor-pointer border-t border-slate-100 hover:bg-slate-50 ${
-                          selectedQuote?.quote_id === quote.quote_id ? 'bg-blue-50/50' : ''
-                        } ${status === 'OVERPAID' ? 'bg-red-50/60' : ''}`}
-                        onClick={() => selectQuote(quote)}
-                      >
-                        <td className="px-4 py-3 font-medium text-slate-900">{quote.estimate_number}</td>
-                        <td className="px-4 py-3 text-slate-700">
-                          <div>{quote.payer_name}</div>
-                          <div className="text-xs text-slate-500">{quote.payer_mobile}</div>
-                        </td>
-                        <td className="px-4 py-3 text-slate-700">{money(quote.total_amount)}</td>
-                        <td className="px-4 py-3 text-green-700">{money(quote.total_paid)}</td>
-                        <td className="px-4 py-3 text-amber-700">{money(quote.remaining_amount)}</td>
-                        <td className="px-4 py-3">
-                          <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700">
-                            {quote.percent_paid}%
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className={`rounded-full border px-2 py-1 text-xs font-medium ${paymentStatusStyles[status]}`}>
-                            {status.replace('_', ' ')}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-4">
-          {!selectedQuote ? (
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-500 shadow-sm">
-              Select a quotation to view payment actions.
-            </div>
-          ) : (
-            <>
-              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                {(() => {
-                  const hasPaid = Number(selectedQuote.total_paid || 0) > 0;
-                  const effectiveStatus = hasPaid ? 'ACCEPTED' : (selectedQuote.quote_status || 'SENT');
-                  const isBusy = quoteStatusBusy === selectedQuote.quote_id;
-                  const canAction = !hasPaid && !['ACCEPTED', 'REJECTED'].includes(selectedQuote.quote_status);
-                  return (
-                    <>
-                      <div className="mb-3 flex items-start justify-between gap-2">
-                        <div>
-                          <h3 className="text-base font-semibold text-slate-900">{selectedQuote.estimate_number}</h3>
-                          <p className="text-sm text-slate-500">{selectedQuote.payer_name}</p>
-                        </div>
-                        <button
-                          onClick={() => navigate(`/admin/quotations/${selectedQuote.quote_id}`)}
-                          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                        >
-                          <ExternalLink className="h-3.5 w-3.5" /> View Details
-                        </button>
-                      </div>
-
-                      <div className="space-y-2 text-sm">
-                        <div className="flex justify-between"><span className="text-slate-500">Total</span><span>{money(selectedQuote.total_amount)}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">Paid</span><span className="text-green-700">{money(selectedQuote.total_paid)}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">Remaining</span><span className="text-amber-700">{money(selectedQuote.remaining_amount)}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">Progress</span><span>{selectedQuote.percent_paid}%</span></div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-slate-500">Status</span>
-                          <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${
-                            effectiveStatus === 'ACCEPTED' ? 'bg-green-100 text-green-700 border-green-200' :
-                            effectiveStatus === 'REJECTED' ? 'bg-red-100 text-red-700 border-red-200' :
-                            'bg-slate-100 text-slate-700 border-slate-200'
-                          }`}>{effectiveStatus}</span>
-                        </div>
-                      </div>
-
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <button
-                          onClick={() => handleDownloadPdf(selectedQuote.quote_id, selectedQuote.estimate_number)}
-                          disabled={quotePdfBusy}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                        >
-                          {quotePdfBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                          {quotePdfBusy ? 'Generating…' : 'Download PDF'}
-                        </button>
-                      </div>
-
-                      {canAction && (
-                        <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
-                          <span className="w-full text-xs text-slate-500">No payment recorded —</span>
-                          <button
-                            onClick={() => handleQuoteStatusUpdate(selectedQuote.quote_id, 'ACCEPTED')}
-                            disabled={isBusy}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
-                          >
-                            {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                            Mark Accepted
-                          </button>
-                          <button
-                            onClick={() => handleQuoteStatusUpdate(selectedQuote.quote_id, 'REJECTED')}
-                            disabled={isBusy}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-100 disabled:opacity-60"
-                          >
-                            {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
-                            Mark Rejected
-                          </button>
-                        </div>
-                      )}
-
-                      {!canAction && selectedQuote.quote_status === 'REJECTED' && (
-                        <div className="mt-3 border-t border-slate-100 pt-3">
-                          <button
-                            onClick={() => handleQuoteStatusUpdate(selectedQuote.quote_id, 'SENT')}
-                            disabled={isBusy}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
-                          >
-                            {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                            Reset to Pending
-                          </button>
-                        </div>
-                      )}
-                    </>
-                  );
-                })()}
-
-                {getPaymentStatus(selectedQuote) === 'OVERPAID' && (
-                  <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700">
-                    Overpaid detected: paid exceeds quotation amount. Recording more payments is blocked.
-                  </div>
-                )}
-
-
-                <button
-                  onClick={() => setShowPaymentForm((v) => !v)}
-                  disabled={selectedQuote.total_paid >= selectedQuote.total_amount}
-                  className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
-                >
-                  {showPaymentForm ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-                  {showPaymentForm ? 'Close Form' : selectedQuote.total_paid >= selectedQuote.total_amount ? 'Payment Locked' : 'Record Payment'}
-                </button>
-
-                {showPaymentForm && (
-                  <form onSubmit={submitPayment} className="mt-4 space-y-3 border-t border-slate-100 pt-4">
-                    <input
-                      required
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={paymentForm.amount_received}
-                      onChange={(e) => setPaymentForm({ ...paymentForm, amount_received: e.target.value })}
-                      placeholder="Amount Received"
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
-                    />
-
-                    <select
-                      value={paymentForm.payment_method}
-                      onChange={(e) => handlePaymentMethodChange(e.target.value)}
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
-                    >
-                      {paymentMethodOptions.map((method) => (
-                        <option key={method} value={method}>{method}</option>
-                      ))}
-                    </select>
-
-                    {requiresBankAccount && (
-                      <select
-                        required
-                        value={paymentForm.bank_account_id}
-                        onChange={(e) => setPaymentForm({ ...paymentForm, bank_account_id: e.target.value })}
-                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
-                      >
-                        <option value="">Select Bank Account</option>
-                        {bankAccounts.map((acc) => (
-                          <option key={acc.account_id} value={acc.account_id}>
-                            {acc.account_nickname} ({acc.account_number})
-                          </option>
-                        ))}
-                      </select>
-                    )}
-
-                    {isCheque && (
                       <>
-                        <input
-                          required
-                          value={paymentForm.cheque_number}
-                          onChange={(e) => setPaymentForm({ ...paymentForm, cheque_number: e.target.value })}
-                          placeholder="Cheque Number"
-                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
-                        />
-                        <input
-                          required
-                          type="date"
-                          value={paymentForm.cheque_date}
-                          onChange={(e) => setPaymentForm({ ...paymentForm, cheque_date: e.target.value })}
-                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
-                        />
-                      </>
-                    )}
-
-                    <input
-                      value={paymentForm.reference_number}
-                      onChange={(e) => setPaymentForm({ ...paymentForm, reference_number: e.target.value })}
-                      placeholder="Reference Number (optional)"
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
-                    />
-
-                    <div className="rounded-lg border border-slate-200 p-3">
-                      <label className="mb-2 block text-xs font-medium text-slate-600">Upload Payment Slip (optional)</label>
-                      <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100">
-                        <Upload className="h-3.5 w-3.5" /> Choose File
-                        <input
-                          type="file"
-                          accept="image/*,.pdf,.doc,.docx"
-                          className="hidden"
-                          onChange={(e) => setPaymentSlipFile(e.target.files?.[0] || null)}
-                        />
-                      </label>
-                      {paymentSlipFile && (
-                        <p className="mt-2 text-xs text-slate-600">Selected: {paymentSlipFile.name}</p>
-                      )}
-                    </div>
-
-                    <textarea
-                      value={paymentForm.notes}
-                      onChange={(e) => setPaymentForm({ ...paymentForm, notes: e.target.value })}
-                      placeholder="Notes (optional)"
-                      rows={2}
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
-                    />
-
-                    <button
-                      type="submit"
-                      disabled={submittingPayment}
-                      className="w-full rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                    >
-                      {submittingPayment ? 'Recording...' : 'Submit Payment'}
-                    </button>
-                  </form>
-                )}
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <h3 className="mb-3 text-base font-semibold text-slate-900">Payments</h3>
-
-                {paymentsLoading ? (
-                  <p className="text-sm text-slate-500">Loading payments...</p>
-                ) : payments.length === 0 ? (
-                  <p className="text-sm text-slate-500">No payments recorded yet.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {payments.map((payment) => (
-                      <div key={payment.payment_id} className="rounded-lg border border-slate-200 p-3">
-                        <div className="mb-2 flex items-center justify-between">
-                          <p className="text-sm font-medium text-slate-900">{money(payment.amount)}</p>
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">{payment.status}</span>
-                        </div>
-                        <p className="text-xs text-slate-500">{payment.payment_method} • {new Date(payment.payment_date).toLocaleString()}</p>
-                        {payment.reference_number && (
-                          <p className="text-xs text-slate-500">Ref: {payment.reference_number}</p>
-                        )}
-                        {payment.slip_url && (
-                          <a
-                            href={payment.slip_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-xs font-medium text-blue-600 hover:text-blue-700"
-                          >
-                            View payment slip
-                          </a>
-                        )}
-
-                        {payment.status !== 'VERIFIED' && (
-                          <div className="mt-2 flex gap-2">
-                            <button
-                              onClick={() => verifyPayment(payment.payment_id)}
-                              disabled={actingPaymentId === payment.payment_id}
-                              className="inline-flex items-center gap-1 rounded-md border border-green-200 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-50"
-                            >
-                              <CheckCircle className="h-3.5 w-3.5" /> Verify
-                            </button>
-                            <button
-                              onClick={() => rejectPayment(payment.payment_id)}
-                              disabled={actingPaymentId === payment.payment_id}
-                              className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
-                            >
-                              <XCircle className="h-3.5 w-3.5" /> Reject
-                            </button>
+                        <div className="flex items-start justify-between gap-2 px-5 py-4 border-b border-slate-100">
+                          <div>
+                            <h3 className="text-sm font-semibold text-slate-900">{selectedQuote.estimate_number}</h3>
+                            <p className="text-xs text-slate-400 mt-0.5">{selectedQuote.payer_name}</p>
                           </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
+                          <button
+                            onClick={() => navigate(`/admin/quotations/${selectedQuote.quote_id}`)}
+                            title="View full details"
+                            className={iconBtnCls}
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
 
-          {selectedQuote?.can_assign_staff && (
-            <div className="flex items-start gap-2 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">
-              <AlertCircle className="mt-0.5 h-4 w-4" />
-              Staff can be assigned for this quote based on received payments.
-            </div>
-          )}
+                        <div className="px-5 py-4 space-y-4">
+                          {/* Summary */}
+                          <div>
+                            <SectionHeader title="Summary" />
+                            <div className="grid grid-cols-3 gap-2 mb-3">
+                              <div className="bg-slate-50 border border-slate-100 rounded-lg p-2.5">
+                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Total</p>
+                                <p className="text-sm font-semibold text-slate-900 mt-0.5">{money(combinedTotal)}</p>
+                              </div>
+                              <div className="bg-slate-50 border border-slate-100 rounded-lg p-2.5">
+                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Paid</p>
+                                <p className="text-sm font-semibold text-emerald-700 mt-0.5">{money(selectedQuote.total_paid)}</p>
+                              </div>
+                              <div className="bg-slate-50 border border-slate-100 rounded-lg p-2.5">
+                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Remaining</p>
+                                <p className="text-sm font-semibold text-amber-700 mt-0.5">{money(remaining)}</p>
+                              </div>
+                            </div>
+                            <ProgressBar percent={Number(selectedQuote.percent_paid)} status={paymentStatus} />
+                            <div className="flex items-center gap-4 mt-3">
+                              <StatusDot config={PAYMENT_STATUS_CONFIG} status={paymentStatus} />
+                              <StatusDot config={QUOTE_STATUS_CONFIG} status={effectiveStatus} />
+                              <InvoiceStatusDot invoiceCode={selectedQuote.invoice_code} />
+                            </div>
+                          </div>
+
+                          <RegFeeAllocationCard
+                            info={getRegFeeInfo(selectedQuote.service_paid, [
+                              ...(selectedQuoteItems?.line_items || []),
+                            ])}
+                          />
+
+                          {/* Line items */}
+                          {itemsLoading ? (
+                            <div className="flex items-center gap-2 text-xs text-slate-400">
+                              <Loader2 className="h-3 w-3 animate-spin" /> Loading line items…
+                            </div>
+                          ) : selectedQuoteItems && (selectedQuoteItems.line_items.length > 0 || selectedQuoteItems.product_line_items.length > 0) && (
+                            <div>
+                              <SectionHeader title="Line Items" />
+                              <div className="space-y-1.5">
+                                {[...selectedQuoteItems.line_items, ...selectedQuoteItems.product_line_items].map((li) => {
+                                  const isDiscount = li.item_type === 'DISCOUNT';
+                                  const amount = Math.abs(parseFloat(li.amount) || 0);
+                                  return (
+                                    <div key={li.line_item_id} className="flex items-start justify-between gap-2 text-xs">
+                                      <span className={li.isProductItem ? 'text-violet-700' : 'text-slate-600'}>
+                                        {li.description}{isDiscount && <span className="ml-1 text-slate-400">(Discount)</span>}
+                                      </span>
+                                      <span className={`shrink-0 font-medium tabular-nums ${isDiscount ? 'text-red-600' : li.isProductItem ? 'text-violet-700' : 'text-slate-800'}`}>
+                                        {isDiscount ? `(${money(amount)})` : money(amount)}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Invoice */}
+                          <div>
+                            <SectionHeader title="Combined Invoice" />
+                            {selectedQuote.invoice_code ? (
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-xs font-mono text-slate-600">{selectedQuote.invoice_code}</span>
+                                <a href={selectedQuote.invoice_pdf_url} target="_blank" rel="noreferrer" className={ghostBtnCls}>
+                                  <Download className="h-3.5 w-3.5" /> Download
+                                </a>
+                                <button onClick={() => handleSendInvoice(selectedQuote.quote_id)} disabled={sendingInvoice} className={primaryBtnCls}>
+                                  {sendingInvoice ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                                  {invoiceSent ? 'Sent!' : 'Send to Client'}
+                                </button>
+                              </div>
+                            ) : (
+                              <p className="text-xs text-slate-400">
+                                Not invoiced yet — the combined invoice is generated automatically once the service or a linked product portion is paid in full.
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Actions */}
+                          <div>
+                            <SectionHeader title="Actions" />
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                onClick={() => handleDownloadPdf(selectedQuote.quote_id, selectedQuote.estimate_number, selectedQuoteItems?.product_quote_id)}
+                                disabled={quotePdfBusy}
+                                className={ghostBtnCls}
+                              >
+                                {quotePdfBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                                {quotePdfBusy ? 'Generating…' : 'Download Quote PDF'}
+                              </button>
+
+                              {canAction && (
+                                <>
+                                  <button
+                                    onClick={() => handleQuoteStatusUpdate(selectedQuote.quote_id, 'ACCEPTED')}
+                                    disabled={isBusy}
+                                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition-colors disabled:opacity-60"
+                                  >
+                                    {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                                    Mark Accepted
+                                  </button>
+                                  <button
+                                    onClick={() => handleQuoteStatusUpdate(selectedQuote.quote_id, 'REJECTED')}
+                                    disabled={isBusy}
+                                    className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 transition-colors disabled:opacity-60"
+                                  >
+                                    {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
+                                    Mark Rejected
+                                  </button>
+                                </>
+                              )}
+
+                              {!canAction && selectedQuote.quote_status === 'REJECTED' && (
+                                <button
+                                  onClick={() => handleQuoteStatusUpdate(selectedQuote.quote_id, 'SENT')}
+                                  disabled={isBusy}
+                                  className={ghostBtnCls}
+                                >
+                                  {isBusy && <Loader2 className="h-3 w-3 animate-spin" />}
+                                  Reset to Pending
+                                </button>
+                              )}
+                            </div>
+                            {canAction && (
+                              <p className="text-xs text-slate-400 mt-2">No payment recorded yet for this quotation.</p>
+                            )}
+                          </div>
+
+                          {paymentStatus === 'OVERPAID' && (
+                            <div className="rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs text-red-700">
+                              Overpaid detected: paid exceeds quotation amount. Recording more payments is blocked.
+                            </div>
+                          )}
+
+                          <button
+                            onClick={() => setShowPaymentModal(true)}
+                            disabled={selectedQuote.total_paid >= selectedQuote.total_amount}
+                            className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <Plus className="h-4 w-4" />
+                            {selectedQuote.total_paid >= selectedQuote.total_amount ? 'Payment Locked' : 'Record Payment'}
+                          </button>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+
+                {/* Payments */}
+                <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                  <div className="px-5 py-3.5 border-b border-slate-100">
+                    <h3 className="text-sm font-semibold text-slate-900">Payments</h3>
+                  </div>
+
+                  <div className="p-4">
+                    {paymentsLoading ? (
+                      <p className="text-sm text-slate-400">Loading payments…</p>
+                    ) : payments.length === 0 ? (
+                      <p className="text-sm text-slate-400">No payments recorded yet.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {payments.map((payment) => (
+                          <div key={payment.payment_id} className="rounded-lg border border-slate-200 p-3">
+                            <div className="flex items-center justify-between">
+                              <p className="text-sm font-medium text-slate-900">{money(payment.amount)}</p>
+                              <StatusDot config={PAYMENT_RECORD_STATUS_CONFIG} status={payment.status} />
+                            </div>
+                            <p className="text-xs text-slate-400 mt-1">{payment.payment_method} · {new Date(payment.payment_date).toLocaleString()}</p>
+                            {payment.reference_number && (
+                              <p className="text-xs text-slate-400">Ref: {payment.reference_number}</p>
+                            )}
+                            {payment.slip_url && (
+                              <a href={payment.slip_url} target="_blank" rel="noreferrer" className="text-xs font-medium text-blue-600 hover:underline">
+                                View payment slip
+                              </a>
+                            )}
+
+                            {payment.status !== 'VERIFIED' && (
+                              <div className="mt-2 flex items-center gap-0.5">
+                                <button
+                                  onClick={() => verifyPayment(payment.payment_id)}
+                                  disabled={actingPaymentId === payment.payment_id}
+                                  title="Verify payment"
+                                  className="inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors disabled:opacity-40"
+                                >
+                                  <CheckCircle className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => rejectPayment(payment.payment_id)}
+                                  disabled={actingPaymentId === payment.payment_id}
+                                  title="Reject payment"
+                                  className="inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-40"
+                                >
+                                  <XCircle className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {selectedQuote?.can_assign_staff && (
+              <div className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                Staff can be assigned for this quote based on received payments.
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
+      {showPaymentModal && selectedQuote && (
+        <PaymentAllocationModal
+          quoteId={selectedQuote.quote_id}
+          onClose={() => setShowPaymentModal(false)}
+          onRecorded={handlePaymentRecorded}
+        />
+      )}
     </AdminLayout>
   );
 };

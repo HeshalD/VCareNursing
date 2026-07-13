@@ -1,77 +1,129 @@
 const db = require('../config/db');
+const { IN_CATEGORIES, OUT_CATEGORIES } = require('../utils/transactionFlow');
 
 const getOverview = async (req, res) => {
   try {
-    // Get total revenue collected from client payments
-    // (CLIENT_PAYMENT is the legacy category; current flows write BOOKING_PAYMENT / WALLET_TOPUP)
-    const totalRevenueQuery = `
-      SELECT COALESCE(SUM(amount), 0) as total_revenue_collected
+    // Real cash flow — same IN/OUT categorization used everywhere else (Transactions
+    // page, bank account ledgers). SERVICE_INVOICE/WALLET_DEBIT/etc. are accrual
+    // records, not cash movement, so they're deliberately excluded here.
+    // transaction_type = 'CREDIT' filters out REGISTRATION_FEE's DEBIT-side
+    // "charge" rows (see transactionFlow.js) — every other IN/OUT category is
+    // CREDIT-only already, so this is a no-op for them.
+    const cashFlowQuery = `
+      SELECT
+        COALESCE(SUM(amount) FILTER (WHERE category::text = ANY($1::text[]) AND transaction_type = 'CREDIT'), 0) AS total_money_in,
+        COALESCE(SUM(amount) FILTER (WHERE category::text = ANY($2::text[]) AND transaction_type = 'CREDIT'), 0) AS total_money_out
       FROM transactions
-      WHERE category IN ('CLIENT_PAYMENT', 'BOOKING_PAYMENT', 'WALLET_TOPUP')
     `;
 
-    // Get total invoiced amount
-    const totalInvoicedQuery = `
-      SELECT COALESCE(SUM(amount), 0) as total_invoiced
-      FROM transactions
-      WHERE category IN ('SERVICE_INVOICE', 'REGISTRATION_FEE')
+    // Outstanding = unpaid amounts across all three invoice mechanisms in the
+    // current system — these are three separate tables, not one, so each is
+    // summed independently rather than trying to force them into `transactions`.
+    const outstandingQuery = `
+      SELECT
+        COALESCE((SELECT SUM(amount) FROM booking_daily_invoices WHERE status = 'PENDING'), 0) AS outstanding_daily_invoices,
+        COALESCE((SELECT SUM(amount) FROM invoices WHERE status IN ('PENDING', 'OVERDUE')), 0) AS outstanding_product_rental_invoices,
+        COALESCE((SELECT SUM(amount) FROM invoices WHERE status = 'OVERDUE'), 0) AS overdue_product_rental_invoices,
+        COALESCE((SELECT SUM(reg_fee_amount) FROM client_profiles WHERE reg_fee_status = 'PENDING'), 0) AS outstanding_registration_fees
     `;
 
-    // Get total refunds issued
-    const totalRefundsQuery = `
-      SELECT COALESCE(SUM(amount), 0) as total_refunds_issued
-      FROM transactions
-      WHERE category = 'WALLET_REFUND'
+    // Genuine receivables — money actually owed right now, as opposed to
+    // "outstanding" above which also counts invoices that aren't due/decided
+    // yet. Two sources:
+    //  1. OVERDUE bookings' real ledger balance (total DEBITs - total CREDITs,
+    //     same math as dailyInvoicing.js's flagOverdueBookings / clientController's
+    //     getClientOverdueBreakdown). booking_daily_invoices is deliberately excluded
+    //     — it's just the not-yet-approved manual queue, and once a charge is
+    //     approved it becomes a DEBIT here anyway, so counting both would double-count.
+    //  2. OVERDUE product/rental invoices only — PENDING ones aren't late yet.
+    // Registration fees are intentionally excluded.
+    const receivablesQuery = `
+      SELECT COALESCE(SUM(GREATEST(total_debits - total_credits, 0)), 0) AS overdue_booking_balance
+      FROM (
+        SELECT
+          b.booking_id,
+          COALESCE(SUM(CASE WHEN t.transaction_type = 'DEBIT' THEN t.amount ELSE 0 END), 0) AS total_debits,
+          COALESCE(SUM(CASE WHEN t.transaction_type = 'CREDIT' AND COALESCE(t.category::text, '') != 'STAFF_SALARY' THEN t.amount ELSE 0 END), 0) AS total_credits
+        FROM bookings b
+        LEFT JOIN transactions t ON b.booking_id = t.booking_id
+        WHERE b.status = 'OVERDUE'
+        GROUP BY b.booking_id
+      ) booking_balances
     `;
 
-    // Get active bookings count (OVERDUE bookings are still running, just behind on payment)
+    // Lifetime registration-fee revenue actually collected — reads straight off
+    // the ledger (see services/registrationFeeSplit.js) rather than
+    // client_profiles.reg_fee_status, which only reflects the client's *current*
+    // membership cycle and resets on the 365-day renewal (regFeeExpiry.js cron).
+    const registrationFeeRevenueQuery = `
+      SELECT COALESCE(SUM(amount), 0) AS registration_fee_revenue
+      FROM transactions
+      WHERE category = 'REGISTRATION_FEE' AND transaction_type = 'CREDIT' AND status = 'COMPLETED'
+    `;
+
+    // Active bookings count (OVERDUE bookings are still running, just behind on payment)
     const activeBookingsCountQuery = `
       SELECT COUNT(*) as active_bookings_count
       FROM bookings
       WHERE status IN ('ACTIVE', 'OVERDUE')
     `;
 
-    // Get total daily burn rate
+    // Total daily burn rate
     const dailyBurnRateQuery = `
       SELECT COALESCE(SUM(daily_rate), 0) as total_daily_burn_rate
       FROM bookings
       WHERE status IN ('ACTIVE', 'OVERDUE')
     `;
 
-    // Execute all queries in parallel
     const [
-      totalRevenueResult,
-      totalInvoicedResult,
-      totalRefundsResult,
+      cashFlowResult,
+      outstandingResult,
+      receivablesResult,
+      registrationFeeRevenueResult,
       activeBookingsCountResult,
       dailyBurnRateResult
     ] = await Promise.all([
-      db.query(totalRevenueQuery),
-      db.query(totalInvoicedQuery),
-      db.query(totalRefundsQuery),
+      db.query(cashFlowQuery, [IN_CATEGORIES, OUT_CATEGORIES]),
+      db.query(outstandingQuery),
+      db.query(receivablesQuery),
+      db.query(registrationFeeRevenueQuery),
       db.query(activeBookingsCountQuery),
       db.query(dailyBurnRateQuery)
     ]);
 
-    // Extract values from query results
-    const total_revenue_collected = parseFloat(totalRevenueResult.rows[0].total_revenue_collected);
-    const total_invoiced = parseFloat(totalInvoicedResult.rows[0].total_invoiced);
-    const total_refunds_issued = parseFloat(totalRefundsResult.rows[0].total_refunds_issued);
+    const total_money_in = parseFloat(cashFlowResult.rows[0].total_money_in);
+    const total_money_out = parseFloat(cashFlowResult.rows[0].total_money_out);
+    const net_cash_flow = total_money_in - total_money_out;
+
+    const outstanding_daily_invoices = parseFloat(outstandingResult.rows[0].outstanding_daily_invoices);
+    const outstanding_product_rental_invoices = parseFloat(outstandingResult.rows[0].outstanding_product_rental_invoices);
+    const overdue_product_rental_invoices = parseFloat(outstandingResult.rows[0].overdue_product_rental_invoices);
+    const outstanding_registration_fees = parseFloat(outstandingResult.rows[0].outstanding_registration_fees);
+    const total_outstanding = outstanding_daily_invoices + outstanding_product_rental_invoices + outstanding_registration_fees;
+
+    const overdue_booking_balance = parseFloat(receivablesResult.rows[0].overdue_booking_balance);
+    const total_receivables = overdue_booking_balance + overdue_product_rental_invoices;
+
+    const registration_fee_revenue = parseFloat(registrationFeeRevenueResult.rows[0].registration_fee_revenue);
+
     const active_bookings_count = parseInt(activeBookingsCountResult.rows[0].active_bookings_count);
     const total_daily_burn_rate = parseFloat(dailyBurnRateResult.rows[0].total_daily_burn_rate);
-
-    // Calculate derived values
-    const outstanding_balance = total_revenue_collected - total_invoiced;
     const projected_monthly_revenue = total_daily_burn_rate * 30;
 
-    // Return comprehensive overview
     res.status(200).json({
       status: 'success',
       data: {
-        total_revenue_collected,
-        total_invoiced,
-        outstanding_balance,
-        total_refunds_issued,
+        total_money_in,
+        total_money_out,
+        net_cash_flow,
+        outstanding_daily_invoices,
+        outstanding_product_rental_invoices,
+        overdue_product_rental_invoices,
+        outstanding_registration_fees,
+        total_outstanding,
+        overdue_booking_balance,
+        total_receivables,
+        registration_fee_revenue,
         active_bookings_count,
         total_daily_burn_rate,
         projected_monthly_revenue
@@ -83,118 +135,6 @@ const getOverview = async (req, res) => {
     res.status(500).json({
       status: 'error',
       message: 'Internal server error while fetching financial overview'
-    });
-  }
-};
-
-const getTransactions = async (req, res) => {
-  try {
-    // Extract query parameters with defaults
-    const {
-      category,
-      payment_method,
-      status,
-      from_date,
-      to_date,
-      page = 1,
-      limit = 20
-    } = req.query;
-
-    // Convert page and limit to integers
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
-    const offset = (pageNum - 1) * limitNum;
-
-    // Build WHERE conditions array
-    const conditions = [];
-    const params = [];
-    let paramIndex = 1;
-
-    // Add conditions based on provided filters
-    if (category) {
-      conditions.push(`t.category = $${paramIndex++}`);
-      params.push(category);
-    }
-
-    if (payment_method) {
-      conditions.push(`t.payment_method = $${paramIndex++}`);
-      params.push(payment_method);
-    }
-
-    if (status) {
-      conditions.push(`t.status = $${paramIndex++}`);
-      params.push(status);
-    }
-
-    if (from_date) {
-      conditions.push(`t.created_at >= $${paramIndex++}`);
-      params.push(from_date);
-    }
-
-    if (to_date) {
-      conditions.push(`t.created_at <= $${paramIndex++}`);
-      params.push(to_date);
-    }
-
-    // Build WHERE clause
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-    // Main query with joins
-    const query = `
-      SELECT
-        t.transaction_id,
-        COALESCE(cp.full_name, sp.full_name, t.external_party, 'Unknown') as client_name,
-        COALESCE(b.service_type, 'Unknown Service') as service_type,
-        t.category,
-        t.amount,
-        t.payment_method,
-        t.status,
-        t.notes,
-        t.created_at
-      FROM transactions t
-      LEFT JOIN client_profiles cp ON t.client_id = cp.client_profile_id
-      LEFT JOIN staff_profiles sp ON t.staff_profile_id = sp.staff_profile_id
-      LEFT JOIN bookings b ON t.booking_id = b.booking_id
-      ${whereClause}
-      ORDER BY t.created_at DESC
-      LIMIT $${paramIndex++} OFFSET $${paramIndex++}
-    `;
-
-    // Count query for pagination
-    const countQuery = `
-      SELECT COUNT(*) as total_count
-      FROM transactions t
-      ${whereClause}
-    `;
-
-    // Add pagination parameters
-    params.push(limitNum, offset);
-
-    // Execute both queries
-    const [result, countResult] = await Promise.all([
-      db.query(query, params),
-      db.query(countQuery, params.slice(0, -2)) // Remove limit and offset for count
-    ]);
-
-    const total_count = parseInt(countResult.rows[0].total_count);
-
-    // Return paginated results
-    res.status(200).json({
-      status: 'success',
-      pagination: {
-        total_count,
-        page: pageNum,
-        limit: limitNum,
-        total_pages: Math.ceil(total_count / limitNum)
-      },
-      data: result.rows
-    });
-
-  } catch (error) {
-    console.error('Error in getTransactions:', error);
-    res.status(500).json({
-      status: 'error',
-      message: 'Internal server error while fetching transactions'
     });
   }
 };
@@ -312,54 +252,38 @@ const getStaffWalletsSummary = async (req, res) => {
   }
 };
 
+// Live balance-risk counts — mirrors the PREDICTION query in
+// scheduledActionsController.getUpcomingEvents (same math: unpaid minus
+// invoiced, expressed in days of daily_rate remaining) rather than counting
+// historical `client_alerts` notification logs, which only reflect whatever
+// happened to be sent and can drift from the current live state.
 const getCreditAlertsSummary = async (req, res) => {
   try {
-    // Query 1: Count of expiring soon alerts today
-    const expiringSoonTodayQuery = `
-      SELECT COUNT(*) as expiring_soon_today
-      FROM client_alerts
-      WHERE alert_type = 'EXPIRING_SOON' 
-        AND DATE(sent_at) = CURRENT_DATE
-    `;
-    
-    // Query 2: Count of negative balance alerts today
-    const negativeBalanceTodayQuery = `
-      SELECT COUNT(*) as negative_balance_today
-      FROM client_alerts
-      WHERE alert_type = 'NEGATIVE_BALANCE' 
-        AND DATE(sent_at) = CURRENT_DATE
-    `;
-    
-    // Query 3: Count of total negative balance alerts across all time
-    const totalNegativeBalanceQuery = `
-      SELECT COUNT(*) as total_negative_balance_clients
-      FROM client_alerts
-      WHERE alert_type = 'NEGATIVE_BALANCE'
+    const query = `
+      SELECT
+        COUNT(*) FILTER (WHERE COALESCE(t.bal, 0) / b.daily_rate <= 0) AS negative_balance_today,
+        COUNT(*) FILTER (WHERE COALESCE(t.bal, 0) / b.daily_rate > 0 AND COALESCE(t.bal, 0) / b.daily_rate <= 1) AS expiring_soon_today
+      FROM bookings b
+      LEFT JOIN (
+        SELECT booking_id,
+          COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' AND COALESCE(category::text, '') != 'STAFF_SALARY' THEN amount ELSE 0 END), 0)
+          - COALESCE(SUM(CASE WHEN transaction_type = 'DEBIT' THEN amount ELSE 0 END), 0) AS bal
+        FROM transactions
+        GROUP BY booking_id
+      ) t ON t.booking_id = b.booking_id
+      WHERE b.status = 'ACTIVE'
+        AND b.daily_rate IS NOT NULL AND b.daily_rate > 0
     `;
 
-    // Execute all queries in parallel
-    const [
-      expiringSoonResult,
-      negativeBalanceTodayResult,
-      totalNegativeBalanceResult
-    ] = await Promise.all([
-      db.query(expiringSoonTodayQuery),
-      db.query(negativeBalanceTodayQuery),
-      db.query(totalNegativeBalanceQuery)
-    ]);
+    const result = await db.query(query);
+    const negative_balance_today = parseInt(result.rows[0].negative_balance_today);
+    const expiring_soon_today = parseInt(result.rows[0].expiring_soon_today);
 
-    // Extract values from query results
-    const expiring_soon_today = parseInt(expiringSoonResult.rows[0].expiring_soon_today);
-    const negative_balance_today = parseInt(negativeBalanceTodayResult.rows[0].negative_balance_today);
-    const total_negative_balance_clients = parseInt(totalNegativeBalanceResult.rows[0].total_negative_balance_clients);
-
-    // Return credit alerts summary
     res.status(200).json({
       status: 'success',
       data: {
         expiring_soon_today,
         negative_balance_today,
-        total_negative_balance_clients,
         current_date: new Date().toISOString().split('T')[0]
       }
     });
@@ -406,26 +330,28 @@ const getRevenueChart = async (req, res) => {
         break;
     }
 
-    // Query revenue data grouped by period
+    // Money In vs Money Out per period — same IN/OUT categorization as the
+    // overview cards and the Transactions page, so the trend line and the
+    // headline totals never disagree with each other.
     const query = `
       SELECT
         DATE_TRUNC('${dateTruncFormat}', created_at) as period,
-        COALESCE(SUM(CASE WHEN category IN ('CLIENT_PAYMENT', 'BOOKING_PAYMENT', 'WALLET_TOPUP') THEN amount ELSE 0 END), 0) as revenue,
-        COALESCE(SUM(CASE WHEN category IN ('SERVICE_INVOICE', 'REGISTRATION_FEE') THEN amount ELSE 0 END), 0) as invoiced
+        COALESCE(SUM(amount) FILTER (WHERE category::text = ANY($1::text[])), 0) as money_in,
+        COALESCE(SUM(amount) FILTER (WHERE category::text = ANY($2::text[])), 0) as money_out
       FROM transactions
-      WHERE category IN ('CLIENT_PAYMENT', 'BOOKING_PAYMENT', 'WALLET_TOPUP', 'SERVICE_INVOICE', 'REGISTRATION_FEE')
+      WHERE (category::text = ANY($1::text[]) OR category::text = ANY($2::text[]))
         AND created_at >= DATE_TRUNC('${dateTruncFormat}', CURRENT_DATE - INTERVAL '${limit} ${dateTruncFormat}s')
       GROUP BY DATE_TRUNC('${dateTruncFormat}', created_at)
       ORDER BY period ASC
     `;
 
-    const result = await db.query(query);
+    const result = await db.query(query, [IN_CATEGORIES, OUT_CATEGORIES]);
 
     // Format the response data
     const chartData = result.rows.map(row => ({
       period: row.period,
-      revenue: parseFloat(row.revenue),
-      invoiced: parseFloat(row.invoiced)
+      money_in: parseFloat(row.money_in),
+      money_out: parseFloat(row.money_out)
     }));
 
     // Return revenue chart data
@@ -452,18 +378,19 @@ const getPaymentMethodsChart = async (req, res) => {
   try {
     // Query payment methods data grouped by payment method
     const query = `
-      SELECT 
+      SELECT
         payment_method,
         COALESCE(SUM(amount), 0) as total,
         COUNT(*) as count
       FROM transactions
-      WHERE category IN ('CLIENT_PAYMENT', 'BOOKING_PAYMENT', 'WALLET_TOPUP')
+      WHERE category::text = ANY($1::text[])
+        AND transaction_type = 'CREDIT'
         AND payment_method IS NOT NULL
       GROUP BY payment_method
       ORDER BY total DESC
     `;
 
-    const result = await db.query(query);
+    const result = await db.query(query, [IN_CATEGORIES]);
 
     // Format the response data
     const chartData = result.rows.map(row => ({
@@ -527,7 +454,6 @@ const getTransactionCategoriesChart = async (req, res) => {
 
 module.exports = {
   getOverview,
-  getTransactions,
   getAdvancesSummary,
   getStaffWalletsSummary,
   getCreditAlertsSummary,

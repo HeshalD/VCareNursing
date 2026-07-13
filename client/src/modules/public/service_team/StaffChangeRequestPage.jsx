@@ -3,49 +3,52 @@ import {
   User, Building2, Trash2, Edit3, Plus, ClipboardList,
   CheckCircle, Clock, XCircle, ChevronDown, ChevronUp, Send, AlertCircle
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import apiClient from '../../../api/api';
 import { useAuth } from '../../../context/AuthContext';
 import StaffSidebar from './StaffSidebar';
 
-const REQUEST_TYPES = [
-  { id: 'PROFILE_UPDATE', label: 'Profile Update', icon: User, description: 'Request changes to your personal details' },
-  { id: 'BANK_ACCOUNT_ADD', label: 'Add Bank Account', icon: Plus, description: 'Add a new bank account for salary payments' },
-  { id: 'BANK_ACCOUNT_EDIT', label: 'Edit Bank Account', icon: Edit3, description: 'Update details on an existing bank account' },
-  { id: 'BANK_ACCOUNT_REMOVE', label: 'Remove Bank Account', icon: Trash2, description: 'Deactivate an existing bank account' },
+const REQUEST_TYPE_META = [
+  { id: 'PROFILE_UPDATE', icon: User },
+  { id: 'BANK_ACCOUNT_ADD', icon: Plus },
+  { id: 'BANK_ACCOUNT_EDIT', icon: Edit3 },
+  { id: 'BANK_ACCOUNT_REMOVE', icon: Trash2 },
 ];
 
 const GENDER_OPTIONS = ['MALE', 'FEMALE', 'OTHER'];
 
-const PROFILE_FIELDS = [
-  { key: 'full_name', label: 'Full Name', type: 'text' },
-  { key: 'home_address', label: 'Home Address', type: 'textarea' },
-  { key: 'location', label: 'City / Location', type: 'text' },
-  { key: 'gender', label: 'Gender', type: 'select', options: GENDER_OPTIONS },
-  { key: 'date_of_birth', label: 'Date of Birth', type: 'date' },
-  { key: 'willing_to_live_in', label: 'Willing to Live In', type: 'boolean' },
-  { key: 'qualifications', label: 'Qualifications', type: 'textarea' },
-  { key: 'nic_number', label: 'NIC Number', type: 'text' },
+const PROFILE_FIELD_META = [
+  { key: 'full_name', labelKey: 'fullName', type: 'text' },
+  { key: 'home_address', labelKey: 'homeAddress', type: 'textarea' },
+  { key: 'location', labelKey: 'location', type: 'text' },
+  { key: 'gender', labelKey: 'gender', type: 'select', options: GENDER_OPTIONS },
+  { key: 'date_of_birth', labelKey: 'dateOfBirth', type: 'date' },
+  { key: 'willing_to_live_in', labelKey: 'willingToLiveIn', type: 'boolean' },
+  { key: 'qualifications', labelKey: 'qualifications', type: 'textarea' },
+  { key: 'nic_number', labelKey: 'nicNumber', type: 'text' },
 ];
 
-const STATUS_CONFIG = {
-  PENDING: { label: 'Pending', color: 'bg-amber-50 text-amber-700 border-amber-200', icon: Clock },
-  UNDER_REVIEW: { label: 'Under Review', color: 'bg-blue-50 text-blue-700 border-blue-200', icon: ClipboardList },
-  APPROVED: { label: 'Approved', color: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: CheckCircle },
-  REJECTED: { label: 'Rejected', color: 'bg-rose-50 text-rose-700 border-rose-200', icon: XCircle },
+const STATUS_META = {
+  PENDING: { labelKey: 'pending', color: 'bg-amber-50 text-amber-700 border-amber-200', icon: Clock },
+  UNDER_REVIEW: { labelKey: 'underReview', color: 'bg-blue-50 text-blue-700 border-blue-200', icon: ClipboardList },
+  APPROVED: { labelKey: 'approved', color: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: CheckCircle },
+  REJECTED: { labelKey: 'rejected', color: 'bg-rose-50 text-rose-700 border-rose-200', icon: XCircle },
 };
 
 const StatusBadge = ({ status }) => {
-  const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.PENDING;
+  const { t } = useTranslation('staffChangeRequest');
+  const cfg = STATUS_META[status] || STATUS_META.PENDING;
   const Icon = cfg.icon;
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${cfg.color}`}>
       <Icon className="w-3 h-3" />
-      {cfg.label}
+      {t(`status.${cfg.labelKey}`)}
     </span>
   );
 };
 
 const InputField = ({ label, value, onChange, type = 'text', options = [], placeholder = '' }) => {
+  const { t } = useTranslation('staffChangeRequest');
   if (type === 'textarea') {
     return (
       <div>
@@ -70,7 +73,7 @@ const InputField = ({ label, value, onChange, type = 'text', options = [], place
             onChange={e => onChange(e.target.value)}
             className="w-full appearance-none rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white pr-8"
           >
-            <option value="">Select {label}</option>
+            <option value="">{t('selectPlaceholder', { label })}</option>
             {options.map(o => <option key={o} value={o}>{o}</option>)}
           </select>
           <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
@@ -106,21 +109,22 @@ const InputField = ({ label, value, onChange, type = 'text', options = [], place
   );
 };
 
-const PROFILE_FIELD_LABELS = Object.fromEntries(PROFILE_FIELDS.map(f => [f.key, f.label]));
+const PROFILE_FIELD_LABEL_KEYS = Object.fromEntries(PROFILE_FIELD_META.map(f => [f.key, f.labelKey]));
 
-const formatFieldValue = (key, value) => {
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+const formatFieldValue = (key, value, t) => {
+  if (typeof value === 'boolean') return value ? t('yes') : t('no');
   if (key === 'date_of_birth' && value) return new Date(value).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   return String(value);
 };
 
 const RequestDetails = ({ req }) => {
+  const { t } = useTranslation('staffChangeRequest');
   // Backend stores changes in `requested_changes`
   const changes = req.requested_changes || {};
   const keys = Object.keys(changes);
 
   if (req.request_type === 'PROFILE_UPDATE') {
-    if (keys.length === 0) return <p className="text-xs text-slate-400 italic">No field details recorded.</p>;
+    if (keys.length === 0) return <p className="text-xs text-slate-400 italic">{t('requestDetails.noFieldDetails')}</p>;
     // Each value is { old_value, new_value }
     return (
       <div className="space-y-2">
@@ -128,15 +132,16 @@ const RequestDetails = ({ req }) => {
           const entry = changes[k];
           const oldVal = entry?.old_value;
           const newVal = entry?.new_value;
+          const labelKey = PROFILE_FIELD_LABEL_KEYS[k];
           return (
             <div key={k} className="flex items-start gap-3 text-sm">
               <span className="w-32 flex-shrink-0 text-xs font-semibold text-slate-400 uppercase tracking-wide pt-0.5">
-                {PROFILE_FIELD_LABELS[k] || k}
+                {labelKey ? t(`profileFields.${labelKey}`) : k}
               </span>
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="line-through text-slate-400 text-xs">{oldVal != null && oldVal !== '' ? formatFieldValue(k, oldVal) : '(empty)'}</span>
+                <span className="line-through text-slate-400 text-xs">{oldVal != null && oldVal !== '' ? formatFieldValue(k, oldVal, t) : t('requestDetails.empty')}</span>
                 <span className="text-slate-300">→</span>
-                <span className="text-slate-800 font-medium">{newVal != null && newVal !== '' ? formatFieldValue(k, newVal) : '(empty)'}</span>
+                <span className="text-slate-800 font-medium">{newVal != null && newVal !== '' ? formatFieldValue(k, newVal, t) : t('requestDetails.empty')}</span>
               </div>
             </div>
           );
@@ -147,17 +152,17 @@ const RequestDetails = ({ req }) => {
 
   if (req.request_type === 'BANK_ACCOUNT_ADD') {
     const fields = [
-      { label: 'Account Holder', key: 'account_holder_name' },
-      { label: 'Bank', key: 'bank_name' },
-      { label: 'Branch', key: 'branch_name' },
-      { label: 'Account Number', key: 'account_number' },
-      { label: 'Currency', key: 'currency' },
+      { labelKey: 'accountHolder', key: 'account_holder_name' },
+      { labelKey: 'bank', key: 'bank_name' },
+      { labelKey: 'branch', key: 'branch_name' },
+      { labelKey: 'accountNumber', key: 'account_number' },
+      { labelKey: 'currency', key: 'currency' },
     ];
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2">
         {fields.filter(f => changes[f.key]).map(f => (
           <div key={f.key} className="flex flex-col">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{f.label}</span>
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{t(`requestDetails.bankAddFields.${f.labelKey}`)}</span>
             <span className="text-sm text-slate-800 mt-0.5">{changes[f.key]}</span>
           </div>
         ))}
@@ -166,7 +171,7 @@ const RequestDetails = ({ req }) => {
   }
 
   if (req.request_type === 'BANK_ACCOUNT_EDIT') {
-    if (keys.length === 0) return <p className="text-xs text-slate-400 italic">No field details recorded.</p>;
+    if (keys.length === 0) return <p className="text-xs text-slate-400 italic">{t('requestDetails.noFieldDetails')}</p>;
     // Each value is { old_value, new_value }
     return (
       <div className="space-y-2">
@@ -180,9 +185,9 @@ const RequestDetails = ({ req }) => {
                 {k.replace(/_/g, ' ')}
               </span>
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="line-through text-slate-400 text-xs">{oldVal != null && oldVal !== '' ? oldVal : '(empty)'}</span>
+                <span className="line-through text-slate-400 text-xs">{oldVal != null && oldVal !== '' ? oldVal : t('requestDetails.empty')}</span>
                 <span className="text-slate-300">→</span>
-                <span className="text-slate-800 font-medium">{newVal != null && newVal !== '' ? newVal : '(empty)'}</span>
+                <span className="text-slate-800 font-medium">{newVal != null && newVal !== '' ? newVal : t('requestDetails.empty')}</span>
               </div>
             </div>
           );
@@ -194,8 +199,9 @@ const RequestDetails = ({ req }) => {
   if (req.request_type === 'BANK_ACCOUNT_REMOVE') {
     return (
       <p className="text-xs text-slate-600">
-        Requested deactivation of bank account
-        {req.target_bank_account_id ? ` (ID: ${req.target_bank_account_id})` : ''}.
+        {req.target_bank_account_id
+          ? t('requestDetails.removeTextWithId', { id: req.target_bank_account_id })
+          : t('requestDetails.removeText')}
       </p>
     );
   }
@@ -204,6 +210,7 @@ const RequestDetails = ({ req }) => {
 };
 
 const StaffChangeRequestPage = () => {
+  const { t } = useTranslation('staffChangeRequest');
   const { user, loading: authLoading } = useAuth();
 
   const [staffData, setStaffData] = useState(null);
@@ -220,6 +227,11 @@ const StaffChangeRequestPage = () => {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
   const [submitSuccess, setSubmitSuccess] = useState(false);
+
+  const requestTypeTranslations = t('requestTypes', { returnObjects: true });
+  const REQUEST_TYPES = REQUEST_TYPE_META.map((meta, i) => ({ ...meta, ...requestTypeTranslations[i] }));
+
+  const PROFILE_FIELDS = PROFILE_FIELD_META.map(f => ({ ...f, label: t(`profileFields.${f.labelKey}`) }));
 
   useEffect(() => {
     const fetchData = async () => {

@@ -21,6 +21,14 @@ router.post(
   transactionController.createManualTransaction
 );
 
+// GET /api/transactions/export/pdf — same filters, every matching row, as a landscape PDF
+router.get(
+  '/export/pdf',
+  protect,
+  restrictTo(...adminRoles),
+  transactionController.exportTransactionsPdf
+);
+
 // GET /api/transactions — full ledger with filters
 router.get(
   '/',

@@ -1,5 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
+import { useTranslation } from 'react-i18next';
 import {
   Briefcase, Heart, DollarSign, Award, CheckCircle,
   ArrowRight, Users, GraduationCap, Stethoscope, Baby, User
@@ -7,64 +8,34 @@ import {
 import { Link } from 'react-router-dom';
 import Navbar from '../../../components/layout/Navbar';
 import Footer from '../../../components/layout/Footer';
+import LanguageToggle from '../../../i18n/LanguageToggle';
 
 // Placeholder image for professionals
 import proBg from '../../../assets/images/home_care_takers_img_landingpage.avif';
 
-const WorkersTeamPage = () => {
-  const benefits = [
-    {
-      icon: DollarSign,
-      title: "Impactful Earnings",
-      desc: "Earn above market rates with our transparent payment structure. Weekly payouts directly to your bank account."
-    },
-    {
-      icon: Briefcase,
-      title: "Flexible Schedule",
-      desc: "You are your own boss. Accept shifts that fit your life—whether it's night shifts, weekends, or full-time live-in."
-    },
-    {
-      icon: Award,
-      title: "Career Growth",
-      desc: "Access free training modules, certification upgrades, and mentorship from senior matrons."
-    }
-  ];
+const BENEFIT_ICONS = [DollarSign, Briefcase, Award];
+const ROLE_ICONS = [
+  { icon: Stethoscope, color: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-100' },
+  { icon: Baby, color: 'text-rose-600', bg: 'bg-rose-50', border: 'border-rose-100' },
+  { icon: User, color: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-100' },
+];
 
-  const roles = [
-    {
-      icon: Stethoscope,
-      title: "Registered Nurses",
-      req: "SLMC Registration Required",
-      color: "text-emerald-600",
-      bg: "bg-emerald-50",
-      border: "border-emerald-100"
-    },
-    {
-      icon: Baby,
-      title: "Child Care Pro",
-      req: "ECCDE Diploma or Experience",
-      color: "text-rose-600",
-      bg: "bg-rose-50",
-      border: "border-rose-100"
-    },
-    {
-      icon: User,
-      title: "Elderly Care Aide",
-      req: "NVQ Level 3/4 Certificate",
-      color: "text-amber-600",
-      bg: "bg-amber-50",
-      border: "border-amber-100"
-    }
-  ];
+const WorkersTeamPage = () => {
+  const { t } = useTranslation('workersTeam');
+  const benefits = t('benefits', { returnObjects: true }).map((b, i) => ({ ...b, icon: BENEFIT_ICONS[i] }));
+  const roles = t('roles', { returnObjects: true }).map((r, i) => ({ ...r, ...ROLE_ICONS[i] }));
+  const steps = t('protocol.steps', { returnObjects: true });
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 selection:bg-indigo-100 selection:text-indigo-900">
       <Navbar />
 
       {/* Hero Section */}
-      {/* Hero Section */}
       <section className="relative min-h-[90vh] flex items-center pt-24 pb-12 lg:pt-32 lg:pb-20 overflow-hidden bg-white">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 relative z-10 w-full">
+          <div className="flex justify-end mb-4">
+            <LanguageToggle />
+          </div>
           <div className="grid lg:grid-cols-2 gap-8 lg:gap-16 items-center">
 
             {/* Text Content */}
@@ -79,28 +50,27 @@ const WorkersTeamPage = () => {
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
                   </span>
-                  Hiring Professionals Now
+                  {t('badge')}
                 </div>
 
                 <h1 className="text-4xl xs:text-5xl sm:text-6xl md:text-7xl font-bold tracking-tighter text-slate-900 mb-6 leading-[1.0] md:leading-[0.9]">
-                  Care with Pride. <br />
+                  {t('heroTitleLine1')} <br />
                   <span className="text-indigo-600">
-                    Earn with Dignity.
+                    {t('heroTitleLine2')}
                   </span>
                 </h1>
 
                 <p className="text-lg md:text-xl text-slate-600 mb-8 max-w-lg leading-relaxed">
-                  Join Sri Lanka's largest network of verified healthcare professionals.
-                  We handle the finding clients, insurance, and billing. You just focus on caring.
+                  {t('heroDesc')}
                 </p>
 
                 <div className="flex flex-col sm:flex-row gap-4">
                   <Link to="/services/apply" className="px-8 py-4 bg-indigo-600 text-white rounded-full font-bold text-lg hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2">
-                    Apply Now <ArrowRight className="w-5 h-5" />
+                    {t('applyNow')} <ArrowRight className="w-5 h-5" />
                   </Link>
                   <div className="flex items-center gap-4 px-6 py-4 bg-white border border-slate-200 rounded-full shadow-sm">
                     <span className="text-sm font-medium text-slate-600">
-                      <span className="font-bold text-slate-900">2,500+</span> professionals joined
+                      <span className="font-bold text-slate-900">{t('professionalsCount')}</span> {t('professionalsJoinedSuffix')}
                     </span>
                   </div>
                 </div>
@@ -126,8 +96,8 @@ const WorkersTeamPage = () => {
                 {/* Floating Card */}
                 <div className="absolute bottom-6 left-6 right-6 bg-white/95 backdrop-blur-md p-6 rounded-3xl border border-white/50 shadow-lg">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-bold text-slate-400 uppercase">This Week's Earnings</span>
-                    <span className="text-xs font-bold text-green-500">+12% vs last week</span>
+                    <span className="text-xs font-bold text-slate-400 uppercase">{t('earningsCard.label')}</span>
+                    <span className="text-xs font-bold text-green-500">{t('earningsCard.change')}</span>
                   </div>
                   <div className="text-3xl font-black text-slate-900 mb-1">LKR 45,000</div>
                   <div className="w-full bg-slate-100 h-1.5 rounded-full mt-2">
@@ -144,7 +114,7 @@ const WorkersTeamPage = () => {
       <section className="py-24 bg-white">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
-            <h2 className="text-3xl font-bold text-slate-900">Who We Are Looking For</h2>
+            <h2 className="text-3xl font-bold text-slate-900">{t('whoWeAreLookingFor')}</h2>
           </div>
           <div className="grid md:grid-cols-3 gap-6">
             {roles.map((role, i) => (
@@ -164,11 +134,11 @@ const WorkersTeamPage = () => {
           <div className="grid lg:grid-cols-2 gap-20 items-center">
             <div>
               <h2 className="text-4xl md:text-5xl font-bold text-slate-900 mb-6">
-                Why professionals <br />
-                <span className="text-indigo-600">choose VCare.</span>
+                {t('whyChoose.titleLine1')} <br />
+                <span className="text-indigo-600">{t('whyChoose.titleLine2')}</span>
               </h2>
               <p className="text-xl text-slate-600 leading-relaxed mb-12">
-                We are building the first "Nurse-First" ecosystem in Sri Lanka. We believe that if we take care of you, you will take better care of our patients.
+                {t('whyChoose.desc')}
               </p>
 
               <div className="space-y-8">
@@ -189,17 +159,12 @@ const WorkersTeamPage = () => {
             <div className="relative">
               <div className="absolute -inset-4 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-[40px] opacity-10 blur-2xl" />
               <div className="bg-white p-6 sm:p-10 rounded-3xl sm:rounded-[40px] border border-slate-200 shadow-xl relative">
-                <h3 className="text-2xl font-bold text-slate-900 mb-8">Application Protocol</h3>
+                <h3 className="text-2xl font-bold text-slate-900 mb-8">{t('protocol.title')}</h3>
 
                 <div className="space-y-8 relative">
                   <div className="absolute left-[19px] top-4 bottom-4 w-0.5 bg-slate-100" />
 
-                  {[
-                    { step: "1", title: "Submit Documents", desc: "Upload NIC, Certificates, and CV via our app." },
-                    { step: "2", title: "Skill Assessment", desc: "Take a quick online quiz or visit our center for practicals." },
-                    { step: "3", title: "Background Check", desc: "We verify your police report and past employment." },
-                    { step: "4", title: "Onboarding", desc: "Receive your uniform, ID, and VCare App access." }
-                  ].map((s, i) => (
+                  {steps.map((s, i) => (
                     <div key={i} className="flex gap-6 relative">
                       <div className="w-10 h-10 rounded-full bg-slate-900 text-white flex items-center justify-center font-bold text-sm flex-shrink-0 z-10 border-4 border-white shadow-sm">
                         {s.step}
@@ -214,7 +179,7 @@ const WorkersTeamPage = () => {
 
                 <div className="mt-10 pt-8 border-t border-slate-100">
                   <Link to="/services/apply" className="block w-full py-4 bg-slate-900 text-white text-center font-bold rounded-xl hover:bg-slate-800 transition-colors">
-                    Start Application
+                    {t('protocol.startApplication')}
                   </Link>
                 </div>
               </div>

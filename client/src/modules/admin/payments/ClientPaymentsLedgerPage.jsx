@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import useAutoRefresh from '../../../hooks/useAutoRefresh';
 
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
 const fmt = (v) => money.format(Number(v || 0));
@@ -18,6 +19,9 @@ const fmtDateTime = (d) => d
 const METHOD_LABELS = { BANK_TRANSFER: 'Bank Transfer', CASH_DEPOSIT: 'Cash Deposit', CASH: 'Cash', CHEQUE: 'Cheque', WALLET: 'Wallet' };
 const LIMIT = 20;
 
+// Icon-only row action — minimal equivalent of a bordered/solid text button.
+const iconBtnCls = 'inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
+
 const ClientPaymentsLedgerPage = () => {
   const [receipts, setReceipts] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, limit: LIMIT, total: 0, total_pages: 1 });
@@ -28,9 +32,9 @@ const ClientPaymentsLedgerPage = () => {
   const [sendingIds, setSendingIds] = useState(new Set());
   const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
+    if (!silent) setError('');
     try {
       const res = await apiClient.getAllReceipts({
         page, limit: LIMIT, ...(search.trim() ? { search: search.trim() } : {}),
@@ -39,10 +43,12 @@ const ClientPaymentsLedgerPage = () => {
       if (res?.pagination) setPagination(res.pagination);
     } catch (err) {
       console.error('ClientPaymentsLedgerPage load error:', err);
-      setError(err?.message || 'Failed to load payments');
-      setReceipts([]);
+      if (!silent) {
+        setError(err?.message || 'Failed to load payments');
+        setReceipts([]);
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [page, search]);
 
@@ -53,6 +59,13 @@ const ClientPaymentsLedgerPage = () => {
   }, [searchInput]);
 
   useEffect(() => { load(); }, [load]);
+
+  // New client payments can be recorded by other admins at any time; pause
+  // while a WhatsApp receipt send is in flight so it can't be raced.
+  useAutoRefresh(() => load({ silent: true }), {
+    intervalMs: 5000,
+    enabled: sendingIds.size === 0,
+  });
 
   const handleSend = async (receiptId) => {
     setSendingIds((prev) => new Set([...prev, receiptId]));
@@ -83,21 +96,21 @@ const ClientPaymentsLedgerPage = () => {
       {/* Filter / action bar */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 flex-wrap">
         <div className="relative">
-          <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             type="text"
             placeholder="Search by client name or receipt no…"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            className="pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-100 w-72"
+            className="pl-8 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none w-72"
           />
         </div>
-        <button onClick={load} className="p-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-500" title="Refresh">
+        <button onClick={load} title="Refresh" className={iconBtnCls}>
           <RefreshCcw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </button>
         <div className="flex-1" />
-        <div className="flex items-center gap-2 text-sm text-slate-500">
-          <Receipt className="w-4 h-4 text-[#137A6B]" />
+        <div className="flex items-center gap-2 text-xs text-slate-400">
+          <Receipt className="w-3.5 h-3.5" />
           {loading ? '…' : `${pagination.total} receipt${pagination.total !== 1 ? 's' : ''} total`}
         </div>
       </div>
@@ -107,7 +120,7 @@ const ClientPaymentsLedgerPage = () => {
       )}
 
       {/* Table */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-20 gap-2 text-slate-400">
             <Loader2 className="w-5 h-5 animate-spin" />
@@ -150,9 +163,9 @@ const ClientPaymentsLedgerPage = () => {
                         </tr>
                       )}
                       <tr className="hover:bg-slate-50/60 transition-colors">
-                        <td className="px-4 py-3 font-mono text-xs text-slate-600 whitespace-nowrap">{r.receipt_code}</td>
+                        <td className="px-4 py-3 font-mono text-xs text-slate-500 whitespace-nowrap">{r.receipt_code}</td>
                         <td className="px-4 py-3 text-slate-600 text-xs whitespace-nowrap">{fmtDate(r.payment_date || r.created_at)}</td>
-                        <td className="px-4 py-3 text-right font-bold text-slate-900 whitespace-nowrap">{fmt(r.total_amount)}</td>
+                        <td className="px-4 py-3 text-right font-medium text-slate-900 whitespace-nowrap">{fmt(r.total_amount)}</td>
                         <td className="px-4 py-3 text-slate-600 text-xs">{METHOD_LABELS[r.payment_method] || r.payment_method || '—'}</td>
                         <td className="px-4 py-3 text-slate-500 text-xs font-mono">
                           {r.reference_number || <span className="italic text-slate-300">—</span>}
@@ -174,26 +187,24 @@ const ClientPaymentsLedgerPage = () => {
                           )}
                         </td>
                         <td className="px-4 py-3">
-                          <div className="flex items-center justify-end gap-2">
+                          <div className="flex items-center justify-end gap-0.5">
                             <button
                               disabled={isSending || !r.mobile_number}
                               onClick={() => handleSend(r.receipt_id)}
                               title={!r.mobile_number ? 'Client has no mobile number on record' : (r.whatsapp_sent ? 'Resend receipt via WhatsApp' : 'Send receipt via WhatsApp')}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                              className={iconBtnCls}
                             >
                               {isSending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                              {r.whatsapp_sent ? 'Resend' : 'Send'}
                             </button>
                             {r.pdf_url ? (
                               <a
                                 href={r.pdf_url}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#137A6B] text-white text-xs font-semibold hover:bg-[#0F6559] transition-colors"
                                 title="Download receipt PDF"
+                                className={iconBtnCls}
                               >
                                 <Download className="w-3.5 h-3.5" />
-                                Download
                               </a>
                             ) : (
                               <span className="text-xs text-amber-600 px-2">Generating…</span>
@@ -239,7 +250,7 @@ const ClientPaymentsLedgerPage = () => {
 
       {/* Empty state */}
       {!loading && pagination.total === 0 && !search && (
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-8 text-center">
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center">
           <Wallet className="w-10 h-10 text-slate-300 mx-auto mb-3" />
           <p className="text-slate-600 font-medium">No client payments yet</p>
           <p className="text-sm text-slate-400 mt-1">Receipts are generated automatically when a client payment is recorded.</p>

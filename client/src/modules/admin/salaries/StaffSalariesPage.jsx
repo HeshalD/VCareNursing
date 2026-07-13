@@ -16,19 +16,24 @@ const fmtDate = (d) => d
   : '—';
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
+const STATUS_DOT_CONFIG = {
+  ACTIVE:      { dot: 'bg-emerald-500', text: 'text-emerald-700' },
+  ASSIGNED:    { dot: 'bg-blue-400',    text: 'text-blue-700' },
+  UNAVAILABLE: { dot: 'bg-slate-400',   text: 'text-slate-600' },
+  COMPLETED:   { dot: 'bg-violet-400',  text: 'text-violet-700' },
+};
 const StatusBadge = ({ status }) => {
-  const map = {
-    ACTIVE:     'bg-emerald-100 text-emerald-700',
-    ASSIGNED:   'bg-blue-100 text-blue-700',
-    UNAVAILABLE:'bg-slate-100 text-slate-600',
-    COMPLETED:  'bg-purple-100 text-purple-700',
-  };
+  const cfg = STATUS_DOT_CONFIG[status] || { dot: 'bg-slate-400', text: 'text-slate-600' };
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${map[status] || 'bg-slate-100 text-slate-600'}`}>
+    <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
       {status || '—'}
     </span>
   );
 };
+
+// Icon-only row action — minimal equivalent of a bordered text button.
+const iconBtnCls = 'inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
 
 // ─── Summary card ─────────────────────────────────────────────────────────────
 const StatCard = ({ label, value, sub, tone = 'slate', icon: Icon }) => {
@@ -191,9 +196,9 @@ const BreakdownModal = ({ staff, onClose, onPay }) => {
                       ))}
                     </tbody>
                     <tfoot>
-                      <tr className="border-t-2 border-slate-200 bg-slate-50">
-                        <td colSpan={5} className="px-4 py-3 text-xs font-bold text-slate-600 uppercase">Gross Earnings (All Time)</td>
-                        <td className="px-4 py-3 text-right font-bold text-slate-900">{fmt(data.gross_total)}</td>
+                      <tr className="border-t border-slate-200 bg-slate-50">
+                        <td colSpan={5} className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Gross Earnings (All Time)</td>
+                        <td className="px-4 py-3 text-right font-semibold text-slate-900">{fmt(data.gross_total)}</td>
                         <td colSpan={2}></td>
                       </tr>
                     </tfoot>
@@ -204,7 +209,7 @@ const BreakdownModal = ({ staff, onClose, onPay }) => {
               {/* Deductions */}
               {data?.deductions?.length > 0 && (
                 <div className="rounded-xl border border-rose-200 overflow-hidden">
-                  <div className="bg-rose-50 px-4 py-2.5 text-xs font-bold text-rose-700 uppercase tracking-wide border-b border-rose-200">
+                  <div className="bg-rose-50 px-4 py-2.5 text-xs font-semibold text-rose-700 uppercase tracking-wide border-b border-rose-200">
                     Deductions (All Time)
                   </div>
                   <table className="min-w-full text-sm">
@@ -219,8 +224,8 @@ const BreakdownModal = ({ staff, onClose, onPay }) => {
                     </tbody>
                     <tfoot>
                       <tr className="border-t border-rose-200 bg-rose-50">
-                        <td colSpan={2} className="px-4 py-2.5 text-xs font-bold text-rose-700 uppercase">Total Deductions</td>
-                        <td className="px-4 py-2.5 text-right font-bold text-rose-700">− {fmt(data.total_deductions)}</td>
+                        <td colSpan={2} className="px-4 py-2.5 text-xs font-semibold text-rose-700 uppercase">Total Deductions</td>
+                        <td className="px-4 py-2.5 text-right font-semibold text-rose-700">− {fmt(data.total_deductions)}</td>
                       </tr>
                     </tfoot>
                   </table>
@@ -230,7 +235,7 @@ const BreakdownModal = ({ staff, onClose, onPay }) => {
               {/* Advances */}
               {data?.advances?.length > 0 && (
                 <div className="rounded-xl border border-blue-200 overflow-hidden">
-                  <div className="bg-blue-50 px-4 py-2.5 text-xs font-bold text-blue-700 uppercase tracking-wide border-b border-blue-200">
+                  <div className="bg-blue-50 px-4 py-2.5 text-xs font-semibold text-blue-700 uppercase tracking-wide border-b border-blue-200">
                     Advances Disbursed (All Time)
                   </div>
                   <table className="min-w-full text-sm">
@@ -245,8 +250,8 @@ const BreakdownModal = ({ staff, onClose, onPay }) => {
                     </tbody>
                     <tfoot>
                       <tr className="border-t border-blue-200 bg-blue-50">
-                        <td colSpan={2} className="px-4 py-2.5 text-xs font-bold text-blue-700 uppercase">Total Advances</td>
-                        <td className="px-4 py-2.5 text-right font-bold text-blue-700">− {fmt(data.total_advances)}</td>
+                        <td colSpan={2} className="px-4 py-2.5 text-xs font-semibold text-blue-700 uppercase">Total Advances</td>
+                        <td className="px-4 py-2.5 text-right font-semibold text-blue-700">− {fmt(data.total_advances)}</td>
                       </tr>
                     </tfoot>
                   </table>
@@ -256,7 +261,7 @@ const BreakdownModal = ({ staff, onClose, onPay }) => {
               {/* Previous payouts */}
               {data?.payouts?.length > 0 && (
                 <div className="rounded-xl border border-amber-200 overflow-hidden">
-                  <div className="bg-amber-50 px-4 py-2.5 text-xs font-bold text-amber-700 uppercase tracking-wide border-b border-amber-200">
+                  <div className="bg-amber-50 px-4 py-2.5 text-xs font-semibold text-amber-700 uppercase tracking-wide border-b border-amber-200">
                     Salary Payouts (All Time)
                   </div>
                   <table className="min-w-full text-sm">
@@ -273,8 +278,8 @@ const BreakdownModal = ({ staff, onClose, onPay }) => {
                     </tbody>
                     <tfoot>
                       <tr className="border-t border-amber-200 bg-amber-50">
-                        <td colSpan={2} className="px-4 py-2.5 text-xs font-bold text-amber-700 uppercase">Total Paid Out</td>
-                        <td className="px-4 py-2.5 text-right font-bold text-amber-700">− {fmt(data.total_paid_out)}</td>
+                        <td colSpan={2} className="px-4 py-2.5 text-xs font-semibold text-amber-700 uppercase">Total Paid Out</td>
+                        <td className="px-4 py-2.5 text-right font-semibold text-amber-700">− {fmt(data.total_paid_out)}</td>
                       </tr>
                     </tfoot>
                   </table>
@@ -328,8 +333,8 @@ const BreakdownModal = ({ staff, onClose, onPay }) => {
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-base font-bold text-slate-900">{fmt(p.amount_paid)}</span>
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold">
+                            <span className="text-base font-semibold text-slate-900">{fmt(p.amount_paid)}</span>
+                            <span className="text-xs font-medium text-emerald-700">
                               {METHOD_LABELS[p.payment_method] || p.payment_method || 'Payment'}
                             </span>
                           </div>
@@ -347,27 +352,19 @@ const BreakdownModal = ({ staff, onClose, onPay }) => {
                           {p.notes && <p className="text-xs text-slate-400 mt-0.5 italic">{p.notes}</p>}
                         </div>
 
-                        <div className="flex items-center gap-2 flex-shrink-0">
+                        <div className="flex items-center gap-0.5 flex-shrink-0">
                           {p.salary_sheet_url ? (
                             <>
-                              <a
-                                href={p.salary_sheet_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
-                                title="Preview salary sheet"
-                              >
+                              <a href={p.salary_sheet_url} target="_blank" rel="noopener noreferrer" title="Preview salary sheet" className={iconBtnCls}>
                                 <Eye className="w-3.5 h-3.5" />
-                                Preview
                               </a>
                               <a
                                 href={p.salary_sheet_url}
                                 download={`Salary_Sheet_${staff.full_name.replace(/\s+/g, '_')}_${fmtDate(p.paid_at)}.pdf`}
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#137A6B] text-white text-xs font-semibold hover:bg-[#0F6559] transition-colors"
                                 title="Download salary sheet"
+                                className={iconBtnCls}
                               >
                                 <Download className="w-3.5 h-3.5" />
-                                Download
                               </a>
                             </>
                           ) : (
@@ -554,6 +551,26 @@ const SinglePayModal = ({ staff, companyAccounts, onClose, onSuccess }) => {
   const [done, setDone] = useState(false);
   const [error, setError] = useState(null);
 
+  const [staffBankAccounts, setStaffBankAccounts] = useState([]);
+  const [staffBankAccountsLoading, setStaffBankAccountsLoading] = useState(true);
+  const [staffBankAccountId, setStaffBankAccountId] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setStaffBankAccountsLoading(true);
+    apiClient.getStaffBankAccounts(staff.staff_profile_id)
+      .then(res => {
+        if (cancelled) return;
+        const accounts = res.data || [];
+        setStaffBankAccounts(accounts);
+        const preferred = accounts.find(a => a.staff_bank_account_id === staff.staff_bank_account_id) || accounts[0];
+        setStaffBankAccountId(preferred ? String(preferred.staff_bank_account_id) : '');
+      })
+      .catch(() => { if (!cancelled) setStaffBankAccounts([]); })
+      .finally(() => { if (!cancelled) setStaffBankAccountsLoading(false); });
+    return () => { cancelled = true; };
+  }, [staff.staff_profile_id, staff.staff_bank_account_id]);
+
   useEffect(() => {
     let cancelled = false;
     setPreviewLoading(true);
@@ -577,7 +594,7 @@ const SinglePayModal = ({ staff, companyAccounts, onClose, onSuccess }) => {
       await apiClient.createStaffPayout(staff.staff_profile_id, {
         amount: parseFloat(amount),
         company_bank_account_id: companyAccountId || null,
-        staff_bank_account_id: staff.staff_bank_account_id || null,
+        staff_bank_account_id: staffBankAccountId || null,
         payment_method: paymentMethod,
         reference_number: reference || null,
         notes: notes || null,
@@ -681,8 +698,8 @@ const SinglePayModal = ({ staff, companyAccounts, onClose, onSuccess }) => {
                           </tbody>
                           <tfoot>
                             <tr className="border-t border-slate-200 bg-slate-50">
-                              <td colSpan={5} className="px-3 py-2 text-xs font-bold text-slate-500 uppercase">Gross Earnings</td>
-                              <td className="px-3 py-2 text-right font-bold text-slate-800">{fmt(preview.gross_total)}</td>
+                              <td colSpan={5} className="px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Gross Earnings</td>
+                              <td className="px-3 py-2 text-right font-semibold text-slate-800">{fmt(preview.gross_total)}</td>
                             </tr>
                           </tfoot>
                         </table>
@@ -692,7 +709,7 @@ const SinglePayModal = ({ staff, companyAccounts, onClose, onSuccess }) => {
                     {/* Deductions */}
                     {preview.deductions?.length > 0 && (
                       <div className="rounded-xl border border-rose-200 overflow-hidden">
-                        <div className="bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 uppercase tracking-wide border-b border-rose-200">Deductions</div>
+                        <div className="bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 uppercase tracking-wide border-b border-rose-200">Deductions</div>
                         <table className="min-w-full text-sm">
                           <tbody className="divide-y divide-slate-100">
                             {preview.deductions.map((d, i) => (
@@ -705,8 +722,8 @@ const SinglePayModal = ({ staff, companyAccounts, onClose, onSuccess }) => {
                           </tbody>
                           <tfoot>
                             <tr className="border-t border-rose-200 bg-rose-50">
-                              <td colSpan={2} className="px-3 py-2 text-xs font-bold text-rose-700 uppercase">Total Deductions</td>
-                              <td className="px-3 py-2 text-right font-bold text-rose-700">− {fmt(preview.total_deductions)}</td>
+                              <td colSpan={2} className="px-3 py-2 text-xs font-semibold text-rose-700 uppercase">Total Deductions</td>
+                              <td className="px-3 py-2 text-right font-semibold text-rose-700">− {fmt(preview.total_deductions)}</td>
                             </tr>
                           </tfoot>
                         </table>
@@ -716,7 +733,7 @@ const SinglePayModal = ({ staff, companyAccounts, onClose, onSuccess }) => {
                     {/* Advances */}
                     {preview.advances?.length > 0 && (
                       <div className="rounded-xl border border-blue-200 overflow-hidden">
-                        <div className="bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 uppercase tracking-wide border-b border-blue-200">Advances Disbursed</div>
+                        <div className="bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 uppercase tracking-wide border-b border-blue-200">Advances Disbursed</div>
                         <table className="min-w-full text-sm">
                           <tbody className="divide-y divide-slate-100">
                             {preview.advances.map((a, i) => (
@@ -729,8 +746,8 @@ const SinglePayModal = ({ staff, companyAccounts, onClose, onSuccess }) => {
                           </tbody>
                           <tfoot>
                             <tr className="border-t border-blue-200 bg-blue-50">
-                              <td colSpan={2} className="px-3 py-2 text-xs font-bold text-blue-700 uppercase">Total Advances</td>
-                              <td className="px-3 py-2 text-right font-bold text-blue-700">− {fmt(preview.total_advances)}</td>
+                              <td colSpan={2} className="px-3 py-2 text-xs font-semibold text-blue-700 uppercase">Total Advances</td>
+                              <td className="px-3 py-2 text-right font-semibold text-blue-700">− {fmt(preview.total_advances)}</td>
                             </tr>
                           </tfoot>
                         </table>
@@ -740,7 +757,7 @@ const SinglePayModal = ({ staff, companyAccounts, onClose, onSuccess }) => {
                     {/* Previous payouts this month */}
                     {preview.payouts?.length > 0 && (
                       <div className="rounded-xl border border-amber-200 overflow-hidden">
-                        <div className="bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700 uppercase tracking-wide border-b border-amber-200">Already Paid This Month</div>
+                        <div className="bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700 uppercase tracking-wide border-b border-amber-200">Already Paid This Month</div>
                         <table className="min-w-full text-sm">
                           <tbody className="divide-y divide-slate-100">
                             {preview.payouts.map((p, i) => (
@@ -753,8 +770,8 @@ const SinglePayModal = ({ staff, companyAccounts, onClose, onSuccess }) => {
                           </tbody>
                           <tfoot>
                             <tr className="border-t border-amber-200 bg-amber-50">
-                              <td colSpan={2} className="px-3 py-2 text-xs font-bold text-amber-700 uppercase">Total Already Paid</td>
-                              <td className="px-3 py-2 text-right font-bold text-amber-700">− {fmt(preview.total_payouts)}</td>
+                              <td colSpan={2} className="px-3 py-2 text-xs font-semibold text-amber-700 uppercase">Total Already Paid</td>
+                              <td className="px-3 py-2 text-right font-semibold text-amber-700">− {fmt(preview.total_payouts)}</td>
                             </tr>
                           </tfoot>
                         </table>
@@ -801,7 +818,7 @@ const SinglePayModal = ({ staff, companyAccounts, onClose, onSuccess }) => {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
-                    <label className="text-sm font-semibold text-slate-700">Company Bank Account</label>
+                    <label className="text-sm font-semibold text-slate-700">Company Bank Account <span className="text-slate-400 font-normal">(paying from)</span></label>
                     <select value={companyAccountId} onChange={e => setCompanyAccountId(e.target.value)} className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8]">
                       <option value="">Select (optional)</option>
                       {companyAccounts.map(a => <option key={a.account_id} value={a.account_id}>{a.account_nickname || a.bank_name} — {a.account_number}</option>)}
@@ -816,6 +833,33 @@ const SinglePayModal = ({ staff, companyAccounts, onClose, onSuccess }) => {
                     </select>
                   </div>
                 </div>
+                {paymentMethod === 'BANK_TRANSFER' && (
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-semibold text-slate-700">Staff Bank Account <span className="text-slate-400 font-normal">(paying to)</span></label>
+                    {staffBankAccountsLoading ? (
+                      <div className="flex items-center gap-2 text-sm text-slate-400 px-3 py-2.5">
+                        <Loader2 className="w-4 h-4 animate-spin" /> Loading accounts…
+                      </div>
+                    ) : staffBankAccounts.length === 0 ? (
+                      <p className="text-sm text-rose-600 bg-rose-50 border border-rose-100 rounded-xl px-4 py-2.5 flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                        No bank account on file for {staff.full_name}. Add one or choose Cash/Cheque instead.
+                      </p>
+                    ) : (
+                      <select
+                        value={staffBankAccountId}
+                        onChange={e => setStaffBankAccountId(e.target.value)}
+                        className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8]"
+                      >
+                        {staffBankAccounts.map(a => (
+                          <option key={a.staff_bank_account_id} value={a.staff_bank_account_id}>
+                            {a.bank_name} — {a.account_number} ({a.account_holder_name})
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   <label className="text-sm font-semibold text-slate-700">Reference Number <span className="text-slate-400 font-normal">(optional)</span></label>
                   <input type="text" value={reference} onChange={e => setReference(e.target.value)} placeholder="e.g. TXN-20260615" className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8]" />
@@ -833,7 +877,12 @@ const SinglePayModal = ({ staff, companyAccounts, onClose, onSuccess }) => {
         {!done && (
           <div className="p-6 border-t border-slate-200 flex items-center justify-between flex-shrink-0 gap-3">
             <button onClick={onClose} className="px-5 py-2.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50">Cancel</button>
-            <button type="submit" form="single-pay-form" disabled={submitting || parseFloat(amount) <= 0} className="bg-[#137A6B] text-white rounded-xl px-6 py-2.5 text-sm font-bold hover:bg-[#0F6559] transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2">
+            <button
+              type="submit"
+              form="single-pay-form"
+              disabled={submitting || parseFloat(amount) <= 0 || (paymentMethod === 'BANK_TRANSFER' && !staffBankAccountId)}
+              className="bg-[#137A6B] text-white rounded-xl px-6 py-2.5 text-sm font-bold hover:bg-[#0F6559] transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
+            >
               {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
               {submitting ? 'Processing…' : `Confirm Payment — ${fmt(parseFloat(amount) || 0)}`}
             </button>
@@ -853,12 +902,29 @@ const PayModal = ({ staffList, companyAccounts, onClose, onSuccess }) => {
 };
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
+// ─── Staff categorization (for section tabs) ──────────────────────────────────
+const categorize = (s) => {
+  if (parseFloat(s.current_earnings || 0) > 0) return 'outstanding';
+  if (parseFloat(s.total_earned || 0) > 0) return 'paid';
+  return 'none';
+};
+
+const TABS = [
+  { key: 'all', label: 'All Staff' },
+  { key: 'outstanding', label: 'Outstanding' },
+  { key: 'paid', label: 'Paid Up' },
+  { key: 'none', label: 'No Earnings' },
+];
+
+const PAGE_SIZE = 15;
+
 const StaffSalariesPage = () => {
   const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [showAll, setShowAll] = useState(false);
+  const [tab, setTab] = useState('all');
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
   const [selected, setSelected] = useState(new Set());
   const [companyAccounts, setCompanyAccounts] = useState([]);
 
@@ -870,7 +936,7 @@ const StaffSalariesPage = () => {
     setSelected(new Set());
     try {
       const [overviewRes, accountsRes] = await Promise.allSettled([
-        apiClient.getStaffSalariesOverview(showAll),
+        apiClient.getStaffSalariesOverview(true),
         apiClient.getBankAccounts(),
       ]);
       if (overviewRes.status === 'fulfilled') setData(overviewRes.value.data);
@@ -880,20 +946,41 @@ const StaffSalariesPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [showAll]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
+  const categorized = useMemo(
+    () => (data?.staff || []).map(s => ({ ...s, _category: categorize(s) })),
+    [data]
+  );
+
+  const tabCounts = useMemo(() => {
+    const counts = { all: categorized.length, outstanding: 0, paid: 0, none: 0 };
+    categorized.forEach(s => { counts[s._category] += 1; });
+    return counts;
+  }, [categorized]);
+
   const filtered = useMemo(() => {
-    if (!data?.staff) return [];
+    let list = tab === 'all' ? categorized : categorized.filter(s => s._category === tab);
     const q = search.trim().toLowerCase();
-    if (!q) return data.staff;
-    return data.staff.filter(s =>
-      s.full_name?.toLowerCase().includes(q) ||
-      s.designation?.toLowerCase().includes(q) ||
-      s.mobile_number?.includes(q)
-    );
-  }, [data, search]);
+    if (q) {
+      list = list.filter(s =>
+        s.full_name?.toLowerCase().includes(q) ||
+        s.designation?.toLowerCase().includes(q) ||
+        s.mobile_number?.includes(q)
+      );
+    }
+    return list;
+  }, [categorized, tab, search]);
+
+  useEffect(() => { setPage(1); }, [tab, search]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageItems = useMemo(
+    () => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [filtered, page]
+  );
 
   const toggleSelect = (id) => {
     setSelected(prev => {
@@ -903,12 +990,18 @@ const StaffSalariesPage = () => {
     });
   };
 
+  const allChecked = pageItems.length > 0 && pageItems.every(s => selected.has(s.staff_profile_id));
+
   const toggleAll = () => {
-    if (selected.size === filtered.length) {
-      setSelected(new Set());
-    } else {
-      setSelected(new Set(filtered.map(s => s.staff_profile_id)));
-    }
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (allChecked) {
+        pageItems.forEach(s => next.delete(s.staff_profile_id));
+      } else {
+        pageItems.forEach(s => next.add(s.staff_profile_id));
+      }
+      return next;
+    });
   };
 
   const selectedStaff = useMemo(
@@ -925,8 +1018,6 @@ const StaffSalariesPage = () => {
     () => (data?.staff || []).filter(s => parseFloat(s.current_earnings || 0) > 0),
     [data]
   );
-
-  const allChecked = filtered.length > 0 && selected.size === filtered.length;
 
   const [exporting, setExporting] = useState(false);
 
@@ -1059,8 +1150,8 @@ const StaffSalariesPage = () => {
         <StatCard
           icon={Users}
           label="Staff with Balance"
-          value={data?.staff_count ?? '—'}
-          sub={showAll ? 'All staff shown' : 'Outstanding only'}
+          value={allStaffWithBalance.length}
+          sub={`${tabCounts.all} staff total`}
           tone="blue"
         />
         <StatCard
@@ -1083,25 +1174,16 @@ const StaffSalariesPage = () => {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="relative">
-            <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="text"
               placeholder="Search staff…"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-100 w-60"
+              className="pl-8 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none w-60"
             />
           </div>
-          <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={showAll}
-              onChange={e => setShowAll(e.target.checked)}
-              className="rounded"
-            />
-            Show all staff
-          </label>
-          <button onClick={load} className="p-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-500" title="Refresh">
+          <button onClick={load} title="Refresh" className={iconBtnCls}>
             <RefreshCcw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>
@@ -1109,34 +1191,34 @@ const StaffSalariesPage = () => {
         <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => navigate('/admin/salary-sheets')}
-            className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 rounded-xl px-4 py-2 text-sm font-medium hover:bg-slate-50 transition-colors"
+            className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-slate-50 transition-colors"
           >
-            <FileText className="w-4 h-4 text-violet-600" />
+            <FileText className="w-4 h-4 text-slate-400" />
             Salary Sheets Ledger
             <ExternalLink className="w-3 h-3 opacity-50" />
           </button>
           <button
             onClick={() => buildAndDownload(true)}
             disabled={exporting}
-            className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 rounded-xl px-4 py-2 text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             title="Download current month's data as Excel"
           >
-            {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4 text-emerald-600" />}
+            {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4 text-slate-400" />}
             Monthly Report
           </button>
           <button
             onClick={() => buildAndDownload(false)}
             disabled={exporting}
-            className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 rounded-xl px-4 py-2 text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             title="Download all-time data as Excel"
           >
-            {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4 text-blue-600" />}
+            {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4 text-slate-400" />}
             Download All
           </button>
           {selected.size > 0 && (
             <button
               onClick={() => openPay(selectedStaff)}
-              className="flex items-center gap-2 bg-violet-600 text-white rounded-xl px-4 py-2 text-sm font-bold hover:bg-violet-700 transition-colors"
+              className="flex items-center gap-2 bg-violet-600 text-white rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-violet-500 transition-colors"
             >
               <Banknote className="w-4 h-4" />
               Pay Selected ({selected.size})
@@ -1145,7 +1227,7 @@ const StaffSalariesPage = () => {
           <button
             onClick={() => openPay(allStaffWithBalance)}
             disabled={allStaffWithBalance.length === 0}
-            className="flex items-center gap-2 bg-[#137A6B] text-white rounded-xl px-4 py-2 text-sm font-bold hover:bg-[#0F6559] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 bg-[#137A6B] text-white rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-[#0F6559] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <CheckCircle2 className="w-4 h-4" />
             Settle All Payables
@@ -1153,8 +1235,28 @@ const StaffSalariesPage = () => {
         </div>
       </div>
 
+      {/* Section tabs */}
+      <div className="flex items-center gap-1 border-b border-slate-200">
+        {TABS.map(t => (
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border-b-2 -mb-px transition-colors ${
+              tab === t.key ? 'border-[#137A6B] text-[#137A6B]' : 'border-transparent text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            {t.label}
+            <span className={`inline-flex items-center justify-center min-w-5 h-5 px-1 rounded-full text-[10px] font-bold ${
+              tab === t.key ? 'bg-[#137A6B] text-white' : 'bg-slate-100 text-slate-500'
+            }`}>
+              {tabCounts[t.key]}
+            </span>
+          </button>
+        ))}
+      </div>
+
       {/* Table */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-20 gap-2 text-slate-400">
             <Loader2 className="w-5 h-5 animate-spin" />
@@ -1162,7 +1264,7 @@ const StaffSalariesPage = () => {
           </div>
         ) : filtered.length === 0 ? (
           <div className="text-center py-20 text-slate-400 text-sm">
-            {search ? 'No staff match your search.' : 'No outstanding payables.'}
+            {search ? 'No staff match your search.' : 'No staff in this section.'}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -1185,7 +1287,7 @@ const StaffSalariesPage = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filtered.map(s => {
+                {pageItems.map(s => {
                   const isSelected = selected.has(s.staff_profile_id);
                   const hasBalance = parseFloat(s.current_earnings || 0) > 0;
                   return (
@@ -1203,7 +1305,7 @@ const StaffSalariesPage = () => {
                         <p className="text-xs text-slate-500">{s.designation} · {s.mobile_number || '—'}</p>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <span className={`font-bold text-base ${hasBalance ? 'text-rose-600' : 'text-slate-400'}`}>
+                        <span className={`font-medium ${hasBalance ? 'text-rose-600' : 'text-slate-400'}`}>
                           {fmt(s.current_earnings)}
                         </span>
                       </td>
@@ -1233,18 +1335,14 @@ const StaffSalariesPage = () => {
                         <StatusBadge status={s.current_status} />
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            onClick={() => setBreakdownStaff(s)}
-                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-colors"
-                          >
+                        <div className="flex items-center justify-end gap-0.5">
+                          <button onClick={() => setBreakdownStaff(s)} title="View earnings breakdown" className={iconBtnCls}>
                             <Eye className="w-3.5 h-3.5" />
-                            Breakdown
                           </button>
                           {hasBalance && (
                             <button
                               onClick={() => openPay([s])}
-                              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#137A6B] text-white text-xs font-bold hover:bg-[#0F6559] transition-colors"
+                              className="ml-1 inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#137A6B] text-white text-xs font-medium hover:bg-[#0F6559] transition-colors"
                             >
                               <Banknote className="w-3.5 h-3.5" />
                               Pay
@@ -1257,23 +1355,47 @@ const StaffSalariesPage = () => {
                 })}
               </tbody>
               <tfoot>
-                <tr className="border-t-2 border-slate-200 bg-slate-50">
-                  <td colSpan={2} className="px-4 py-3 text-xs font-bold text-slate-500 uppercase">
-                    {filtered.length} staff
+                <tr className="border-t border-slate-200 bg-slate-50">
+                  <td colSpan={2} className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                    {filtered.length} staff in this section
                   </td>
-                  <td className="px-4 py-3 text-right font-bold text-rose-600">
+                  <td className="px-4 py-3 text-right font-semibold text-rose-600">
                     {fmt(filtered.reduce((s, r) => s + parseFloat(r.current_earnings || 0), 0))}
                   </td>
-                  <td className="px-4 py-3 text-right font-bold text-slate-800">
+                  <td className="px-4 py-3 text-right font-semibold text-slate-800">
                     {fmt(filtered.reduce((s, r) => s + parseFloat(r.total_earned || 0), 0))}
                   </td>
-                  <td className="px-4 py-3 text-right font-bold text-slate-800">
+                  <td className="px-4 py-3 text-right font-semibold text-slate-800">
                     {fmt(filtered.reduce((s, r) => s + parseFloat(r.total_paid_out || 0), 0))}
                   </td>
                   <td colSpan={4}></td>
                 </tr>
               </tfoot>
             </table>
+          </div>
+        )}
+        {!loading && filtered.length > 0 && totalPages > 1 && (
+          <div className="flex items-center justify-between gap-4 px-4 py-3 border-t border-slate-200 bg-slate-50">
+            <p className="text-xs text-slate-500">
+              Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length}
+            </p>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={page === 1}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Previous
+              </button>
+              <span className="px-2 text-xs text-slate-500">Page {page} of {totalPages}</span>
+              <button
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Next
+              </button>
+            </div>
           </div>
         )}
       </div>

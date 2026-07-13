@@ -5,7 +5,7 @@ const paymentTrackingController = require('../controllers/paymentTrackingControl
 const bookingNotesController = require('../controllers/bookingNotesController');
 const dailyAttendanceController = require('../controllers/dailyAttendanceController');
 const shiftPatternController = require('../controllers/shiftPatternController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, attachSalesScope, requireOwnSalesRecord } = require('../middleware/authMiddleware');
 const { upload } = require('../config/cloudinaryConfig');
 
 router.post(
@@ -29,7 +29,8 @@ router.post(
 );
 
 router.get('/',protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'SALES'),
+    attachSalesScope,
     bookingController.getAllBookings
 );
 
@@ -40,7 +41,8 @@ router.get('/active-bookings', protect,
 router.get(
     '/:booking_id/admin-detail',
     protect,
-    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR', 'ACCOUNTS', 'SALES'),
+    requireOwnSalesRecord('booking_id', 'booking_salesperson_assignments'),
     bookingController.getAdminBookingDetail
 );
 

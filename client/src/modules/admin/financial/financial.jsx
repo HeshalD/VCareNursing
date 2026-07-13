@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import {
   DollarSign, TrendingUp, TrendingDown, Download,
-  ArrowUpRight, ArrowDownLeft, AlertTriangle,
-  Package, Wallet, Clock, RefreshCw
+  AlertTriangle, Receipt,
+  Wallet, Clock, RefreshCw
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
@@ -10,69 +10,72 @@ import {
 } from 'recharts';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { CATEGORY_CONFIG, categoryBadge, relatedTo, flowAmountClass, flowSign } from '../../../constants/transactionCategories';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const fmt = (val) =>
   `LKR ${parseFloat(val || 0).toLocaleString('en-LK', { minimumFractionDigits: 2 })}`;
 
-const CATEGORY_COLORS = {
-  CLIENT_PAYMENT: '#6366f1',
-  BOOKING_PAYMENT: '#6366f1',
-  WALLET_TOPUP: '#0ea5e9',
-  SERVICE_INVOICE: '#f59e0b',
-  REGISTRATION_FEE: '#fb923c',
-  WALLET_REFUND: '#10b981',
-  WALLET_DEBIT: '#14b8a6',
-  STAFF_SALARY: '#3b82f6',
-  STAFF_SALARY_PAID: '#2563eb',
-  STAFF_ADVANCE: '#a855f7',
-  STAFF_DEDUCTION: '#ef4444',
-  AGENCY_FEE: '#8b5cf6',
-  BOOKING_SETTLEMENT: '#64748b',
+const fmtDate = (d) => d
+  ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+  : '—';
+
+// Recharts needs real color values (not Tailwind class names), so the pie
+// chart keeps its own hex palette — labels still come from the shared
+// CATEGORY_CONFIG so this page never drifts from what Transactions/Bank
+// Accounts call the same category.
+const CATEGORY_HEX = {
+  CLIENT_PAYMENT: '#10b981',
+  BOOKING_PAYMENT: '#60a5fa',
+  WALLET_TOPUP: '#2dd4bf',
   OTHER_INCOME: '#22c55e',
-  OTHER_EXPENSE: '#dc2626',
+  PRODUCT_SALE: '#34d399',
+  RENTAL_PAYMENT: '#c084fc',
+  STAFF_SALARY_PAID: '#a78bfa',
+  STAFF_ADVANCE: '#e879f9',
+  AGENCY_FEE: '#818cf8',
+  OTHER_EXPENSE: '#fb7185',
+  DEPOSIT_REFUND: '#f43f5e',
+  STAFF_SALARY: '#c4b5fd',
+  SERVICE_INVOICE: '#22d3ee',
+  REGISTRATION_FEE: '#84cc16',
+  WALLET_DEBIT: '#fb923c',
+  WALLET_REFUND: '#fbbf24',
+  BOOKING_SETTLEMENT: '#38bdf8',
 };
 
-const CATEGORY_LABELS = {
-  CLIENT_PAYMENT: 'Client Payment',
-  BOOKING_PAYMENT: 'Booking Payment',
-  WALLET_TOPUP: 'Wallet Top-up',
-  SERVICE_INVOICE: 'Service Invoice',
-  REGISTRATION_FEE: 'Registration Fee',
-  WALLET_REFUND: 'Wallet Refund',
-  WALLET_DEBIT: 'Wallet Debit',
-  STAFF_SALARY: 'Staff Salary',
-  STAFF_SALARY_PAID: 'Staff Salary Paid',
-  STAFF_ADVANCE: 'Staff Advance',
-  STAFF_DEDUCTION: 'Staff Deduction',
-  AGENCY_FEE: 'Agency Fee',
-  BOOKING_SETTLEMENT: 'Booking Settlement',
-  OTHER_INCOME: 'Other Income',
-  OTHER_EXPENSE: 'Other Expense',
+const STATUS_CONFIG = {
+  COMPLETED: { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Completed' },
+  PENDING:   { dot: 'bg-amber-400',   text: 'text-amber-700',   label: 'Pending' },
+  FAILED:    { dot: 'bg-red-400',     text: 'text-red-700',     label: 'Failed' },
 };
 
-const STATUS_STYLES = {
-  COMPLETED: 'bg-green-50 text-green-700',
-  PENDING: 'bg-yellow-50 text-yellow-700',
-  FAILED: 'bg-red-50 text-red-700',
+const StatusBadge = ({ status }) => {
+  const cfg = STATUS_CONFIG[status] || { dot: 'bg-slate-400', text: 'text-slate-600', label: status };
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
+      {cfg.label}
+    </span>
+  );
 };
 
 // ─── Sub Components ───────────────────────────────────────────────────────────
 
-const StatCard = ({ title, value, sub, icon: Icon, iconBg, loading }) => (
-  <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+const StatCard = ({ title, value, sub, icon: Icon, iconBg, loading, valueClass = 'text-slate-900' }) => (
+  <div className="bg-white p-4 rounded-xl border border-slate-200">
     <div className="flex items-center justify-between mb-3">
-      <p className="text-sm font-medium text-slate-500">{title}</p>
-      <div className={`p-2 rounded-xl ${iconBg}`}>
+      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{title}</p>
+      <div className={`p-2 rounded-lg ${iconBg}`}>
         <Icon className="w-4 h-4" />
       </div>
     </div>
     {loading ? (
-      <div className="h-8 w-32 bg-slate-100 rounded animate-pulse" />
+      <div className="h-7 w-32 bg-slate-100 rounded animate-pulse" />
     ) : (
       <>
-        <p className="text-2xl font-bold text-slate-900">{value}</p>
+        <p className={`text-xl font-bold tabular-nums ${valueClass}`}>{value}</p>
         {sub && <p className="text-xs text-slate-400 mt-1">{sub}</p>}
       </>
     )}
@@ -80,7 +83,7 @@ const StatCard = ({ title, value, sub, icon: Icon, iconBg, loading }) => (
 );
 
 const SectionTitle = ({ children }) => (
-  <h2 className="text-base font-semibold text-slate-800 mb-4">{children}</h2>
+  <h2 className="text-sm font-semibold text-slate-900 mb-4">{children}</h2>
 );
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -88,7 +91,7 @@ const SectionTitle = ({ children }) => (
 const Financials = () => {
   const [overview, setOverview] = useState(null);
   const [transactions, setTransactions] = useState([]);
-  const [transactionsMeta, setTransactionsMeta] = useState({ total_count: 0, page: 1 });
+  const [transactionsMeta, setTransactionsMeta] = useState({ total: 0, page: 1, total_pages: 1 });
   const [advances, setAdvances] = useState(null);
   const [staffWallets, setStaffWallets] = useState(null);
   const [creditAlerts, setCreditAlerts] = useState(null);
@@ -96,7 +99,7 @@ const Financials = () => {
   const [categoriesChart, setCategoriesChart] = useState([]);
 
   const [period, setPeriod] = useState('monthly');
-  const [filters, setFilters] = useState({ category: '', status: '', page: 1, limit: 10 });
+  const [filters, setFilters] = useState({ category: '', flow: '', status: '', page: 1, limit: 10 });
   const [loading, setLoading] = useState(true);
   const [txLoading, setTxLoading] = useState(false);
 
@@ -112,7 +115,7 @@ const Financials = () => {
           apiClient.getCreditAlertsSummary(),
           apiClient.getTransactionCategoriesChart(),
         ]);
-        
+
         setOverview(ov.data);
         setAdvances(adv.data);
         setStaffWallets(sw.data);
@@ -140,17 +143,15 @@ const Financials = () => {
     fetchChart();
   }, [period]);
 
-  // Fetch transactions when filters change
+  // Fetch transactions (canonical ledger endpoint — same one Transactions/Bank
+  // Accounts pages use) when filters change
   useEffect(() => {
     const fetchTransactions = async () => {
       setTxLoading(true);
       try {
-        const res = await apiClient.getFinancesTransactions(filters);
-        setTransactions(res.data);
-        setTransactionsMeta({
-          total_count: res.data.total_count,
-          page: res.data.page
-        });
+        const res = await apiClient.getAllTransactions(filters);
+        setTransactions(res.data || []);
+        setTransactionsMeta(res.pagination || { total: 0, page: filters.page, total_pages: 1 });
       } catch (err) {
         console.error('Failed to load transactions:', err);
       } finally {
@@ -160,56 +161,68 @@ const Financials = () => {
     fetchTransactions();
   }, [filters]);
 
-  const totalPages = Math.ceil(transactionsMeta.total_count / filters.limit);
+  const totalOutstanding = parseFloat(overview?.total_outstanding || 0);
+  const totalReceivables = parseFloat(overview?.total_receivables || 0);
+  const netCashFlow = parseFloat(overview?.net_cash_flow || 0);
 
   return (
     <AdminLayout
       title="Financial Overview"
-      subtitle="Monitor revenue, invoices, advances, and platform activity."
+      subtitle="Real cash flow, outstanding invoices, advances, and platform activity."
       actions={
-        <button className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors">
+        <button className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 text-slate-600 text-sm font-medium rounded-lg hover:bg-slate-50 transition-colors">
           <Download className="w-4 h-4" /> Export CSV
         </button>
       }
     >
-      {/* ── Revenue Overview Cards ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      {/* ── Cash Flow Overview Cards ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
         <StatCard
-          title="Total Revenue Collected"
-          value={fmt(overview?.total_revenue_collected)}
-          sub="All time client payments"
-          icon={DollarSign}
-          iconBg="bg-indigo-50 text-indigo-600"
+          title="Total Money In"
+          value={fmt(overview?.total_money_in)}
+          sub="Client/booking payments, product & rental sales, top-ups"
+          icon={TrendingUp}
+          iconBg="bg-emerald-50 text-emerald-600"
           loading={loading}
         />
         <StatCard
-          title="Total Invoiced"
-          value={fmt(overview?.total_invoiced)}
-          sub="All service invoices issued"
-          icon={ArrowUpRight}
+          title="Total Money Out"
+          value={fmt(overview?.total_money_out)}
+          sub="Staff salaries, advances, agency fees, deposit refunds"
+          icon={TrendingDown}
+          iconBg="bg-red-50 text-red-600"
+          loading={loading}
+        />
+        <StatCard
+          title="Net Cash Flow"
+          value={fmt(netCashFlow)}
+          sub="Money in minus money out"
+          icon={DollarSign}
+          iconBg={netCashFlow >= 0 ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600'}
+          valueClass={netCashFlow >= 0 ? 'text-slate-900' : 'text-amber-700'}
+          loading={loading}
+        />
+        <StatCard
+          title="Total Outstanding"
+          value={fmt(totalOutstanding)}
+          sub={`Daily ${fmt(overview?.outstanding_daily_invoices)} · Product/Rental ${fmt(overview?.outstanding_product_rental_invoices)}${parseFloat(overview?.overdue_product_rental_invoices || 0) > 0 ? ` (${fmt(overview?.overdue_product_rental_invoices)} overdue)` : ''} · Reg. fee ${fmt(overview?.outstanding_registration_fees)}`}
+          icon={Receipt}
           iconBg="bg-amber-50 text-amber-600"
           loading={loading}
         />
         <StatCard
-          title="Outstanding Balance"
-          value={fmt(overview?.outstanding_balance)}
-          sub="Collected minus invoiced"
-          icon={TrendingUp}
-          iconBg="bg-green-50 text-green-600"
-          loading={loading}
-        />
-        <StatCard
-          title="Total Refunds Issued"
-          value={fmt(overview?.total_refunds_issued)}
-          sub="Wallet refunds to clients"
-          icon={TrendingDown}
+          title="Total Receivables"
+          value={fmt(totalReceivables)}
+          sub={`Overdue bookings ${fmt(overview?.overdue_booking_balance)} · Overdue product/rental ${fmt(overview?.overdue_product_rental_invoices)}`}
+          icon={AlertTriangle}
           iconBg="bg-red-50 text-red-600"
+          valueClass={totalReceivables > 0 ? 'text-red-700' : 'text-slate-900'}
           loading={loading}
         />
       </div>
 
       {/* ── Active Booking Financials ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <StatCard
           title="Active Bookings"
           value={overview?.active_bookings_count ?? '—'}
@@ -223,7 +236,7 @@ const Financials = () => {
           value={fmt(overview?.total_daily_burn_rate)}
           sub="Sum of all active daily rates"
           icon={Clock}
-          iconBg="bg-purple-50 text-purple-600"
+          iconBg="bg-violet-50 text-violet-600"
           loading={loading}
         />
         <StatCard
@@ -234,24 +247,32 @@ const Financials = () => {
           iconBg="bg-emerald-50 text-emerald-600"
           loading={loading}
         />
+        <StatCard
+          title="Registration Fee Revenue"
+          value={fmt(overview?.registration_fee_revenue)}
+          sub="Lifetime cash collected, across all renewal cycles"
+          icon={Receipt}
+          iconBg="bg-lime-50 text-lime-600"
+          loading={loading}
+        />
       </div>
 
       {/* ── Revenue Chart + Categories Pie ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
 
-        {/* Revenue vs Invoiced Chart */}
-        <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+        {/* Money In vs Money Out Chart */}
+        <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-5">
           <div className="flex items-center justify-between mb-4">
-            <SectionTitle>Revenue vs Invoiced</SectionTitle>
-            <div className="flex gap-2">
+            <SectionTitle>Money In vs Money Out</SectionTitle>
+            <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-1">
               {['daily', 'weekly', 'monthly'].map((p) => (
                 <button
                   key={p}
                   onClick={() => setPeriod(p)}
-                  className={`px-3 py-1 rounded-lg text-xs font-medium capitalize transition ${
+                  className={`px-3 py-1.5 rounded-md text-xs font-semibold capitalize transition-all ${
                     period === p
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
                   }`}
                 >
                   {p}
@@ -262,13 +283,13 @@ const Financials = () => {
           <ResponsiveContainer width="100%" height={220}>
             <AreaChart data={revenueChart}>
               <defs>
-                <linearGradient id="revenue" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#6366f1" stopOpacity={0.15} />
-                  <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                <linearGradient id="moneyIn" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.15} />
+                  <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
                 </linearGradient>
-                <linearGradient id="invoiced" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.15} />
-                  <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
+                <linearGradient id="moneyOut" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#ef4444" stopOpacity={0.15} />
+                  <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -276,16 +297,16 @@ const Financials = () => {
               <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
               <Tooltip
                 formatter={(val) => `LKR ${parseFloat(val).toLocaleString()}`}
-                contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', fontSize: '12px' }}
+                contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '12px' }}
               />
-              <Area type="monotone" dataKey="revenue" stroke="#6366f1" strokeWidth={2} fill="url(#revenue)" name="Revenue" />
-              <Area type="monotone" dataKey="invoiced" stroke="#f59e0b" strokeWidth={2} fill="url(#invoiced)" name="Invoiced" />
+              <Area type="monotone" dataKey="money_in" stroke="#10b981" strokeWidth={2} fill="url(#moneyIn)" name="Money In" />
+              <Area type="monotone" dataKey="money_out" stroke="#ef4444" strokeWidth={2} fill="url(#moneyOut)" name="Money Out" />
             </AreaChart>
           </ResponsiveContainer>
         </div>
 
         {/* Transaction Categories Pie */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+        <div className="bg-white rounded-xl border border-slate-200 p-5">
           <SectionTitle>By Category</SectionTitle>
           <ResponsiveContainer width="100%" height={220}>
             <PieChart>
@@ -302,16 +323,16 @@ const Financials = () => {
                 {categoriesChart.map((entry, index) => (
                   <Cell
                     key={index}
-                    fill={CATEGORY_COLORS[entry.category] || '#94a3b8'}
+                    fill={CATEGORY_HEX[entry.category] || '#94a3b8'}
                   />
                 ))}
               </Pie>
               <Tooltip
-                formatter={(val, name) => [`LKR ${parseFloat(val).toLocaleString()}`, CATEGORY_LABELS[name] || name]}
-                contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', fontSize: '12px' }}
+                formatter={(val, name) => [`LKR ${parseFloat(val).toLocaleString()}`, CATEGORY_CONFIG[name]?.label || name]}
+                contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '12px' }}
               />
               <Legend
-                formatter={(val) => CATEGORY_LABELS[val] || val}
+                formatter={(val) => CATEGORY_CONFIG[val]?.label || val}
                 iconType="circle"
                 iconSize={8}
                 wrapperStyle={{ fontSize: '11px' }}
@@ -322,15 +343,15 @@ const Financials = () => {
       </div>
 
       {/* ── Secondary Stats ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
 
         {/* Staff Advances */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="p-2 bg-purple-50 rounded-xl">
-              <Wallet className="w-4 h-4 text-purple-600" />
+        <div className="bg-white rounded-xl border border-slate-200 p-5">
+          <div className="flex items-center gap-2.5 mb-3">
+            <div className="w-9 h-9 rounded-lg bg-violet-50 flex items-center justify-center flex-shrink-0">
+              <Wallet className="w-4 h-4 text-violet-600" />
             </div>
-            <p className="text-sm font-semibold text-slate-700">Staff Advances</p>
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Staff Advances</p>
           </div>
           {loading ? (
             <div className="space-y-2">
@@ -340,27 +361,27 @@ const Financials = () => {
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="text-slate-500">Approved this month</span>
-                <span className="font-semibold text-slate-800">{fmt(advances?.total_approved_this_month)}</span>
+                <span className="font-semibold text-slate-900 tabular-nums">{fmt(advances?.total_approved_this_month)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Pending requests</span>
-                <span className="font-semibold text-amber-600">{advances?.pending_count ?? 0}</span>
+                <span className="font-semibold text-amber-600 tabular-nums">{advances?.pending_count ?? 0}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Total outstanding</span>
-                <span className="font-semibold text-slate-800">{fmt(advances?.total_outstanding_advances)}</span>
+                <span className="font-semibold text-slate-900 tabular-nums">{fmt(advances?.total_outstanding_advances)}</span>
               </div>
             </div>
           )}
         </div>
 
         {/* Staff Wallets */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="p-2 bg-blue-50 rounded-xl">
+        <div className="bg-white rounded-xl border border-slate-200 p-5">
+          <div className="flex items-center gap-2.5 mb-3">
+            <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center flex-shrink-0">
               <DollarSign className="w-4 h-4 text-blue-600" />
             </div>
-            <p className="text-sm font-semibold text-slate-700">Staff Wallets</p>
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Staff Wallets</p>
           </div>
           {loading ? (
             <div className="space-y-2">
@@ -370,39 +391,39 @@ const Financials = () => {
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="text-slate-500">Total balance held</span>
-                <span className="font-semibold text-slate-800">{fmt(staffWallets?.total_balance_held)}</span>
+                <span className="font-semibold text-slate-900 tabular-nums">{fmt(staffWallets?.total_balance_held)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Total wallets</span>
-                <span className="font-semibold text-slate-800">{staffWallets?.total_staff_wallets ?? 0}</span>
+                <span className="font-semibold text-slate-900 tabular-nums">{staffWallets?.total_staff_wallets ?? 0}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-500">Average balance</span>
-                <span className="font-semibold text-slate-800">{fmt(staffWallets?.average_wallet_balance)}</span>
+                <span className="font-semibold text-slate-900 tabular-nums">{fmt(staffWallets?.average_wallet_balance)}</span>
               </div>
             </div>
           )}
         </div>
 
-        {/* Credit Alerts */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="p-2 bg-red-50 rounded-xl">
+        {/* Credit Alerts — live counts, not historical notification logs */}
+        <div className="bg-white rounded-xl border border-slate-200 p-5">
+          <div className="flex items-center gap-2.5 mb-3">
+            <div className="w-9 h-9 rounded-lg bg-red-50 flex items-center justify-center flex-shrink-0">
               <AlertTriangle className="w-4 h-4 text-red-500" />
             </div>
-            <p className="text-sm font-semibold text-slate-700">Credit Alerts Today</p>
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Booking Balance Risk (Live)</p>
           </div>
           {loading ? (
             <div className="h-4 bg-slate-100 rounded animate-pulse" />
           ) : (
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
-                <span className="text-slate-500">Expiring soon</span>
-                <span className="font-semibold text-amber-600">{creditAlerts?.expiring_soon_today ?? 0}</span>
+                <span className="text-slate-500">Expiring soon (≤1 day left)</span>
+                <span className="font-semibold text-amber-600 tabular-nums">{creditAlerts?.expiring_soon_today ?? 0}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Negative balance</span>
-                <span className="font-semibold text-red-600">{creditAlerts?.negative_balance_today ?? 0}</span>
+                <span className="text-slate-500">Already negative</span>
+                <span className="font-semibold text-red-600 tabular-nums">{creditAlerts?.negative_balance_today ?? 0}</span>
               </div>
             </div>
           )}
@@ -410,35 +431,39 @@ const Financials = () => {
       </div>
 
       {/* ── Transactions Table ── */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <h2 className="text-base font-semibold text-slate-800">Transactions</h2>
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold text-slate-900">Transactions</h2>
           <div className="flex flex-wrap gap-2">
+            {/* Direction Filter */}
+            <select
+              value={filters.flow}
+              onChange={(e) => setFilters(f => ({ ...f, flow: e.target.value, page: 1 }))}
+              className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 text-slate-600 bg-white outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+            >
+              <option value="">All Directions</option>
+              <option value="IN">Money In</option>
+              <option value="OUT">Money Out</option>
+              <option value="NEUTRAL">Neutral</option>
+            </select>
+
             {/* Category Filter */}
             <select
               value={filters.category}
               onChange={(e) => setFilters(f => ({ ...f, category: e.target.value, page: 1 }))}
-              className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+              className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 text-slate-600 bg-white outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
             >
               <option value="">All Categories</option>
-              <option value="BOOKING_PAYMENT">Booking Payment</option>
-              <option value="WALLET_TOPUP">Wallet Top-up</option>
-              <option value="SERVICE_INVOICE">Service Invoice</option>
-              <option value="REGISTRATION_FEE">Registration Fee</option>
-              <option value="WALLET_REFUND">Wallet Refund</option>
-              <option value="STAFF_SALARY">Staff Salary</option>
-              <option value="STAFF_SALARY_PAID">Staff Salary Paid</option>
-              <option value="STAFF_ADVANCE">Staff Advance</option>
-              <option value="AGENCY_FEE">Agency Fee</option>
-              <option value="OTHER_INCOME">Other Income</option>
-              <option value="OTHER_EXPENSE">Other Expense</option>
+              {Object.entries(CATEGORY_CONFIG).map(([key, cfg]) => (
+                <option key={key} value={key}>{cfg.label}</option>
+              ))}
             </select>
 
             {/* Status Filter */}
             <select
               value={filters.status}
               onChange={(e) => setFilters(f => ({ ...f, status: e.target.value, page: 1 }))}
-              className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+              className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 text-slate-600 bg-white outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
             >
               <option value="">All Statuses</option>
               <option value="COMPLETED">Completed</option>
@@ -450,82 +475,67 @@ const Financials = () => {
 
         <div className="overflow-x-auto">
           {txLoading ? (
-            <div className="p-8 text-center text-slate-400 text-sm">Loading transactions...</div>
+            <div className="p-8 text-center text-slate-400 text-sm">Loading transactions…</div>
           ) : transactions.length === 0 ? (
             <div className="p-8 text-center text-slate-400 text-sm">No transactions found.</div>
           ) : (
             <table className="w-full text-sm text-left">
-              <thead className="bg-slate-50 text-slate-500 text-xs font-semibold border-b border-slate-100">
-                <tr>
-                  <th className="px-5 py-3">Client</th>
-                  <th className="px-5 py-3">Category</th>
-                  <th className="px-5 py-3">Service Type</th>
-                  <th className="px-5 py-3">Amount</th>
-                  <th className="px-5 py-3">Method</th>
-                  <th className="px-5 py-3">Status</th>
-                  <th className="px-5 py-3">Date</th>
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50">
+                  {['Party', 'Category', 'Amount', 'Method', 'Status', 'Date'].map((h) => (
+                    <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
+                  ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-50">
-                {transactions.map((tx) => (
-                  <tr key={tx.transaction_id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-5 py-3.5 font-medium text-slate-800">
-                      {tx.client_name || '—'}
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <span
-                        className="px-2.5 py-1 rounded-full text-xs font-medium"
-                        style={{
-                          backgroundColor: `${CATEGORY_COLORS[tx.category]}18`,
-                          color: CATEGORY_COLORS[tx.category] || '#64748b'
-                        }}
-                      >
-                        {CATEGORY_LABELS[tx.category] || tx.category}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3.5 text-slate-500">{tx.service_type || '—'}</td>
-                    <td className="px-5 py-3.5 font-semibold text-slate-800">
-                      {fmt(tx.amount)}
-                    </td>
-                    <td className="px-5 py-3.5 text-slate-500 capitalize">
-                      {tx.payment_method?.replace('_', ' ') || '—'}
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${STATUS_STYLES[tx.status] || 'bg-slate-100 text-slate-600'}`}>
-                        {tx.status}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3.5 text-slate-400 text-xs">
-                      {new Date(tx.created_at).toLocaleDateString('en-GB', {
-                        day: 'numeric', month: 'short', year: 'numeric'
-                      })}
-                    </td>
-                  </tr>
-                ))}
+              <tbody className="divide-y divide-slate-100">
+                {transactions.map((tx) => {
+                  const related = relatedTo(tx);
+                  return (
+                    <tr key={tx.transaction_id} className="hover:bg-slate-50 transition-colors">
+                      <td className="px-4 py-3">
+                        <p className="font-semibold text-slate-900 leading-tight">{related.primary}</p>
+                        {related.secondary && <p className="text-xs text-slate-400 mt-0.5">{related.secondary}</p>}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">{categoryBadge(tx.category)}</td>
+                      <td className={`px-4 py-3 font-semibold tabular-nums whitespace-nowrap ${flowAmountClass(tx.category, tx.transaction_type)}`}>
+                        {flowSign(tx.category, tx.transaction_type)}{fmt(tx.amount)}
+                      </td>
+                      <td className="px-4 py-3 text-slate-600 capitalize">
+                        {tx.payment_method?.replace(/_/g, ' ') || '—'}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <StatusBadge status={tx.status} />
+                      </td>
+                      <td className="px-4 py-3 text-slate-500 whitespace-nowrap">
+                        {fmtDate(tx.transaction_date || tx.created_at)}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
         </div>
 
         {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="p-4 border-t border-slate-100 flex items-center justify-between text-sm text-slate-500">
-            <span>{transactionsMeta.total_count} total transactions</span>
-            <div className="flex gap-2">
+        {transactionsMeta.total_pages > 1 && (
+          <div className="border-t border-slate-100 px-4 py-2.5 flex items-center justify-between">
+            <span className="text-xs text-slate-400">{transactionsMeta.total} total transactions</span>
+            <div className="flex items-center gap-2">
               <button
                 onClick={() => setFilters(f => ({ ...f, page: f.page - 1 }))}
                 disabled={filters.page === 1}
-                className="px-3 py-1.5 rounded-lg border border-slate-200 disabled:opacity-40 hover:bg-slate-50 transition"
+                className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 transition-colors"
               >
                 Previous
               </button>
-              <span className="px-3 py-1.5">
-                {filters.page} / {totalPages}
+              <span className="text-sm text-slate-600 tabular-nums px-1">
+                {filters.page} / {transactionsMeta.total_pages}
               </span>
               <button
                 onClick={() => setFilters(f => ({ ...f, page: f.page + 1 }))}
-                disabled={filters.page === totalPages}
-                className="px-3 py-1.5 rounded-lg border border-slate-200 disabled:opacity-40 hover:bg-slate-50 transition"
+                disabled={filters.page === transactionsMeta.total_pages}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 transition-colors"
               >
                 Next
               </button>

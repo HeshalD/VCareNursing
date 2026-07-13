@@ -5,6 +5,7 @@ import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import AdminDirectBookingDrawer from './AdminDirectBookingDrawer';
+import useAutoRefresh from '../../../hooks/useAutoRefresh';
 
 const STATUS_TABS = [
   { key: 'ALL',                label: 'All' },
@@ -84,10 +85,10 @@ const Bookings = () => {
     if (adminToken) fetchBookings();
   }, [adminToken]);
 
-  const fetchBookings = async () => {
+  const fetchBookings = async ({ silent = false } = {}) => {
     try {
-      setLoading(true);
-      setError('');
+      if (!silent) setLoading(true);
+      if (!silent) setError('');
       const orig = apiClient.token;
       apiClient.setToken(adminToken);
       const response = await apiClient.getAllBookings();
@@ -99,13 +100,18 @@ const Bookings = () => {
       } else if (response.status === 'success') {
         bookingsData = response.data || [];
       } else {
-        setError(response.message || 'Failed to load bookings');
+        if (!silent) setError(response.message || 'Failed to load bookings');
         return;
       }
 
       setBookings(bookingsData);
 
-      const detailsPromises = bookingsData.map(async (booking) => {
+      // On a silent poll, only fetch details for bookings we haven't seen yet —
+      // re-fetching every booking's detail every 5s would be a heavy N+1 poll.
+      const knownIds = silent ? new Set(Object.keys(bookingDetails).map(String)) : new Set();
+      const toFetch = bookingsData.filter((b) => !knownIds.has(String(b.booking_id)));
+
+      const detailsPromises = toFetch.map(async (booking) => {
         try {
           apiClient.setToken(adminToken);
           const detailResponse = await apiClient.getBookingById(booking.booking_id);
@@ -117,17 +123,27 @@ const Bookings = () => {
       });
 
       const detailsResults = await Promise.all(detailsPromises);
-      const detailsMap = {};
-      detailsResults.forEach(({ bookingId, details }) => {
-        if (details) detailsMap[bookingId] = details;
+      setBookingDetails((prev) => {
+        const next = silent ? { ...prev } : {};
+        detailsResults.forEach(({ bookingId, details }) => {
+          if (details) next[bookingId] = details;
+        });
+        return next;
       });
-      setBookingDetails(detailsMap);
     } catch (err) {
-      setError(err.message || 'Unknown error');
+      if (!silent) setError(err.message || 'Unknown error');
+      else console.error('Bookings silent refresh error:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
+
+  // Booking status/staff assignment changes continuously across coordinators,
+  // so keep the list current; pause while the direct-booking drawer is open.
+  useAutoRefresh(() => fetchBookings({ silent: true }), {
+    intervalMs: 5000,
+    enabled: !!adminToken && !showDirectBooking,
+  });
 
   const filteredBookings = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();

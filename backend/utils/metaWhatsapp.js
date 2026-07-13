@@ -107,11 +107,29 @@ const sendStaffApplicationRejected = (mobileNumber, fullName, reason) =>
 const sendServiceRequestConfirmed = (mobileNumber, payerName, serviceType, date) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_service_request_confirmed', 'en', [payerName, serviceType, date]);
 
-// Sent when a quotation is issued — header: document, {{1}} = name, {{2}} = estimate number
+// Sent when a SERVICE (booking) quotation is issued — header: document,
+// {{1}} = name, {{2}} = estimate number. Wording talks about "the booking",
+// so this is only appropriate for care/service quotations — see
+// sendClientProductQuotation below for product/rental quotes.
 const sendClientQuotation = (mobileNumber, payerName, estimateNumber, pdfUrl) =>
   sendTemplate(
     formatNumber(mobileNumber),
     'vcare_client_quotation',
+    'en',
+    [payerName, estimateNumber],
+    [{ type: 'document', document: { link: pdfUrl, filename: `${estimateNumber}.pdf` } }]
+  );
+
+// Sent when a PRODUCT/RENTAL quotation is issued — separate template from
+// sendClientQuotation above because that one's approved wording ("...to move
+// on with the booking") doesn't fit a product/rental order. Requires a
+// distinct Meta-approved template named 'vcare_product_quotation' with the
+// same {{1}} = name, {{2}} = estimate number, document-header shape — see
+// quoteController.sendProductQuotePDF for the caller.
+const sendClientProductQuotation = (mobileNumber, payerName, estimateNumber, pdfUrl) =>
+  sendTemplate(
+    formatNumber(mobileNumber),
+    'vcare_product_quotation',
     'en',
     [payerName, estimateNumber],
     [{ type: 'document', document: { link: pdfUrl, filename: `${estimateNumber}.pdf` } }]
@@ -149,11 +167,36 @@ const sendPaymentReceipt = (mobileNumber, clientName, receiptNumber, amount, dat
     [{ type: 'document', document: { link: pdfUrl, filename: filename || `${receiptNumber}.pdf` } }]
   );
 
-// Sent when staff is assigned to a booking — {{1}} = client name, {{2}} = staff name, {{3}} = date, {{4}} = time.
-// NOTE: the live template has only 4 body vars (no profile-link line); the staff profile URL is
-// delivered to the client via SMS instead (see staffAssignmentController).
-const sendBookingConfirmed = (mobileNumber, clientName, staffName, date, time) =>
-  sendTemplate(formatNumber(mobileNumber), 'vcare_booking_confirmed', 'en', [clientName, staffName, date, time]);
+// Sent alongside the payment receipt the first time any payment is recorded
+// against a SERVICE quote and/or its linked PRODUCT quote (e.g. daily-rate
+// charges + a rental + its deposit) — a single combined Invoice document for
+// the full quoted total, distinct from the Quotation (sent pre-acceptance)
+// and the Receipt (sent per-payment). See quoteController.ensureCombinedInvoice
+// for generation and receiptController.sendReceiptWhatsApp for the send hook.
+// Requires a distinct Meta-approved template named 'vcare_client_invoice' —
+// NOT YET APPROVED as of writing; sends will 404 until it is.
+//
+// META TEMPLATE SPEC — vcare_client_invoice (UTILITY, en) — TO BE SUBMITTED
+// Header: DOCUMENT → Variable (dynamic PDF URL)
+// Body:
+//   Hi {{1}}, please find attached your invoice.
+//
+//   🧾 *Invoice No:* {{2}}
+//   💰 *Total Amount:* LKR {{3}}
+//
+//   Thank you for choosing VCare Nursing.
+const sendClientInvoice = (mobileNumber, clientName, invoiceNumber, totalAmount, pdfUrl) =>
+  sendTemplate(
+    formatNumber(mobileNumber),
+    'vcare_client_invoice',
+    'en',
+    [clientName, invoiceNumber, String(totalAmount)],
+    [{ type: 'document', document: { link: pdfUrl, filename: `${invoiceNumber}.pdf` } }]
+  );
+
+// Sent when staff is assigned to a booking — {{1}} = client name, {{2}} = staff name, {{3}} = date, {{4}} = staff profile URL.
+const sendBookingConfirmed = (mobileNumber, clientName, staffName, date, staffProfileUrl) =>
+  sendTemplate(formatNumber(mobileNumber), 'vcare_booking_confirmed', 'en', [clientName, staffName, date, staffProfileUrl]);
 
 // Sent to staff when assigned to a booking — {{1}} = staff name, {{2}} = patient name, {{3}} = location, {{4}} = conditions, {{5}} = start date (with start time appended when set, e.g. "25 June 2026, 9:00 AM")
 const sendStaffNewAssignment = (mobileNumber, staffName, patientName, location, conditions, startDate) =>
@@ -425,4 +468,4 @@ const sendRegFeeInvoice = (mobileNumber, clientName, amount, bankName, accountHo
 const sendStaffLeaveRejected = (mobileNumber, staffName, startDate, endDate, reason) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_leave_rejected', 'en', [staffName, startDate, endDate, reason]);
 
-module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendClientWelcomeNew, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendPaymentRecorded, sendPaymentReceipt, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected, sendClientBookingStatement, sendStaffAgreement, sendCandidateProfile, sendStaffLeaveApproved, sendStaffLeaveRejected, sendDocumentUploadRequest, sendRegFeeNotice, sendRegFeeInvoice };
+module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendClientWelcomeNew, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendClientProductQuotation, sendPaymentRecorded, sendPaymentReceipt, sendClientInvoice, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected, sendClientBookingStatement, sendStaffAgreement, sendCandidateProfile, sendStaffLeaveApproved, sendStaffLeaveRejected, sendDocumentUploadRequest, sendRegFeeNotice, sendRegFeeInvoice };

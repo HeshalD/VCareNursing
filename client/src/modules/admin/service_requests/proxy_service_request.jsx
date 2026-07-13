@@ -78,7 +78,11 @@ const labelCls = 'block text-xs font-medium text-slate-600 mb-1.5';
 
 // ─── Add Request Drawer ───────────────────────────────────────────────────────
 
-function AddRequestDrawer({ open, onClose, onSuccess }) {
+// `presetClient` — when the caller already knows which client this request is
+// for (e.g. from that client's own detail page), pass { client_profile_id,
+// full_name, mobile_number } to skip the client-search step entirely and go
+// straight to care profile / service details.
+export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null }) {
   const [formData, setFormData]                       = useState(BLANK_FORM);
   const [formLoading, setFormLoading]                 = useState(false);
   const [error, setError]                             = useState(null);
@@ -94,7 +98,11 @@ function AddRequestDrawer({ open, onClose, onSuccess }) {
 
   useEffect(() => {
     if (open) {
-      fetchClients();
+      if (presetClient) {
+        handleSelectClient(presetClient);
+      } else {
+        fetchClients();
+      }
     } else {
       // reset on close
       setFormData(BLANK_FORM);
@@ -105,6 +113,7 @@ function AddRequestDrawer({ open, onClose, onSuccess }) {
       setError(null);
       setSuccess(null);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const fetchClients = async () => {
@@ -196,6 +205,7 @@ function AddRequestDrawer({ open, onClose, onSuccess }) {
         ...formData,
         patient_age: parseInt(formData.patient_age),
         client_id: selectedClient.client_profile_id,
+        patient_id: selectedCareProfile?.patient_id || null,
       });
       setSuccess('Service request created successfully!');
       setTimeout(() => { onClose(); onSuccess(); }, 1500);
@@ -225,8 +235,12 @@ function AddRequestDrawer({ open, onClose, onSuccess }) {
         {/* Header */}
         <div className="shrink-0 flex items-center justify-between border-b border-slate-200 px-6 py-4">
           <div>
-            <h3 className="text-[15px] font-semibold text-slate-900">New Proxy Service Request</h3>
-            <p className="text-xs text-slate-500 mt-0.5">Create a request on behalf of a registered client</p>
+            <h3 className="text-[15px] font-semibold text-slate-900">
+              {presetClient ? 'New Service Request' : 'New Proxy Service Request'}
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {presetClient ? `For ${presetClient.full_name}` : 'Create a request on behalf of a registered client'}
+            </p>
           </div>
           <button
             type="button"
@@ -254,7 +268,8 @@ function AddRequestDrawer({ open, onClose, onSuccess }) {
               </div>
             )}
 
-            {/* ── Step 1 — Select Client ── */}
+            {/* ── Step 1 — Select Client (skipped when the client is already known) ── */}
+            {!presetClient && (
             <div className="rounded-xl border border-slate-200 overflow-hidden">
               <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 bg-slate-50">
                 <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${selectedClient ? 'bg-emerald-500 text-white' : 'bg-blue-600 text-white'}`}>
@@ -329,13 +344,14 @@ function AddRequestDrawer({ open, onClose, onSuccess }) {
                 </div>
               )}
             </div>
+            )}
 
             {/* ── Step 2 — Select Care Profile ── */}
             {selectedClient && (
               <div className="rounded-xl border border-slate-200 overflow-hidden">
                 <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 bg-slate-50">
                   <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${selectedCareProfile ? 'bg-emerald-500 text-white' : 'bg-blue-600 text-white'}`}>
-                    {selectedCareProfile ? <Check className="w-3.5 h-3.5" /> : '2'}
+                    {selectedCareProfile ? <Check className="w-3.5 h-3.5" /> : (presetClient ? '1' : '2')}
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-slate-800 text-sm">Select Care Profile</p>
@@ -360,7 +376,7 @@ function AddRequestDrawer({ open, onClose, onSuccess }) {
                     <div className="text-center py-4 text-slate-400">
                       <Heart className="w-7 h-7 mx-auto mb-2 text-slate-200" />
                       <p className="text-sm font-medium">No care profiles for this client</p>
-                      <p className="text-xs mt-0.5">Fill in the details manually in Step 3</p>
+                      <p className="text-xs mt-0.5">Fill in the details manually in the next step</p>
                     </div>
                   ) : (
                     <div className="grid grid-cols-2 gap-2">
@@ -402,7 +418,7 @@ function AddRequestDrawer({ open, onClose, onSuccess }) {
             {/* ── Step 3 — Service Details ── */}
             <div className="rounded-xl border border-slate-200 overflow-hidden">
               <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 bg-slate-50">
-                <div className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold flex-shrink-0">3</div>
+                <div className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold flex-shrink-0">{presetClient ? '2' : '3'}</div>
                 <div>
                   <p className="font-semibold text-slate-800 text-sm">Service Details</p>
                   <p className="text-xs text-slate-500">Review auto-filled info and configure the service</p>

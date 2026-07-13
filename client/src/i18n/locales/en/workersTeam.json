@@ -1,0 +1,39 @@
+{
+  "badge": "Hiring Professionals Now",
+  "heroTitleLine1": "Care with Pride.",
+  "heroTitleLine2": "Earn with Dignity.",
+  "heroDesc": "Join Sri Lanka's largest network of verified healthcare professionals. We handle the finding clients, insurance, and billing. You just focus on caring.",
+  "applyNow": "Apply Now",
+  "professionalsCount": "2,500+",
+  "professionalsJoinedSuffix": "professionals joined",
+  "earningsCard": {
+    "label": "This Week's Earnings",
+    "change": "+12% vs last week"
+  },
+  "whoWeAreLookingFor": "Who We Are Looking For",
+  "roles": [
+    { "title": "Registered Nurses", "req": "SLMC Registration Required" },
+    { "title": "Child Care Pro", "req": "ECCDE Diploma or Experience" },
+    { "title": "Elderly Care Aide", "req": "NVQ Level 3/4 Certificate" }
+  ],
+  "whyChoose": {
+    "titleLine1": "Why professionals",
+    "titleLine2": "choose VCare.",
+    "desc": "We are building the first \"Nurse-First\" ecosystem in Sri Lanka. We believe that if we take care of you, you will take better care of our patients."
+  },
+  "benefits": [
+    { "title": "Impactful Earnings", "desc": "Earn above market rates with our transparent payment structure. Weekly payouts directly to your bank account." },
+    { "title": "Flexible Schedule", "desc": "You are your own boss. Accept shifts that fit your life—whether it's night shifts, weekends, or full-time live-in." },
+    { "title": "Career Growth", "desc": "Access free training modules, certification upgrades, and mentorship from senior matrons." }
+  ],
+  "protocol": {
+    "title": "Application Protocol",
+    "steps": [
+      { "step": "1", "title": "Submit Documents", "desc": "Upload NIC, Certificates, and CV via our app." },
+      { "step": "2", "title": "Skill Assessment", "desc": "Take a quick online quiz or visit our center for practicals." },
+      { "step": "3", "title": "Background Check", "desc": "We verify your police report and past employment." },
+      { "step": "4", "title": "Onboarding", "desc": "Receive your uniform, ID, and VCare App access." }
+    ],
+    "startApplication": "Start Application"
+  }
+}

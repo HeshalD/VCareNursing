@@ -8,6 +8,7 @@ import {
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import PresetManager from '../service_quotes/PresetManager';
+import useAutoRefresh from '../../../hooks/useAutoRefresh';
 
 const STATUS_TABS = ['All', 'New Lead', 'Pending', 'Contacted', 'Confirmed', 'Cancelled', 'Booking Created'];
 
@@ -71,18 +72,26 @@ const ServiceRequests = () => {
 
   useEffect(() => { fetchRequests(); }, []);
 
-  const fetchRequests = async () => {
+  const fetchRequests = async ({ silent = false } = {}) => {
     try {
-      setLoading(true);
-      setError(null);
+      if (!silent) setLoading(true);
+      if (!silent) setError(null);
       const res = await apiClient.getAllServiceRequests();
       setRequests(res.data || []);
     } catch (err) {
-      setError('Failed to load service requests.');
+      if (!silent) setError('Failed to load service requests.');
+      else console.error('ServiceRequests silent refresh error:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
+
+  // New leads arrive from the public site continuously, so keep this list
+  // fresh in the background; pause while the preset manager modal is open.
+  useAutoRefresh(() => fetchRequests({ silent: true }), {
+    intervalMs: 5000,
+    enabled: !showPresetManager,
+  });
 
   const filtered = requests.filter(r => {
     const statusMatch = activeTab === 'All' || r.status === TAB_TO_STATUS[activeTab];

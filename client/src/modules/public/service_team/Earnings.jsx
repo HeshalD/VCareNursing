@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Wallet,
   TrendingUp,
@@ -22,9 +23,9 @@ import { useAuth } from '../../../context/AuthContext';
 import StaffSidebar from './StaffSidebar';
 
 const STATUS_META = {
-  APPROVED: { label: 'Approved', className: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
-  PENDING:  { label: 'Pending',  className: 'bg-amber-50 text-amber-700 border-amber-100'   },
-  REJECTED: { label: 'Rejected', className: 'bg-rose-50 text-rose-700 border-rose-100'      },
+  APPROVED: { labelKey: 'statusMeta.approved', className: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
+  PENDING:  { labelKey: 'statusMeta.pending',  className: 'bg-amber-50 text-amber-700 border-amber-100'   },
+  REJECTED: { labelKey: 'statusMeta.rejected', className: 'bg-rose-50 text-rose-700 border-rose-100'      },
 };
 
 const formatCurrency = (value) => `LKR ${Number(value || 0).toLocaleString()}`;
@@ -42,6 +43,7 @@ const formatDateTime = (value) => {
 };
 
 const LedgerRow = ({ entry }) => {
+  const { t } = useTranslation('earnings');
   const isCredit   = entry.transaction_type === 'CREDIT';
   const isAdvance  = entry.category === 'STAFF_ADVANCE';
   const isDeduction = entry.category === 'STAFF_DEDUCTION';
@@ -55,51 +57,51 @@ const LedgerRow = ({ entry }) => {
         {isCredit ? (
           <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
             <ArrowUpRight className="h-3 w-3" />
-            Earned
+            {t('ledgerTypes.earned')}
           </span>
         ) : isAdvance ? (
           <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700">
             <Wallet className="h-3 w-3" />
-            Advance
+            {t('ledgerTypes.advance')}
           </span>
         ) : isDeduction ? (
           <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-700">
             <MinusCircle className="h-3 w-3" />
-            Deduction
+            {t('ledgerTypes.deduction')}
           </span>
         ) : (
           <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-700">
             <ArrowDownLeft className="h-3 w-3" />
-            Payout
+            {t('ledgerTypes.payout')}
           </span>
         )}
       </td>
       <td className="px-4 py-3">
         {isCredit ? (
           <div>
-            <p className="text-sm font-medium text-slate-800">{entry.client_name || 'Daily Salary'}</p>
-            {entry.patient_name && <p className="text-xs text-slate-400">Care Profile: {entry.patient_name}</p>}
+            <p className="text-sm font-medium text-slate-800">{entry.client_name || t('ledgerDescriptions.dailySalary')}</p>
+            {entry.patient_name && <p className="text-xs text-slate-400">{t('ledgerDescriptions.careProfile')}{entry.patient_name}</p>}
             {entry.service_type  && <p className="text-xs text-slate-400">{entry.service_type}</p>}
           </div>
         ) : isAdvance ? (
           <div>
-            <p className="text-sm font-medium text-slate-800">Salary Advance</p>
+            <p className="text-sm font-medium text-slate-800">{t('ledgerDescriptions.salaryAdvance')}</p>
             {entry.reviewed_by_name && (
-              <p className="text-xs text-slate-400">Approved by: {entry.reviewed_by_name}</p>
+              <p className="text-xs text-slate-400">{t('ledgerDescriptions.approvedBy')}{entry.reviewed_by_name}</p>
             )}
           </div>
         ) : isDeduction ? (
           <div>
-            <p className="text-sm font-medium text-slate-800">{entry.reason || 'Manual deduction'}</p>
+            <p className="text-sm font-medium text-slate-800">{entry.reason || t('ledgerDescriptions.manualDeduction')}</p>
           </div>
         ) : (
           <div>
             <p className="text-sm font-medium text-slate-800">
-              Payout{entry.company_account_name ? ` via ${entry.company_account_name}` : ''}
+              {t('ledgerDescriptions.payout')}{entry.company_account_name ? ` ${t('ledgerDescriptions.via')} ${entry.company_account_name}` : ''}
             </p>
             {entry.staff_bank_name && (
               <p className="text-xs text-slate-400">
-                To: {entry.staff_bank_name}
+                {t('ledgerDescriptions.to')}{entry.staff_bank_name}
                 {entry.staff_account_number && ` ···${entry.staff_account_number.slice(-4)}`}
               </p>
             )}
@@ -118,6 +120,7 @@ const LedgerRow = ({ entry }) => {
 };
 
 const Earnings = () => {
+  const { t } = useTranslation('earnings');
   const { user } = useAuth();
   const [wallet, setWallet]       = useState(null);
   const [staffData, setStaffData] = useState(null);
@@ -148,7 +151,7 @@ const Earnings = () => {
         setError('');
 
         const staffId = user?.staff_id || user?.id;
-        if (!staffId) { setError('Staff profile not found.'); return; }
+        if (!staffId) { setError(t('errors.staffNotFound')); return; }
 
         const [walletResponse, staffResponse, advancesResponse] = await Promise.all([
           apiClient.getMyWallet(),
@@ -162,7 +165,7 @@ const Earnings = () => {
         await fetchBreakdown(1);
       } catch (err) {
         console.error('Failed to load earnings data:', err);
-        setError('Failed to load earnings data.');
+        setError(t('errors.loadFailed'));
       } finally {
         setLoading(false);
       }
@@ -178,14 +181,14 @@ const Earnings = () => {
   const handleRequestAdvance = async () => {
     const parsedAmount = Number(amount);
     if (!parsedAmount || Number.isNaN(parsedAmount) || parsedAmount <= 0) {
-      setError('Please enter a valid amount.');
+      setError(t('errors.invalidAmount'));
       return;
     }
     try {
       setSubmitting(true);
       setError('');
       await apiClient.requestAdvance({ amount_requested: parsedAmount });
-      setSuccessMsg('Advance request submitted successfully.');
+      setSuccessMsg(t('success.advanceSubmitted'));
       setShowModal(false);
       setAmount('');
       const [walletResponse, advancesResponse] = await Promise.all([
@@ -196,7 +199,7 @@ const Earnings = () => {
       setAdvances(advancesResponse.data || []);
     } catch (err) {
       console.error('Advance request error:', err);
-      setError(err.message || 'Failed to submit advance request.');
+      setError(err.message || t('errors.submitFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -218,8 +221,8 @@ const Earnings = () => {
   const approvedCount = useMemo(() => advances.filter((i) => i.status === 'APPROVED').length, [advances]);
   const pendingCount  = useMemo(() => advances.filter((i) => i.status === 'PENDING').length,  [advances]);
 
-  const staffName        = staffData?.full_name || user?.name || 'Staff Member';
-  const verificationLabel = staffData?.verification_status === 'VERIFIED' ? 'Verified' : 'Pending verification';
+  const staffName        = staffData?.full_name || user?.name || t('staffFallbackName');
+  const verificationLabel = staffData?.verification_status === 'VERIFIED' ? t('verification.verified') : t('verification.pending');
 
   const totalLedgerPages = breakdown?.pagination?.total_pages || 1;
 
@@ -251,11 +254,11 @@ const Earnings = () => {
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 font-sans text-slate-900 flex flex-col md:flex-row">
-        <StaffSidebar staffProfileId={staffData?.staff_profile_id} title="Earnings" />
+        <StaffSidebar staffProfileId={staffData?.staff_profile_id} title={t('header.title')} />
         <main className="flex-1 flex items-center justify-center">
           <div className="text-center flex flex-col items-center gap-4">
             <div className="w-12 h-12 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
-            <div className="text-sm font-medium text-slate-600">Loading earnings...</div>
+            <div className="text-sm font-medium text-slate-600">{t('loading')}</div>
           </div>
         </main>
       </div>
@@ -264,7 +267,7 @@ const Earnings = () => {
 
   return (
     <div className="h-screen bg-slate-50 font-sans text-slate-900 flex flex-col md:flex-row overflow-hidden">
-      <StaffSidebar staffProfileId={staffData?.staff_profile_id} title="Earnings" />
+      <StaffSidebar staffProfileId={staffData?.staff_profile_id} title={t('header.title')} />
 
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-6xl mx-auto px-6 md:px-8 py-6 md:py-8 space-y-6">
@@ -273,10 +276,10 @@ const Earnings = () => {
           <header className="flex flex-col gap-4 border-b border-slate-200 bg-white px-6 py-6 rounded-2xl shadow-sm">
             <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400 mb-1">Provider Portal</p>
-                <h1 className="text-3xl md:text-4xl font-semibold tracking-tight text-slate-900">Earnings</h1>
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400 mb-1">{t('header.portalLabel')}</p>
+                <h1 className="text-3xl md:text-4xl font-semibold tracking-tight text-slate-900">{t('header.title')}</h1>
                 <p className="text-sm text-slate-500 mt-2 max-w-2xl">
-                  Track your current balance, view your full earnings ledger, and manage advance requests.
+                  {t('header.subtitle')}
                 </p>
               </div>
               <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
@@ -309,39 +312,39 @@ const Earnings = () => {
             <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-5 shadow-sm">
               <div className="flex items-center gap-2 mb-3 text-emerald-600">
                 <BadgeDollarSign className="h-5 w-5" />
-                <span className="text-xs font-semibold uppercase tracking-wide">Current Balance</span>
+                <span className="text-xs font-semibold uppercase tracking-wide">{t('summaryCards.currentBalance.label')}</span>
               </div>
               <p className="text-2xl font-bold text-slate-900">{formatCurrency(breakdown?.summary?.current_earnings ?? walletBalance)}</p>
-              <p className="mt-1 text-xs text-slate-500">Unpaid earnings owed to you</p>
+              <p className="mt-1 text-xs text-slate-500">{t('summaryCards.currentBalance.sub')}</p>
             </div>
 
             <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5 shadow-sm">
               <div className="flex items-center gap-2 mb-3 text-blue-600">
                 <Activity className="h-5 w-5" />
-                <span className="text-xs font-semibold uppercase tracking-wide">Total Earned</span>
+                <span className="text-xs font-semibold uppercase tracking-wide">{t('summaryCards.totalEarned.label')}</span>
               </div>
               <p className="text-2xl font-bold text-slate-900">{formatCurrency(breakdown?.summary?.total_earned)}</p>
-              <p className="mt-1 text-xs text-slate-500">Sum of all salary credits</p>
+              <p className="mt-1 text-xs text-slate-500">{t('summaryCards.totalEarned.sub')}</p>
             </div>
 
             <div className="rounded-2xl border border-rose-100 bg-rose-50 p-5 shadow-sm">
               <div className="flex items-center gap-2 mb-3 text-rose-600">
                 <ArrowDownLeft className="h-5 w-5" />
-                <span className="text-xs font-semibold uppercase tracking-wide">Total Paid Out</span>
+                <span className="text-xs font-semibold uppercase tracking-wide">{t('summaryCards.totalPaidOut.label')}</span>
               </div>
               <p className="text-2xl font-bold text-slate-900">{formatCurrency(breakdown?.summary?.total_paid_out)}</p>
-              <p className="mt-1 text-xs text-slate-500">Sum of all payouts recorded</p>
+              <p className="mt-1 text-xs text-slate-500">{t('summaryCards.totalPaidOut.sub')}</p>
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between mb-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Wallet Balance</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">{t('summaryCards.walletBalance.label')}</p>
                 <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600">
                   <Wallet className="w-5 h-5" />
                 </div>
               </div>
               <p className="text-2xl font-bold text-slate-900">{formatCurrency(walletBalance)}</p>
-              <p className="mt-1 text-xs text-slate-500">Threshold: {formatCurrency(thresholdAmount)}</p>
+              <p className="mt-1 text-xs text-slate-500">{t('summaryCards.walletBalance.sub', { amount: formatCurrency(thresholdAmount) })}</p>
             </div>
           </section>
 

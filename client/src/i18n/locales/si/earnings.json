@@ -1,0 +1,100 @@
+{
+  "loading": "ඉපැයීම් පූරණය වෙමින්...",
+  "errors": {
+    "staffNotFound": "කාර්ය මණ්ඩල පැතිකඩ හමු නොවීය.",
+    "loadFailed": "ඉපැයීම් දත්ත පූරණය කිරීමට අසමත් විය.",
+    "invalidAmount": "කරුණාකර වලංගු මුදලක් ඇතුළත් කරන්න.",
+    "submitFailed": "අත්තිකාරම් ඉල්ලීම ඉදිරිපත් කිරීමට අසමත් විය."
+  },
+  "success": {
+    "advanceSubmitted": "අත්තිකාරම් ඉල්ලීම සාර්ථකව ඉදිරිපත් කරන ලදී."
+  },
+  "staffFallbackName": "කාර්ය මණ්ඩල සාමාජිකයා",
+  "verification": {
+    "verified": "සත්‍යාපිත",
+    "pending": "සත්‍යාපනය අපේක්ෂිතයි"
+  },
+  "header": {
+    "portalLabel": "සේවා සපයන්නාගේ පිවිසුම",
+    "title": "ඉපැයීම්",
+    "subtitle": "ඔබගේ වත්මන් ශේෂය නිරීක්ෂණය කරන්න, සම්පූර්ණ ඉපැයීම් ලෙජරය බලන්න, සහ අත්තිකාරම් ඉල්ලීම් කළමනාකරණය කරන්න."
+  },
+  "ledgerTypes": {
+    "earned": "උපයන ලද",
+    "advance": "අත්තිකාරම",
+    "deduction": "අඩු කිරීම",
+    "payout": "ගෙවීම"
+  },
+  "ledgerDescriptions": {
+    "dailySalary": "දෛනික වැටුප",
+    "careProfile": "සත්කාර පැතිකඩ: ",
+    "salaryAdvance": "වැටුප් අත්තිකාරම",
+    "approvedBy": "අනුමත කළේ: ",
+    "manualDeduction": "අතින් සිදු කළ අඩු කිරීම",
+    "payout": "ගෙවීම",
+    "via": "මගින්",
+    "to": "වෙත: "
+  },
+  "summaryCards": {
+    "currentBalance": { "label": "වත්මන් ශේෂය", "sub": "ඔබට ගෙවිය යුතු නොගෙවූ ඉපැයීම්" },
+    "totalEarned": { "label": "මුළු ඉපැයීම", "sub": "සියලුම වැටුප් බැර වීම්වල එකතුව" },
+    "totalPaidOut": { "label": "මුළු ගෙවූ මුදල", "sub": "සියලුම ගෙවීම්වල එකතුව" },
+    "walletBalance": { "label": "පසුම්බි ශේෂය", "sub": "සීමාව: {{amount}}" }
+  },
+  "calcExplanation": {
+    "boldCurrentBalance": "වත්මන් ශේෂය",
+    "text1": " = මුළු ඉපැයීම − මුළු ගෙවූ මුදල. පහත ලෙජරයේ මෙම ශේෂයට දායක වූ සෑම සිදුවීමක්ම, එක් එක් ඇතුළත් කිරීමෙන් පසු ධාවන එකතුවක් සමඟින් පෙන්වයි, එමඟින් එය ගොඩනැගුණු ආකාරය ඔබට හරියටම සොයා ගත හැක.",
+    "boldWalletBalance": "පසුම්බි ශේෂය",
+    "text2": " යනු වෙනම අත්තිකාරම් සුදුසුකම් ලත් ශේෂයකි.",
+    "boldAdvances": "අත්තිකාරම්",
+    "text3": " පසුම්බියෙන් නිකුත් කරන අතර පහත එහිම වෙනම කොටසක පෙන්වයි."
+  },
+  "ledger": {
+    "title": "ඉපැයීම් සහ ගෙවීම් ලෙජරය",
+    "subtitle": "ධාවන ශේෂය සමඟ කාලානුක්‍රමික වාර්තාව",
+    "legend": { "earning": "ඉපැයීම", "payout": "ගෙවීම", "advance": "අත්තිකාරම" },
+    "empty": "තවම කිසිදු ගනුදෙනුවක් වාර්තා වී නොමැත.",
+    "table": {
+      "dateTime": "දිනය සහ වේලාව",
+      "type": "වර්ගය",
+      "description": "විස්තරය",
+      "amount": "මුදල",
+      "runningBalance": "ධාවන ශේෂය"
+    },
+    "pagination": {
+      "pageInfo": "පිටුව {{page}} න් {{totalPages}} ({{count}} ඇතුළත් කිරීම්)",
+      "previous": "පෙර",
+      "next": "ඊළඟ"
+    }
+  },
+  "advanceRequests": {
+    "title": "අත්තිකාරම් ඉල්ලීම්",
+    "stats": "අනුමත {{approved}} · අපේක්ෂිත {{pending}} · මෙම මාසය: {{amount}}",
+    "requestButton": "අත්තිකාරමක් ඉල්ලන්න",
+    "table": {
+      "amount": "මුදල",
+      "status": "තත්ත්වය",
+      "requested": "ඉල්ලූ දිනය",
+      "actioned": "ක්‍රියාත්මක කළ දිනය"
+    },
+    "empty": "තවම අත්තිකාරම් ඉල්ලීම් නොමැත.",
+    "advanceRequestLabel": "අත්තිකාරම් ඉල්ලීම"
+  },
+  "statusMeta": {
+    "approved": "අනුමතයි",
+    "pending": "අපේක්ෂිතයි",
+    "rejected": "ප්‍රතික්ෂේපිතයි"
+  },
+  "modal": {
+    "title": "අත්තිකාරමක් ඉල්ලන්න",
+    "subtitle": "ඔබට ලබා ගැනීමට අවශ්‍ය මුදල ඇතුළත් කරන්න.",
+    "closeAriaLabel": "කවුළුව වසන්න",
+    "walletBalanceLabel": "පසුම්බි ශේෂය",
+    "amountLabel": "මුදල (රු.)",
+    "amountPlaceholder": "උදා. 5000",
+    "minBalanceNote": "අවශ්‍ය අවම පසුම්බි ශේෂය: {{amount}}.",
+    "cancel": "අවලංගු කරන්න",
+    "submit": "ඉල්ලීම ඉදිරිපත් කරන්න",
+    "submitting": "ඉදිරිපත් කරමින්..."
+  }
+}

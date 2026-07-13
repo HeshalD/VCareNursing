@@ -333,14 +333,17 @@ class ApiClient {
     });
   }
 
-  async updateRegFeeStatus(clientId, status) {
+  async updateRegFeeStatus(clientId, status, salespersonId = null) {
     return this.request(`/client/${clientId}/reg-fee-status`, {
       method: 'PATCH',
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ status, salesperson_id: salespersonId }),
     });
   }
-  async verifyRegFeePayment(clientId) {
-    return this.request(`/client/${clientId}/verify-reg-fee-payment`, { method: 'POST' });
+  async verifyRegFeePayment(clientId, salespersonId = null) {
+    return this.request(`/client/${clientId}/verify-reg-fee-payment`, {
+      method: 'POST',
+      body: JSON.stringify({ salesperson_id: salespersonId }),
+    });
   }
 
   async getReceiptUploadPortal(token) {
@@ -509,6 +512,14 @@ class ApiClient {
     return this.request(`/quotes/${quoteId}/payment-progress`);
   }
 
+  async getCombinedInvoices() {
+    return this.request('/quotes/invoices/list');
+  }
+
+  async sendCombinedInvoice(quoteId) {
+    return this.request(`/quotes/${quoteId}/send-invoice`, { method: 'POST' });
+  }
+
   async getQuotePayments(quoteId) {
     return this.request(`/quotes/${quoteId}/payments`);
   }
@@ -550,6 +561,29 @@ class ApiClient {
 
   async switchBookingSalesperson(bookingId, salespersonId, switchReason = null) {
     return this.request(`/salespersons/booking/${bookingId}/switch`, {
+      method: 'PUT',
+      body: JSON.stringify({ salesperson_id: salespersonId, switch_reason: switchReason }),
+    });
+  }
+
+  // ── Salesperson crediting — client registrations (separate metric from bookings) ──
+  async getClientSalesperson(clientId) {
+    return this.request(`/salespersons/client/${clientId}`);
+  }
+
+  async getSalespersonClients(salespersonId) {
+    return this.request(`/salespersons/${salespersonId}/clients`);
+  }
+
+  async creditClientSalesperson(clientId, salespersonId) {
+    return this.request(`/salespersons/client/${clientId}/credit`, {
+      method: 'POST',
+      body: JSON.stringify({ salesperson_id: salespersonId }),
+    });
+  }
+
+  async switchClientSalesperson(clientId, salespersonId, switchReason = null) {
+    return this.request(`/salespersons/client/${clientId}/switch`, {
       method: 'PUT',
       body: JSON.stringify({ salesperson_id: salespersonId, switch_reason: switchReason }),
     });
@@ -671,11 +705,12 @@ class ApiClient {
 
   }
 
-  async sendQuotePDF(quoteId) {
+  async sendQuotePDF(quoteId, productQuoteId = null) {
 
     return this.request(`/quotes/send-pdf/${quoteId}`, {
 
       method: 'POST',
+      body: JSON.stringify(productQuoteId ? { product_quote_id: productQuoteId } : {}),
 
     });
 
@@ -1666,6 +1701,17 @@ class ApiClient {
     return this.request('/staff-reviews/reviewable');
   }
 
+  async getReviewableBookingsForClient(clientId) {
+    return this.request(`/staff-reviews/admin/reviewable/${clientId}`);
+  }
+
+  async adminCreateReview(reviewData) {
+    return this.request('/staff-reviews/admin/create', {
+      method: 'POST',
+      body: JSON.stringify(reviewData),
+    });
+  }
+
   async getAdminAllReviews({ page = 1, limit = 10, is_visible, search = '' } = {}) {
     const params = new URLSearchParams({ page, limit });
     if (is_visible !== undefined && is_visible !== '') params.set('is_visible', is_visible);
@@ -1699,12 +1745,6 @@ class ApiClient {
   // Finances endpoints
   async getFinancesOverview() {
     return this.request('/finances/overview');
-  }
-
-  async getFinancesTransactions(params = {}) {
-    const queryParams = new URLSearchParams(params).toString();
-    const url = queryParams ? `/finances/transactions?${queryParams}` : '/finances/transactions';
-    return this.request(url);
   }
 
   async getAdvancesSummary() {
@@ -1861,14 +1901,243 @@ class ApiClient {
     return this.request(`/quotes/${quoteId}/details`);
   }
 
-  async generateQuotePdf(quoteId) {
-    return this.request(`/quotes/${quoteId}/generate-pdf`, { method: 'POST' });
+  async generateQuotePdf(quoteId, productQuoteId = null) {
+    return this.request(`/quotes/${quoteId}/generate-pdf`, {
+      method: 'POST',
+      body: JSON.stringify(productQuoteId ? { product_quote_id: productQuoteId } : {}),
+    });
   }
 
   async updateQuoteLineItems(quoteId, lineItemsData) {
     return this.request(`/quotes/${quoteId}/line-items`, {
       method: 'PUT',
       body: JSON.stringify(lineItemsData),
+    });
+  }
+
+  // Product quotes (quote_type = 'PRODUCT' — no service_request involved)
+  async createProductQuotation(quoteData) {
+    return this.request('/quotes/create-modular', {
+      method: 'POST',
+      body: JSON.stringify({ ...quoteData, quote_type: 'PRODUCT' }),
+    });
+  }
+
+  async getProductQuote(quoteId) {
+    return this.request(`/quotes/product/${quoteId}`);
+  }
+
+  async getProductQuotes(filters = {}) {
+    const qs = new URLSearchParams(filters).toString();
+    return this.request(qs ? `/quotes/product/list?${qs}` : '/quotes/product/list');
+  }
+
+  async generateProductQuotePdf(quoteId) {
+    return this.request(`/quotes/product/${quoteId}/generate-pdf`, { method: 'POST' });
+  }
+
+  async sendProductQuotePDF(quoteId) {
+    return this.request(`/quotes/product/${quoteId}/send`, { method: 'POST' });
+  }
+
+  // The single "accept" action for any PRODUCT quote — creates a rental
+  // agreement for each rental line item (using its own quoted terms) and a
+  // combined invoice for any remaining non-rental items, in one call.
+  async acceptProductQuote(quoteId) {
+    return this.request(`/quotes/product/${quoteId}/accept`, { method: 'POST' });
+  }
+
+  // Client portal: express interest in a catalog product
+  async submitProductInterest(productId, quantity = 1) {
+    return this.request('/quotes/product/request', {
+      method: 'POST',
+      body: JSON.stringify({ product_id: productId, quantity }),
+    });
+  }
+
+  // ==================== PRODUCTS / CATALOG ====================
+
+  async getProducts(filters = {}) {
+    const qs = new URLSearchParams(filters).toString();
+    return this.request(qs ? `/products?${qs}` : '/products');
+  }
+
+  async getProduct(productId) {
+    return this.request(`/products/${productId}`);
+  }
+
+  async getProductCategories() {
+    return this.request('/products/categories');
+  }
+
+  async getProductPurchaseHistory(productId) {
+    return this.request(`/products/${productId}/purchase-history`);
+  }
+
+  // Client portal: the logged-in client's own purchased/rented products + deposits
+  async getMyProductOrders() {
+    return this.request('/products/mine');
+  }
+
+  async createProductCategory(categoryData) {
+    return this.request('/products/categories', {
+      method: 'POST',
+      body: JSON.stringify(categoryData),
+    });
+  }
+
+  async createProduct(productData, imageFile = null) {
+    const formData = new FormData();
+    Object.entries(productData).forEach(([key, value]) => {
+      if (value !== null && value !== undefined && value !== '') {
+        formData.append(key, value);
+      }
+    });
+    if (imageFile) formData.append('image', imageFile);
+
+    return this.request('/products', {
+      method: 'POST',
+      headers: { ...(this.token && { Authorization: `Bearer ${this.token}` }) },
+      body: formData,
+    });
+  }
+
+  async updateProduct(productId, productData, imageFile = null) {
+    const formData = new FormData();
+    Object.entries(productData).forEach(([key, value]) => {
+      if (value !== null && value !== undefined && value !== '') {
+        formData.append(key, value);
+      }
+    });
+    if (imageFile) formData.append('image', imageFile);
+
+    return this.request(`/products/${productId}`, {
+      method: 'PUT',
+      headers: { ...(this.token && { Authorization: `Bearer ${this.token}` }) },
+      body: formData,
+    });
+  }
+
+  async deactivateProduct(productId) {
+    return this.request(`/products/${productId}/deactivate`, { method: 'PATCH' });
+  }
+
+  // ==================== WALK-IN CUSTOMERS ====================
+
+  async searchWalkInCustomers(query = '') {
+    const qs = query ? `?q=${encodeURIComponent(query)}` : '';
+    return this.request(`/walk-in-customers${qs}`);
+  }
+
+  async createWalkInCustomer(customerData) {
+    return this.request('/walk-in-customers', {
+      method: 'POST',
+      body: JSON.stringify(customerData),
+    });
+  }
+
+  // ==================== PRODUCT INVOICES ====================
+
+  async getProductInvoices(filters = {}) {
+    const qs = new URLSearchParams(filters).toString();
+    return this.request(qs ? `/product-invoices?${qs}` : '/product-invoices');
+  }
+
+  async getProductInvoice(invoiceId) {
+    return this.request(`/product-invoices/${invoiceId}`);
+  }
+
+  async getProductInvoicePdf(invoiceId) {
+    return this.request(`/product-invoices/${invoiceId}/pdf`);
+  }
+
+  async createInvoiceFromQuote(quoteId, dueDate = null) {
+    return this.request(`/product-invoices/from-quote/${quoteId}`, {
+      method: 'POST',
+      body: JSON.stringify(dueDate ? { due_date: dueDate } : {}),
+    });
+  }
+
+  async recordProductInvoicePayment(invoiceId, paymentData, paymentSlipFile = null) {
+    if (paymentSlipFile) {
+      const formData = new FormData();
+      Object.entries(paymentData).forEach(([key, value]) => {
+        if (value !== null && value !== undefined && value !== '') {
+          formData.append(key, value);
+        }
+      });
+      formData.append('payment_slip', paymentSlipFile);
+
+      return this.request(`/product-invoices/${invoiceId}/record-payment`, {
+        method: 'POST',
+        headers: { ...(this.token && { Authorization: `Bearer ${this.token}` }) },
+        body: formData,
+      });
+    }
+
+    return this.request(`/product-invoices/${invoiceId}/record-payment`, {
+      method: 'POST',
+      body: JSON.stringify(paymentData),
+    });
+  }
+
+  // ==================== RENTALS (units, agreements, deposits) ====================
+
+  async getRentalUnits(filters = {}) {
+    const qs = new URLSearchParams(filters).toString();
+    return this.request(qs ? `/rentals/units?${qs}` : '/rentals/units');
+  }
+
+  async createRentalUnit(unitData) {
+    return this.request('/rentals/units', {
+      method: 'POST',
+      body: JSON.stringify(unitData),
+    });
+  }
+
+  async updateRentalUnitStatus(unitId, status, notes) {
+    return this.request(`/rentals/units/${unitId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status, notes }),
+    });
+  }
+
+  async getRentalAgreements(filters = {}) {
+    const qs = new URLSearchParams(filters).toString();
+    return this.request(qs ? `/rentals/agreements?${qs}` : '/rentals/agreements');
+  }
+
+  async getRentalAgreement(rentalAgreementId) {
+    return this.request(`/rentals/agreements/${rentalAgreementId}`);
+  }
+
+  async createRentalAgreement(agreementData) {
+    return this.request('/rentals/agreements', {
+      method: 'POST',
+      body: JSON.stringify(agreementData),
+    });
+  }
+
+  async returnRentalUnit(rentalAgreementId) {
+    return this.request(`/rentals/agreements/${rentalAgreementId}/return`, { method: 'POST' });
+  }
+
+  async getDeposits(filters = {}) {
+    const qs = new URLSearchParams(filters).toString();
+    return this.request(qs ? `/rentals/deposits?${qs}` : '/rentals/deposits');
+  }
+
+  async refundDeposit(depositId, paymentData) {
+    return this.request(`/rentals/deposits/${depositId}/refund`, {
+      method: 'POST',
+      body: JSON.stringify(paymentData),
+    });
+  }
+
+  async forfeitDeposit(depositId, notes) {
+    return this.request(`/rentals/deposits/${depositId}/forfeit`, {
+      method: 'POST',
+      body: JSON.stringify({ notes }),
     });
   }
 
@@ -2043,6 +2312,27 @@ class ApiClient {
 
   async getTransactionMeta() {
     return this.request('/transactions/meta');
+  }
+
+  async exportTransactionsPdf(params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const url = `${this.baseURL}/transactions/export/pdf${query ? `?${query}` : ''}`;
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          ...(this.token && { Authorization: `Bearer ${this.token}` }),
+        },
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Transactions PDF download failed');
+      }
+      return await response.blob();
+    } catch (error) {
+      console.error('Transactions PDF Download Error:', error);
+      throw error;
+    }
   }
 
   async createManualTransaction(transactionData) {

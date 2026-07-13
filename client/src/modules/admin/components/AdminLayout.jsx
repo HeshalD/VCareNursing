@@ -4,7 +4,7 @@ import {
   Settings, LogOut, Bell, Search,
   ShieldCheck, FileText, SendHorizontal, Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet, Landmark,
   ChevronLeft, ChevronRight, ClipboardList, History, HeartPulse, ArrowLeftRight, Banknote, Star, Lock, UserCog, CalendarClock, Briefcase, Receipt, CalendarOff, MonitorSmartphone,
-  Menu, X, ReceiptText
+  Menu, X, ReceiptText, Package
 } from 'lucide-react';
 import logo from '../../../assets/Logo/VCareLogo.png';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -29,7 +29,7 @@ const NAV_ITEMS = [
   { icon: CalendarClock, label: 'Upcoming Events', path: '/admin/upcoming-events' },
   { icon: CalendarOff, label: 'Leave Requests', path: '/admin/leave-requests' },
   { icon: CalendarDays, label: 'Bookings', path: '/admin/bookings' },
-  { icon: ReceiptText, label: 'Daily Invoices', path: '/admin/invoices' },
+  { icon: ReceiptText, label: 'Invoices', path: '/admin/invoices' },
   { icon: FileText, label: 'Statements', path: '/admin/statements' },
   { icon: Wallet, label: 'Advance Requests', path: '/admin/advance-requests' },
   { icon: ShieldCheck, label: 'Worker Verification', path: '/admin/workers' },
@@ -40,6 +40,7 @@ const NAV_ITEMS = [
   { icon: FileText, label: 'Salary Sheets', path: '/admin/salary-sheets' },
   { icon: Landmark, label: 'Bank Accounts', path: '/admin/bank-accounts' },
   { icon: FileText, label: 'Quotations', path: '/admin/quotations' },
+  { icon: Package, label: 'Products', path: '/admin/products' },
   { icon: FileText, label: 'Reports', path: '/admin/reports', match: (p) => p.startsWith('/admin/reports') },
   { icon: HeartPulse, label: 'Care Profiles', path: '/admin/patients' },
   { icon: ClipboardList, label: 'Change Requests', path: '/admin/change-requests' },

@@ -12,6 +12,7 @@ const getRoleLabel = (user) => {
 const getRoleColor = (label) => {
   if (label.includes('COORDINATOR')) return 'bg-blue-100 text-blue-700';
   if (label.includes('ACCOUNTS')) return 'bg-teal-100 text-teal-700';
+  if (label.includes('SALES')) return 'bg-amber-100 text-amber-700';
   return 'bg-slate-100 text-slate-600';
 };
 
@@ -138,8 +139,8 @@ const StaffPermissionsPage = () => {
                 <Users className="w-8 h-8 mx-auto mb-2 opacity-30" />
                 <p className="text-sm font-medium text-slate-500">No staff accounts yet</p>
                 <p className="text-xs mt-1">
-                  Create internal staff accounts with COORDINATOR or ACCOUNTS role to manage
-                  their permissions here.
+                  Create internal staff accounts with COORDINATOR, ACCOUNTS, or SALES role to
+                  manage their permissions here.
                 </p>
               </div>
             ) : (

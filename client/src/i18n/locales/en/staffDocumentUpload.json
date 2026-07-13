@@ -1,0 +1,41 @@
+{
+  "header": {
+    "appName": "VCare Nursing",
+    "portalTitle": "Document Upload Portal"
+  },
+  "welcome": {
+    "greeting": "Hello, {{name}}",
+    "instructions": "To complete your registration with VCare Nursing, please upload the two documents below. You can upload them in any order and return to this link at any time."
+  },
+  "allDone": {
+    "title": "All documents submitted!",
+    "desc": "Our team will review your documents and get in touch with you shortly."
+  },
+  "errors": {
+    "invalidLink": "This upload link is invalid or has expired.",
+    "linkNotValid": "Link Not Valid",
+    "fileTypeError": "Only JPG, PNG or PDF files are accepted.",
+    "uploadFailed": "Upload failed. Please try again."
+  },
+  "docCard": {
+    "uploaded": "Uploaded",
+    "required": "Required",
+    "view": "View",
+    "uploading": "Uploading...",
+    "replace": "Replace",
+    "upload": "Upload"
+  },
+  "documents": {
+    "gramaNiladhari": {
+      "title": "Grama Niladhari Report",
+      "description": "An official report issued by your Grama Niladhari officer confirming your residency. JPG, PNG or PDF accepted."
+    },
+    "policeReport": {
+      "title": "Police Report",
+      "description": "A clearance certificate issued by your local police station. JPG, PNG or PDF accepted."
+    }
+  },
+  "footer": {
+    "contact": "If you have any questions please contact the VCare Nursing office directly."
+  }
+}

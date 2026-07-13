@@ -1,7 +1,8 @@
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
-const { sendPaymentReceipt } = require('../utils/metaWhatsapp');
+const { sendPaymentReceipt, sendClientInvoice } = require('../utils/metaWhatsapp');
 const { generateReceiptPdf } = require('../services/receiptService');
+const { ensureCombinedInvoice } = require('./quoteController');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -15,6 +16,28 @@ const methodLabel = {
 
 const fmtAmt = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtDate = (d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+
+// Traces a payment_receipts row back to the SERVICE quote it was paid
+// against (if any), so its combined Invoice (see quoteController.
+// ensureCombinedInvoice) can be sent alongside this receipt. Only
+// QUOTE_PAYMENT (paid against a SERVICE quote directly) and PRODUCT_INVOICE
+// (paid against a PRODUCT quote that may be linked back to a SERVICE quote)
+// resolve to anything — other receipt sources (bookings, reg fee, etc.)
+// have no combined-invoice concept and simply return null.
+async function resolveServiceQuoteId(receipt) {
+    if (receipt.source_type === 'QUOTE_PAYMENT') {
+        const r = await db.query('SELECT quote_id FROM payment_tracking WHERE payment_id = $1', [receipt.source_id]);
+        return r.rows[0]?.quote_id || null;
+    }
+    if (receipt.source_type === 'PRODUCT_INVOICE') {
+        const inv = await db.query('SELECT quote_id FROM invoices WHERE invoice_id = $1', [receipt.source_id]);
+        const productQuoteId = inv.rows[0]?.quote_id;
+        if (!productQuoteId) return null;
+        const q = await db.query('SELECT linked_quote_id FROM quotations WHERE quote_id = $1', [productQuoteId]);
+        return q.rows[0]?.linked_quote_id || null;
+    }
+    return null;
+}
 
 function extractActorRole(role) {
     const raw = Array.isArray(role) ? role[0] : role;
@@ -258,10 +281,35 @@ const sendReceiptWhatsApp = async (req, res) => {
                 },
             })).catch((e) => console.error('[Receipt] Activity log error:', e.message));
 
+            // Best-effort: send the combined Invoice alongside this receipt if
+            // this payment was made against a SERVICE quote (or a PRODUCT quote
+            // linked to one). Never blocks or fails the receipt response — the
+            // WhatsApp template ('vcare_client_invoice') may not be Meta-approved
+            // yet, in which case this just logs and the receipt send still succeeds.
+            let invoiceSent = false;
+            try {
+                const serviceQuoteId = await resolveServiceQuoteId(receipt);
+                if (serviceQuoteId) {
+                    const invoice = await ensureCombinedInvoice(serviceQuoteId);
+                    if (invoice?.invoice_pdf_url && invoice.payer_mobile) {
+                        await sendClientInvoice(
+                            invoice.payer_mobile,
+                            invoice.payer_name || receipt.client_name || 'Valued Client',
+                            invoice.invoice_code,
+                            fmtAmt(invoice.total_amount),
+                            invoice.invoice_pdf_url
+                        );
+                        invoiceSent = true;
+                    }
+                }
+            } catch (invErr) {
+                console.error('[Invoice] Send alongside receipt failed (non-fatal):', invErr.response?.data ? JSON.stringify(invErr.response.data) : invErr.message);
+            }
+
             return res.status(200).json({
                 status: 'success',
                 message: 'Receipt sent via WhatsApp',
-                data: { receipt_id, pdf_url: pdfUrl, whatsapp_message_id: messageId },
+                data: { receipt_id, pdf_url: pdfUrl, whatsapp_message_id: messageId, invoice_sent: invoiceSent },
             });
         } catch (sendErr) {
             const errMsg = sendErr.response?.data ? JSON.stringify(sendErr.response.data) : sendErr.message;

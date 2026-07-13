@@ -236,6 +236,7 @@ exports.updateServiceRequestStatus = async (req, res) => {
 exports.createServiceRequest = async (req, res) => {
     const {
         client_id,
+        patient_id,
         payer_name,
         payer_mobile,
         patient_name,
@@ -325,6 +326,7 @@ exports.createServiceRequest = async (req, res) => {
         const insertQuery = `
             INSERT INTO service_requests (
                 client_id,
+                patient_id,
                 payer_name,
                 payer_mobile,
                 patient_name,
@@ -343,16 +345,17 @@ exports.createServiceRequest = async (req, res) => {
                 gender,
                 created_at
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9::service_model_enum, $10,
-                CASE WHEN $11::double precision IS NOT NULL AND $12::double precision IS NOT NULL
-                     THEN point($12::double precision, $11::double precision)
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::service_model_enum, $11,
+                CASE WHEN $12::double precision IS NOT NULL AND $13::double precision IS NOT NULL
+                     THEN point($13::double precision, $12::double precision)
                      ELSE NULL
                 END,
-                $13, $14, $15::gender_preference_enum, $16, $17, $18::gender_enum, NOW()
+                $14, $15, $16::gender_preference_enum, $17, $18, $19::gender_enum, NOW()
             )
             RETURNING
                 request_id,
                 client_id,
+                patient_id,
                 payer_name,
                 payer_mobile,
                 patient_name,
@@ -374,6 +377,7 @@ exports.createServiceRequest = async (req, res) => {
 
         const insertValues = [
             client_id || null,
+            patient_id || null,
             payer_name,
             payer_mobile,
             patient_name,

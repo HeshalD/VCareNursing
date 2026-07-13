@@ -93,6 +93,7 @@ const Navbar = () => {
           <div className="hidden md:flex items-center space-x-8">
             <Link to="/" className="text-sm font-medium text-slate-600 hover:text-blue-600 transition-colors">Home</Link>
             <button onClick={() => scrollToSection('services')} className="text-sm font-medium text-slate-600 hover:text-blue-600 transition-colors">Services</button>
+            <Link to="/products" className="text-sm font-medium text-slate-600 hover:text-blue-600 transition-colors">Products</Link>
             <Link to="/about" className="text-sm font-medium text-slate-600 hover:text-blue-600 transition-colors">About</Link>
 
             {loading ? (
@@ -237,6 +238,7 @@ const Navbar = () => {
           <div className="px-4 pt-2 pb-6 space-y-2">
             <Link to="/" className="block px-3 py-2 text-base font-medium text-slate-600 hover:text-blue-600 bg-slate-50 rounded-lg">Home</Link>
             <button onClick={() => { scrollToSection('services'); setIsOpen(false); }} className="block w-full text-left px-3 py-2 text-base font-medium text-slate-600 hover:text-blue-600 hover:bg-slate-50 rounded-lg">Services</button>
+            <Link to="/products" className="block px-3 py-2 text-base font-medium text-slate-600 hover:text-blue-600 hover:bg-slate-50 rounded-lg" onClick={() => setIsOpen(false)}>Products</Link>
             <Link to="/about" className="block px-3 py-2 text-base font-medium text-slate-600 hover:text-blue-600 hover:bg-slate-50 rounded-lg">About</Link>
 
             {loading ? (
