@@ -10,6 +10,7 @@ import Navbar from '../../components/layout/Navbar';
 import Footer from '../../components/layout/Footer';
 import Popup from '../../components/common/Popup';
 import ReviewSection from './components/ReviewSection';
+import { useAuth } from '../../context/AuthContext';
 
 // Reusing the background image from Login for consistency, but using it differently
 import heroBg from '../../assets/images/Gemini_Generated_Image_5nmpua5nmpua5nmp.png';
@@ -20,6 +21,24 @@ import logoUrl from '../../assets/Logo/VCareLogo.png';
 import patternBg from '../../assets/images/abstract-seamless-geometric-shape-lines-pattern-design-background_84443-23990.png';
 
 const REG_FEE_AUTO_CLOSE_MS = 5000;
+
+const STAFF_ROLES = [
+  'CARETAKER', 'NURSE', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR',
+  'ACCOUNTS', 'COORDINATOR', 'SALES', 'STORE_MANAGER',
+];
+
+// Handles '{NURSE}', ['NURSE'], '{NURSE,COORDINATOR}', ['NURSE','COORDINATOR'], 'NURSE'
+const normalizeRoles = (role) => {
+  if (Array.isArray(role)) {
+    return role.map(r => r.replace(/[{}]/g, '').trim()).filter(Boolean);
+  }
+  if (typeof role === 'string') {
+    return role.replace(/[{}]/g, '').split(',').map(r => r.trim()).filter(Boolean);
+  }
+  return [];
+};
+
+const isStaffUser = (user) => normalizeRoles(user?.role).some(r => STAFF_ROLES.includes(r));
 
 const RegFeeBanner = ({ status, onClose }) => {
   const navigate = useNavigate();
@@ -40,6 +59,7 @@ const RegFeeBanner = ({ status, onClose }) => {
   }, [onClose]);
 
   const isInvoiced = status === 'INVOICED';
+  const isExpired = status === 'EXPIRED';
 
   return (
     <AnimatePresence>
@@ -56,7 +76,9 @@ const RegFeeBanner = ({ status, onClose }) => {
             <p className="flex-1 text-sm font-medium leading-snug">
               {isInvoiced
                 ? 'Your registration fee invoice has been sent. Please complete payment and upload your receipt to activate your account.'
-                : 'Your VCare registration fee is outstanding. An invoice will be sent to you shortly.'}
+                : isExpired
+                  ? 'Your VCare membership has expired. Contact VCare Nursing to renew your registration.'
+                  : 'Your VCare registration fee is outstanding. An invoice will be sent to you shortly.'}
             </p>
             {isInvoiced && (
               <button
@@ -87,7 +109,7 @@ const RegFeeBanner = ({ status, onClose }) => {
   );
 };
 
-const HeroSection = () => {
+const HeroSection = ({ blockStaffJoin, onStaffJoinBlocked }) => {
   const navigate = useNavigate();
 
   return (
@@ -120,7 +142,7 @@ const HeroSection = () => {
               Find care now <ArrowRight className="w-5 h-5" />
             </button>
             <button
-              onClick={() => navigate('/services/join-team')}
+              onClick={() => blockStaffJoin ? onStaffJoinBlocked?.() : navigate('/services/join-team')}
               className="w-full sm:w-auto px-6 py-3.5 bg-[#E2E6EA] text-slate-800 rounded-lg font-semibold text-lg hover:bg-slate-300 transition-colors flex items-center justify-center"
             >
               Join as staff
@@ -169,7 +191,8 @@ const ServiceGrid = () => {
 
 
 
-const JoinTeamBanner = () => {
+const JoinTeamBanner = ({ blockStaffJoin, onStaffJoinBlocked }) => {
+  const navigate = useNavigate();
   return (
     <section className="py-20 bg-[#F8F9FA]">
       <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8">
@@ -199,7 +222,10 @@ const JoinTeamBanner = () => {
               </p>
 
               <div className="flex flex-col sm:flex-row gap-4">
-                <button className="px-6 py-3.5 bg-blue-500 text-white rounded-lg font-semibold text-[15px] hover:bg-blue-600 transition-colors flex items-center justify-center gap-2">
+                <button
+                  onClick={() => blockStaffJoin ? onStaffJoinBlocked?.() : navigate('/services/join-team')}
+                  className="px-6 py-3.5 bg-blue-500 text-white rounded-lg font-semibold text-[15px] hover:bg-blue-600 transition-colors flex items-center justify-center gap-2"
+                >
                   Join now <ArrowRight className="w-4 h-4" />
                 </button>
                 <div className="px-6 py-3.5 bg-white text-slate-600 rounded-lg font-semibold text-[15px] flex items-center justify-center shadow-sm">
@@ -461,9 +487,12 @@ const BrowseStaffSection = () => {
 const LandingPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [showWelcome, setShowWelcome] = useState(false);
   const [welcomeName, setWelcomeName] = useState('');
   const [regFeeBannerStatus, setRegFeeBannerStatus] = useState(null);
+  const [showStaffJoinBlocked, setShowStaffJoinBlocked] = useState(false);
+  const blockStaffJoin = isStaffUser(user);
 
   // Show post-login banners / popups
   useEffect(() => {
@@ -472,7 +501,7 @@ const LandingPage = () => {
       setShowWelcome(true);
 
       const feeStatus = location.state.regFeeStatus;
-      if (feeStatus === 'PENDING' || feeStatus === 'INVOICED') {
+      if (feeStatus === 'PENDING' || feeStatus === 'INVOICED' || feeStatus === 'EXPIRED') {
         setRegFeeBannerStatus(feeStatus);
       }
 
@@ -491,10 +520,10 @@ const LandingPage = () => {
       )}
 
       <Navbar />
-      <HeroSection />
+      <HeroSection blockStaffJoin={blockStaffJoin} onStaffJoinBlocked={() => setShowStaffJoinBlocked(true)} />
       <ServiceGrid />
       <BrowseStaffSection />
-      <JoinTeamBanner />
+      <JoinTeamBanner blockStaffJoin={blockStaffJoin} onStaffJoinBlocked={() => setShowStaffJoinBlocked(true)} />
       <ReviewSection />
       <Footer />
 
@@ -505,6 +534,16 @@ const LandingPage = () => {
         title={welcomeName ? `Welcome back, ${welcomeName}!` : 'Welcome back!'}
         message="You're successfully signed in to VCare. Explore trusted caregivers and manage your care services all in one place."
         primaryAction={{ label: 'Get started', onClick: () => setShowWelcome(false) }}
+      />
+
+      <Popup
+        isOpen={showStaffJoinBlocked}
+        onClose={() => setShowStaffJoinBlocked(false)}
+        variant="info"
+        title="You already have a staff account"
+        message="This account is already registered as VCare staff, so you can't submit another worker application. Head to your provider dashboard to manage your profile."
+        primaryAction={{ label: 'Go to dashboard', onClick: () => navigate('/services/provider-dashboard') }}
+        secondaryAction={{ label: 'Close', onClick: () => setShowStaffJoinBlocked(false) }}
       />
     </div>
   );

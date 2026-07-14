@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import apiClient from '../../../api/api';
 import { useAuth } from '../../../context/AuthContext';
 import StaffSidebar from './StaffSidebar';
+import DateInput from '../../../components/common/DateInput';
 
 const STATUS_CONFIG = {
   PENDING:  { dot: 'bg-amber-400',   text: 'text-amber-700',   labelKey: 'status.pending' },
@@ -149,8 +150,7 @@ const StaffLeaveRequestPage = () => {
                   <label className="block text-xs font-medium text-slate-600 mb-1">
                     {t('form.startDateLabel')}<span className="text-red-500 ml-0.5">*</span>
                   </label>
-                  <input
-                    type="date"
+                  <DateInput
                     value={startDate}
                     min={todayISO()}
                     onChange={(e) => setStartDate(e.target.value)}
@@ -161,8 +161,7 @@ const StaffLeaveRequestPage = () => {
                   <label className="block text-xs font-medium text-slate-600 mb-1">
                     {t('form.endDateLabel')}<span className="text-red-500 ml-0.5">*</span>
                   </label>
-                  <input
-                    type="date"
+                  <DateInput
                     value={endDate}
                     min={startDate || todayISO()}
                     onChange={(e) => setEndDate(e.target.value)}

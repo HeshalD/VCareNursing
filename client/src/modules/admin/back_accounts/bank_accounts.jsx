@@ -13,6 +13,7 @@ import {
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { categoryBadge, relatedTo, flowAmountClass, flowSign } from '../../../constants/transactionCategories';
+import DateInput from '../../../components/common/DateInput';
 
 const initialFormState = {
 	account_nickname: '',
@@ -409,16 +410,14 @@ const BankAccounts = () => {
 							{/* Filters — flat inline toolbar */}
 							<form onSubmit={applyTransactionFilters} className="flex flex-wrap items-end gap-3">
 								<Field label="From">
-									<input
-										type="date"
+									<DateInput
 										value={transactionsFilters.start_date}
 										onChange={(e) => setTransactionsFilters({ ...transactionsFilters, start_date: e.target.value })}
 										className={inputCls}
 									/>
 								</Field>
 								<Field label="To">
-									<input
-										type="date"
+									<DateInput
 										value={transactionsFilters.end_date}
 										onChange={(e) => setTransactionsFilters({ ...transactionsFilters, end_date: e.target.value })}
 										className={inputCls}
@@ -584,8 +583,7 @@ const BankAccounts = () => {
 											/>
 										</Field>
 										<Field label="Opening Balance Date">
-											<input
-												type="date"
+											<DateInput
 												value={formData.opening_balance_date}
 												onChange={(e) => setFormData({ ...formData, opening_balance_date: e.target.value })}
 												className={inputCls}

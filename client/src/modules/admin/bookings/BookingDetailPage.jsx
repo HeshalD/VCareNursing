@@ -22,6 +22,8 @@ import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import CareTimeline from './CareTimeline';
+import DateInput from '../../../components/common/DateInput';
+import DateTimeInput from '../../../components/common/DateTimeInput';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -939,8 +941,8 @@ const BookingDetailPage = () => {
                       </div>
                       <div>
                         <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Cheque date</label>
-                        <input
-                          required type="date" value={paymentForm.cheque_date}
+                        <DateInput
+                          required value={paymentForm.cheque_date}
                           onChange={(e) => setPaymentForm({ ...paymentForm, cheque_date: e.target.value })}
                           className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8] text-[#6F6A60]"
                         />
@@ -1298,9 +1300,9 @@ const BookingDetailPage = () => {
                   ))}
                 </div>
                 <div className="flex gap-2 mb-3">
-                  <input type="date" value={statementStartDate} onChange={(e) => setStatementStartDate(e.target.value)}
+                  <DateInput value={statementStartDate} onChange={(e) => setStatementStartDate(e.target.value)}
                     className="flex-1 border border-[#E2DCD0] rounded-xl px-3 py-2 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8] text-[#6F6A60]" />
-                  <input type="date" value={statementEndDate} onChange={(e) => setStatementEndDate(e.target.value)}
+                  <DateInput value={statementEndDate} onChange={(e) => setStatementEndDate(e.target.value)}
                     className="flex-1 border border-[#E2DCD0] rounded-xl px-3 py-2 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8] text-[#6F6A60]" />
                 </div>
                 <button onClick={downloadStatement} disabled={statementLoading || !statementClientId}
@@ -1319,7 +1321,7 @@ const BookingDetailPage = () => {
                 <div className="flex flex-col gap-4">
                   <div>
                     <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Actual end time</label>
-                    <input type="datetime-local" value={actualEndTime} onChange={(e) => setActualEndTime(e.target.value)}
+                    <DateTimeInput value={actualEndTime} onChange={(e) => setActualEndTime(e.target.value)}
                       className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8] text-[#6F6A60]" />
                   </div>
 
@@ -1548,8 +1550,7 @@ const BookingDetailPage = () => {
                     <>
                       <div>
                         <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Actual end date & time</label>
-                        <input
-                          type="datetime-local"
+                        <DateTimeInput
                           value={actualEndTime}
                           onChange={(e) => setActualEndTime(e.target.value)}
                           className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8] text-[#6F6A60]"
@@ -1873,8 +1874,7 @@ const BookingDetailPage = () => {
                     <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">
                       New staff start date <span className="text-rose-500">*</span>
                     </label>
-                    <input
-                      type="date"
+                    <DateInput
                       value={swapModalStartDate}
                       onChange={(e) => setSwapModalStartDate(e.target.value)}
                       className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"

@@ -5,39 +5,24 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   User, Calendar, Phone, CreditCard, MapPin,
   Briefcase, FileText, CheckCircle, ChevronDown, List,
-  ChevronRight, ChevronLeft, Award, Home, Upload, X
+  ChevronRight, ChevronLeft, Award, Home, Upload, X, Lock, Info
 } from 'lucide-react';
 import Navbar from '../../../components/layout/Navbar';
 import Footer from '../../../components/layout/Footer';
 import ImageCropModal from '../../../components/common/ImageCropModal';
 import apiClient from '../../../api/api';
+import DateInput, { isoToDisplay } from '../../../components/common/DateInput';
 
-// Formats raw digits typed by the user into a DD/MM/YYYY masked string
-const maskDateInput = (raw) => {
-  const digits = raw.replace(/\D/g, '').slice(0, 8);
-  if (digits.length <= 2) return digits;
-  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
-  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
-};
-
-// Parses a DD/MM/YYYY string into a Date, or null if invalid
+// Parses an ISO (YYYY-MM-DD) string into a Date, or null if invalid/empty
 const parseDateOfBirth = (value) => {
-  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value || '');
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '');
   if (!match) return null;
-  const [, day, month, year] = match;
+  const [, year, month, day] = match;
   const date = new Date(Number(year), Number(month) - 1, Number(day));
   if (date.getFullYear() !== Number(year) || date.getMonth() !== Number(month) - 1 || date.getDate() !== Number(day)) {
     return null;
   }
   return date;
-};
-
-// Converts a DD/MM/YYYY string into YYYY-MM-DD for the backend
-const formatDateForBackend = (value) => {
-  const date = parseDateOfBirth(value);
-  if (!date) return '';
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 };
 
 // Service-team roles applicants can apply for. `value` is the user_role_enum
@@ -72,6 +57,7 @@ const WorkerRegistrationPage = () => {
   const [isConfirmed, setIsConfirmed] = useState(false);
   const [profilePictureToCrop, setProfilePictureToCrop] = useState(null);
   const [mobileConflict, setMobileConflict] = useState('');
+  const [clientProfile, setClientProfile] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({
     full_name: '',
     email: '',
@@ -89,57 +75,68 @@ const WorkerRegistrationPage = () => {
     nic_back: ''
   });
 
-  // Auto-complete form fields if user is authenticated
+  // Look up the caller's actual client profile (if any) so we know whether to
+  // lock the fields below. The JWT/user object has no client_info — it only
+  // carries generic top-level fields — so this can't be inferred from `user`
+  // alone and needs a real lookup, the same one ClientPatients-style pages use.
+  useEffect(() => {
+    if (!isAuthenticated || !user?.id) {
+      setClientProfile(null);
+      return;
+    }
+    let cancelled = false;
+    apiClient.getClientProfileByUserId(user.id)
+      .then(res => { if (!cancelled) setClientProfile(res.data || null); })
+      .catch(() => { if (!cancelled) setClientProfile(null); });
+    return () => { cancelled = true; };
+  }, [isAuthenticated, user?.id]);
+
+  // Auto-complete form fields if user is authenticated. Client profile data
+  // (when it exists) takes priority since it's the more authoritative source.
   useEffect(() => {
     if (isAuthenticated && user) {
-      console.log('Full user object:', user);
-      console.log('Available fields:', Object.keys(user));
-      
-      // Extract data from actual user object structure
-      const fullName = user.client_info?.name || user.staff_info?.name || user.full_name || '';
-      const email = user.email || ''; // Email is at top level in response.data
-      const gender = user.gender || ''; // New field from JWT
-      const primaryAddress = user.primary_address || ''; // New field from JWT
-      
+      const fullName = clientProfile?.full_name || user.full_name || '';
+      const email = clientProfile?.email || user.email || '';
+      const gender = clientProfile?.gender || user.gender || '';
+      const primaryAddress = clientProfile?.primary_address || user.primary_address || '';
+      const mobileNumber = clientProfile?.mobile_number || user.mobile_number || '';
+
       setFormData(prev => ({
         ...prev,
         full_name: fullName.trim() || prev.full_name,
-        mobile_number: user.mobile_number || prev.mobile_number,
+        mobile_number: mobileNumber || prev.mobile_number,
         email: email || prev.email,
         gender: gender || prev.gender,
         home_address: primaryAddress || prev.home_address
       }));
-      
-      console.log('Auto-completed form fields:', {
-        full_name: fullName.trim(),
-        mobile_number: user.mobile_number,
-        email: email,
-        gender: gender,
-        home_address: primaryAddress
-      });
     }
-  }, [isAuthenticated, user]);
+  }, [isAuthenticated, user, clientProfile]);
 
   // Helper functions to check if fields are auto-completed
   const hasAutoCompletedFullName = () => {
     if (!isAuthenticated || !user) return false;
-    return !!(user.client_info?.name || user.staff_info?.name || user.full_name);
+    return !!(clientProfile?.full_name || user.full_name);
   };
 
   const hasAutoCompletedEmail = () => {
     if (!isAuthenticated || !user) return false;
-    return !!user.email;
+    return !!(clientProfile?.email || user.email);
   };
 
   const hasAutoCompletedGender = () => {
     if (!isAuthenticated || !user) return false;
-    return !!user.gender;
+    return !!(clientProfile?.gender || user.gender);
   };
 
   const hasAutoCompletedAddress = () => {
     if (!isAuthenticated || !user) return false;
-    return !!user.primary_address;
+    return !!(clientProfile?.primary_address || user.primary_address);
   };
+
+  // Fields pulled from an existing client profile must not be editable here —
+  // this registration should never let a worker application silently diverge
+  // from the client's actual profile data.
+  const hasClientProfile = () => !!clientProfile;
 
   // Handle NIC front photo change
   const handleNicFrontChange = (file) => {
@@ -314,7 +311,7 @@ const WorkerRegistrationPage = () => {
         } else {
           const selectedDate = parseDateOfBirth(value);
           if (!selectedDate) {
-            error = 'Enter a valid date as DD/MM/YYYY';
+            error = 'Enter a valid date';
           } else {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
@@ -453,7 +450,7 @@ const WorkerRegistrationPage = () => {
         longitude: formData.longitude,
         gender: formData.gender,
         willing_to_live_in: formData.willing_to_live_in,
-        date_of_birth: formatDateForBackend(formData.date_of_birth),
+        date_of_birth: formData.date_of_birth,
         nic_number: formData.nic_number,
         experience_level: formData.experience_level || ''
       };
@@ -606,17 +603,13 @@ const WorkerRegistrationPage = () => {
                       
                       {/* Auto-complete notice for authenticated users */}
                       {isAuthenticated && (
-                        <div className="md:col-span-2 mb-6 p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
-                          <div className="flex items-center gap-2">
-                            <div className="w-5 h-5 bg-emerald-500 rounded-full flex items-center justify-center">
-                              <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                              </svg>
-                            </div>
-                            <p className="text-sm text-emerald-800">
-                              <span className="font-semibold">Welcome back!</span> Some fields have been pre-filled from your account. You can modify them if needed.
-                            </p>
-                          </div>
+                        <div className="md:col-span-2 mb-6 flex items-start gap-2.5 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                          {hasClientProfile() ? <Lock className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" /> : <Info className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />}
+                          <p className="text-sm text-slate-600">
+                            {hasClientProfile()
+                              ? 'Some fields below have been filled in from your client profile and are locked to keep them in sync.'
+                              : 'Some fields below have been pre-filled from your account. You can edit them if needed.'}
+                          </p>
                         </div>
                       )}
                       
@@ -624,23 +617,24 @@ const WorkerRegistrationPage = () => {
                         <div className="md:col-span-2">
                           <label className="text-sm font-semibold text-slate-600 block mb-1">
                             Name With Initials
-                            {hasAutoCompletedFullName() && (
-                              <span className="ml-2 text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full">From account</span>
+                            {hasClientProfile() ? (
+                              <span className="ml-2 inline-flex items-center gap-1 text-xs font-normal text-slate-400">
+                                <Lock className="w-3 h-3" /> Locked
+                              </span>
+                            ) : hasAutoCompletedFullName() && (
+                              <span className="ml-2 text-xs font-normal text-slate-400">Auto-filled</span>
                             )}
                           </label>
                           <input
                             type="text"
-                            className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 placeholder:text-slate-400 ${
-                              hasAutoCompletedFullName() 
-                                ? 'bg-emerald-50 border-emerald-200' 
-                                : fieldErrors.full_name 
-                                  ? 'bg-red-50 border-red-300' 
-                                  : 'bg-slate-50 border-slate-200'
+                            className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 placeholder:text-slate-400 disabled:bg-slate-100 disabled:text-slate-500 disabled:border-slate-200 disabled:cursor-not-allowed ${
+                              fieldErrors.full_name ? 'bg-red-50 border-red-300' : 'bg-slate-50 border-slate-200'
                             }`}
                             value={formData.full_name}
                             onChange={e => handleInputChange('full_name', e.target.value)}
                             placeholder="e.g. Saman Kumara"
                             required
+                            disabled={hasClientProfile()}
                           />
                           {fieldErrors.full_name && (
                             <p className="text-xs text-red-500 mt-1">{fieldErrors.full_name}</p>
@@ -650,22 +644,23 @@ const WorkerRegistrationPage = () => {
                           <label className="text-sm font-semibold text-slate-600 block mb-1">
                             Email Address
                             <span className="ml-2 text-xs text-slate-400 font-normal">(Optional)</span>
-                            {hasAutoCompletedEmail() && (
-                              <span className="ml-2 text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full">From account</span>
+                            {hasClientProfile() ? (
+                              <span className="ml-2 inline-flex items-center gap-1 text-xs font-normal text-slate-400">
+                                <Lock className="w-3 h-3" /> Locked
+                              </span>
+                            ) : hasAutoCompletedEmail() && (
+                              <span className="ml-2 text-xs font-normal text-slate-400">Auto-filled</span>
                             )}
                           </label>
                           <input
                             type="email"
-                            className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 placeholder:text-slate-400 ${
-                              hasAutoCompletedEmail()
-                                ? 'bg-emerald-50 border-emerald-200'
-                                : fieldErrors.email
-                                  ? 'bg-red-50 border-red-300'
-                                  : 'bg-slate-50 border-slate-200'
+                            className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 placeholder:text-slate-400 disabled:bg-slate-100 disabled:text-slate-500 disabled:border-slate-200 disabled:cursor-not-allowed ${
+                              fieldErrors.email ? 'bg-red-50 border-red-300' : 'bg-slate-50 border-slate-200'
                             }`}
                             value={formData.email}
                             onChange={e => handleInputChange('email', e.target.value)}
                             placeholder="e.g. saman@example.com"
+                            disabled={hasClientProfile()}
                           />
                           {fieldErrors.email && (
                             <p className="text-xs text-red-500 mt-1">{fieldErrors.email}</p>
@@ -674,24 +669,25 @@ const WorkerRegistrationPage = () => {
                         <div>
                           <label className="text-sm font-semibold text-slate-600 block mb-1">
                             Mobile Number
-                            {isAuthenticated && user?.mobile_number && (
-                              <span className="ml-2 text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full">From account</span>
+                            {hasClientProfile() ? (
+                              <span className="ml-2 inline-flex items-center gap-1 text-xs font-normal text-slate-400">
+                                <Lock className="w-3 h-3" /> Locked
+                              </span>
+                            ) : isAuthenticated && user?.mobile_number && (
+                              <span className="ml-2 text-xs font-normal text-slate-400">Auto-filled</span>
                             )}
                           </label>
                           <input
                             type="tel"
-                            className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 placeholder:text-slate-400 ${
-                              isAuthenticated && user?.mobile_number
-                                ? 'bg-emerald-50 border-emerald-200'
-                                : (fieldErrors.mobile_number || mobileConflict)
-                                  ? 'bg-red-50 border-red-300'
-                                  : 'bg-slate-50 border-slate-200'
+                            className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 placeholder:text-slate-400 disabled:bg-slate-100 disabled:text-slate-500 disabled:border-slate-200 disabled:cursor-not-allowed ${
+                              (fieldErrors.mobile_number || mobileConflict) ? 'bg-red-50 border-red-300' : 'bg-slate-50 border-slate-200'
                             }`}
                             value={formData.mobile_number}
                             onChange={e => handleInputChange('mobile_number', e.target.value)}
                             onBlur={e => handleMobileBlur(e.target.value)}
                             placeholder="e.g. 0771234567"
                             required
+                            disabled={hasClientProfile()}
                           />
                           {(fieldErrors.mobile_number || mobileConflict) && (
                             <p className="text-xs text-red-500 mt-1">{mobileConflict || fieldErrors.mobile_number}</p>
@@ -700,21 +696,22 @@ const WorkerRegistrationPage = () => {
                         <div>
                           <label className="text-sm font-semibold text-slate-600 block mb-1">
                             Gender
-                            {hasAutoCompletedGender() && (
-                              <span className="ml-2 text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full">From account</span>
+                            {hasClientProfile() ? (
+                              <span className="ml-2 inline-flex items-center gap-1 text-xs font-normal text-slate-400">
+                                <Lock className="w-3 h-3" /> Locked
+                              </span>
+                            ) : hasAutoCompletedGender() && (
+                              <span className="ml-2 text-xs font-normal text-slate-400">Auto-filled</span>
                             )}
                           </label>
                           <select
-                            className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 ${
-                              hasAutoCompletedGender() 
-                                ? 'bg-emerald-50 border-emerald-200' 
-                                : fieldErrors.gender 
-                                  ? 'bg-red-50 border-red-300' 
-                                  : 'bg-slate-50 border-slate-200'
+                            className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 disabled:bg-slate-100 disabled:text-slate-500 disabled:border-slate-200 disabled:cursor-not-allowed ${
+                              fieldErrors.gender ? 'bg-red-50 border-red-300' : 'bg-slate-50 border-slate-200'
                             }`}
                             value={formData.gender}
                             onChange={e => handleInputChange('gender', e.target.value)}
                             required
+                            disabled={hasClientProfile()}
                           >
                             <option value="">Select gender</option>
                             <option value="MALE">Male</option>
@@ -727,18 +724,14 @@ const WorkerRegistrationPage = () => {
                         </div>
                         <div>
                           <label className="text-sm font-semibold text-slate-600 block mb-1">Date of Birth</label>
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            placeholder="DD/MM/YYYY"
-                            maxLength={10}
+                          <DateInput
                             className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 ${
                               fieldErrors.date_of_birth
                                 ? 'bg-red-50 border-red-300'
                                 : 'bg-slate-50 border-slate-200'
                             }`}
                             value={formData.date_of_birth}
-                            onChange={e => handleInputChange('date_of_birth', maskDateInput(e.target.value))}
+                            onChange={e => handleInputChange('date_of_birth', e.target.value)}
                             required
                           />
                           {fieldErrors.date_of_birth && (
@@ -1026,23 +1019,24 @@ const WorkerRegistrationPage = () => {
                         <div className="md:col-span-2">
                           <label className="text-sm font-semibold text-slate-600 block mb-1">
                             Home Address
-                            {hasAutoCompletedAddress() && (
-                              <span className="ml-2 text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full">From account</span>
+                            {hasClientProfile() ? (
+                              <span className="ml-2 inline-flex items-center gap-1 text-xs font-normal text-slate-400">
+                                <Lock className="w-3 h-3" /> Locked
+                              </span>
+                            ) : hasAutoCompletedAddress() && (
+                              <span className="ml-2 text-xs font-normal text-slate-400">Auto-filled</span>
                             )}
                           </label>
                           <textarea
                             rows="3"
-                            className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none resize-none text-slate-900 placeholder:text-slate-400 ${
-                              hasAutoCompletedAddress() 
-                                ? 'bg-emerald-50 border-emerald-200' 
-                                : fieldErrors.home_address 
-                                  ? 'bg-red-50 border-red-300' 
-                                  : 'bg-slate-50 border-slate-200'
+                            className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none resize-none text-slate-900 placeholder:text-slate-400 disabled:bg-slate-100 disabled:text-slate-500 disabled:border-slate-200 disabled:cursor-not-allowed ${
+                              fieldErrors.home_address ? 'bg-red-50 border-red-300' : 'bg-slate-50 border-slate-200'
                             }`}
                             value={formData.home_address}
                             onChange={e => handleInputChange('home_address', e.target.value)}
                             placeholder="Street address, Zip code"
                             required
+                            disabled={hasClientProfile()}
                           />
                           {fieldErrors.home_address && (
                             <p className="text-xs text-red-500 mt-1">{fieldErrors.home_address}</p>
@@ -1274,7 +1268,7 @@ const WorkerRegistrationPage = () => {
                               <p className="text-xs text-slate-400 mt-1">Gender: {formData.gender.charAt(0) + formData.gender.slice(1).toLowerCase()}</p>
                             )}
                             {formData.date_of_birth && (
-                              <p className="text-xs text-slate-400 mt-1">Date of Birth: {formData.date_of_birth}</p>
+                              <p className="text-xs text-slate-400 mt-1">Date of Birth: {isoToDisplay(formData.date_of_birth)}</p>
                             )}
                           </div>
                         </div>

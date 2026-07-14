@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { X, Loader2, ChevronDown } from 'lucide-react';
 import apiClient from '../../../api/api';
+import DateInput, { todayISO } from '../../../components/common/DateInput';
 
 // ─── Style helpers ────────────────────────────────────────────────────────────
 
@@ -565,17 +566,17 @@ const AdminDirectBookingDrawer = ({
             <SectionHeader title="Schedule & Billing" />
             <div className="px-5 py-4 space-y-3">
               <Field label="Start Date" required error={errors.startDate}>
-                <input
-                  type="date"
+                <DateInput
                   value={startDate}
+                  min={todayISO()}
                   onChange={(e) => { setStartDate(e.target.value); setErrors((err) => ({ ...err, startDate: undefined })); }}
                   className={inputCls(!!errors.startDate)}
                 />
               </Field>
               <Field label="Scheduled End Date (optional)">
-                <input
-                  type="date"
+                <DateInput
                   value={scheduledEndDate}
+                  min={startDate || todayISO()}
                   onChange={(e) => setScheduledEndDate(e.target.value)}
                   className={inputCls(false)}
                 />

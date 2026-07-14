@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import logoUrl from '../../../assets/Logo/VCareLogo.png';
 import { useAuth } from '../../../context/AuthContext';
-import LanguageToggle from '../../../i18n/LanguageToggle';
+// import LanguageToggle from '../../../i18n/LanguageToggle'; // hidden for this release
 
 const NAV_ITEMS = [
   { icon: LayoutDashboard, labelKey: 'nav.dashboard', to: '/services/provider-dashboard' },
@@ -83,7 +83,7 @@ const StaffSidebar = ({ staffProfileId, title }) => {
         </Link>
         {title && <span className="text-sm font-semibold text-slate-700 truncate px-2">{title}</span>}
         <div className="flex items-center gap-2">
-          <LanguageToggle />
+          {/* <LanguageToggle /> hidden for this release — see memory: language-toggle-locations */}
           <button
             onClick={() => setMobileOpen(true)}
             className="p-2 -mr-2 rounded-lg text-slate-600 hover:bg-slate-50"
@@ -144,7 +144,7 @@ const StaffSidebar = ({ staffProfileId, title }) => {
 
         <div className="px-5 py-4 border-b border-slate-100 space-y-3">
           <ProviderPortalCard />
-          <LanguageToggle className="w-full justify-center" />
+          {/* <LanguageToggle className="w-full justify-center" /> hidden for this release */}
         </div>
 
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">

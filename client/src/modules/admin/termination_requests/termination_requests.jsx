@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import DateInput from '../../../components/common/DateInput';
 import {
   User,
   AlertTriangle,
@@ -623,8 +624,7 @@ const TerminationRequests = () => {
                 <label className="block text-xs font-medium text-slate-600 mb-1">
                   Official End Date <span className="text-red-500 ml-0.5">*</span>
                 </label>
-                <input
-                  type="date"
+                <DateInput
                   value={modalFinalEndDate}
                   onChange={(e) => setModalFinalEndDate(e.target.value)}
                   className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-800 outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-colors"

@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import DateInput, { todayISO } from '../../../components/common/DateInput';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -527,7 +528,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                     </div>
                     <div>
                       <label className={labelCls}>Preferred Start Date</label>
-                      <input type="date" name="start_date" value={formData.start_date} onChange={handleInputChange} className={inputCls} />
+                      <DateInput name="start_date" value={formData.start_date} onChange={handleInputChange} min={todayISO()} className={inputCls} />
                     </div>
                     <div>
                       <label className={labelCls}>Additional Remarks</label>

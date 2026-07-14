@@ -17,9 +17,6 @@ import {
   Tag,
   Download,
   RefreshCw,
-  Trash2,
-  ChevronUp,
-  ChevronDown,
   Percent,
   Package,
   ShoppingBag,
@@ -27,6 +24,9 @@ import {
 } from 'lucide-react';
 import PresetItemSelector from '../service_quotes/PresetItemSelector';
 import PresetManager from '../service_quotes/PresetManager';
+import LineItemRow from '../service_quotes/LineItemRow';
+import RegistrationFeeRow from '../service_quotes/RegistrationFeeRow';
+import ProductLineItemRow from '../service_quotes/ProductLineItemRow';
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -124,332 +124,6 @@ const buildPreviewItems = (validLineItems, validProductLineItems, rentalUnits, i
   }
 
   return items;
-};
-
-// ---------------------------------------------------------------------------
-// Inline editable line-item row (Zoho-style)
-// ---------------------------------------------------------------------------
-const LineItemRow = ({ item, index, isFirst, isLast, onUpdate, onDelete, onMoveUp, onMoveDown }) => {
-  const isDiscount = item.item_type === 'DISCOUNT';
-  const qty        = parseFloat(item.quantity)  || 0;
-  const rate       = parseFloat(item.unit_price) || 0;
-  const amount     = parseFloat(item.amount)     || 0;
-
-  const set = (field, value) => {
-    const next = { ...item, [field]: value };
-    if (field === 'quantity' || field === 'unit_price') {
-      const q = parseFloat(field === 'quantity'  ? value : item.quantity)  || 0;
-      const r = parseFloat(field === 'unit_price' ? value : item.unit_price) || 0;
-      next.amount = isDiscount ? -(q * r) : q * r;
-    }
-    onUpdate(next);
-  };
-
-  return (
-    <tr className="group border-b border-gray-100 hover:bg-gray-50/60 transition-colors">
-      {/* # */}
-      <td className="py-3 pl-4 w-8 text-[12px] text-gray-300 select-none">{index + 1}</td>
-
-      {/* Item / Description */}
-      <td className="py-2 pr-3">
-        <input
-          value={item.description || ''}
-          onChange={(e) => set('description', e.target.value)}
-          placeholder="Type to enter item details"
-          className="w-full text-sm text-gray-800 bg-transparent placeholder-gray-300 border-0 outline-none focus:ring-0 p-0"
-        />
-        {isDiscount && (
-          <span className="text-[11px] text-gray-400 font-medium">Discount</span>
-        )}
-      </td>
-
-      {/* Qty */}
-      <td className="py-2 pr-3 w-24">
-        <input
-          type="number"
-          min="0"
-          value={item.quantity ?? 1}
-          onChange={(e) => set('quantity', e.target.value)}
-          className="w-full text-sm text-gray-800 bg-transparent border-0 outline-none focus:ring-0 text-right p-0 tabular-nums"
-        />
-      </td>
-
-      {/* Rate */}
-      <td className="py-2 pr-3 w-32">
-        <input
-          type="number"
-          min="0"
-          value={item.unit_price ?? 0}
-          onChange={(e) => set('unit_price', e.target.value)}
-          className="w-full text-sm text-gray-800 bg-transparent border-0 outline-none focus:ring-0 text-right p-0 tabular-nums"
-        />
-      </td>
-
-      {/* Amount */}
-      <td className={`py-2 pr-2 w-32 text-right text-sm tabular-nums font-medium select-none ${isDiscount ? 'text-gray-500' : 'text-gray-900'}`}>
-        {isDiscount ? `(${fmt(Math.abs(amount))})` : fmt(amount)}
-      </td>
-
-      {/* Actions */}
-      <td className="py-2 pr-3 w-20">
-        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button
-            onClick={onMoveUp}
-            disabled={isFirst}
-            className="p-1 text-gray-400 hover:text-gray-700 disabled:opacity-20 disabled:cursor-not-allowed"
-          >
-            <ChevronUp className="w-3.5 h-3.5" />
-          </button>
-          <button
-            onClick={onMoveDown}
-            disabled={isLast}
-            className="p-1 text-gray-400 hover:text-gray-700 disabled:opacity-20 disabled:cursor-not-allowed"
-          >
-            <ChevronDown className="w-3.5 h-3.5" />
-          </button>
-          <button
-            onClick={onDelete}
-            className="p-1 text-gray-400 hover:text-red-500"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </td>
-    </tr>
-  );
-};
-
-// ---------------------------------------------------------------------------
-// Registration Fee line item — a dedicated, first-class item (not the old
-// free-text preset) so paymentTrackingController.recordPayment can detect it
-// unambiguously via is_registration_fee and treat it as the first "bucket"
-// any payment on the quote fills. Prints on the client's PDF like any other
-// charge (see estimateTemplate) — only the assigned salesperson stays
-// internal, never rendered there.
-// ---------------------------------------------------------------------------
-const RegistrationFeeRow = ({ item, index, salespersons, onUpdate, onDelete }) => {
-  const set = (field, value) => {
-    const next = { ...item, [field]: value };
-    if (field === 'quantity' || field === 'unit_price') {
-      const q = parseFloat(field === 'quantity' ? value : item.quantity) || 0;
-      const r = parseFloat(field === 'unit_price' ? value : item.unit_price) || 0;
-      next.amount = q * r;
-    }
-    onUpdate(next);
-  };
-
-  return (
-    <tr className="border-b border-gray-100 bg-amber-50/40">
-      <td className="py-3 pl-4 w-8 text-[12px] text-gray-300 select-none align-top">{index + 1}</td>
-      <td colSpan={5} className="py-2.5 pr-3">
-        <div className="rounded-lg border border-amber-100 p-2.5 space-y-2">
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1 shrink-0 rounded bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-700">
-              <BadgeDollarSign className="w-3 h-3" /> Registration Fee
-            </span>
-            <input
-              type="text"
-              value={item.description}
-              onChange={(e) => set('description', e.target.value)}
-              className="flex-1 rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-            />
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={item.unit_price}
-              onChange={(e) => set('unit_price', e.target.value)}
-              className="w-32 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-sm text-right outline-none focus:border-blue-500"
-            />
-            <button type="button" onClick={onDelete} className="text-gray-400 hover:text-red-500">
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="text-[10px] font-medium text-gray-500 shrink-0">Credit to Salesperson</label>
-            <select
-              value={item.salesperson_id || ''}
-              onChange={(e) => set('salesperson_id', e.target.value)}
-              className="w-56 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1 text-xs outline-none focus:border-blue-500"
-            >
-              <option value="">Not assigned</option>
-              {salespersons.map((sp) => (
-                <option key={sp.id} value={sp.id}>{sp.full_name}</option>
-              ))}
-            </select>
-            <span className="text-[10px] text-gray-400">Internal only — never printed on the client's document</span>
-          </div>
-        </div>
-      </td>
-    </tr>
-  );
-};
-
-// ---------------------------------------------------------------------------
-// Product / Rental line-item row (companion PRODUCT quotation)
-// ---------------------------------------------------------------------------
-const ProductLineItemRow = ({ item, products, rentalUnits, canDelete, onUpdate, onDelete }) => {
-  const rental = !!products.find((p) => p.product_id === item.product_id && p.product_type === 'RENTAL');
-
-  const set = (patch) => onUpdate({ ...item, ...patch });
-
-  const selectProduct = (productId) => {
-    const product = products.find((p) => p.product_id === productId);
-    set({
-      product_id: productId,
-      description: product ? product.name : '',
-      unit_price: product ? product.price : '',
-      unit_id: '',
-    });
-  };
-
-  if (item.isStandaloneDeposit) {
-    return (
-      <div className="rounded-lg border border-amber-100 bg-amber-50/40 p-2.5">
-        <div className="flex items-center gap-2">
-          <span className="w-36 shrink-0 text-[11px] font-semibold text-amber-700">Refundable Deposit</span>
-          <input
-            type="text"
-            placeholder="Description"
-            value={item.description}
-            onChange={(e) => set({ description: e.target.value })}
-            className="flex-1 rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-          />
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            placeholder="Amount"
-            value={item.unit_price}
-            onChange={(e) => set({ unit_price: e.target.value })}
-            className="w-28 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
-          />
-          {canDelete && (
-            <button type="button" onClick={onDelete} className="text-gray-400 hover:text-red-500">
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-        <p className="mt-1 pl-[9.5rem] text-[10px] text-amber-600">
-          Held by the company regardless of any rental item; refunded or forfeited later from the Products page.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className={rental ? 'rounded-lg border border-purple-100 bg-purple-50/40 p-2.5 space-y-2' : 'rounded-lg border border-gray-100 p-2.5'}>
-      <div className="flex items-center gap-2">
-        <select
-          value={item.product_id}
-          onChange={(e) => selectProduct(e.target.value)}
-          className="w-40 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-xs outline-none focus:border-blue-500"
-        >
-          <option value="">Custom item…</option>
-          {products.map((p) => (
-            <option key={p.product_id} value={p.product_id}>{p.name}{p.product_type === 'RENTAL' ? ' (Rental)' : ''}</option>
-          ))}
-        </select>
-        <input
-          type="text"
-          placeholder="Description"
-          value={item.description}
-          onChange={(e) => set({ description: e.target.value })}
-          className="flex-1 rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-        />
-        <input
-          type="number"
-          min="0"
-          step="1"
-          placeholder="Qty"
-          value={item.quantity}
-          onChange={(e) => set({ quantity: e.target.value })}
-          className="w-16 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
-        />
-        <input
-          type="number"
-          min="0"
-          step="0.01"
-          placeholder="Unit price"
-          value={item.unit_price}
-          onChange={(e) => set({ unit_price: e.target.value })}
-          className="w-28 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
-        />
-        {canDelete && (
-          <button type="button" onClick={onDelete} className="text-gray-400 hover:text-red-500">
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-        )}
-      </div>
-
-      {rental && (
-        <div className="pl-1 space-y-2">
-          <p className="text-[11px] font-semibold text-purple-700">Rental Terms for this item</p>
-          <div>
-            <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Specific Unit</label>
-            <select
-              value={item.unit_id || ''}
-              onChange={(e) => set({ unit_id: e.target.value })}
-              className="w-56 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1 text-xs outline-none focus:border-blue-500"
-            >
-              <option value="">Auto-assign any available unit</option>
-              {rentalUnits.filter((u) => u.product_id === item.product_id).map((u) => (
-                <option key={u.unit_id} value={u.unit_id}>{u.unit_code || u.unit_id.slice(0, 8)}</option>
-              ))}
-            </select>
-            {item.product_id && rentalUnits.filter((u) => u.product_id === item.product_id).length === 0 && (
-              <p className="mt-0.5 text-[10px] text-amber-600">No units currently available for this product.</p>
-            )}
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <div>
-              <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Billing</label>
-              <select
-                value={item.rental_billing_type}
-                onChange={(e) => set({ rental_billing_type: e.target.value })}
-                className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1 text-xs outline-none focus:border-blue-500"
-              >
-                <option value="ONE_TIME">One-time</option>
-                <option value="RECURRING">Monthly</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Start Date</label>
-              <input
-                type="date"
-                value={item.rental_start_date}
-                onChange={(e) => set({ rental_start_date: e.target.value })}
-                className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1 text-xs outline-none focus:border-blue-500"
-              />
-            </div>
-            {item.rental_billing_type === 'ONE_TIME' && (
-              <div>
-                <label className="block text-[10px] font-medium text-gray-500 mb-0.5">End Date *</label>
-                <input
-                  type="date"
-                  value={item.rental_end_date}
-                  onChange={(e) => set({ rental_end_date: e.target.value })}
-                  className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1 text-xs outline-none focus:border-blue-500"
-                />
-              </div>
-            )}
-          </div>
-          <div>
-            <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Refundable Deposit (optional)</label>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              placeholder="0.00"
-              value={item.deposit_amount}
-              onChange={(e) => set({ deposit_amount: e.target.value })}
-              className="w-40 rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2 py-1 text-xs outline-none focus:border-blue-500"
-            />
-          </div>
-        </div>
-      )}
-    </div>
-  );
 };
 
 // ---------------------------------------------------------------------------
@@ -1175,21 +849,16 @@ const ModularQuoteBuilder = () => {
                               the same table since its items get folded into one combined PDF
                               and one WhatsApp message (see quoteController.mergeProductQuoteIntoData). */}
                           {productLineItems.map((item, idx) => (
-                            <tr key={`prod-${idx}`} className="border-b border-gray-100">
-                              <td className="py-3 pl-4 w-8 text-[12px] text-gray-300 select-none align-top">
-                                {lineItems.length + idx + 1}
-                              </td>
-                              <td colSpan={5} className="py-2 pr-3">
-                                <ProductLineItemRow
-                                  item={item}
-                                  products={products}
-                                  rentalUnits={rentalUnits}
-                                  canDelete
-                                  onUpdate={(updated) => updateProductLine(idx, updated)}
-                                  onDelete={() => deleteProductLine(idx)}
-                                />
-                              </td>
-                            </tr>
+                            <ProductLineItemRow
+                              key={`prod-${idx}`}
+                              item={item}
+                              index={lineItems.length + idx}
+                              products={products}
+                              rentalUnits={rentalUnits}
+                              canDelete
+                              onUpdate={(updated) => updateProductLine(idx, updated)}
+                              onDelete={() => deleteProductLine(idx)}
+                            />
                           ))}
                         </>
                       )}

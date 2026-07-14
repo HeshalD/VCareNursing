@@ -8,7 +8,7 @@ import {
 import { Link } from 'react-router-dom';
 import Navbar from '../../../components/layout/Navbar';
 import Footer from '../../../components/layout/Footer';
-import LanguageToggle from '../../../i18n/LanguageToggle';
+// import LanguageToggle from '../../../i18n/LanguageToggle'; // hidden for this release
 
 // Placeholder image for professionals
 import proBg from '../../../assets/images/home_care_takers_img_landingpage.avif';
@@ -33,9 +33,7 @@ const WorkersTeamPage = () => {
       {/* Hero Section */}
       <section className="relative min-h-[90vh] flex items-center pt-24 pb-12 lg:pt-32 lg:pb-20 overflow-hidden bg-white">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 relative z-10 w-full">
-          <div className="flex justify-end mb-4">
-            <LanguageToggle />
-          </div>
+          {/* <LanguageToggle /> hidden for this release — see memory: language-toggle-locations */}
           <div className="grid lg:grid-cols-2 gap-8 lg:gap-16 items-center">
 
             {/* Text Content */}

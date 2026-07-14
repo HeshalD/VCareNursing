@@ -5,7 +5,7 @@ import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
 
-const REG_TABS = ['All', 'Pending', 'Invoiced', 'Receipt Submitted', 'Paid', 'Waived'];
+const REG_TABS = ['All', 'Pending', 'Invoiced', 'Receipt Submitted', 'Paid', 'Waived', 'Expired'];
 
 const STATUS_CONFIG = {
   PENDING:          { dot: 'bg-amber-400',   text: 'text-amber-700',   bg: '',  label: 'Fee Pending' },
@@ -13,6 +13,7 @@ const STATUS_CONFIG = {
   RECEIPT_UPLOADED: { dot: 'bg-violet-400',  text: 'text-violet-700',  bg: '',  label: 'Receipt Submitted' },
   PAID:             { dot: 'bg-emerald-500', text: 'text-emerald-700', bg: '',  label: 'Paid' },
   WAIVED:           { dot: 'bg-slate-400',   text: 'text-slate-600',   bg: '',  label: 'Waived' },
+  EXPIRED:          { dot: 'bg-rose-400',    text: 'text-rose-700',    bg: '',  label: 'Expired' },
 };
 
 const TAB_TO_STATUS = {
@@ -21,6 +22,7 @@ const TAB_TO_STATUS = {
   'Receipt Submitted':'RECEIPT_UPLOADED',
   Paid:               'PAID',
   Waived:             'WAIVED',
+  Expired:            'EXPIRED',
 };
 
 const HONORIFICS = ['Mr.', 'Mrs.', 'Ms.', 'Dr.', 'Prof.', 'Rev.'];

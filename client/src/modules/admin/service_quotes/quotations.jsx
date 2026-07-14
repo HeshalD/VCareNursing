@@ -19,6 +19,8 @@ import { useNavigate } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import PaymentAllocationModal from './PaymentAllocationModal';
+import ReceiptSendPopup from './ReceiptSendPopup';
+import InvoiceSendPopup from './InvoiceSendPopup';
 
 const PAYMENT_STATUS_FILTERS = ['ALL', 'FULLY_PAID', 'PARTIALLY_PAID', 'UNPAID', 'OVERPAID'];
 const INVOICE_STATUS_FILTERS = ['ALL', 'INVOICED', 'NOT_INVOICED'];
@@ -193,6 +195,10 @@ const QuotationsPage = () => {
   const [quotePdfBusy, setQuotePdfBusy] = useState(false);
   const [sendingInvoice, setSendingInvoice] = useState(false);
   const [invoiceSent, setInvoiceSent] = useState(false);
+  const [showReceiptPopup, setShowReceiptPopup] = useState(false);
+  const [receiptTarget, setReceiptTarget] = useState(null); // { clientId, payerName, payerMobile }
+  const [showInvoicePopup, setShowInvoicePopup] = useState(false);
+  const [invoiceTarget, setInvoiceTarget] = useState(null); // { quoteId, payerName, payerMobile }
 
   // Line items for the selected quote — the service quote's own charges,
   // plus a companion PRODUCT quote's items (products/rentals/deposits added
@@ -248,6 +254,7 @@ const QuotationsPage = () => {
             return {
               request_id: request.request_id,
               quote_id: quote.quote_id,
+              client_id: request.client_id || null,
               estimate_number: quote.estimate_number || '-',
               payer_name: quote.payer_name || request.payer_name,
               payer_mobile: quote.payer_mobile || request.payer_mobile,
@@ -278,8 +285,10 @@ const QuotationsPage = () => {
       } else {
         setSelectedQuote(null);
       }
+      return quoteRows;
     } catch (err) {
       setError(err.message || 'Failed to load quotations');
+      return [];
     } finally {
       setLoading(false);
     }
@@ -370,14 +379,31 @@ const QuotationsPage = () => {
 
   const invoicedCount = useMemo(() => quotations.filter((q) => q.invoice_code).length, [quotations]);
 
+  // Receipt is offered after every payment; the invoice is offered only once
+  // nothing is left to pay on this quote (checked against the freshly
+  // refetched quoteRows, since `quotations`/`selectedQuote` state won't
+  // reflect the new payment until the next render).
   const handlePaymentRecorded = async () => {
     setShowPaymentModal(false);
     setSuccessMessage('Payment recorded successfully.');
     if (selectedQuote) {
-      await Promise.all([fetchQuotations(), fetchPayments(selectedQuote.quote_id)]);
+      setReceiptTarget({
+        clientId: selectedQuote.client_id,
+        payerName: selectedQuote.payer_name,
+        payerMobile: selectedQuote.payer_mobile,
+      });
+      const [quoteRows] = await Promise.all([fetchQuotations(), fetchPayments(selectedQuote.quote_id)]);
+      const updated = (quoteRows || []).find((q) => q.quote_id === selectedQuote.quote_id);
+      setInvoiceTarget(
+        updated && updated.remaining_amount <= 0.01
+          ? { quoteId: updated.quote_id, payerName: updated.payer_name, payerMobile: updated.payer_mobile }
+          : null
+      );
     } else {
       await fetchQuotations();
+      setInvoiceTarget(null);
     }
+    setShowReceiptPopup(true);
   };
 
   const verifyPayment = async (paymentId) => {
@@ -860,6 +886,25 @@ const QuotationsPage = () => {
           onRecorded={handlePaymentRecorded}
         />
       )}
+
+      <ReceiptSendPopup
+        open={showReceiptPopup}
+        clientId={receiptTarget?.clientId}
+        payerName={receiptTarget?.payerName}
+        payerMobile={receiptTarget?.payerMobile}
+        onClose={() => {
+          setShowReceiptPopup(false);
+          if (invoiceTarget) setShowInvoicePopup(true);
+        }}
+      />
+
+      <InvoiceSendPopup
+        open={showInvoicePopup}
+        quoteId={invoiceTarget?.quoteId}
+        payerName={invoiceTarget?.payerName}
+        payerMobile={invoiceTarget?.payerMobile}
+        onClose={() => setShowInvoicePopup(false)}
+      />
     </AdminLayout>
   );
 };

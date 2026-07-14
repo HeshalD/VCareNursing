@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import DateInput from '../../../components/common/DateInput';
 import AddTransactionModal from './AddTransactionModal';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
 import { CATEGORY_CONFIG, flowOf, categoryBadge, relatedTo } from '../../../constants/transactionCategories';
@@ -317,8 +318,7 @@ const TransactionsPage = () => {
 
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">From</label>
-            <input
-              type="date"
+            <DateInput
               value={fromDate}
               onChange={e => setFromDate(e.target.value)}
               className={filterInputCls}
@@ -327,8 +327,7 @@ const TransactionsPage = () => {
 
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">To</label>
-            <input
-              type="date"
+            <DateInput
               value={toDate}
               onChange={e => setToDate(e.target.value)}
               className={filterInputCls}

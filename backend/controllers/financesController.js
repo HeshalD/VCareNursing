@@ -24,7 +24,7 @@ const getOverview = async (req, res) => {
         COALESCE((SELECT SUM(amount) FROM booking_daily_invoices WHERE status = 'PENDING'), 0) AS outstanding_daily_invoices,
         COALESCE((SELECT SUM(amount) FROM invoices WHERE status IN ('PENDING', 'OVERDUE')), 0) AS outstanding_product_rental_invoices,
         COALESCE((SELECT SUM(amount) FROM invoices WHERE status = 'OVERDUE'), 0) AS overdue_product_rental_invoices,
-        COALESCE((SELECT SUM(reg_fee_amount) FROM client_profiles WHERE reg_fee_status = 'PENDING'), 0) AS outstanding_registration_fees
+        COALESCE((SELECT SUM(reg_fee_amount) FROM client_profiles WHERE reg_fee_status IN ('PENDING', 'EXPIRED')), 0) AS outstanding_registration_fees
     `;
 
     // Genuine receivables — money actually owed right now, as opposed to

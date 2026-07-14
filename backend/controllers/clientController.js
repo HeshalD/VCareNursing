@@ -1104,11 +1104,11 @@ exports.getClientServiceHistory = async (req, res) => {
   try {
     // Get all service requests for this client
     const serviceRequestsResult = await db.query(`
-      SELECT 
+      SELECT
         sr.*,
         u.mobile_number as client_mobile
       FROM service_requests sr
-      JOIN users u ON sr.payer_mobile = u.mobile_number
+      LEFT JOIN users u ON sr.payer_mobile = u.mobile_number
       WHERE sr.client_id = $1
       ORDER BY sr.created_at DESC
     `, [client_id]);

@@ -3,6 +3,7 @@ import { History, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
+import DateInput from '../../../components/common/DateInput';
 
 const ACTION_TYPE_OPTIONS = [
   'CHANGE_REQUEST_SUBMITTED',
@@ -157,11 +158,11 @@ const ActivityLogPage = () => {
         </div>
         <div>
           <label className="block text-xs font-medium text-slate-600 mb-1">From</label>
-          <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className={inputCls} />
+          <DateInput value={fromDate} onChange={e => setFromDate(e.target.value)} className={inputCls} />
         </div>
         <div>
           <label className="block text-xs font-medium text-slate-600 mb-1">To</label>
-          <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className={inputCls} />
+          <DateInput value={toDate} onChange={e => setToDate(e.target.value)} className={inputCls} />
         </div>
         <div className="flex gap-2">
           <button onClick={handleApply} className={primaryBtnCls}>Apply</button>

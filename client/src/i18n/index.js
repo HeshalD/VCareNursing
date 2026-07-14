@@ -62,7 +62,9 @@ i18n.use(initReactI18next).init({
       staffDocumentUpload: staffDocumentUploadSi,
     },
   },
-  lng: localStorage.getItem(STORAGE_KEY) || 'en',
+  // Toggle UI is hidden for this release (see memory: language-toggle-locations),
+  // so force English regardless of any 'si' choice persisted from before.
+  lng: 'en',
   fallbackLng: 'en',
   interpolation: { escapeValue: false },
 });

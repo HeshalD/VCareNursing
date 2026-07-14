@@ -1,6 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Loader2, Plus, Trash2, X, CreditCard, Wallet } from 'lucide-react';
+import { Loader2, Plus, Trash2, X, CreditCard, Wallet, FileText, Receipt, ChevronRight } from 'lucide-react';
 import apiClient from '../../../api/api';
+import DateInput from '../../../components/common/DateInput';
+import PaymentAllocationModal from '../service_quotes/PaymentAllocationModal';
+import ReceiptSendPopup from '../service_quotes/ReceiptSendPopup';
+import InvoiceSendPopup from '../service_quotes/InvoiceSendPopup';
 
 const PAYMENT_METHODS = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
 const SERVICE_MODELS  = ['SHIFT_BASED', 'LIVE_IN', 'VISITING'];
@@ -145,8 +149,7 @@ const AllocationRow = ({ row, index, bookings, patients, onChange, onRemove, can
             </div>
             <div>
               <label className={labelCls}>Start Date</label>
-              <input
-                type="date"
+              <DateInput
                 className={inputCls}
                 value={row.new_booking.start_date}
                 onChange={e => updateNewBooking('start_date', e.target.value)}
@@ -192,6 +195,63 @@ const AllocationRow = ({ row, index, bookings, patients, onChange, onRemove, can
   );
 };
 
+const QUOTE_STATUS_STYLE = {
+  FULLY_PAID:     { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Fully Paid' },
+  PARTIALLY_PAID: { dot: 'bg-amber-400',   text: 'text-amber-700',   label: 'Partially Paid' },
+  UNPAID:         { dot: 'bg-slate-400',   text: 'text-slate-600',   label: 'Unpaid' },
+};
+
+const getQuoteStatus = (quote) => {
+  const total = parseFloat(quote.combined_total || 0);
+  const paid = parseFloat(quote.combined_paid || 0);
+  if (paid <= 0) return 'UNPAID';
+  if (paid >= total) return 'FULLY_PAID';
+  return 'PARTIALLY_PAID';
+};
+
+// One row per SERVICE-type quotation belonging to this client — clicking
+// "Pay" opens the same reg-fee-gated allocation modal used across the
+// Quotations/Quotation Details/Service Request pages (see
+// service_quotes/PaymentAllocationModal.jsx), so paying a quotation from
+// here behaves identically to paying it from anywhere else in the admin.
+const QuotationPayRow = ({ quote, onPay }) => {
+  const status = getQuoteStatus(quote);
+  const style = QUOTE_STATUS_STYLE[status];
+  const remaining = parseFloat(quote.remaining_amount || 0);
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-bold text-slate-900">{quote.estimate_number}</span>
+          <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${style.text}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
+            {style.label}
+          </span>
+        </div>
+        <p className="mt-0.5 truncate text-xs text-slate-500">
+          {quote.payer_name}{quote.patient_name ? ` · ${quote.patient_name}` : ''}
+        </p>
+        <p className="mt-1 text-xs text-slate-500">
+          {fmt(quote.combined_paid)} of {fmt(quote.combined_total)} paid
+          {remaining > 0 && <span className="font-semibold text-amber-700"> · {fmt(remaining)} remaining</span>}
+        </p>
+      </div>
+      {remaining > 0 ? (
+        <button
+          type="button"
+          onClick={() => onPay(quote.quote_id)}
+          className="inline-flex shrink-0 items-center gap-1 rounded-xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700"
+        >
+          Pay <ChevronRight className="h-3.5 w-3.5" />
+        </button>
+      ) : (
+        <span className="shrink-0 text-xs font-semibold text-emerald-700">Settled</span>
+      )}
+    </div>
+  );
+};
+
 export default function RecordPaymentDrawer({ open, clientId, bookings, patients, onClose, onSuccess }) {
   const [form, setForm] = useState({
     total_amount: '',
@@ -208,6 +268,19 @@ export default function RecordPaymentDrawer({ open, clientId, bookings, patients
   const [loading, setLoading]           = useState(false);
   const [error, setError]               = useState('');
 
+  // Alternate way to pay: instead of allocating a lump sum across bookings/
+  // wallet, pick one of the client's quotations and pay specific line items
+  // on it via PaymentAllocationModal — the booking/wallet flow above is
+  // untouched either way.
+  const [payMode, setPayMode]                 = useState('ALLOCATIONS'); // 'ALLOCATIONS' | 'QUOTATION'
+  const [quoteList, setQuoteList]             = useState([]);
+  const [quoteListLoading, setQuoteListLoading] = useState(false);
+  const [payingQuoteId, setPayingQuoteId]     = useState(null);
+  const [showReceiptPopup, setShowReceiptPopup] = useState(false);
+  const [receiptTarget, setReceiptTarget]     = useState(null); // { clientId, payerName, payerMobile }
+  const [showInvoicePopup, setShowInvoicePopup] = useState(false);
+  const [invoiceTarget, setInvoiceTarget]     = useState(null); // { quoteId, payerName, payerMobile }
+
   useEffect(() => {
     if (!open) return;
     apiClient.getBankAccounts()
@@ -221,8 +294,91 @@ export default function RecordPaymentDrawer({ open, clientId, bookings, patients
       setSlipFile(null);
       setRows([createRow()]);
       setError('');
+      setPayMode('ALLOCATIONS');
+      setQuoteList([]);
+      setPayingQuoteId(null);
     }
   }, [open]);
+
+  // Fetches every SERVICE-type quotation for this client and folds in each
+  // one's combined (service + linked PRODUCT) total/paid/remaining, the same
+  // way quotations.jsx / quotation_details.jsx / service_request_summary.jsx
+  // do — getClientQuotes itself doesn't include payment or product-quote
+  // figures. Returns the computed list so callers can act on fresh numbers
+  // without waiting on a re-render.
+  const fetchClientQuotations = async () => {
+    if (!clientId) return [];
+    setQuoteListLoading(true);
+    try {
+      const res = await apiClient.getClientQuotes(clientId);
+      const serviceQuotes = (res.data || []).filter(q => q.quote_type !== 'PRODUCT');
+      const withTotals = await Promise.all(serviceQuotes.map(async (q) => {
+        try {
+          const [detailRes, progressRes] = await Promise.all([
+            apiClient.getQuoteWithLineItems(q.quote_id),
+            apiClient.getQuotePaymentProgress(q.quote_id),
+          ]);
+          const productQuoteId = detailRes?.data?.product_quote_id || null;
+          let productTotal = 0;
+          let productPaid = 0;
+          if (productQuoteId) {
+            try {
+              const productDetail = await apiClient.getProductQuote(productQuoteId);
+              productTotal = (productDetail?.data?.line_items || []).reduce((s, li) => s + (parseFloat(li.amount) || 0), 0);
+            } catch { /* non-critical */ }
+            try {
+              const invRes = await apiClient.getProductInvoices({ quote_id: productQuoteId });
+              const invoices = Array.isArray(invRes?.data) ? invRes.data : [];
+              productPaid = invoices.filter(i => i.status === 'PAID').reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+            } catch { /* non-critical */ }
+          }
+          const serviceTotal = parseFloat(progressRes?.total_amount ?? q.total_amount) || 0;
+          const servicePaid = parseFloat(progressRes?.total_paid) || 0;
+          const combined_total = serviceTotal + productTotal;
+          const combined_paid = servicePaid + productPaid;
+          return {
+            ...q,
+            combined_total,
+            combined_paid,
+            remaining_amount: Math.max(combined_total - combined_paid, 0),
+          };
+        } catch {
+          const total = parseFloat(q.total_amount) || 0;
+          return { ...q, combined_total: total, combined_paid: 0, remaining_amount: total };
+        }
+      }));
+      withTotals.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      setQuoteList(withTotals);
+      return withTotals;
+    } catch {
+      setQuoteList([]);
+      return [];
+    } finally {
+      setQuoteListLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (open && payMode === 'QUOTATION') fetchClientQuotations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, payMode, clientId]);
+
+  // Receipt is offered after every quotation payment; the invoice is offered
+  // only once nothing is left to pay on that quotation — same two-step
+  // pattern as the other admin payment surfaces.
+  const handleQuotePaymentRecorded = async () => {
+    const paidQuoteId = payingQuoteId;
+    setPayingQuoteId(null);
+    const updatedList = await fetchClientQuotations();
+    const updated = updatedList.find(q => q.quote_id === paidQuoteId);
+    setReceiptTarget({ clientId, payerName: updated?.payer_name, payerMobile: updated?.payer_mobile });
+    setInvoiceTarget(
+      updated && updated.remaining_amount <= 0.01
+        ? { quoteId: updated.quote_id, payerName: updated.payer_name, payerMobile: updated.payer_mobile }
+        : null
+    );
+    setShowReceiptPopup(true);
+  };
 
   const parsedTotal    = parseFloat(form.total_amount) || 0;
   const allocatedTotal = rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
@@ -310,6 +466,59 @@ export default function RecordPaymentDrawer({ open, clientId, bookings, patients
         <form id="record-payment-form" onSubmit={handleSubmit} className="flex flex-1 flex-col overflow-hidden">
           <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
 
+            {/* Payment mode toggle — booking/wallet allocation (unchanged) vs
+                paying a specific quotation's line items directly. */}
+            <div className="flex items-center gap-1 rounded-2xl bg-slate-100 p-1">
+              <button
+                type="button"
+                onClick={() => setPayMode('ALLOCATIONS')}
+                className={`flex-1 rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${
+                  payMode === 'ALLOCATIONS' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                Booking / Wallet
+              </button>
+              <button
+                type="button"
+                onClick={() => setPayMode('QUOTATION')}
+                className={`flex-1 rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${
+                  payMode === 'QUOTATION' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                Pay a Quotation
+              </button>
+            </div>
+
+            {payMode === 'QUOTATION' ? (
+              <section className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-3.5 w-3.5 text-slate-400" />
+                  <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wide">Quotations</h3>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Select a quotation to choose which line items to pay for — registration fees, if any, must be settled first.
+                </p>
+
+                {quoteListLoading ? (
+                  <div className="flex items-center justify-center gap-2 py-10 text-sm text-slate-500">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading quotations…
+                  </div>
+                ) : quoteList.length === 0 ? (
+                  <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-slate-200 py-10 text-center">
+                    <Receipt className="h-6 w-6 text-slate-300" />
+                    <p className="text-sm text-slate-400">No quotations found for this client.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {quoteList.map(quote => (
+                      <QuotationPayRow key={quote.quote_id} quote={quote} onPay={setPayingQuoteId} />
+                    ))}
+                  </div>
+                )}
+              </section>
+            ) : (
+            <>
+
             {/* Payment Details */}
             <section className="space-y-4">
               <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wide">Payment Details</h3>
@@ -375,8 +584,7 @@ export default function RecordPaymentDrawer({ open, clientId, bookings, patients
                     </div>
                     <div>
                       <label className={labelCls}>Cheque Date *</label>
-                      <input
-                        type="date"
+                      <DateInput
                         required
                         className={inputCls}
                         value={form.cheque_date}
@@ -472,6 +680,8 @@ export default function RecordPaymentDrawer({ open, clientId, bookings, patients
                 {error}
               </div>
             )}
+            </>
+            )}
           </div>
 
           {/* Footer */}
@@ -482,8 +692,9 @@ export default function RecordPaymentDrawer({ open, clientId, bookings, patients
               disabled={loading}
               className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             >
-              Cancel
+              {payMode === 'QUOTATION' ? 'Close' : 'Cancel'}
             </button>
+            {payMode === 'ALLOCATIONS' && (
             <button
               type="submit"
               disabled={!isBalanced || loading}
@@ -492,9 +703,37 @@ export default function RecordPaymentDrawer({ open, clientId, bookings, patients
               {loading && <Loader2 className="h-4 w-4 animate-spin" />}
               {loading ? 'Recording…' : 'Record Payment'}
             </button>
+            )}
           </div>
         </form>
       </div>
+
+      {payingQuoteId && (
+        <PaymentAllocationModal
+          quoteId={payingQuoteId}
+          onClose={() => setPayingQuoteId(null)}
+          onRecorded={handleQuotePaymentRecorded}
+        />
+      )}
+
+      <ReceiptSendPopup
+        open={showReceiptPopup}
+        clientId={receiptTarget?.clientId}
+        payerName={receiptTarget?.payerName}
+        payerMobile={receiptTarget?.payerMobile}
+        onClose={() => {
+          setShowReceiptPopup(false);
+          if (invoiceTarget) setShowInvoicePopup(true);
+        }}
+      />
+
+      <InvoiceSendPopup
+        open={showInvoicePopup}
+        quoteId={invoiceTarget?.quoteId}
+        payerName={invoiceTarget?.payerName}
+        payerMobile={invoiceTarget?.payerMobile}
+        onClose={() => setShowInvoicePopup(false)}
+      />
     </>
   );
 }

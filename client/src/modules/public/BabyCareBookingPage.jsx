@@ -11,6 +11,7 @@ import Footer from '../../components/layout/Footer';
 import apiClient from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 import babyCareBg from '../../assets/images/BabyCare.webp';
+import DateInput, { todayISO } from '../../components/common/DateInput';
 
 // Selectable options for the Service Details step
 const SERVICE_MODELS = [
@@ -27,16 +28,10 @@ const SERVICE_MODELS = [
     description: 'A nanny stays in the home full-time for round-the-clock care.'
   },
   {
-    value: 'PART_TIME',
-    label: 'Part Time',
+    value: 'SHIFT_BASED',
+    label: 'Shift Based',
     icon: Clock,
-    description: 'A few hours a day — perfect for working parents needing extra hands.'
-  },
-  {
-    value: 'FULL_TIME',
-    label: 'Full Time',
-    icon: Heart,
-    description: 'Full working-day care covering meals, play, and daily routines.'
+    description: 'Care scheduled in fixed shifts to cover the hours you need.'
   }
 ];
 
@@ -612,7 +607,7 @@ const BabyCareBookingPage = () => {
                           value={formData.patient_age}
                           onChange={e => setFormData({ ...formData, patient_age: e.target.value })}
                           onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
-                          placeholder="e.g. 6 months, 2 years"
+                          placeholder="e.g. 2"
                           required
                           disabled={isPatientLocked}
                         />
@@ -687,12 +682,12 @@ const BabyCareBookingPage = () => {
                       </div>
                       <div>
                         <label className="text-sm font-semibold text-slate-600 block mb-1">Start Date</label>
-                        <input
-                          type="date"
+                        <DateInput
                           className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-slate-900"
                           value={formData.start_date}
                           onChange={e => setFormData({ ...formData, start_date: e.target.value })}
                           onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
+                          min={todayISO()}
                           required
                         />
                       </div>

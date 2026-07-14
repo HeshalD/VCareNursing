@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import apiClient from '../../../api/api';
 import { useAuth } from '../../../context/AuthContext';
 import StaffSidebar from './StaffSidebar';
+import DateInput from '../../../components/common/DateInput';
 
 const REQUEST_TYPE_META = [
   { id: 'PROFILE_UPDATE', icon: User },
@@ -92,6 +93,19 @@ const InputField = ({ label, value, onChange, type = 'text', options = [], place
         >
           <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${value ? 'translate-x-6' : 'translate-x-1'}`} />
         </button>
+      </div>
+    );
+  }
+  if (type === 'date') {
+    return (
+      <div>
+        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">{label}</label>
+        <DateInput
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+        />
       </div>
     );
   }

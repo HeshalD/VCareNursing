@@ -4,6 +4,8 @@ import { ArrowLeft, FileText, RefreshCw, Receipt, CheckCircle2, Clock3, Clipboar
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import PaymentAllocationModal from './PaymentAllocationModal';
+import ReceiptSendPopup from './ReceiptSendPopup';
+import InvoiceSendPopup from './InvoiceSendPopup';
 
 const money = (value) =>
   `LKR ${parseFloat(value || 0).toLocaleString('en-LK', {
@@ -171,7 +173,13 @@ const QuotationDetailsPage = () => {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [sendingInvoice, setSendingInvoice] = useState(false);
   const [invoiceSent, setInvoiceSent] = useState(false);
+  const [showReceiptPopup, setShowReceiptPopup] = useState(false);
+  const [showInvoicePopup, setShowInvoicePopup] = useState(false);
+  const [invoiceReady, setInvoiceReady] = useState(false);
 
+  // Returns the freshly computed remaining balance (rather than relying on
+  // this render's now-stale state) so callers like handlePaymentRecorded can
+  // reliably tell whether this payment just fully settled the quotation.
   const loadData = async () => {
     try {
       setLoading(true);
@@ -188,6 +196,9 @@ const QuotationDetailsPage = () => {
       setSummary(progressRes || null);
       setPayments(paymentsRes.payments || []);
 
+      let freshProductTotal = 0;
+      let freshProductPaid = 0;
+
       // The companion PRODUCT quote (products/rentals added via
       // ModularQuoteBuilder's Products & Rentals section) is a separate
       // quotation record, linked back via quotations.linked_quote_id — its
@@ -200,7 +211,9 @@ const QuotationDetailsPage = () => {
       if (quoteData?.product_quote_id) {
         try {
           const productRes = await apiClient.getProductQuote(quoteData.product_quote_id);
-          setProductLineItems(expandProductLineItems(productRes?.data?.line_items));
+          const expanded = expandProductLineItems(productRes?.data?.line_items);
+          setProductLineItems(expanded);
+          freshProductTotal = expanded.reduce((s, li) => s + (parseFloat(li.amount) || 0), 0);
         } catch {
           setProductLineItems([]);
         }
@@ -208,7 +221,8 @@ const QuotationDetailsPage = () => {
           const invRes = await apiClient.getProductInvoices({ quote_id: quoteData.product_quote_id });
           const invoices = Array.isArray(invRes?.data) ? invRes.data : [];
           const paidInvoices = invoices.filter((i) => i.status === 'PAID');
-          setProductPaid(paidInvoices.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0));
+          freshProductPaid = paidInvoices.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+          setProductPaid(freshProductPaid);
           setProductInvoice(paidInvoices[0] || null);
         } catch {
           setProductPaid(0);
@@ -219,8 +233,19 @@ const QuotationDetailsPage = () => {
         setProductPaid(0);
         setProductInvoice(null);
       }
+
+      const freshServiceTotal = parseFloat(progressRes?.total_amount ?? quoteData?.total_amount) || 0;
+      const freshServicePaid = parseFloat(progressRes?.total_paid) || 0;
+      const freshRemaining = Math.max((freshServiceTotal + freshProductTotal) - (freshServicePaid + freshProductPaid), 0);
+
+      return {
+        remaining: freshRemaining,
+        payerName: quoteData?.payer_name,
+        payerMobile: quoteData?.payer_mobile,
+      };
     } catch (err) {
       setError(err.message || 'Failed to load quotation details');
+      return null;
     } finally {
       setLoading(false);
     }
@@ -498,9 +523,35 @@ const QuotationDetailsPage = () => {
         <PaymentAllocationModal
           quoteId={quote.quote_id}
           onClose={() => setShowPaymentModal(false)}
-          onRecorded={() => { setShowPaymentModal(false); loadData(); }}
+          onRecorded={async () => {
+            setShowPaymentModal(false);
+            const result = await loadData();
+            setInvoiceReady(!!result && result.remaining <= 0.01);
+            setShowReceiptPopup(true);
+          }}
         />
       )}
+
+      {/* Receipt is offered after every payment; the invoice is offered only
+          once nothing is left to pay — see handlePaymentAllocated. */}
+      <ReceiptSendPopup
+        open={showReceiptPopup}
+        clientId={quote?.request_client_id}
+        payerName={quote?.payer_name}
+        payerMobile={quote?.payer_mobile}
+        onClose={() => {
+          setShowReceiptPopup(false);
+          if (invoiceReady) setShowInvoicePopup(true);
+        }}
+      />
+
+      <InvoiceSendPopup
+        open={showInvoicePopup}
+        quoteId={quote?.quote_id}
+        payerName={quote?.payer_name}
+        payerMobile={quote?.payer_mobile}
+        onClose={() => setShowInvoicePopup(false)}
+      />
     </AdminLayout>
   );
 };

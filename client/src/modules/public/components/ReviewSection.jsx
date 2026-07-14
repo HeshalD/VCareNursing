@@ -21,7 +21,6 @@ const ReviewSection = () => {
       id: 1,
       name: "Dilshan Perera",
       role: "Client - Elderly Care",
-      image: "https://i.pravatar.cc/150?u=dilshan",
       content: "Finding reliable care for my father was a nightmare until I found VCare. The nurse assigned, Sarah, is absolutely wonderful. She's punctual, professional, and treats my dad like family.",
       rating: 5
     },
@@ -29,7 +28,6 @@ const ReviewSection = () => {
       id: 2,
       name: "Chathurika Alwis",
       role: "Client - Baby Care",
-      image: "https://i.pravatar.cc/150?u=michelle",
       content: "I was hesitant about leaving my newborn, but the nanny from VCare put my mind at ease immediately. The background checks and verification process really make a difference.",
       rating: 5
     },
@@ -37,7 +35,6 @@ const ReviewSection = () => {
       id: 3,
       name: "Dr. K. Jayasuriya",
       role: "Hospital Administrator",
-      image: "https://i.pravatar.cc/150?u=jayasuriya",
       content: "VCare allows us to fill staffing gaps in our emergency ward within hours. The quality of professionals we get is consistently high. It's an indispensable tool for our hospital.",
       rating: 5
     },
@@ -46,7 +43,6 @@ const ReviewSection = () => {
       id: 4,
       name: "Dr. M. Bandara",
       role: "Hospital Administrator",
-      image: "https://i.pravatar.cc/150?u=Bandara",
       content: "VCare allows us to fill staffing gaps in our emergency ward within hours. The quality of professionals we get is consistently high. It's an indispensable tool for our hospital.",
       rating: 4
     }
@@ -111,9 +107,6 @@ const ReviewSection = () => {
               </p>
 
               <div className="flex items-center gap-4 mt-auto">
-                <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-slate-100">
-                  <img src={review.image} alt={review.role} className="w-full h-full object-cover" />
-                </div>
                 <div>
                   <div className="flex items-center gap-1.5">
                     <span className="text-sm text-slate-500">{review.role}</span>

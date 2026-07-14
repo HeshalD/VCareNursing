@@ -18,6 +18,7 @@ const STATUS_META = {
   RECEIPT_UPLOADED: { label: 'Receipt Uploaded', cls: 'bg-violet-50 text-violet-700 ring-1 ring-inset ring-violet-200' },
   PAID:             { label: 'Paid',             cls: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200' },
   WAIVED:           { label: 'Waived',           cls: 'bg-gray-100 text-gray-600 ring-1 ring-inset ring-gray-200' },
+  EXPIRED:          { label: 'Expired',          cls: 'bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-200' },
 };
 
 const Field = ({ label, children }) => (
@@ -38,7 +39,7 @@ export default function RegFeeDrawer({ open, onClose, clientId, clientProfile, o
 
   const feeStatus = clientProfile?.reg_fee_status || 'PENDING';
   const badge = STATUS_META[feeStatus] || STATUS_META.PENDING;
-  const canSendInvoice = ['PENDING', 'INVOICED'].includes(feeStatus);
+  const canSendInvoice = ['PENDING', 'INVOICED', 'EXPIRED'].includes(feeStatus);
   const canViewReceipt = feeStatus === 'RECEIPT_UPLOADED' && clientProfile?.reg_fee_receipt_url;
   const isSettled = ['PAID', 'WAIVED'].includes(feeStatus);
 
@@ -135,6 +136,12 @@ export default function RegFeeDrawer({ open, onClose, clientId, clientProfile, o
                 <div>
                   <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1">Invoiced On</p>
                   <p className="text-sm font-medium text-gray-700">{fmtDate(clientProfile.reg_fee_invoiced_at)}</p>
+                </div>
+              )}
+              {feeStatus === 'EXPIRED' && clientProfile?.reg_fee_expires_at && (
+                <div>
+                  <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1">Expired On</p>
+                  <p className="text-sm font-medium text-rose-600">{fmtDate(clientProfile.reg_fee_expires_at)}</p>
                 </div>
               )}
             </div>

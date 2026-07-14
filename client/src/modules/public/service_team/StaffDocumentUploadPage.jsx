@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { CheckCircle2, Upload, Eye, FileText, AlertCircle, Loader2, ShieldCheck } from 'lucide-react';
 import apiClient from '../../../api/api';
-import LanguageToggle from '../../../i18n/LanguageToggle';
+// import LanguageToggle from '../../../i18n/LanguageToggle'; // hidden for this release
 
 const DocCard = ({ title, description, url, fieldName, onUpload, uploading }) => {
   const { t } = useTranslation('staffDocumentUpload');
@@ -168,7 +168,7 @@ const StaffDocumentUploadPage = () => {
             <p className="text-xs text-slate-500 leading-none">{t('header.appName')}</p>
             <p className="text-sm font-bold text-slate-900 leading-tight">{t('header.portalTitle')}</p>
           </div>
-          <LanguageToggle />
+          {/* <LanguageToggle /> hidden for this release — see memory: language-toggle-locations */}
         </div>
       </div>
 

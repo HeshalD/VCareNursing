@@ -3,6 +3,7 @@ import {
   X, Plus, Trash2, CheckCircle, AlertCircle, Loader2, FileText, ExternalLink,
 } from 'lucide-react';
 import apiClient from '../../../api/api';
+import DateInput from '../../../components/common/DateInput';
 
 const PAYMENT_METHODS = ['CASH', 'BANK_TRANSFER', 'CASH_DEPOSIT', 'CHEQUE'];
 
@@ -387,8 +388,7 @@ const CreateProductInvoiceDrawer = ({ open, onClose, clientId, clientProfile, on
                               </div>
                               <div>
                                 <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Start Date</label>
-                                <input
-                                  type="date"
+                                <DateInput
                                   value={it.rental_start_date}
                                   onChange={(e) => updateLine(idx, { rental_start_date: e.target.value })}
                                   className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1 text-xs outline-none focus:border-blue-500"
@@ -397,8 +397,7 @@ const CreateProductInvoiceDrawer = ({ open, onClose, clientId, clientProfile, on
                               {it.rental_billing_type === 'ONE_TIME' && (
                                 <div>
                                   <label className="block text-[10px] font-medium text-gray-500 mb-0.5">End Date *</label>
-                                  <input
-                                    type="date"
+                                  <DateInput
                                     value={it.rental_end_date}
                                     onChange={(e) => updateLine(idx, { rental_end_date: e.target.value })}
                                     className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1 text-xs outline-none focus:border-blue-500"
@@ -467,8 +466,7 @@ const CreateProductInvoiceDrawer = ({ open, onClose, clientId, clientProfile, on
                 {!markPaid && !hasRentalItems && (
                   <div>
                     <label className="block text-[11px] font-medium text-gray-500 mb-1">Due Date (optional)</label>
-                    <input
-                      type="date"
+                    <DateInput
                       value={dueDate}
                       onChange={(e) => setDueDate(e.target.value)}
                       className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
@@ -520,8 +518,7 @@ const CreateProductInvoiceDrawer = ({ open, onClose, clientId, clientProfile, on
                           onChange={(e) => setChequeNumber(e.target.value)}
                           className="rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
                         />
-                        <input
-                          type="date"
+                        <DateInput
                           value={chequeDate}
                           onChange={(e) => setChequeDate(e.target.value)}
                           className="rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"

@@ -11,6 +11,7 @@ import Footer from '../../components/layout/Footer';
 import apiClient from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 import homeNursingBg from '../../assets/images/HomeNursing.webp';
+import DateInput, { todayISO } from '../../components/common/DateInput';
 
 // Selectable options for the Service Details step
 const SERVICE_MODELS = [
@@ -690,12 +691,12 @@ const HomeNursingBookingPage = () => {
                       </div>
                       <div>
                         <label className="text-sm font-semibold text-slate-400 block mb-1">Start Date</label>
-                        <input
-                          type="date"
+                        <DateInput
                           className="w-full px-4 py-3 bg-[#0b1120] border border-white/10 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-white"
                           value={formData.start_date}
                           onChange={e => setFormData({ ...formData, start_date: e.target.value })}
                           onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
+                          min={todayISO()}
                           required
                         />
                       </div>

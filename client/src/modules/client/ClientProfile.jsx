@@ -101,15 +101,20 @@ const ClientProfile = () => {
         </div>
 
         {/* Outstanding fee banner */}
-        {(profile?.reg_fee_status === 'PENDING' || profile?.reg_fee_status === 'INVOICED') && (
+        {(profile?.reg_fee_status === 'PENDING' || profile?.reg_fee_status === 'INVOICED' || profile?.reg_fee_status === 'EXPIRED') && (
           <div style={styles.feeBanner}>
             <AlertCircle size={15} style={{ color: '#92400e', flexShrink: 0 }} />
             <span>
-              You have an outstanding registration fee of{' '}
-              <strong>LKR {Number(profile?.reg_fee_amount || 10000).toLocaleString('en-LK', { minimumFractionDigits: 2 })}</strong>.{' '}
-              {profile?.reg_fee_status === 'PENDING'
-                ? 'Contact VCare Nursing to receive your invoice and payment instructions.'
-                : 'Please follow the instructions in the WhatsApp invoice to complete your payment.'}
+              {profile?.reg_fee_status === 'EXPIRED'
+                ? 'Your VCare membership has expired.'
+                : 'You have an outstanding registration fee of'}{' '}
+              {profile?.reg_fee_status !== 'EXPIRED' && (
+                <strong>LKR {Number(profile?.reg_fee_amount || 10000).toLocaleString('en-LK', { minimumFractionDigits: 2 })}</strong>
+              )}
+              {profile?.reg_fee_status !== 'EXPIRED' && '. '}
+              {profile?.reg_fee_status === 'INVOICED'
+                ? 'Please follow the instructions in the WhatsApp invoice to complete your payment.'
+                : 'Contact VCare Nursing to receive your invoice and payment instructions.'}
             </span>
           </div>
         )}
@@ -135,6 +140,7 @@ const ClientProfile = () => {
                 if (s === 'PAID') return <span style={styles.badgeGreen}>Registered</span>;
                 if (s === 'WAIVED') return <span style={styles.badgeGreen}>Fee Waived</span>;
                 if (s === 'RECEIPT_UPLOADED') return <span style={styles.badgeViolet}>Receipt Submitted</span>;
+                if (s === 'EXPIRED') return <span style={styles.badgeRose}>Membership Expired</span>;
                 return <span style={styles.badgeAmber}>Fee Pending</span>;
               })()}
             </p>
@@ -398,6 +404,11 @@ const styles = {
   },
   badgeViolet: {
     display: 'inline-block', background: '#f3e8ff', color: '#6b21a8',
+    borderRadius: 4, padding: '1px 8px', fontSize: 11, fontWeight: 600,
+    letterSpacing: '0.04em', textTransform: 'uppercase',
+  },
+  badgeRose: {
+    display: 'inline-block', background: '#ffe4e6', color: '#9f1239',
     borderRadius: 4, padding: '1px 8px', fontSize: 11, fontWeight: 600,
     letterSpacing: '0.04em', textTransform: 'uppercase',
   },

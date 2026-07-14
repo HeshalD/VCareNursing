@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Loader2, X, ArrowDownLeft, ArrowUpRight, PenLine } from 'lucide-react';
 import apiClient from '../../../api/api';
+import DateInput from '../../../components/common/DateInput';
 
 const PAYMENT_METHODS = ['CASH', 'BANK_TRANSFER', 'CASH_DEPOSIT', 'CHEQUE', 'ONLINE_GATEWAY', 'OTHER'];
 
@@ -154,8 +155,7 @@ const AddTransactionModal = ({ onClose, onSuccess }) => {
             {/* Date */}
             <div>
               <label className={labelCls}>Transaction Date *</label>
-              <input
-                type="date"
+              <DateInput
                 required
                 max={todayStr()}
                 className={inputCls}
@@ -242,8 +242,7 @@ const AddTransactionModal = ({ onClose, onSuccess }) => {
                 </div>
                 <div>
                   <label className={labelCls}>Cheque Date *</label>
-                  <input
-                    type="date"
+                  <DateInput
                     required
                     className={inputCls}
                     value={form.cheque_date}

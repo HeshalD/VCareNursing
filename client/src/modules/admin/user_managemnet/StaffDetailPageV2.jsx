@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import DateInput from '../../../components/common/DateInput';
 import {
   AlertCircle,
   ArrowLeft,
@@ -1944,7 +1945,7 @@ const StaffDetailPageV2 = () => {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Date of Birth</label>
-              <input type="date" value={editModal.form.date_of_birth} onChange={e => editField('date_of_birth', e.target.value)}
+              <DateInput value={editModal.form.date_of_birth} onChange={e => editField('date_of_birth', e.target.value)}
                 className={editInputCls} />
             </div>
             <div>
