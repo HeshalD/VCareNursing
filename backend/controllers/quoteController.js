@@ -118,7 +118,7 @@ exports.getQuotesByRequest = async (req, res) => {
     try {
         const result = await db.query(`
             SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type,
-                   s.status as request_status, s.active_quote_id,
+                   s.status as request_status, s.active_quote_id, s.client_id as request_client_id,
                    pq.quote_id as product_quote_id,
                    COALESCE((
                        SELECT SUM(amount_received)
@@ -644,6 +644,7 @@ exports.getQuoteWithLineItems = async (req, res) => {
     try {
         const result = await db.query(`
             SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type,
+                s.client_id as request_client_id,
                 pq.quote_id as product_quote_id,
                 COALESCE(json_agg(
                     json_build_object(
@@ -662,7 +663,7 @@ exports.getQuoteWithLineItems = async (req, res) => {
             LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
             LEFT JOIN quotations pq ON pq.linked_quote_id = q.quote_id AND pq.quote_type = 'PRODUCT'
             WHERE q.quote_id = $1
-            GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, pq.quote_id
+            GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, s.client_id, pq.quote_id
         `, [quote_id]);
 
         if (result.rows.length === 0) {

@@ -9,6 +9,7 @@ import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import ImageCropModal from '../../../components/common/ImageCropModal';
+import DateInput from '../../../components/common/DateInput';
 
 const STAFF_ROLES = ['CARETAKER', 'NURSING_ASSISTANT', 'NURSE', 'PHYSIOTHERAPIST', 'NANNY', 'COUNSELLOR'];
 const GENDERS = ['MALE', 'FEMALE', 'OTHER'];
@@ -620,7 +621,7 @@ const WorkerVerificationDetailsPage = () => {
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-slate-500 mb-1">Date of Birth</label>
-                    <input type="date" value={editData.date_of_birth}
+                    <DateInput value={editData.date_of_birth}
                       onChange={e => setEditData(p => ({ ...p, date_of_birth: e.target.value }))}
                       className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:border-blue-400 outline-none" />
                   </div>

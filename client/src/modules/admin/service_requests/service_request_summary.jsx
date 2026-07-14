@@ -5,11 +5,14 @@ import {
   ExternalLink, Pencil, X, Save, User, Stethoscope,
   BadgeCheck, MapPin, CheckCircle2, Plus, Phone, Calendar,
   Heart, Loader2, AlertCircle, Download, ThumbsUp, ThumbsDown, Send,
-  MessageCircle, SendHorizontal, BadgeDollarSign,
+  BadgeDollarSign,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import DateInput, { todayISO } from '../../../components/common/DateInput';
 import PaymentAllocationModal from '../service_quotes/PaymentAllocationModal';
+import ReceiptSendPopup from '../service_quotes/ReceiptSendPopup';
+import InvoiceSendPopup from '../service_quotes/InvoiceSendPopup';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -199,7 +202,8 @@ const ServiceRequestSummaryPage = () => {
   const [paymentSuccess, setPaymentSuccess]         = useState('');
   const [showPaymentModal, setShowPaymentModal]     = useState(false);
   const [showReceiptPopup, setShowReceiptPopup]     = useState(false);
-  const [receiptSendBusy, setReceiptSendBusy]       = useState(false);
+  const [showInvoicePopup, setShowInvoicePopup]     = useState(false);
+  const [invoiceTarget, setInvoiceTarget]           = useState(null); // { quoteId, payerName, payerMobile }
   const [sendingInvoiceQuoteId, setSendingInvoiceQuoteId] = useState('');
   const [invoiceSentQuoteId, setInvoiceSentQuoteId] = useState('');
 
@@ -281,8 +285,10 @@ const ServiceRequestSummaryPage = () => {
         })
       );
       setQuotes(withLineItems);
+      return withLineItems;
     } catch (err) {
       setError(err.message || 'Failed to load service request');
+      return [];
     } finally {
       setLoading(false);
     }
@@ -353,12 +359,23 @@ const ServiceRequestSummaryPage = () => {
 
   // Fires after PaymentAllocationModal records payment against the service
   // portion and/or the linked PRODUCT invoice — mirrors handlePaymentSubmit's
-  // post-success steps above.
+  // post-success steps above. Receipt is offered after every payment; the
+  // invoice is offered only once nothing is left to pay on this quote —
+  // checked against the freshly refetched quotes (returned by fetchData),
+  // since `quotes`/`selectedQuote` state won't reflect the new payment until
+  // the next render.
   const handlePaymentAllocated = async () => {
     setShowPaymentModal(false);
     setPaymentSuccess('Payment recorded successfully.');
-    await fetchData();
-    if (selectedQuote) await fetchPaymentHistory(selectedQuote.quote_id);
+    const targetQuoteId = selectedQuote?.quote_id;
+    const updatedQuotes = await fetchData();
+    if (targetQuoteId) await fetchPaymentHistory(targetQuoteId);
+    const updated = (updatedQuotes || []).find(q => q.quote_id === targetQuoteId);
+    setInvoiceTarget(
+      updated && updated.remaining_amount <= 0.01
+        ? { quoteId: updated.quote_id, payerName: updated.payer_name || request?.payer_name, payerMobile: updated.payer_mobile || request?.payer_mobile }
+        : null
+    );
     setShowReceiptPopup(true);
   };
 
@@ -373,23 +390,6 @@ const ServiceRequestSummaryPage = () => {
       setError(err.message || 'Failed to send invoice');
     } finally {
       setSendingInvoiceQuoteId('');
-    }
-  };
-
-  const handleSendLatestReceipt = async () => {
-    if (!request?.client_id) { setShowReceiptPopup(false); return; }
-    try {
-      setReceiptSendBusy(true);
-      const res = await apiClient.getClientReceipts(request.client_id);
-      const receipts = Array.isArray(res?.receipts) ? res.receipts : [];
-      const latest = receipts[0];
-      if (latest?.receipt_id) {
-        await apiClient.sendPaymentReceipt(latest.receipt_id);
-      }
-    } catch { /* non-critical */ }
-    finally {
-      setReceiptSendBusy(false);
-      setShowReceiptPopup(false);
     }
   };
 
@@ -774,7 +774,7 @@ const ServiceRequestSummaryPage = () => {
                           </div>
                           <div>
                             <label className={labelCls}>Preferred Start Date</label>
-                            <input type="date" value={editForm.start_date} onChange={e => set('start_date')(e.target.value)} className={inputCls} />
+                            <DateInput value={editForm.start_date} onChange={e => set('start_date')(e.target.value)} min={todayISO()} className={inputCls} />
                           </div>
                         </div>
                       </div>
@@ -1396,64 +1396,24 @@ const ServiceRequestSummaryPage = () => {
         />
       )}
 
-      {/* ── Receipt send popup ── */}
-      {showReceiptPopup && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-sm rounded-xl bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100">
-                  <MessageCircle className="h-4 w-4 text-slate-600" />
-                </div>
-                <h3 className="text-sm font-semibold text-slate-900">Send Payment Receipt?</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowReceiptPopup(false)}
-                className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="px-5 py-4">
-              <p className="text-sm text-slate-600">
-                Payment recorded. Would you like to send the receipt to{' '}
-                <span className="font-semibold text-slate-900">{request?.payer_name || 'the client'}</span>
-                {request?.payer_mobile && (
-                  <span className="text-slate-400"> ({request.payer_mobile})</span>
-                )}{' '}
-                via WhatsApp?
-              </p>
-              {!request?.client_id && (
-                <p className="mt-2 text-xs text-slate-400">
-                  No linked client profile — receipt sending is only available for registered clients.
-                </p>
-              )}
-            </div>
-            <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-5 py-3">
-              <button
-                type="button"
-                onClick={() => setShowReceiptPopup(false)}
-                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Skip for now
-              </button>
-              <button
-                type="button"
-                onClick={handleSendLatestReceipt}
-                disabled={receiptSendBusy || !request?.client_id}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {receiptSendBusy ? (
-                  <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Sending…</>
-                ) : (
-                  <><SendHorizontal className="h-3.5 w-3.5" /> Yes, send now</>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ReceiptSendPopup
+        open={showReceiptPopup}
+        clientId={request?.client_id}
+        payerName={request?.payer_name}
+        payerMobile={request?.payer_mobile}
+        onClose={() => {
+          setShowReceiptPopup(false);
+          if (invoiceTarget) setShowInvoicePopup(true);
+        }}
+      />
+
+      <InvoiceSendPopup
+        open={showInvoicePopup}
+        quoteId={invoiceTarget?.quoteId}
+        payerName={invoiceTarget?.payerName}
+        payerMobile={invoiceTarget?.payerMobile}
+        onClose={() => setShowInvoicePopup(false)}
+      />
     </AdminLayout>
   );
 };

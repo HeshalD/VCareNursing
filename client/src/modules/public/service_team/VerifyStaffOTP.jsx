@@ -5,7 +5,7 @@ import { Lock, ChevronLeft, Phone, MessageSquare } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import Navbar from '../../../components/layout/Navbar';
 import apiClient from '../../../api/api';
-import LanguageToggle from '../../../i18n/LanguageToggle';
+// import LanguageToggle from '../../../i18n/LanguageToggle'; // hidden for this release
 
 const VerifyStaffOTP = () => {
   const { t } = useTranslation('verifyStaffOtp');
@@ -135,9 +135,7 @@ const VerifyStaffOTP = () => {
       <Navbar />
 
       <div className="flex-grow flex flex-col items-center justify-center pt-24 pb-12 px-4">
-        <div className="w-full max-w-md flex justify-end mb-3">
-          <LanguageToggle />
-        </div>
+        {/* <LanguageToggle /> hidden for this release — see memory: language-toggle-locations */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}

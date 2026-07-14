@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import DateInput from '../../../components/common/DateInput';
 
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
 const formatMoney = (v) => money.format(Number(v || 0));
@@ -35,6 +36,7 @@ const MEMBERSHIP_STATUS_CONFIG = {
   INVOICED:         { dot: 'bg-blue-400',    text: 'text-blue-700',    label: 'Invoiced' },
   RECEIPT_UPLOADED: { dot: 'bg-violet-400',  text: 'text-violet-700',  label: 'Receipt Submitted' },
   WAIVED:           { dot: 'bg-slate-400',   text: 'text-slate-600',   label: 'Waived' },
+  EXPIRED:          { dot: 'bg-rose-400',    text: 'text-rose-700',    label: 'Expired' },
 };
 
 // Product/rental invoices (backend/controllers/invoiceController.js) — a
@@ -517,11 +519,11 @@ export default function AdminInvoicesPage() {
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Date from</label>
-                <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={inputCls} />
+                <DateInput value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={inputCls} />
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Date to</label>
-                <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className={inputCls} />
+                <DateInput value={dateTo} onChange={(e) => setDateTo(e.target.value)} className={inputCls} />
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Booking ID</label>

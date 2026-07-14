@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Search, UserCircle, FileText, Plus, Edit2, Trash2, X, Upload, Shield, LogOut } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import ImageCropModal from '../../../components/common/ImageCropModal';
+import DateInput from '../../../components/common/DateInput';
 import apiClient from '../../../api/api';
 
 const ROLE_LABELS = {
@@ -22,30 +23,6 @@ const EXP_LABELS = {
   '4_YEARS': '4 Years',
   '5_YEARS': '5 Years',
   MORE_THAN_5_YEARS: 'More than 5 Years',
-};
-
-// Formats raw digits typed by the user into a DD/MM/YYYY masked string
-const maskDateInput = (raw) => {
-  const digits = raw.replace(/\D/g, '').slice(0, 8);
-  if (digits.length <= 2) return digits;
-  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
-  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
-};
-
-// Converts a DD/MM/YYYY string into YYYY-MM-DD for the backend (empty string if invalid/incomplete)
-const formatDateForBackend = (value) => {
-  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value || '');
-  if (!match) return '';
-  const [, day, month, year] = match;
-  return `${year}-${month}-${day}`;
-};
-
-// Converts a YYYY-MM-DD string (as returned by the backend) into DD/MM/YYYY for display/editing
-const formatDateForDisplay = (value) => {
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value || '');
-  if (!match) return '';
-  const [, year, month, day] = match;
-  return `${day}/${month}/${year}`;
 };
 
 function parseRoles(raw) {
@@ -213,7 +190,7 @@ const ProxyUserManagement = () => {
       role: worker.role && worker.role.length > 0 ? worker.role : [],
       experience_level: worker.experience_level || '',
       willing_to_live_in: worker.willing_to_live_in || false,
-      date_of_birth: formatDateForDisplay(worker.date_of_birth),
+      date_of_birth: worker.date_of_birth || '',
       nic_number: worker.nic_number || '',
       nic_front: null,
       nic_back: null,
@@ -329,7 +306,7 @@ const ProxyUserManagement = () => {
     fd.append('gender', formData.gender);
     if (formData.experience_level) fd.append('experience_level', formData.experience_level);
     fd.append('willing_to_live_in', formData.willing_to_live_in);
-    fd.append('date_of_birth', formatDateForBackend(formData.date_of_birth));
+    fd.append('date_of_birth', formData.date_of_birth);
     fd.append('nic_number', formData.nic_number);
     if (formData.staff_code) fd.append('staff_code', formData.staff_code);
     if (formData.admin_remarks) fd.append('admin_remarks', formData.admin_remarks);
@@ -357,11 +334,6 @@ const ProxyUserManagement = () => {
           setFormLoading(false);
           return;
         }
-      }
-      if (formData.date_of_birth && !formatDateForBackend(formData.date_of_birth)) {
-        setFormError('Enter a valid Date of Birth as DD/MM/YYYY.');
-        setFormLoading(false);
-        return;
       }
       const fd = buildFormData();
       if (isEditMode && selectedWorker?.id) {
@@ -604,9 +576,10 @@ const ProxyUserManagement = () => {
                   </select>
                 </Field>
                 <Field label="Date of Birth" required>
-                  <input type="text" inputMode="numeric" name="date_of_birth" placeholder="DD/MM/YYYY" maxLength={10}
+                  <DateInput name="date_of_birth"
                     value={formData.date_of_birth}
-                    onChange={e => setFormData(p => ({ ...p, date_of_birth: maskDateInput(e.target.value) }))}
+                    onChange={e => setFormData(p => ({ ...p, date_of_birth: e.target.value }))}
+                    max={new Date().toISOString().slice(0, 10)}
                     required className={inputCls(false)} />
                 </Field>
               </div>

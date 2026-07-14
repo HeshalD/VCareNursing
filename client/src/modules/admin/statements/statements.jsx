@@ -9,6 +9,7 @@ import {
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
+import DateInput from '../../../components/common/DateInput';
 
 const PAGE_SIZE = 10;
 
@@ -1013,8 +1014,7 @@ const Statements = () => {
           {/* Manual dates */}
           <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-slate-600">From</label>
-            <input
-              type="date"
+            <DateInput
               value={globalStartDate}
               onChange={(e) => handleStartChange(e.target.value)}
               disabled={isAllTime || isFromBookingStart}
@@ -1023,8 +1023,7 @@ const Statements = () => {
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-slate-600">To</label>
-            <input
-              type="date"
+            <DateInput
               value={globalEndDate}
               onChange={(e) => handleEndChange(e.target.value)}
               disabled={isAllTime || isFromBookingStart}

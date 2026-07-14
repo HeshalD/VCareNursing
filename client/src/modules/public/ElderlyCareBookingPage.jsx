@@ -11,6 +11,7 @@ import Footer from '../../components/layout/Footer';
 import apiClient from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 import elderlyCareBg from '../../assets/images/ElderlyCare.webp';
+import DateInput, { todayISO } from '../../components/common/DateInput';
 
 // Selectable options for the Service Details step
 const SERVICE_TYPES = [
@@ -699,12 +700,12 @@ const ElderlyCareBookingPage = () => {
                       </div>
                       <div>
                         <label className="text-sm font-semibold text-slate-600 block mb-1">Start Date</label>
-                        <input
-                          type="date"
+                        <DateInput
                           className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none text-slate-900"
                           value={formData.start_date}
                           onChange={e => setFormData({ ...formData, start_date: e.target.value })}
                           onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
+                          min={todayISO()}
                           required
                         />
                       </div>

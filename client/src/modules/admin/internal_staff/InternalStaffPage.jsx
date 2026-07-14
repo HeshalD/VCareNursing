@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Pencil, Trash2, X, Loader2, ShieldCheck, Smartphone, Copy, Search, RefreshCw } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import DateInput from '../../../components/common/DateInput';
 
 // Must match the internal/office roles defined in user_role_enum (backend/migrate.js).
 // Caregiving roles (NURSE, CARETAKER, NANNY, etc.) belong to field staff, not internal staff.
@@ -592,8 +593,7 @@ const InternalStaffPage = () => {
               <div className="px-5 pt-4 pb-2 space-y-3">
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Joined Date">
-                    <input
-                      type="date"
+                    <DateInput
                       className={inputCls}
                       value={form.joined_date}
                       onChange={set('joined_date')}

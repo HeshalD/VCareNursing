@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import DateInput from '../../../components/common/DateInput';
 
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
 const formatMoney = (v) => money.format(Number(v || 0));
@@ -1682,8 +1683,7 @@ function NewProductQuoteModal({ onClose, onCreated }) {
                           </div>
                           <div>
                             <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Start Date</label>
-                            <input
-                              type="date"
+                            <DateInput
                               value={it.rental_start_date}
                               onChange={(e) => updateLineItem(idx, { rental_start_date: e.target.value })}
                               className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1 text-xs outline-none focus:border-blue-500"
@@ -1692,8 +1692,7 @@ function NewProductQuoteModal({ onClose, onCreated }) {
                           {it.rental_billing_type === 'ONE_TIME' && (
                             <div>
                               <label className="block text-[10px] font-medium text-slate-500 mb-0.5">End Date *</label>
-                              <input
-                                type="date"
+                              <DateInput
                                 value={it.rental_end_date}
                                 onChange={(e) => updateLineItem(idx, { rental_end_date: e.target.value })}
                                 className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1 text-xs outline-none focus:border-blue-500"
@@ -1853,8 +1852,7 @@ function RecordInvoicePaymentModal({ invoice, onClose, onRecorded }) {
                 onChange={(e) => setChequeNumber(e.target.value)}
                 className="rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
               />
-              <input
-                type="date"
+              <DateInput
                 value={chequeDate}
                 onChange={(e) => setChequeDate(e.target.value)}
                 className="rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
@@ -2617,8 +2615,7 @@ function NewRentalAgreementModal({ rentalProducts, onClose, onCreated }) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-[11px] font-medium text-slate-500 mb-1">Start Date</label>
-              <input
-                type="date"
+              <DateInput
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
                 className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
@@ -2627,8 +2624,7 @@ function NewRentalAgreementModal({ rentalProducts, onClose, onCreated }) {
             {billingType === 'ONE_TIME' && (
               <div>
                 <label className="block text-[11px] font-medium text-slate-500 mb-1">End Date *</label>
-                <input
-                  type="date"
+                <DateInput
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
                   className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"

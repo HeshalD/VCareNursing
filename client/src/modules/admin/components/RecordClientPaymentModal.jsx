@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Loader2, Plus, Trash2, X, CreditCard, Wallet, CalendarDays } from 'lucide-react';
 import apiClient from '../../../api/api';
+import DateInput from '../../../components/common/DateInput';
 
 const PAYMENT_METHODS = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
 const SERVICE_MODELS  = ['SHIFT_BASED', 'LIVE_IN', 'VISITING'];
@@ -155,8 +156,7 @@ const AllocationRow = ({ row, index, bookings, patients, onChange, onRemove, can
 
             <div>
               <label className={labelCls}>Start Date</label>
-              <input
-                type="date"
+              <DateInput
                 className={inputCls}
                 value={row.new_booking.start_date}
                 onChange={e => updateNewBooking('start_date', e.target.value)}
@@ -385,8 +385,7 @@ const RecordClientPaymentModal = ({ clientId, bookings, patients, onClose, onSuc
                   </div>
                   <div>
                     <label className={labelCls}>Cheque Date *</label>
-                    <input
-                      type="date"
+                    <DateInput
                       required
                       className={inputCls}
                       value={form.cheque_date}

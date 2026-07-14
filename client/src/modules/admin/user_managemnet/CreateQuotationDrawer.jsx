@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import {
-  X, Plus, Minus, Calculator, Send, CheckCircle, AlertCircle, Loader2, Trash2, Package,
+  X, Plus, Send, CheckCircle, AlertCircle, Loader2, Package, BadgeDollarSign, Percent, ShoppingBag,
 } from 'lucide-react';
 import apiClient from '../../../api/api';
-import QuoteLineItem from '../service_quotes/QuoteLineItem';
 import PresetItemSelector from '../service_quotes/PresetItemSelector';
-import QuoteSummary from '../service_quotes/QuoteSummary';
+import LineItemRow from '../service_quotes/LineItemRow';
+import RegistrationFeeRow from '../service_quotes/RegistrationFeeRow';
+import ProductLineItemRow from '../service_quotes/ProductLineItemRow';
 
 const emptyProductLine = () => ({
   description: '', quantity: 1, unit_price: '', product_id: '', unit_id: '',
@@ -19,8 +20,8 @@ const emptyDepositLine = () => ({
   description: 'Refundable Deposit', quantity: 1, unit_price: '', isStandaloneDeposit: true,
 });
 
-const formatMoney = (value) =>
-  `LKR ${parseFloat(value || 0).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmt = (n) =>
+  Number(n || 0).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId, onSuccess }) => {
   const isEditMode = !!quoteId;
@@ -33,13 +34,15 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
   const [lineItems, setLineItems] = useState([]);
   const [products, setProducts] = useState([]);
   const [rentalUnits, setRentalUnits] = useState([]);
-  const [productLineItems, setProductLineItems] = useState([emptyProductLine()]);
+  const [productLineItems, setProductLineItems] = useState([]);
+  const [salespersons, setSalespersons] = useState([]);
   const [termsConditions, setTermsConditions] = useState('The initial estimated amount is non-refundable.');
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [sendingPDF, setSendingPDF] = useState(false);
   const [error, setError] = useState('');
   const [createdQuote, setCreatedQuote] = useState(null);
+  const [createdProductQuote, setCreatedProductQuote] = useState(null);
 
   useEffect(() => {
     if (!open) {
@@ -47,14 +50,18 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
       setQuoteKind(null);
       setSelectedRequestId(null);
       setLineItems([]);
-      setProductLineItems([emptyProductLine()]);
+      setProductLineItems([]);
       setTermsConditions('The initial estimated amount is non-refundable.');
       setError('');
       setCreatedQuote(null);
+      setCreatedProductQuote(null);
       return;
     }
 
     fetchPresets();
+    apiClient.getProducts().then((res) => setProducts(Array.isArray(res?.data) ? res.data : [])).catch(() => setProducts([]));
+    apiClient.getRentalUnits({ status: 'AVAILABLE' }).then((res) => setRentalUnits(Array.isArray(res?.data) ? res.data : [])).catch(() => setRentalUnits([]));
+    apiClient.getSalespersons().then((res) => setSalespersons(Array.isArray(res?.data) ? res.data : [])).catch(() => setSalespersons([]));
 
     if (isEditMode) {
       setQuoteKind('SERVICE');
@@ -92,25 +99,33 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
     }
   };
 
-  const startProductQuote = async () => {
+  const startProductQuote = () => {
     setQuoteKind('PRODUCT');
     setStep('build');
-    setLoading(true);
-    try {
-      const [productsRes, unitsRes] = await Promise.all([
-        apiClient.getProducts(),
-        apiClient.getRentalUnits({ status: 'AVAILABLE' }),
-      ]);
-      setProducts(Array.isArray(productsRes?.data) ? productsRes.data : []);
-      setRentalUnits(Array.isArray(unitsRes?.data) ? unitsRes.data : []);
-    } catch {
-      setError('Failed to load product catalog');
-    } finally {
-      setLoading(false);
-    }
   };
 
   const isRentalLine = (it) => products.find((p) => p.product_id === it.product_id)?.product_type === 'RENTAL';
+
+  const hasRegistrationFeeItem = lineItems.some((i) => i.is_registration_fee);
+  const registrationFeeAlreadySettled = ['PAID', 'WAIVED'].includes(clientProfile?.reg_fee_status);
+  const canAddRegistrationFee = !hasRegistrationFeeItem && !registrationFeeAlreadySettled;
+
+  const addRegistrationFeeItem = () => {
+    const amount = parseFloat(clientProfile?.reg_fee_amount) || 10000;
+    setLineItems((prev) => [
+      ...prev,
+      {
+        item_type: 'CHARGE',
+        description: 'Registration Fee',
+        quantity: 1,
+        unit_price: amount,
+        amount,
+        is_registration_fee: true,
+        salesperson_id: '',
+        sort_order: prev.length,
+      },
+    ]);
+  };
 
   const updateProductLineItem = (idx, patch) => {
     setProductLineItems((items) => items.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
@@ -119,22 +134,38 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
   const addDepositLine = () => setProductLineItems((items) => [...items, emptyDepositLine()]);
   const removeProductLine = (idx) => setProductLineItems((items) => items.filter((_, i) => i !== idx));
 
-  const selectProductForLine = (idx, productId) => {
-    const product = products.find((p) => p.product_id === productId);
-    updateProductLineItem(idx, {
-      product_id: productId,
-      description: product ? product.name : '',
-      unit_price: product ? product.price : '',
-      unit_id: '',
-    });
-  };
+  const validProductLineItems = productLineItems.filter((it) => it.description?.trim() && it.unit_price !== '');
 
-  const productTotal = productLineItems.reduce(
-    (sum, it) => sum + (parseFloat(it.quantity) || 0) * (parseFloat(it.unit_price) || 0), 0
+  const productTotal = validProductLineItems.reduce(
+    (sum, it) => sum + (parseFloat(it.quantity) || 1) * (parseFloat(it.unit_price) || 0), 0
   );
-  const productDepositTotal = productLineItems.reduce(
-    (sum, it) => sum + (isRentalLine(it) ? (parseFloat(it.deposit_amount) || 0) : 0), 0
+  const productDepositTotal = validProductLineItems.reduce(
+    (sum, it) => sum + (!it.isStandaloneDeposit && isRentalLine(it) ? (parseFloat(it.deposit_amount) || 0) : 0), 0
   );
+
+  // Shared payload shape for the companion PRODUCT-type quotation, used both
+  // when the quote is products/rentals-only and when it's a companion to a
+  // SERVICE quote (see quoteController.mergeProductQuoteIntoData).
+  const mapProductLineItemsForApi = (items) => items.map((it) => {
+    if (it.isStandaloneDeposit) {
+      return { item_type: 'DEPOSIT', description: it.description, quantity: 1, unit_price: parseFloat(it.unit_price) || 0 };
+    }
+    const rental = isRentalLine(it);
+    return {
+      item_type: rental ? 'RENTAL' : 'PRODUCT',
+      description: it.description,
+      quantity: parseFloat(it.quantity) || 1,
+      unit_price: parseFloat(it.unit_price) || 0,
+      product_id: it.product_id || undefined,
+      ...(rental ? {
+        unit_id: it.unit_id || undefined,
+        rental_billing_type: it.rental_billing_type,
+        rental_start_date: it.rental_start_date,
+        rental_end_date: it.rental_billing_type === 'ONE_TIME' ? it.rental_end_date : undefined,
+        deposit_amount: it.deposit_amount ? parseFloat(it.deposit_amount) : 0,
+      } : {}),
+    };
+  });
 
   const fetchExistingQuote = async () => {
     setLoading(true);
@@ -196,15 +227,19 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
     return { totalCharges, totalDiscounts, subtotal: totalCharges - totalDiscounts };
   };
 
-  const handleSubmitProductQuote = async () => {
-    const validItems = productLineItems.filter((it) => it.description && it.unit_price !== '');
-    if (validItems.length === 0) { setError('Add at least one line item with a description and price.'); return; }
-    for (const it of validItems) {
+  const validateRentalEndDates = (items) => {
+    for (const it of items) {
       if (isRentalLine(it) && it.rental_billing_type === 'ONE_TIME' && !it.rental_end_date) {
         setError(`End date is required for the one-time rental item "${it.description}"`);
-        return;
+        return false;
       }
     }
+    return true;
+  };
+
+  const handleSubmitProductQuote = async () => {
+    if (validProductLineItems.length === 0) { setError('Add at least one line item with a description and price.'); return; }
+    if (!validateRentalEndDates(validProductLineItems)) return;
 
     setSubmitting(true);
     setError('');
@@ -212,26 +247,7 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
       const res = await apiClient.createProductQuotation({
         client_id: clientId,
         terms_conditions: termsConditions,
-        line_items: validItems.map((it) => {
-          if (it.isStandaloneDeposit) {
-            return { item_type: 'DEPOSIT', description: it.description, quantity: 1, unit_price: parseFloat(it.unit_price) || 0 };
-          }
-          const rental = isRentalLine(it);
-          return {
-            item_type: rental ? 'RENTAL' : 'PRODUCT',
-            description: it.description,
-            quantity: parseFloat(it.quantity) || 1,
-            unit_price: parseFloat(it.unit_price) || 0,
-            product_id: it.product_id || undefined,
-            ...(rental ? {
-              unit_id: it.unit_id || undefined,
-              rental_billing_type: it.rental_billing_type,
-              rental_start_date: it.rental_start_date,
-              rental_end_date: it.rental_billing_type === 'ONE_TIME' ? it.rental_end_date : undefined,
-              deposit_amount: it.deposit_amount ? parseFloat(it.deposit_amount) : 0,
-            } : {}),
-          };
-        }),
+        line_items: mapProductLineItemsForApi(validProductLineItems),
       });
       setCreatedQuote(res.data);
       setStep('done');
@@ -243,6 +259,21 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
     }
   };
 
+  // Companion PRODUCT-type quotation created alongside the SERVICE quote
+  // (see ModularQuoteBuilder.ensureProductQuoteCreated) — its line items get
+  // folded into the SERVICE quote's own PDF server-side, so the client still
+  // only ever gets one combined document. Returns null when there's nothing
+  // to quote.
+  const createCompanionProductQuote = async (serviceQuoteId) => {
+    if (validProductLineItems.length === 0) return null;
+    const res = await apiClient.createProductQuotation({
+      client_id: clientId,
+      linked_quote_id: serviceQuoteId,
+      line_items: mapProductLineItemsForApi(validProductLineItems),
+    });
+    return res.data;
+  };
+
   const handleSubmit = async () => {
     if (quoteKind === 'PRODUCT') {
       await handleSubmitProductQuote();
@@ -252,12 +283,14 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
     if (lineItems.length === 0) { setError('Add at least one line item.'); return; }
     const { subtotal } = calculateTotals();
     if (subtotal <= 0) { setError('Quote total must be greater than zero.'); return; }
+    if (!validateRentalEndDates(validProductLineItems)) return;
 
     setSubmitting(true);
     setError('');
     try {
       if (isEditMode) {
         await apiClient.updateQuoteLineItems(quoteId, { line_items: lineItems, terms_conditions: termsConditions });
+        await createCompanionProductQuote(quoteId);
         onSuccess?.();
         onClose();
       } else {
@@ -266,7 +299,9 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
           line_items: lineItems,
           terms_conditions: termsConditions,
         });
+        const productQuote = await createCompanionProductQuote(res.data.quote_id);
         setCreatedQuote(res.data);
+        setCreatedProductQuote(productQuote);
         setStep('done');
         onSuccess?.();
       }
@@ -285,7 +320,7 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
       if (quoteKind === 'PRODUCT') {
         await apiClient.sendProductQuotePDF(createdQuote.quote_id);
       } else {
-        await apiClient.sendQuotePDF(createdQuote.quote_id);
+        await apiClient.sendQuotePDF(createdQuote.quote_id, createdProductQuote?.quote_id);
       }
       onClose();
     } catch (err) {
@@ -303,7 +338,7 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
     <>
       <div className="fixed inset-0 z-40 bg-black/40" onClick={onClose} />
 
-      <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-3xl flex-col bg-white shadow-2xl">
+      <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-4xl flex-col bg-white shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4 shrink-0">
           <div>
@@ -404,192 +439,105 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
               {error && <p className="text-xs text-red-600">{error}</p>}
             </div>
           ) : quoteKind === 'PRODUCT' ? (
-            /* Build step — product/rental line item editor */
+            /* Build step — product/rental line item editor (Zoho-style table, matches ModularQuoteBuilder) */
             <div className="space-y-5">
-              <div className="rounded-lg border border-gray-200 bg-white">
-                <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Line Items ({productLineItems.length})
-                  </p>
-                  <div className="flex items-center gap-3">
-                    <button type="button" onClick={addDepositLine} className="text-xs font-medium text-amber-600 hover:underline">
-                      + Add refundable deposit
-                    </button>
-                    <button type="button" onClick={addProductLine} className="text-xs font-medium text-blue-600 hover:underline">
-                      + Add line
-                    </button>
+              <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+                <div className="border-b border-gray-100">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="bg-gray-50">
+                        <th className="py-3 pl-4 w-8" />
+                        <th className="py-3 text-left text-[11px] font-medium uppercase tracking-wider text-gray-400 pr-3">
+                          Item Details
+                        </th>
+                        <th className="py-3 text-right text-[11px] font-medium uppercase tracking-wider text-gray-400 pr-3 w-24">
+                          Quantity
+                        </th>
+                        <th className="py-3 text-right text-[11px] font-medium uppercase tracking-wider text-gray-400 pr-3 w-32">
+                          Rate
+                        </th>
+                        <th className="py-3 text-right text-[11px] font-medium uppercase tracking-wider text-gray-400 pr-2 w-32">
+                          Amount
+                        </th>
+                        <th className="py-3 pr-3 w-20" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {productLineItems.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="py-10 text-center text-[13px] text-gray-400">
+                            No items added. Add a product, rental, or refundable deposit below.
+                          </td>
+                        </tr>
+                      ) : (
+                        productLineItems.map((it, idx) => (
+                          <ProductLineItemRow
+                            key={idx}
+                            item={it}
+                            index={idx}
+                            products={products}
+                            rentalUnits={rentalUnits}
+                            canDelete
+                            onUpdate={(updated) => updateProductLineItem(idx, updated)}
+                            onDelete={() => removeProductLine(idx)}
+                          />
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Add-item row */}
+                <div className="px-4 py-3 flex flex-wrap items-center gap-4 border-b border-gray-100">
+                  <button
+                    type="button"
+                    onClick={addProductLine}
+                    className="inline-flex items-center gap-1.5 text-[13px] text-purple-600 hover:text-purple-800 font-medium transition-colors"
+                  >
+                    <ShoppingBag className="w-3.5 h-3.5" />
+                    Add Item
+                  </button>
+                  <span className="text-gray-200 select-none">|</span>
+                  <button
+                    type="button"
+                    onClick={addDepositLine}
+                    className="inline-flex items-center gap-1.5 text-[13px] text-amber-600 hover:text-amber-700 font-medium transition-colors"
+                  >
+                    <Package className="w-3.5 h-3.5" />
+                    Add Refundable Deposit
+                  </button>
+                </div>
+
+                {/* Totals + Terms */}
+                <div className="px-5 py-5 grid grid-cols-2 gap-6">
+                  <div>
+                    <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1.5">
+                      Terms &amp; Conditions
+                    </p>
+                    <textarea
+                      value={termsConditions}
+                      onChange={(e) => setTermsConditions(e.target.value)}
+                      rows={4}
+                      className="w-full text-[13px] text-gray-700 border border-gray-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 placeholder-gray-300"
+                      placeholder="Enter terms and conditions…"
+                    />
                   </div>
-                </div>
-                <div className="p-4 space-y-2">
-                  {productLineItems.map((it, idx) => {
-                    if (it.isStandaloneDeposit) {
-                      return (
-                        <div key={idx} className="rounded-lg border border-amber-100 bg-amber-50/40 p-2.5">
-                          <div className="flex items-center gap-2">
-                            <span className="w-40 shrink-0 text-[11px] font-semibold text-amber-700">Refundable Deposit</span>
-                            <input
-                              type="text"
-                              placeholder="Description"
-                              value={it.description}
-                              onChange={(e) => updateProductLineItem(idx, { description: e.target.value })}
-                              className="flex-1 rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                            />
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              placeholder="Amount"
-                              value={it.unit_price}
-                              onChange={(e) => updateProductLineItem(idx, { unit_price: e.target.value })}
-                              className="w-28 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
-                            />
-                            {productLineItems.length > 1 && (
-                              <button type="button" onClick={() => removeProductLine(idx)} className="text-gray-400 hover:text-red-500">
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            )}
-                          </div>
-                          <p className="mt-1 pl-[10.5rem] text-[10px] text-amber-600">
-                            Held by the company regardless of any rental item; refund or forfeit later from the client's deposits.
-                          </p>
-                        </div>
-                      );
-                    }
-                    const rental = isRentalLine(it);
-                    return (
-                      <div key={idx} className={rental ? 'rounded-lg border border-purple-100 bg-purple-50/40 p-2.5 space-y-2' : ''}>
-                        <div className="flex items-center gap-2">
-                          <select
-                            value={it.product_id}
-                            onChange={(e) => selectProductForLine(idx, e.target.value)}
-                            className="w-40 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-xs outline-none focus:border-blue-500"
-                          >
-                            <option value="">Custom item…</option>
-                            {products.map((p) => (
-                              <option key={p.product_id} value={p.product_id}>{p.name}{p.product_type === 'RENTAL' ? ' (Rental)' : ''}</option>
-                            ))}
-                          </select>
-                          <input
-                            type="text"
-                            placeholder="Description"
-                            value={it.description}
-                            onChange={(e) => updateProductLineItem(idx, { description: e.target.value })}
-                            className="flex-1 rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                          />
-                          <input
-                            type="number"
-                            min="0"
-                            step="1"
-                            placeholder="Qty"
-                            value={it.quantity}
-                            onChange={(e) => updateProductLineItem(idx, { quantity: e.target.value })}
-                            className="w-16 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
-                          />
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            placeholder="Unit price"
-                            value={it.unit_price}
-                            onChange={(e) => updateProductLineItem(idx, { unit_price: e.target.value })}
-                            className="w-28 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
-                          />
-                          {productLineItems.length > 1 && (
-                            <button type="button" onClick={() => removeProductLine(idx)} className="text-gray-400 hover:text-red-500">
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          )}
-                        </div>
-
-                        {rental && (
-                          <div className="pl-1 space-y-2">
-                            <p className="text-[11px] font-semibold text-purple-700">Rental Terms for this item</p>
-                            <div>
-                              <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Specific Unit</label>
-                              <select
-                                value={it.unit_id || ''}
-                                onChange={(e) => updateProductLineItem(idx, { unit_id: e.target.value })}
-                                className="w-56 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1 text-xs outline-none focus:border-blue-500"
-                              >
-                                <option value="">Auto-assign any available unit</option>
-                                {rentalUnits.filter((u) => u.product_id === it.product_id).map((u) => (
-                                  <option key={u.unit_id} value={u.unit_id}>{u.unit_code || u.unit_id.slice(0, 8)}</option>
-                                ))}
-                              </select>
-                              {it.product_id && rentalUnits.filter((u) => u.product_id === it.product_id).length === 0 && (
-                                <p className="mt-0.5 text-[10px] text-amber-600">No units currently available for this product.</p>
-                              )}
-                            </div>
-                            <div className="grid grid-cols-3 gap-2">
-                              <div>
-                                <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Billing</label>
-                                <select
-                                  value={it.rental_billing_type}
-                                  onChange={(e) => updateProductLineItem(idx, { rental_billing_type: e.target.value })}
-                                  className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1 text-xs outline-none focus:border-blue-500"
-                                >
-                                  <option value="ONE_TIME">One-time</option>
-                                  <option value="RECURRING">Monthly</option>
-                                </select>
-                              </div>
-                              <div>
-                                <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Start Date</label>
-                                <input
-                                  type="date"
-                                  value={it.rental_start_date}
-                                  onChange={(e) => updateProductLineItem(idx, { rental_start_date: e.target.value })}
-                                  className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1 text-xs outline-none focus:border-blue-500"
-                                />
-                              </div>
-                              {it.rental_billing_type === 'ONE_TIME' && (
-                                <div>
-                                  <label className="block text-[10px] font-medium text-gray-500 mb-0.5">End Date *</label>
-                                  <input
-                                    type="date"
-                                    value={it.rental_end_date}
-                                    onChange={(e) => updateProductLineItem(idx, { rental_end_date: e.target.value })}
-                                    className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1 text-xs outline-none focus:border-blue-500"
-                                  />
-                                </div>
-                              )}
-                            </div>
-                            <div>
-                              <label className="block text-[10px] font-medium text-gray-500 mb-0.5">Refundable Deposit (optional)</label>
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                placeholder="0.00"
-                                value={it.deposit_amount}
-                                onChange={(e) => updateProductLineItem(idx, { deposit_amount: e.target.value })}
-                                className="w-40 rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2 py-1 text-xs outline-none focus:border-blue-500"
-                              />
-                            </div>
-                          </div>
-                        )}
+                  <div className="flex flex-col justify-end gap-2">
+                    <div className="flex justify-between text-[13px] text-gray-600">
+                      <span>Products &amp; Rentals</span>
+                      <span className="tabular-nums">{fmt(productTotal)}</span>
+                    </div>
+                    {productDepositTotal > 0 && (
+                      <div className="flex justify-between text-[13px] text-amber-600">
+                        <span>Refundable deposit(s)</span>
+                        <span className="tabular-nums">{fmt(productDepositTotal)}</span>
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="rounded-lg border border-gray-200 bg-white p-4 space-y-3">
-                <div className="text-right text-sm font-semibold text-gray-800">
-                  Total: {formatMoney(productTotal)}
-                  {productDepositTotal > 0 && (
-                    <span className="block text-xs font-normal text-gray-400">
-                      + {formatMoney(productDepositTotal)} refundable deposit(s) = {formatMoney(productTotal + productDepositTotal)} across first invoice(s)
-                    </span>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1.5">Terms &amp; conditions</label>
-                  <textarea
-                    value={termsConditions}
-                    onChange={(e) => setTermsConditions(e.target.value)}
-                    rows={3}
-                    className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                  />
+                    )}
+                    <div className="flex justify-between text-[14px] font-semibold text-gray-900 border-t border-gray-200 pt-2 mt-1">
+                      <span>Total</span>
+                      <span className="tabular-nums">LKR {fmt(productTotal + productDepositTotal)}</span>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -600,9 +548,9 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
               )}
             </div>
           ) : (
-            /* Build step — service line item editor */
+            /* Build step — service line item editor (Zoho-style table, matches ModularQuoteBuilder) */
             <div className="space-y-5">
-              <div className="rounded-lg border border-gray-200 bg-white p-4">
+              <div className="rounded-lg border border-gray-200 bg-white px-5 py-4">
                 <PresetItemSelector
                   presets={presets}
                   onSelectPreset={addPresetItem}
@@ -610,62 +558,174 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
                 />
               </div>
 
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => addCustomItem('CHARGE')}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700"
-                >
-                  <Plus className="h-3.5 w-3.5" /> Add Charge
-                </button>
-                <button
-                  type="button"
-                  onClick={() => addCustomItem('DISCOUNT')}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-700"
-                >
-                  <Minus className="h-3.5 w-3.5" /> Add Discount
-                </button>
-              </div>
-
-              <div className="rounded-lg border border-gray-200 bg-white">
-                <div className="border-b border-gray-100 px-4 py-3">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">
-                    Line Items ({lineItems.length})
-                  </p>
+              <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+                <div className="border-b border-gray-100">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="bg-gray-50">
+                        <th className="py-3 pl-4 w-8" />
+                        <th className="py-3 text-left text-[11px] font-medium uppercase tracking-wider text-gray-400 pr-3">
+                          Item Details
+                        </th>
+                        <th className="py-3 text-right text-[11px] font-medium uppercase tracking-wider text-gray-400 pr-3 w-24">
+                          Quantity
+                        </th>
+                        <th className="py-3 text-right text-[11px] font-medium uppercase tracking-wider text-gray-400 pr-3 w-32">
+                          Rate
+                        </th>
+                        <th className="py-3 text-right text-[11px] font-medium uppercase tracking-wider text-gray-400 pr-2 w-32">
+                          Amount
+                        </th>
+                        <th className="py-3 pr-3 w-20" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lineItems.length === 0 && productLineItems.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="py-10 text-center text-[13px] text-gray-400">
+                            No items added. Select a preset above or add a custom item below.
+                          </td>
+                        </tr>
+                      ) : (
+                        <>
+                          {lineItems.map((item, index) => (
+                            item.is_registration_fee ? (
+                              <RegistrationFeeRow
+                                key={`svc-${index}`}
+                                item={item}
+                                index={index}
+                                salespersons={salespersons}
+                                onUpdate={(updated) => updateLineItem(index, updated)}
+                                onDelete={() => deleteLineItem(index)}
+                              />
+                            ) : (
+                              <LineItemRow
+                                key={`svc-${index}`}
+                                item={item}
+                                index={index}
+                                isFirst={index === 0}
+                                isLast={index === lineItems.length - 1}
+                                onUpdate={(updated) => updateLineItem(index, updated)}
+                                onDelete={() => deleteLineItem(index)}
+                                onMoveUp={() => moveLineItem(index, 'up')}
+                                onMoveDown={() => moveLineItem(index, 'down')}
+                              />
+                            )
+                          ))}
+                          {/* Products & Rentals — a companion PRODUCT quotation under the
+                              hood (see createCompanionProductQuote), but shown here as part
+                              of the same table since its items get folded into one combined
+                              PDF and one WhatsApp message, same as ModularQuoteBuilder. */}
+                          {productLineItems.map((item, idx) => (
+                            <ProductLineItemRow
+                              key={`prod-${idx}`}
+                              item={item}
+                              index={lineItems.length + idx}
+                              products={products}
+                              rentalUnits={rentalUnits}
+                              canDelete
+                              onUpdate={(updated) => updateProductLineItem(idx, updated)}
+                              onDelete={() => removeProductLine(idx)}
+                            />
+                          ))}
+                        </>
+                      )}
+                    </tbody>
+                  </table>
                 </div>
-                <div className="p-4">
-                  {lineItems.length === 0 ? (
-                    <div className="py-10 text-center">
-                      <Calculator className="h-8 w-8 mx-auto mb-3 text-gray-300" />
-                      <p className="text-sm text-gray-400">
-                        No items yet. Pick from presets or add a custom charge.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {lineItems.map((item, index) => (
-                        <QuoteLineItem
-                          key={index}
-                          item={item}
-                          index={index}
-                          onUpdate={(updated) => updateLineItem(index, updated)}
-                          onDelete={() => deleteLineItem(index)}
-                          onMoveUp={() => moveLineItem(index, 'up')}
-                          onMoveDown={() => moveLineItem(index, 'down')}
-                          isFirst={index === 0}
-                          isLast={index === lineItems.length - 1}
-                        />
-                      ))}
-                    </div>
+
+                {/* Add-item row */}
+                <div className="px-4 py-3 flex flex-wrap items-center gap-4 border-b border-gray-100">
+                  {canAddRegistrationFee ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={addRegistrationFeeItem}
+                        className="inline-flex items-center gap-1.5 text-[13px] text-amber-700 hover:text-amber-800 font-medium transition-colors"
+                      >
+                        <BadgeDollarSign className="w-3.5 h-3.5" />
+                        Add Registration Fee
+                      </button>
+                      <span className="text-gray-200 select-none">|</span>
+                    </>
+                  ) : registrationFeeAlreadySettled && (
+                    <span className="text-[11px] text-gray-400">Registration fee already settled for this client</span>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => addCustomItem('CHARGE')}
+                    className="inline-flex items-center gap-1.5 text-[13px] text-blue-600 hover:text-blue-800 font-medium transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Add Charge
+                  </button>
+                  <span className="text-gray-200 select-none">|</span>
+                  <button
+                    type="button"
+                    onClick={() => addCustomItem('DISCOUNT')}
+                    className="inline-flex items-center gap-1.5 text-[13px] text-gray-500 hover:text-gray-700 font-medium transition-colors"
+                  >
+                    <Percent className="w-3.5 h-3.5" />
+                    Add Discount
+                  </button>
+                  <span className="text-gray-200 select-none">|</span>
+                  <button
+                    type="button"
+                    onClick={addProductLine}
+                    className="inline-flex items-center gap-1.5 text-[13px] text-purple-600 hover:text-purple-800 font-medium transition-colors"
+                  >
+                    <ShoppingBag className="w-3.5 h-3.5" />
+                    Add Item
+                  </button>
+                  <span className="text-gray-200 select-none">|</span>
+                  <button
+                    type="button"
+                    onClick={addDepositLine}
+                    className="inline-flex items-center gap-1.5 text-[13px] text-amber-600 hover:text-amber-700 font-medium transition-colors"
+                  >
+                    <Package className="w-3.5 h-3.5" />
+                    Add Refundable Deposit
+                  </button>
+                </div>
+
+                {/* Totals + Terms */}
+                <div className="px-5 py-5 grid grid-cols-2 gap-6">
+                  <div>
+                    <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1.5">
+                      Terms &amp; Conditions
+                    </p>
+                    <textarea
+                      value={termsConditions}
+                      onChange={(e) => setTermsConditions(e.target.value)}
+                      rows={4}
+                      className="w-full text-[13px] text-gray-700 border border-gray-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 placeholder-gray-300"
+                      placeholder="Enter terms and conditions…"
+                    />
+                  </div>
+                  <div className="flex flex-col justify-end gap-2">
+                    <div className="flex justify-between text-[13px] text-gray-600">
+                      <span>Subtotal</span>
+                      <span className="tabular-nums">{fmt(totals.totalCharges)}</span>
+                    </div>
+                    {totals.totalDiscounts > 0 && (
+                      <div className="flex justify-between text-[13px] text-gray-500">
+                        <span>Discounts</span>
+                        <span className="tabular-nums">({fmt(totals.totalDiscounts)})</span>
+                      </div>
+                    )}
+                    {productTotal > 0 && (
+                      <div className="flex justify-between text-[13px] text-purple-600">
+                        <span>Products &amp; Rentals</span>
+                        <span className="tabular-nums">{fmt(productTotal)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between text-[14px] font-semibold text-gray-900 border-t border-gray-200 pt-2 mt-1">
+                      <span>Total</span>
+                      <span className="tabular-nums">LKR {fmt(totals.subtotal + productTotal)}</span>
+                    </div>
+                  </div>
                 </div>
               </div>
-
-              <QuoteSummary
-                lineItems={lineItems}
-                termsConditions={termsConditions}
-                onTermsChange={setTermsConditions}
-              />
 
               {error && (
                 <div className="flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-4 py-2.5 text-xs text-red-700">
@@ -715,7 +775,7 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
                   disabled={
                     submitting ||
                     (quoteKind === 'PRODUCT'
-                      ? productLineItems.filter((it) => it.description && it.unit_price !== '').length === 0
+                      ? validProductLineItems.length === 0
                       : lineItems.length === 0 || totals.subtotal <= 0)
                   }
                   className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-5 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"

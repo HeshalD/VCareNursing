@@ -11,6 +11,8 @@ import { useAdminAuth } from '../../../context/AdminAuthContext';
 import CareTimeline from './CareTimeline';
 import StaffScheduleTimeline from '../components/StaffScheduleTimeline';
 import vcareLogo from '../../../assets/Logo/VCareLogo.png';
+import DateInput, { todayISO } from '../../../components/common/DateInput';
+import DateTimeInput from '../../../components/common/DateTimeInput';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -23,27 +25,6 @@ const moneyFmt = new Intl.NumberFormat('en-LK', { style: 'currency', currency: '
 const formatMoney  = (v) => moneyFmt.format(Number(v || 0));
 const formatDate   = (v) => { if (!v) return '-'; const d = new Date(v); return isNaN(d) ? '-' : d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }); };
 const formatDT     = (v) => { if (!v) return '-'; const d = new Date(v); return isNaN(d) ? '-' : d.toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }); };
-// Masked DD/MM/YYYY text input helpers — mirrors the pattern used elsewhere in the admin panel
-// (e.g. proxy_user_management.jsx) so typed dates render in local format while staying
-// convertible to the ISO (YYYY-MM-DD) strings the backend and native <input type="date"> expect.
-const maskDateInput = (raw) => {
-  const digits = raw.replace(/\D/g, '').slice(0, 8);
-  if (digits.length <= 2) return digits;
-  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
-  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
-};
-const formatDateForBackend = (value) => {
-  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value || '');
-  if (!m) return '';
-  const [, day, month, year] = m;
-  return `${year}-${month}-${day}`;
-};
-const formatDateForDisplay = (value) => {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value || '');
-  if (!m) return '';
-  const [, year, month, day] = m;
-  return `${day}/${month}/${year}`;
-};
 const formatTime   = (t) => { if (!t) return '-'; const m = String(t).match(/^(\d{1,2}):(\d{2})/); if (!m) return '-'; let h = parseInt(m[1], 10); const p = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return `${h}:${m[2]} ${p}`; };
 const toDTLocal    = (value = new Date()) => { const d = value instanceof Date ? value : new Date(value); if (isNaN(d)) return ''; return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
 const toDateInput  = (value = new Date()) => { const d = value instanceof Date ? value : new Date(value); return isNaN(d) ? '' : d.toISOString().slice(0, 10); };
@@ -364,8 +345,7 @@ const BookingDetailPageV2 = () => {
   };
   const actionsTargetDate = actualEndTime ? actualEndTime.slice(0, 10) : toDateInput(new Date());
   const projectedRemainingBalance = projectedRemainingBalanceAt(actionsTargetDate);
-  const termFinalEndDateIso = formatDateForBackend(termFinalEndDate);
-  const termProjectedRemainingBalance = projectedRemainingBalanceAt(termFinalEndDateIso);
+  const termProjectedRemainingBalance = projectedRemainingBalanceAt(termFinalEndDate);
 
   const staffColorMap = useMemo(() => {
     const map = new Map();
@@ -879,7 +859,7 @@ const BookingDetailPageV2 = () => {
   const openApproveTermModal = (request) => {
     setTermModal({ mode: 'approve', request });
     const defaultEndDateIso = request.requested_end_date ? new Date(request.requested_end_date).toISOString().split('T')[0] : toDateInput(new Date());
-    setTermFinalEndDate(formatDateForDisplay(defaultEndDateIso));
+    setTermFinalEndDate(defaultEndDateIso);
     setTermSettlementAction(projectedRemainingBalanceAt(defaultEndDateIso) > 0 ? 'WALLET_DEPOSIT' : 'NO_REFUND');
     setTermSettlementNote('');
     setTermModalError('');
@@ -902,7 +882,7 @@ const BookingDetailPageV2 = () => {
       try {
         setTermModalLoading(true); setTermModalError('');
         const response = await apiClient.approveTerminationRequest(
-          termModal.request.termination_id, termFinalEndDateIso, termSettlementAction, termSettlementNote.trim() || null,
+          termModal.request.termination_id, termFinalEndDate, termSettlementAction, termSettlementNote.trim() || null,
         );
         closeTermModal(); await fetchDetail(); await fetchScheduledActions();
         if (response?.scheduled) {
@@ -1453,7 +1433,7 @@ const BookingDetailPageV2 = () => {
                         </div>
                         <div>
                           <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Cheque date</label>
-                          <input required type="date" value={paymentForm.cheque_date} onChange={e => setPaymentForm({ ...paymentForm, cheque_date: e.target.value })} style={inp} />
+                          <DateInput required value={paymentForm.cheque_date} onChange={e => setPaymentForm({ ...paymentForm, cheque_date: e.target.value })} style={inp} />
                         </div>
                       </div>
                     )}
@@ -1889,8 +1869,8 @@ const BookingDetailPageV2 = () => {
                     ))}
                   </div>
                   <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                    <input type="date" value={statementStartDate} onChange={e => setStatementStartDate(e.target.value)} style={{ ...inp, flex: 1 }} />
-                    <input type="date" value={statementEndDate} onChange={e => setStatementEndDate(e.target.value)} style={{ ...inp, flex: 1 }} />
+                    <DateInput value={statementStartDate} onChange={e => setStatementStartDate(e.target.value)} style={{ ...inp, flex: 1 }} />
+                    <DateInput value={statementEndDate} onChange={e => setStatementEndDate(e.target.value)} style={{ ...inp, flex: 1 }} />
                   </div>
                   <button onClick={downloadStatement} disabled={statementLoading || !statementClientId} style={{ width: '100%', background: statementLoading || !statementClientId ? '#d1d5db' : '#1e293b', border: 'none', borderRadius: 8, padding: '11px 12px', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 700, color: '#fff', cursor: statementLoading || !statementClientId ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                     {statementLoading ? <Loader2 style={{ width: 16, height: 16, animation: 'spin 1s linear infinite' }} /> : <Download style={{ width: 16, height: 16 }} />}
@@ -1999,7 +1979,7 @@ const BookingDetailPageV2 = () => {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                     <div>
                       <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Actual end time</label>
-                      <input type="datetime-local" value={actualEndTime} onChange={e => setActualEndTime(e.target.value)} style={inp} />
+                      <DateTimeInput value={actualEndTime} onChange={e => setActualEndTime(e.target.value)} style={inp} />
                       {actualEndTime && actualEndTime.slice(0, 10) > toDateInput(new Date()) && (
                         <p style={{ margin: '6px 0 0', fontSize: 11.5, color: '#B8893D' }}>
                           Future date — this will be scheduled. The booking stays active and billed until then, then completes/terminates automatically.
@@ -2149,7 +2129,7 @@ const BookingDetailPageV2 = () => {
                     <>
                       <div>
                         <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Actual end date & time</label>
-                        <input type="datetime-local" value={actualEndTime} onChange={e => setActualEndTime(e.target.value)} className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8] text-[#6F6A60]" />
+                        <DateTimeInput value={actualEndTime} onChange={e => setActualEndTime(e.target.value)} className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8] text-[#6F6A60]" />
                       </div>
                       <div>
                         <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Reason <span className="text-[#C4BFB5] font-normal">(optional)</span></label>
@@ -2362,7 +2342,7 @@ const BookingDetailPageV2 = () => {
                   </div>
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">{swapModalIsAssign ? 'Service start date' : 'New staff start date'} <span className="text-rose-500">*</span></label>
-                    <input type="date" value={swapModalStartDate} onChange={e => setSwapModalStartDate(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                    <DateInput value={swapModalStartDate} min={todayISO()} onChange={e => setSwapModalStartDate(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
                     {swapModalStartDate > toDateInput(new Date()) && (
                       <p className="text-xs text-amber-600 mt-1.5">
                         Future date — this will be scheduled and take effect automatically on that date.
@@ -2481,7 +2461,7 @@ const BookingDetailPageV2 = () => {
               </div>
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Effective from <span className="text-rose-500">*</span></label>
-                <input type="date" value={patternModalEffectiveDate} onChange={e => setPatternModalEffectiveDate(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                <DateInput value={patternModalEffectiveDate} min={todayISO()} onChange={e => setPatternModalEffectiveDate(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
                 <p className="text-xs text-slate-400 mt-1.5">Used as both the pattern's effective date and each assigned staff member's shift start date.</p>
                 {patternModalEffectiveDate > toDateInput(new Date()) && (
                   <p className="text-xs text-amber-600 mt-1.5">Future date — this pattern will be scheduled and take effect automatically on that date. The current pattern keeps running until then.</p>
@@ -2615,7 +2595,7 @@ const BookingDetailPageV2 = () => {
                                     {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                   </td>
                                   <td className={tdCls}>
-                                    <input type="date" value={inputs.date || dayModal.dateISO} onChange={e => setAttendanceInputs(p => ({ ...p, [a.assignment_id]: { ...inputs, date: e.target.value } }))} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-32" />
+                                    <DateInput value={inputs.date || dayModal.dateISO} onChange={e => setAttendanceInputs(p => ({ ...p, [a.assignment_id]: { ...inputs, date: e.target.value } }))} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-32" />
                                   </td>
                                   <td className={tdCls}>
                                     <input type="time" value={inputs.in_time} onChange={e => setAttendanceInputs(p => ({ ...p, [a.assignment_id]: { ...inputs, in_time: e.target.value, autoFilled: false } }))} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-24" />
@@ -2809,7 +2789,7 @@ const BookingDetailPageV2 = () => {
                     </div>
                     <div className={`rounded-lg border p-3 ${termProjectedRemainingBalance > 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-100'}`}>
                       <p className="text-xs text-slate-500 mb-0.5">
-                        {termFinalEndDateIso && termFinalEndDateIso > toDateInput(new Date()) ? 'Projected Balance (end date)' : 'Remaining Balance'}
+                        {termFinalEndDate && termFinalEndDate > toDateInput(new Date()) ? 'Projected Balance (end date)' : 'Remaining Balance'}
                       </p>
                       <p className={`text-sm font-semibold ${termProjectedRemainingBalance > 0 ? 'text-emerald-700' : 'text-slate-400'}`}>{formatMoney(termProjectedRemainingBalance)}</p>
                     </div>
@@ -2817,16 +2797,12 @@ const BookingDetailPageV2 = () => {
 
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Official End Date <span className="text-rose-500">*</span></label>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      placeholder="DD/MM/YYYY"
-                      maxLength={10}
+                    <DateInput
                       value={termFinalEndDate}
-                      onChange={e => setTermFinalEndDate(maskDateInput(e.target.value))}
+                      onChange={e => setTermFinalEndDate(e.target.value)}
                       className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                     />
-                    {termFinalEndDateIso && termFinalEndDateIso > toDateInput(new Date()) && (
+                    {termFinalEndDate && termFinalEndDate > toDateInput(new Date()) && (
                       <p className="text-xs text-amber-600 mt-1.5">Future date — the booking stays active and billed until then, then terminates automatically.</p>
                     )}
                   </div>
@@ -2895,7 +2871,7 @@ const BookingDetailPageV2 = () => {
               <button onClick={closeTermModal} className="px-4 py-2 text-sm font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">Cancel</button>
               <button
                 onClick={submitTermModal}
-                disabled={termModalLoading || (termModal.mode === 'approve' ? !termFinalEndDateIso : !termRejectReason.trim())}
+                disabled={termModalLoading || (termModal.mode === 'approve' ? !termFinalEndDate : !termRejectReason.trim())}
                 className={`inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed ${termModal.mode === 'approve' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}
               >
                 {termModalLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : termModal.mode === 'approve' ? <CheckCircle className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}

@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { CheckCircle, ArrowRight, Phone, Mail, Calendar, Briefcase, Home, FileText, User } from 'lucide-react';
 import Navbar from '../../../components/layout/Navbar';
 import Footer from '../../../components/layout/Footer';
-import LanguageToggle from '../../../i18n/LanguageToggle';
+// import LanguageToggle from '../../../i18n/LanguageToggle'; // hidden for this release
 
 const CONTACT_NUMBERS = [
   { label: '+94 (77) 393 9112', href: 'tel:+94773939112' },
@@ -42,9 +42,7 @@ const WorkerRegistrationSuccessPage = () => {
     <div className="min-h-screen bg-slate-50">
       <Navbar />
 
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pt-24 flex justify-end">
-        <LanguageToggle />
-      </div>
+      {/* <LanguageToggle /> hidden for this release — see memory: language-toggle-locations */}
 
       {/* Hero */}
       <div className="relative overflow-hidden">

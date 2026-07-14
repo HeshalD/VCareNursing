@@ -8,6 +8,7 @@ import {
   AlertCircle, Calendar
 } from 'lucide-react';
 import apiClient from '../../api/api';
+import DateInput from '../../components/common/DateInput';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -464,7 +465,7 @@ const FilterSelect = ({ label, value, onChange, children }) => (
 const FilterDate = ({ label, value, onChange }) => (
   <div style={s.filterField}>
     <label style={s.filterLabel}>{label}</label>
-    <input type="date" value={value} onChange={e => onChange(e.target.value)} style={s.input} />
+    <DateInput value={value} onChange={e => onChange(e.target.value)} style={s.input} />
   </div>
 );
 

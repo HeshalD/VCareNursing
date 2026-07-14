@@ -60,7 +60,7 @@ const AdminLoginPage = () => {
           
           console.log('Processed user role:', userRole);
           
-          const ADMIN_ROLES = ['SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'];
+          const ADMIN_ROLES = ['SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'SALES'];
           if (ADMIN_ROLES.includes(userRole)) {
             adminLogin(response.token, response.user);
             navigate('/admin/dashboard');

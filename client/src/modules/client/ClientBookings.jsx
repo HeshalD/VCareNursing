@@ -7,6 +7,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import apiClient from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
+import DateInput from '../../components/common/DateInput';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -657,8 +658,7 @@ const ClientBookings = () => {
                 </div>
                 <div>
                   <label style={s.fieldLabel}>Requested End Date <span style={{ color: '#ef4444' }}>*</span></label>
-                  <input
-                    type="date"
+                  <DateInput
                     value={terminationForm.requested_end_date}
                     onChange={e => setTerminationForm({ ...terminationForm, requested_end_date: e.target.value })}
                     min={new Date().toISOString().split('T')[0]}

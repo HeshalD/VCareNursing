@@ -274,6 +274,7 @@ const QuoteBuilder = () => {
     RECEIPT_UPLOADED: { label: 'Receipt Submitted',         cls: 'bg-violet-500/20 text-violet-100 border-violet-400/30' },
     PAID:             { label: '✓ Reg. Fee Paid',           cls: 'bg-green-500/20  text-green-100  border-green-400/30'  },
     WAIVED:           { label: '✓ Reg. Fee Waived',         cls: 'bg-slate-500/20  text-slate-200  border-slate-400/30'  },
+    EXPIRED:          { label: 'Membership Expired',        cls: 'bg-rose-500/20   text-rose-100   border-rose-400/30'   },
   };
   const feeBadge = REG_FEE_BADGE[regFeeStatus] || REG_FEE_BADGE.PENDING;
 
@@ -411,6 +412,7 @@ const QuoteBuilder = () => {
                         RECEIPT_UPLOADED: { icon: AlertCircle,  text: 'text-violet-700', bg: 'bg-violet-50', border: 'border-violet-100', label: 'Receipt submitted — pending verification' },
                         PAID:             { icon: CheckCircle,  text: 'text-green-700',  bg: 'bg-green-50',  border: 'border-green-100',  label: 'Registration fee paid'      },
                         WAIVED:           { icon: CheckCircle,  text: 'text-slate-600',  bg: 'bg-slate-50',  border: 'border-slate-200',  label: 'Registration fee waived'    },
+                        EXPIRED:          { icon: AlertCircle,  text: 'text-rose-700',   bg: 'bg-rose-50',   border: 'border-rose-100',   label: 'Membership expired — renewal required' },
                       };
                       const cfg = SIDEBAR_CFG[regFeeStatus] || SIDEBAR_CFG.PENDING;
                       const Icon = cfg.icon;

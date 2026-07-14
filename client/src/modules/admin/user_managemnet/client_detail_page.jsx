@@ -1,5 +1,6 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import DateInput from '../../../components/common/DateInput';
 import {
   ArrowLeft,
   ArrowRight,
@@ -1406,8 +1407,7 @@ const ClientDetailPage = () => {
               </div>
               <div>
                 <label className="block text-[11px] font-medium text-gray-500 mb-1">From</label>
-                <input
-                  type="date"
+                <DateInput
                   value={invoiceDateFrom}
                   onChange={(e) => setInvoiceDateFrom(e.target.value)}
                   className="rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
@@ -1415,8 +1415,7 @@ const ClientDetailPage = () => {
               </div>
               <div>
                 <label className="block text-[11px] font-medium text-gray-500 mb-1">To</label>
-                <input
-                  type="date"
+                <DateInput
                   value={invoiceDateTo}
                   onChange={(e) => setInvoiceDateTo(e.target.value)}
                   className="rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
@@ -2307,8 +2306,7 @@ const ClientDetailPage = () => {
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <div>
                   <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1">Start date</p>
-                  <input
-                    type="date"
+                  <DateInput
                     value={statementStartDate}
                     onChange={(e) => setStatementStartDate(e.target.value)}
                     className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
@@ -2316,8 +2314,7 @@ const ClientDetailPage = () => {
                 </div>
                 <div>
                   <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1">End date</p>
-                  <input
-                    type="date"
+                  <DateInput
                     value={statementEndDate}
                     onChange={(e) => setStatementEndDate(e.target.value)}
                     className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
@@ -2477,11 +2474,21 @@ const ClientDetailPage = () => {
                 RECEIPT_UPLOADED: { label: 'Receipt Uploaded', cls: 'bg-violet-50 text-violet-700 ring-1 ring-inset ring-violet-200' },
                 PAID:             { label: 'Paid',             cls: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200' },
                 WAIVED:           { label: 'Waived',           cls: 'bg-gray-100 text-gray-600 ring-1 ring-inset ring-gray-200' },
+                EXPIRED:          { label: 'Expired',          cls: 'bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-200' },
               };
               const badge = statusMeta[feeStatus] || statusMeta.PENDING;
-              const canSendInvoice = ['PENDING', 'INVOICED'].includes(feeStatus);
+              const canSendInvoice = ['PENDING', 'INVOICED', 'EXPIRED'].includes(feeStatus);
               const canViewReceipt = feeStatus === 'RECEIPT_UPLOADED' && clientProfile.reg_fee_receipt_url;
               const isSettled = ['PAID', 'WAIVED'].includes(feeStatus);
+
+              // Membership is valid for 365 days from payment (see
+              // backend/cron/regFeeExpiry.js) — once reg_fee_expires_at
+              // passes, the daily cron flips reg_fee_status to EXPIRED (a
+              // distinct state from PENDING/never-registered) so the client
+              // re-enters the admin's re-invoicing queue.
+              const daysUntilReset = (feeStatus === 'PAID' && clientProfile.reg_fee_expires_at)
+                ? Math.ceil((new Date(clientProfile.reg_fee_expires_at) - Date.now()) / (1000 * 60 * 60 * 24))
+                : null;
 
               return (
                 <DataCard title="Registration Fee">
@@ -2498,6 +2505,22 @@ const ClientDetailPage = () => {
                       <div>
                         <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1">Invoiced On</p>
                         <p className="text-sm font-medium text-gray-700">{formatDateTime(clientProfile.reg_fee_invoiced_at)}</p>
+                      </div>
+                    )}
+                    {daysUntilReset !== null && (
+                      <div>
+                        <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1">Membership Expires In</p>
+                        <p className={`text-sm font-bold ${daysUntilReset <= 30 ? 'text-amber-600' : 'text-gray-800'}`}>
+                          {daysUntilReset > 0 ? `${daysUntilReset} day${daysUntilReset === 1 ? '' : 's'}` : 'Today'}
+                        </p>
+                        <p className="text-[11px] text-gray-400 mt-0.5">on {formatDateTime(clientProfile.reg_fee_expires_at)}</p>
+                      </div>
+                    )}
+                    {feeStatus === 'EXPIRED' && clientProfile.reg_fee_expires_at && (
+                      <div>
+                        <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1">Expired On</p>
+                        <p className="text-sm font-bold text-rose-600">{formatDateTime(clientProfile.reg_fee_expires_at)}</p>
+                        <p className="text-[11px] text-gray-400 mt-0.5">Send a new invoice to renew membership</p>
                       </div>
                     )}
                     <div>

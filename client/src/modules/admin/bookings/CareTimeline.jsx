@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Wallet, Receipt, X, UserCheck, CalendarX, CheckCircle2, LayoutGrid, AlertTriangle } from 'lucide-react';
+import DateInput from '../../../components/common/DateInput';
 
 const useIsMobile = (query = '(max-width: 639px)') => {
   const [match, setMatch] = useState(
@@ -574,8 +575,7 @@ const CareTimeline = ({
                 <div className="text-[11px] text-[#9A9488] mb-2">
                   All outstanding, overdue days and staff assignments update to reflect this date.
                 </div>
-                <input
-                  type="date"
+                <DateInput
                   value={simDate || new Date().toISOString().slice(0, 10)}
                   onChange={(e) => { onSimDateChange?.(e.target.value || null); setShowSimPicker(false); }}
                   className="w-full border border-[#E7E1D6] rounded-lg px-2.5 py-1.5 text-sm text-[#2A2722] focus:outline-none focus:ring-2 focus:ring-[#137A6B]"

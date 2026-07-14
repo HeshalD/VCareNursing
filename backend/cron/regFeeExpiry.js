@@ -1,15 +1,21 @@
 // cron/regFeeExpiry.js
 // Runs once a day. Membership (the client registration fee) is valid for
 // 365 days from payment. Any client_profiles row that's PAID and past its
-// reg_fee_expires_at gets flipped back to PENDING — same state a client
-// starts in before ever paying — so they show up again in the admin's
-// "Registration Fees" queue (AdminInvoicesPage) for manual re-invoicing.
+// reg_fee_expires_at gets flipped to EXPIRED — a distinct terminal state from
+// PENDING (a client who never paid) — so they show up again in the admin's
+// "Registration Fees" queue (AdminInvoicesPage) for manual re-invoicing, with
+// the UI able to tell "never registered" and "membership lapsed" apart.
 //
 // Deliberately NOT automatic re-invoicing: per product decision, expiry only
 // resets status; an admin decides when/whether to send the next invoice.
 //
+// reg_fee_paid_at / reg_fee_expires_at are deliberately left in place (not
+// nulled) so the UI can still show "last paid on X, expired on Y" — every
+// other status transition (updateRegFeeStatus, verifyRegFeePayment,
+// settleRegistrationFee) already overwrites both whenever the fee is next
+// paid, so nothing needs to reset them proactively here.
 // reg_fee_invoiced_at / reg_fee_receipt_url / client_reg_fee_invoices history
-// are left untouched — this only resets the "is currently a paid member" state.
+// are also left untouched — this only resets the "is currently a paid member" state.
 const cron = require('node-cron');
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
@@ -31,14 +37,13 @@ const runRegFeeExpiry = async () => {
         await client.query('BEGIN');
         await client.query(
           `UPDATE client_profiles
-           SET reg_fee_status = 'PENDING', is_registration_fee_paid = false,
-               reg_fee_paid_at = NULL, reg_fee_expires_at = NULL
+           SET reg_fee_status = 'EXPIRED', is_registration_fee_paid = false
            WHERE client_profile_id = $1`,
           [row.client_profile_id]
         );
         await client.query('COMMIT');
 
-        console.log(`Membership expired for client ${row.client_profile_id} (${row.full_name}) — reset to PENDING`);
+        console.log(`Membership expired for client ${row.client_profile_id} (${row.full_name}) — reset to EXPIRED`);
 
         logActivity({
           actorUserId: null,
