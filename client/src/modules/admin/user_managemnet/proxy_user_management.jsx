@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, UserCircle, FileText, Plus, Edit2, Trash2, X, Upload, Shield, LogOut } from 'lucide-react';
+import { Search, UserCircle, FileText, Plus, Edit2, Trash2, X, Upload, Shield, LogOut, ExternalLink, CheckCircle2 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import ImageCropModal from '../../../components/common/ImageCropModal';
 import DateInput from '../../../components/common/DateInput';
@@ -105,6 +105,45 @@ const ImagePreview = ({ src, onDelete, onChangeId, onChangeHandler, changeLabel 
   </div>
 );
 
+const ComplianceDocField = ({ label, existingUrl, newFile, onSelect, onClear, inputId }) => (
+  <div className="border border-slate-200 rounded-lg p-3">
+    <div className="flex items-center justify-between gap-2 mb-2">
+      <p className="text-xs font-semibold text-slate-700">{label}</p>
+      {(existingUrl || newFile) ? (
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700">
+          <CheckCircle2 className="w-3.5 h-3.5" /> Submitted
+        </span>
+      ) : (
+        <span className="text-xs text-slate-400">Not submitted</span>
+      )}
+    </div>
+    <div className="flex items-center gap-2 flex-wrap">
+      {existingUrl && !newFile && (
+        <a href={existingUrl} target="_blank" rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 text-slate-600 rounded text-xs font-medium hover:bg-slate-200 transition-colors">
+          <ExternalLink className="w-3 h-3" /> View
+        </a>
+      )}
+      {newFile && (
+        <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50 text-blue-700 rounded text-xs font-medium">
+          <FileText className="w-3 h-3" /> {newFile.name}
+        </span>
+      )}
+      <input type="file" id={inputId} className="hidden" accept="image/*,.pdf"
+        onChange={e => { const f = e.target.files[0]; if (f) onSelect(f); }} />
+      <label htmlFor={inputId}
+        className="inline-flex items-center gap-1 px-2.5 py-1 border border-dashed border-slate-300 rounded text-xs font-medium text-slate-500 hover:bg-slate-50 cursor-pointer transition-colors">
+        <Upload className="w-3 h-3" /> {existingUrl || newFile ? 'Replace' : 'Upload'}
+      </label>
+      {newFile && (
+        <button type="button" onClick={onClear} className="p-1 text-slate-400 hover:text-red-500 transition-colors">
+          <X className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </div>
+  </div>
+);
+
 const ProxyUserManagement = () => {
   const navigate = useNavigate();
   const [workers, setWorkers] = useState([]);
@@ -124,12 +163,15 @@ const ProxyUserManagement = () => {
     gender: '', role: [], experience_level: '',
     willing_to_live_in: false, date_of_birth: '',
     nic_number: '', nic_front: null, nic_back: null,
-    staff_code: '', admin_remarks: ''
+    staff_code: '', admin_remarks: '',
+    grama_niladhari: null, police_report: null
   });
 
   const [profilePicturePreview, setProfilePicturePreview] = useState('');
   const [nicFrontPreview, setNicFrontPreview] = useState('');
   const [nicBackPreview, setNicBackPreview] = useState('');
+  const [gramaNiladhariUrl, setGramaNiladhariUrl] = useState('');
+  const [policeReportUrl, setPoliceReportUrl] = useState('');
   const [formLoading, setFormLoading] = useState(false);
   const [fieldConflicts, setFieldConflicts] = useState({ mobile_number: '', staff_code: '' });
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -159,7 +201,8 @@ const ProxyUserManagement = () => {
     gender: '', role: [], experience_level: '',
     willing_to_live_in: false, date_of_birth: '',
     nic_number: '', nic_front: null, nic_back: null,
-    staff_code: '', admin_remarks: ''
+    staff_code: '', admin_remarks: '',
+    grama_niladhari: null, police_report: null
   });
 
   const openAdd = () => {
@@ -167,6 +210,8 @@ const ProxyUserManagement = () => {
     setProfilePicturePreview('');
     setNicFrontPreview('');
     setNicBackPreview('');
+    setGramaNiladhariUrl('');
+    setPoliceReportUrl('');
     setFieldConflicts({ mobile_number: '', staff_code: '' });
     setFormError(null);
     setIsEditMode(false);
@@ -187,19 +232,23 @@ const ProxyUserManagement = () => {
       location: worker.location_city || '',
       profile_picture: null,
       gender: worker.gender || '',
-      role: worker.role && worker.role.length > 0 ? worker.role : [],
+      role: parseRoles(worker.role),
       experience_level: worker.experience_level || '',
       willing_to_live_in: worker.willing_to_live_in || false,
-      date_of_birth: worker.date_of_birth || '',
+      date_of_birth: worker.date_of_birth ? String(worker.date_of_birth).slice(0, 10) : '',
       nic_number: worker.nic_number || '',
       nic_front: null,
       nic_back: null,
       staff_code: worker.staff_code || '',
-      admin_remarks: worker.admin_remarks || ''
+      admin_remarks: worker.admin_remarks || '',
+      grama_niladhari: null,
+      police_report: null
     });
     setProfilePicturePreview(worker.profile_picture_url || '');
     setNicFrontPreview(worker.nic_front_url || '');
     setNicBackPreview(worker.nic_back_url || '');
+    setGramaNiladhariUrl(worker.grama_niladhari_url || '');
+    setPoliceReportUrl(worker.police_report_url || '');
     setFieldConflicts({ mobile_number: '', staff_code: '' });
     setFormError(null);
     setSelectedWorker(worker);
@@ -234,6 +283,11 @@ const ProxyUserManagement = () => {
     setFormData(p => ({ ...p, nic_back: file }));
     const r = new FileReader(); r.onloadend = () => setNicBackPreview(r.result); r.readAsDataURL(file);
   };
+
+  const handleGramaNiladhariChange = (file) => setFormData(p => ({ ...p, grama_niladhari: file }));
+  const handleGramaNiladhariClear = () => setFormData(p => ({ ...p, grama_niladhari: null }));
+  const handlePoliceReportChange = (file) => setFormData(p => ({ ...p, police_report: file }));
+  const handlePoliceReportClear = () => setFormData(p => ({ ...p, police_report: null }));
 
   const handleDocumentsChange = (files) => {
     const newDocs = Array.from(files);
@@ -313,6 +367,8 @@ const ProxyUserManagement = () => {
     if (formData.profile_picture) fd.append('profile_picture', formData.profile_picture);
     if (formData.nic_front) fd.append('nic_front', formData.nic_front);
     if (formData.nic_back) fd.append('nic_back', formData.nic_back);
+    if (formData.grama_niladhari) fd.append('grama_niladhari', formData.grama_niladhari);
+    if (formData.police_report) fd.append('police_report', formData.police_report);
     formData.documents.forEach(doc => fd.append('documents', doc));
     return fd;
   };
@@ -365,6 +421,8 @@ const ProxyUserManagement = () => {
     profile_picture_url: staff.profile_picture_url || null,
     nic_front_url: staff.nic_front_url || null,
     nic_back_url: staff.nic_back_url || null,
+    grama_niladhari_url: staff.grama_niladhari_url || null,
+    police_report_url: staff.police_report_url || null,
     gender: staff.gender || '',
     willing_to_live_in: staff.willing_to_live_in || false,
     experience_level: staff.experience_level || '',
@@ -672,6 +730,27 @@ const ProxyUserManagement = () => {
                       : <FileDropZone id="nic-back-upload" label="NIC Back" hint="JPG, PNG" onChange={handleNicBackChange} />}
                   </Field>
                 </div>
+              </div>
+
+              {/* Compliance Documents */}
+              <SectionHeader title="Compliance Documents" />
+              <div className="px-5 pt-4 pb-2 grid grid-cols-2 gap-3">
+                <ComplianceDocField
+                  label="Grama Niladhari Report"
+                  existingUrl={gramaNiladhariUrl}
+                  newFile={formData.grama_niladhari}
+                  onSelect={handleGramaNiladhariChange}
+                  onClear={handleGramaNiladhariClear}
+                  inputId="grama-niladhari-upload"
+                />
+                <ComplianceDocField
+                  label="Police Report"
+                  existingUrl={policeReportUrl}
+                  newFile={formData.police_report}
+                  onSelect={handlePoliceReportChange}
+                  onClear={handlePoliceReportClear}
+                  inputId="police-report-upload"
+                />
               </div>
 
               {/* Media */}

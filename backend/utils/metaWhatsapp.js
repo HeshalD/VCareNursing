@@ -11,6 +11,10 @@ const formatNumber = (mobileNumber) => {
 };
 
 const sendDocument = async (mobileNumber, documentUrl, filename, caption = '') => {
+  if (process.env.WHATSAPP_ENABLED === 'false') {
+    console.log(`[WhatsApp disabled] Skipped document "${filename}" to ${mobileNumber}`);
+    return { skipped: true };
+  }
   const to = formatNumber(mobileNumber);
   const response = await axios.post(
     API_URL,
@@ -38,6 +42,10 @@ const sendDocument = async (mobileNumber, documentUrl, filename, caption = '') =
 };
 
 const sendTemplate = async (to, templateName, languageCode, bodyParams, headerParams = null, buttonComponents = null) => {
+  if (process.env.WHATSAPP_ENABLED === 'false') {
+    console.log(`[WhatsApp disabled] Skipped template "${templateName}" to ${to}`);
+    return { skipped: true };
+  }
   try {
     const components = [];
     if (headerParams) {

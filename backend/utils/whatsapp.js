@@ -5,6 +5,10 @@ const authToken = process.env.TWILIO_AUTH_TOKEN;
 const client = twilio(accountSid, authToken);
 
 const sendWhatsAppOtp = async (mobileNumber, otp) => {
+  if (process.env.WHATSAPP_ENABLED === 'false') {
+    console.log(`[WhatsApp disabled] Skipped OTP WhatsApp message to ${mobileNumber}`);
+    return { skipped: true };
+  }
   try {
     console.log('WhatsApp Debug - Input mobileNumber:', mobileNumber);
     console.log('WhatsApp Debug - TWILIO_ACCOUNT_SID:', process.env.TWILIO_ACCOUNT_SID ? 'SET' : 'NOT SET');
@@ -58,6 +62,10 @@ const sendWhatsAppOtp = async (mobileNumber, otp) => {
 };
 
 const sendWhatsAppMessage = async (mobileNumber, content, mediaOptions = null) => {
+  if (process.env.WHATSAPP_ENABLED === 'false') {
+    console.log(`[WhatsApp disabled] Skipped WhatsApp message to ${mobileNumber}`);
+    return { skipped: true };
+  }
   try {
     let cleanNumber = mobileNumber.replace('whatsapp:', '').replace('+', '');
     if (cleanNumber.startsWith('0')) cleanNumber = cleanNumber.substring(1);

@@ -1365,6 +1365,7 @@ exports.getAllStaff = async (req, res) => {
                 sp.doc_upload_token,
                 sp.grama_niladhari_url,
                 sp.police_report_url,
+                sp.admin_remarks,
                 sp.created_at,
                 sp.advance_threshold_amount,
                 sp.current_earnings,
@@ -2437,7 +2438,9 @@ exports.updateStaffProfile = async (req, res) => {
         mobile_number,
         role,
         nic_number,
-        staff_code
+        staff_code,
+        experience_level,
+        admin_remarks
     } = req.body;
 
     // Extract file URLs from multer/S3
@@ -2445,6 +2448,8 @@ exports.updateStaffProfile = async (req, res) => {
     const uploadedProfilePicture = req.files && req.files.profile_picture ? req.files.profile_picture[0].location : null;
     const uploadedNicFront = getUploadedFileUrl(req.files, 'nic_front');
     const uploadedNicBack = getUploadedFileUrl(req.files, 'nic_back');
+    const uploadedGramaNiladhari = getUploadedFileUrl(req.files, 'grama_niladhari');
+    const uploadedPoliceReport = getUploadedFileUrl(req.files, 'police_report');
 
     try {
         // Validate staff exists
@@ -2568,12 +2573,20 @@ exports.updateStaffProfile = async (req, res) => {
                 willing_to_live_in = COALESCE($10, willing_to_live_in),
                 date_of_birth = COALESCE($11, date_of_birth),
                 staff_code = COALESCE($12, staff_code),
-                nic_number = COALESCE($13, nic_number)
+                nic_number = COALESCE($13, nic_number),
+                nic_front_url = COALESCE($14, nic_front_url),
+                nic_back_url = COALESCE($15, nic_back_url),
+                experience_level = COALESCE($16, experience_level),
+                admin_remarks = COALESCE($17, admin_remarks),
+                grama_niladhari_url = COALESCE($18, grama_niladhari_url),
+                police_report_url = COALESCE($19, police_report_url)
             WHERE staff_profile_id = $1
             RETURNING
                 staff_profile_id,
                 staff_code,
                 nic_number,
+                nic_front_url,
+                nic_back_url,
                 user_id,
                 full_name,
                 designation,
@@ -2585,6 +2598,10 @@ exports.updateStaffProfile = async (req, res) => {
                 gender,
                 willing_to_live_in,
                 date_of_birth,
+                experience_level,
+                admin_remarks,
+                grama_niladhari_url,
+                police_report_url,
                 current_status,
                 verification_status,
                 created_at
@@ -2603,7 +2620,13 @@ exports.updateStaffProfile = async (req, res) => {
             willing_to_live_in !== undefined ? willing_to_live_in : null,
             date_of_birth || null,
             staff_code ? String(staff_code).trim() : null,
-            nic_number || null
+            nic_number || null,
+            uploadedNicFront || null,
+            uploadedNicBack || null,
+            experience_level || null,
+            admin_remarks || null,
+            uploadedGramaNiladhari || null,
+            uploadedPoliceReport || null
         ];
 
         const result = await db.query(updateQuery, updateValues);
@@ -2692,6 +2715,8 @@ exports.createStaffProfile = async (req, res) => {
     const uploadedProfilePicture = req.files && req.files.profile_picture ? req.files.profile_picture[0].location : null;
     const uploadedNicFront = req.files && req.files.nic_front ? req.files.nic_front[0].location : null;
     const uploadedNicBack = req.files && req.files.nic_back ? req.files.nic_back[0].location : null;
+    const uploadedGramaNiladhari = req.files && req.files.grama_niladhari ? req.files.grama_niladhari[0].location : null;
+    const uploadedPoliceReport = req.files && req.files.police_report ? req.files.police_report[0].location : null;
 
     try {
         // Validate required fields
@@ -2826,17 +2851,21 @@ exports.createStaffProfile = async (req, res) => {
                 staff_code,
                 experience_level,
                 admin_remarks,
+                grama_niladhari_url,
+                police_report_url,
                 current_status,
                 verification_status,
                 created_at
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'AVAILABLE', 'VERIFIED', NOW()
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'AVAILABLE', 'VERIFIED', NOW()
             )
             RETURNING
                 staff_profile_id,
                 staff_code,
                 experience_level,
                 admin_remarks,
+                grama_niladhari_url,
+                police_report_url,
                 user_id,
                 full_name,
                 designation,
@@ -2873,7 +2902,9 @@ exports.createStaffProfile = async (req, res) => {
             date_of_birth,
             staff_code ? String(staff_code).trim() : null,
             experience_level || null,
-            admin_remarks || null
+            admin_remarks || null,
+            uploadedGramaNiladhari || null,
+            uploadedPoliceReport || null
         ];
 
         const result = await db.query(insertQuery, insertValues);

@@ -30,10 +30,10 @@ router.get('/check-mobile/:mobile', async (req, res) => {
 });
 
 // Admin: Check if a mobile number is already used by an existing staff profile
-router.get('/check-staff-mobile/:mobile', protect, restrictTo('SUPER_ADMIN'), async (req, res) => {
+router.get('/check-staff-mobile/:mobile', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), async (req, res) => {
   try {
     const result = await db.query(
-      'SELECT 1 FROM staff_profiles WHERE mobile_number = $1',
+      'SELECT 1 FROM staff_profiles sp JOIN users u ON sp.user_id = u.user_id WHERE u.mobile_number = $1',
       [req.params.mobile]
     );
     res.json({ available: result.rows.length === 0 });
@@ -44,7 +44,7 @@ router.get('/check-staff-mobile/:mobile', protect, restrictTo('SUPER_ADMIN'), as
 });
 
 // Admin: Check if a staff code is already taken
-router.get('/check-staff-code/:code', protect, restrictTo('SUPER_ADMIN'), async (req, res) => {
+router.get('/check-staff-code/:code', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), async (req, res) => {
   try {
     const result = await db.query(
       'SELECT 1 FROM staff_profiles WHERE LOWER(staff_code) = LOWER($1)',

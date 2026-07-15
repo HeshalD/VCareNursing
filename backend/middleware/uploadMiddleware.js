@@ -11,6 +11,8 @@ const folderMap = {
   nic_front: 'vcare_nic_cards',
   nic_back: 'vcare_nic_cards',
   documents: 'vcare_documents',
+  grama_niladhari: 'vcare_compliance_docs',
+  police_report: 'vcare_compliance_docs',
 };
 
 const docReportFolderMap = {
@@ -44,6 +46,8 @@ const uploadApplicationFiles = multer({
   { name: 'profile_picture', maxCount: 1 },
   { name: 'nic_front', maxCount: 1 },
   { name: 'nic_back', maxCount: 1 },
+  { name: 'grama_niladhari', maxCount: 1 },
+  { name: 'police_report', maxCount: 1 },
 ]);
 
 const uploadDocReportFiles = multer({

@@ -266,7 +266,7 @@ const PatientFormModal = ({ formData, onChange, onSubmit, onClose, saving }) => 
             {field('Age', 'age', { type: 'number', required: true })}
             {field('Gender', 'gender', { select: true })}
           </div>
-          {field('Relationship with Client', 'relationship_to_client', { select: true, required: true, options: RELATIONSHIP_OPTIONS })}
+          {field('Relationship', 'relationship_to_client', { select: true, required: true, options: RELATIONSHIP_OPTIONS })}
           {field('Medical Condition', 'medical_condition', { textarea: true, required: true })}
           {field('Residential Address', 'residential_address', { required: true, placeholder: 'e.g. 45/A, Galle Road, Dehiwala, Colombo' })}
 

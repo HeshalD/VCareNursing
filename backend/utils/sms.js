@@ -9,6 +9,10 @@ const formatSriLankaNumber = (mobileNumber) => {
 };
 
 const sendSmsOtp = async (mobileNumber, otp) => {
+  if (process.env.SMS_ENABLED === 'false') {
+    console.log(`[SMS disabled] Skipped OTP SMS to ${mobileNumber}`);
+    return { skipped: true };
+  }
   const number = formatSriLankaNumber(mobileNumber);
 
   const response = await axios.post(
@@ -33,6 +37,10 @@ const sendSmsOtp = async (mobileNumber, otp) => {
 };
 
 const sendSms = async (mobileNumber, message) => {
+  if (process.env.SMS_ENABLED === 'false') {
+    console.log(`[SMS disabled] Skipped SMS to ${mobileNumber}`);
+    return { skipped: true };
+  }
   const number = formatSriLankaNumber(mobileNumber);
 
   const response = await axios.post(
