@@ -147,6 +147,10 @@ router.post(
 
 router.patch('/:booking_id/extend', protect, restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'), bookingController.extendBooking);
 
+// Manual overdue flag/clear for SHIFT_BASED bookings (no automatic cron detection for this model)
+router.post('/:booking_id/mark-overdue', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.markShiftBookingOverdue);
+router.post('/:booking_id/resolve-overdue', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.resolveShiftBookingOverdue);
+
 router.post('/:booking_id/swap-staff', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), bookingController.swapStaff);
 router.get('/:booking_id/swap-history', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.getSwapHistory);
 
@@ -167,6 +171,13 @@ router.post('/:booking_id/shift-slots/:shift_slot_id/reassign-staff', protect, r
 router.get('/:booking_id/daily-invoices', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.getBookingDailyInvoices);
 router.post('/:booking_id/daily-invoices', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.confirmDailyInvoice);
 router.patch('/:booking_id/invoicing-mode', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.updateInvoicingMode);
+
+// Per-shift schedule (derived, manual — no cron) + waive/reschedule for SHIFT_BASED bookings
+router.get('/:booking_id/shift-schedule', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.getShiftSchedule);
+router.get('/:booking_id/shift-reschedules', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.getShiftReschedules);
+router.post('/:booking_id/shift-occurrences/waive', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.waiveShiftOccurrence);
+router.post('/:booking_id/shift-occurrences/reschedule', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.rescheduleShiftOccurrence);
+router.post('/:booking_id/shift-occurrences/:reschedule_id/cancel', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.cancelShiftReschedule);
 
 // Notes CRUD
 router.post('/:booking_id/notes', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingNotesController.addNote);

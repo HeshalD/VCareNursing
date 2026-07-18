@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import {
   DollarSign, TrendingUp, TrendingDown, Download,
   AlertTriangle, Receipt,
-  Wallet, Clock, RefreshCw
+  Wallet, Clock, RefreshCw, ChevronDown, Banknote
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend
@@ -86,9 +87,169 @@ const SectionTitle = ({ children }) => (
   <h2 className="text-sm font-semibold text-slate-900 mb-4">{children}</h2>
 );
 
+const RECEIVABLES_BUCKET_TONES_LIST = {
+  days_1_15: 'text-blue-600',
+  days_16_30: 'text-blue-600',
+  days_31_45: 'text-blue-600',
+  days_46_plus: 'text-blue-600',
+};
+
+// Mirrors a standard AR "Total Receivables" widget: a progress bar splitting
+// unpaid invoices into Current (not yet due) vs Overdue (= this app's
+// total_receivables), with a dropdown breaking the overdue portion down by
+// age bucket. "Current" here is invoices/daily charges that are unpaid but
+// not yet overdue — outstanding_daily_invoices (always PENDING, never
+// overdue) plus the non-overdue slice of product/rental invoices. It's kept
+// separate from total_outstanding, which also includes registration fees.
+const ReceivablesCard = ({ loading, totalReceivables, overview, receivablesAging, showBreakdown, onToggleBreakdown, onViewReport }) => {
+  const current = Math.max(
+    parseFloat(overview?.outstanding_daily_invoices || 0) +
+    (parseFloat(overview?.outstanding_product_rental_invoices || 0) - parseFloat(overview?.overdue_product_rental_invoices || 0)),
+    0
+  );
+  const totalUnpaid = current + totalReceivables;
+  const pctOverdue = totalUnpaid > 0 ? (totalReceivables / totalUnpaid) * 100 : 0;
+  const pctCurrent = 100 - pctOverdue;
+
+  return (
+    <div className="relative bg-white p-4 rounded-xl border border-slate-200">
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Receivables</p>
+        <div className="p-2 rounded-lg bg-red-50 text-red-600">
+          <AlertTriangle className="w-4 h-4" />
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="h-7 w-32 bg-slate-100 rounded animate-pulse" />
+      ) : (
+        <>
+          <p className={`text-xl font-bold tabular-nums ${totalReceivables > 0 ? 'text-red-700' : 'text-slate-900'}`}>
+            {fmt(totalReceivables)}
+          </p>
+          <p className="text-xs text-slate-400 mt-0.5">of {fmt(totalUnpaid)} total unpaid</p>
+
+          <div className="mt-3 h-2 w-full rounded-full bg-slate-100 overflow-hidden flex">
+            <div className="h-full bg-blue-500" style={{ width: `${pctCurrent}%` }} />
+            <div className="h-full bg-orange-500" style={{ width: `${pctOverdue}%` }} />
+          </div>
+
+          <div className="mt-2 flex items-center justify-between text-xs">
+            <span className="inline-flex items-center gap-1.5 text-slate-500">
+              <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
+              Current : <span className="font-semibold text-slate-700">{fmt(current)}</span>
+            </span>
+            <button
+              type="button"
+              onClick={onToggleBreakdown}
+              disabled={!receivablesAging?.buckets?.length}
+              className="inline-flex items-center gap-1.5 text-slate-500 disabled:cursor-default"
+            >
+              <span className="w-2 h-2 rounded-full bg-orange-500 flex-shrink-0" />
+              Overdue : <span className="font-semibold text-slate-700">{fmt(totalReceivables)}</span>
+              {receivablesAging?.buckets?.length ? (
+                <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${showBreakdown ? 'rotate-180' : ''}`} />
+              ) : null}
+            </button>
+          </div>
+        </>
+      )}
+
+      {showBreakdown && receivablesAging?.buckets?.length ? (
+        <div className="absolute z-10 top-full right-0 mt-2 w-56 bg-white rounded-xl border border-slate-200 shadow-lg p-3">
+          <div className="space-y-1.5">
+            {receivablesAging.buckets.map(b => (
+              <div key={b.key} className="flex items-center justify-between px-1">
+                <span className="text-sm text-slate-600">{b.label}</span>
+                <span className={`text-sm font-semibold tabular-nums ${RECEIVABLES_BUCKET_TONES_LIST[b.key] || 'text-blue-600'}`}>
+                  {fmt(b.amount)}
+                </span>
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={onViewReport}
+            className="mt-2 w-full text-center text-xs font-semibold text-blue-600 hover:text-blue-700 border-t border-slate-100 pt-2"
+          >
+            View full report
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+const PAYABLES_BUCKET_TONES_LIST = {
+  days_1_15: 'text-violet-600',
+  days_16_30: 'text-violet-600',
+  days_31_45: 'text-violet-600',
+  days_46_plus: 'text-violet-600',
+};
+
+// AP equivalent of ReceivablesCard: unpaid staff_wallet balances, broken
+// down by age bucket. Unlike receivables there's no "not yet due" state for
+// a salary balance — money earned is owed from the moment it's confirmed —
+// so this card skips the Current/Overdue split and just shows the total
+// plus an age-bucket dropdown.
+const PayablesCard = ({ loading, totalPayables, payablesAging, showBreakdown, onToggleBreakdown, onViewReport }) => (
+  <div className="relative bg-white p-4 rounded-xl border border-slate-200">
+    <div className="flex items-center justify-between mb-3">
+      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Payables</p>
+      <div className="p-2 rounded-lg bg-violet-50 text-violet-600">
+        <Banknote className="w-4 h-4" />
+      </div>
+    </div>
+
+    {loading ? (
+      <div className="h-7 w-32 bg-slate-100 rounded animate-pulse" />
+    ) : (
+      <>
+        <button
+          type="button"
+          onClick={onToggleBreakdown}
+          disabled={!payablesAging?.buckets?.length}
+          className="flex items-center gap-1 disabled:cursor-default"
+        >
+          <p className={`text-xl font-bold tabular-nums ${totalPayables > 0 ? 'text-violet-700' : 'text-slate-900'}`}>
+            {fmt(totalPayables)}
+          </p>
+          {payablesAging?.buckets?.length ? (
+            <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${showBreakdown ? 'rotate-180' : ''}`} />
+          ) : null}
+        </button>
+        <p className="text-xs text-slate-400 mt-1">Unpaid staff salary balances</p>
+      </>
+    )}
+
+    {showBreakdown && payablesAging?.buckets?.length ? (
+      <div className="absolute z-10 top-full right-0 mt-2 w-56 bg-white rounded-xl border border-slate-200 shadow-lg p-3">
+        <div className="space-y-1.5">
+          {payablesAging.buckets.map(b => (
+            <div key={b.key} className="flex items-center justify-between px-1">
+              <span className="text-sm text-slate-600">{b.label}</span>
+              <span className={`text-sm font-semibold tabular-nums ${PAYABLES_BUCKET_TONES_LIST[b.key] || 'text-violet-600'}`}>
+                {fmt(b.amount)}
+              </span>
+            </div>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={onViewReport}
+          className="mt-2 w-full text-center text-xs font-semibold text-blue-600 hover:text-blue-700 border-t border-slate-100 pt-2"
+        >
+          View full report
+        </button>
+      </div>
+    ) : null}
+  </div>
+);
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 const Financials = () => {
+  const navigate = useNavigate();
   const [overview, setOverview] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const [transactionsMeta, setTransactionsMeta] = useState({ total: 0, page: 1, total_pages: 1 });
@@ -97,6 +258,10 @@ const Financials = () => {
   const [creditAlerts, setCreditAlerts] = useState(null);
   const [revenueChart, setRevenueChart] = useState([]);
   const [categoriesChart, setCategoriesChart] = useState([]);
+  const [receivablesAging, setReceivablesAging] = useState(null);
+  const [showReceivablesBreakdown, setShowReceivablesBreakdown] = useState(false);
+  const [payablesAging, setPayablesAging] = useState(null);
+  const [showPayablesBreakdown, setShowPayablesBreakdown] = useState(false);
 
   const [period, setPeriod] = useState('monthly');
   const [filters, setFilters] = useState({ category: '', flow: '', status: '', page: 1, limit: 10 });
@@ -108,12 +273,14 @@ const Financials = () => {
     const fetchAll = async () => {
       setLoading(true);
       try {
-        const [ov, adv, sw, ca, cat] = await Promise.all([
+        const [ov, adv, sw, ca, cat, aging, payAging] = await Promise.all([
           apiClient.getFinancesOverview(),
           apiClient.getAdvancesSummary(),
           apiClient.getStaffWalletsSummary(),
           apiClient.getCreditAlertsSummary(),
           apiClient.getTransactionCategoriesChart(),
+          apiClient.getReceivablesAging(),
+          apiClient.getPayablesAging(),
         ]);
 
         setOverview(ov.data);
@@ -121,6 +288,8 @@ const Financials = () => {
         setStaffWallets(sw.data);
         setCreditAlerts(ca.data);
         setCategoriesChart(cat.data);
+        setReceivablesAging(aging.data);
+        setPayablesAging(payAging.data);
       } catch (err) {
         console.error('Failed to load finances data:', err);
       } finally {
@@ -163,6 +332,7 @@ const Financials = () => {
 
   const totalOutstanding = parseFloat(overview?.total_outstanding || 0);
   const totalReceivables = parseFloat(overview?.total_receivables || 0);
+  const totalPayables = parseFloat(payablesAging?.total_payables || 0);
   const netCashFlow = parseFloat(overview?.net_cash_flow || 0);
 
   return (
@@ -210,19 +380,19 @@ const Financials = () => {
           iconBg="bg-amber-50 text-amber-600"
           loading={loading}
         />
-        <StatCard
-          title="Total Receivables"
-          value={fmt(totalReceivables)}
-          sub={`Overdue bookings ${fmt(overview?.overdue_booking_balance)} · Overdue product/rental ${fmt(overview?.overdue_product_rental_invoices)}`}
-          icon={AlertTriangle}
-          iconBg="bg-red-50 text-red-600"
-          valueClass={totalReceivables > 0 ? 'text-red-700' : 'text-slate-900'}
+        <ReceivablesCard
           loading={loading}
+          totalReceivables={totalReceivables}
+          overview={overview}
+          receivablesAging={receivablesAging}
+          showBreakdown={showReceivablesBreakdown}
+          onToggleBreakdown={() => setShowReceivablesBreakdown(v => !v)}
+          onViewReport={() => navigate('/admin/reports/receivables-aging')}
         />
       </div>
 
       {/* ── Active Booking Financials ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
         <StatCard
           title="Active Bookings"
           value={overview?.active_bookings_count ?? '—'}
@@ -254,6 +424,14 @@ const Financials = () => {
           icon={Receipt}
           iconBg="bg-lime-50 text-lime-600"
           loading={loading}
+        />
+        <PayablesCard
+          loading={loading}
+          totalPayables={totalPayables}
+          payablesAging={payablesAging}
+          showBreakdown={showPayablesBreakdown}
+          onToggleBreakdown={() => setShowPayablesBreakdown(v => !v)}
+          onViewReport={() => navigate('/admin/reports/payables-aging')}
         />
       </div>
 

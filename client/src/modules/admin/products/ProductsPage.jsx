@@ -590,6 +590,7 @@ function ProductModal({ product, categories, onClose, onSaved }) {
     category_id: product?.category_id || '',
     description: product?.description || '',
     price: product?.price || '',
+    cost_price: product?.cost_price ?? '',
     stock_quantity: product?.stock_quantity ?? 0,
   });
   const [imageFile, setImageFile] = useState(null);
@@ -675,6 +676,21 @@ function ProductModal({ product, categories, onClose, onSaved }) {
                 onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
                 className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[11px] font-medium text-slate-500 mb-1">Cost Price</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.cost_price}
+                onChange={(e) => setForm((f) => ({ ...f, cost_price: e.target.value }))}
+                className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+              <p className="mt-1 text-[10px] text-slate-400">What this item costs the business — used for the Profit &amp; Loss report's COGS.</p>
             </div>
           </div>
 

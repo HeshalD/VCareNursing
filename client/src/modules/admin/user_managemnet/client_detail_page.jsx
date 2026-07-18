@@ -216,9 +216,13 @@ const ClientDetailPage = () => {
   const [invoiceStatusFilter, setInvoiceStatusFilter] = useState('');
   const [invoiceDateFrom, setInvoiceDateFrom] = useState('');
   const [invoiceDateTo, setInvoiceDateTo] = useState('');
+  const [invoiceTypeView, setInvoiceTypeView] = useState('REG_FEE');
 
   const [regFeeInvoices, setRegFeeInvoices] = useState([]);
   const [regFeeInvoicesLoading, setRegFeeInvoicesLoading] = useState(false);
+
+  const [combinedInvoices, setCombinedInvoices] = useState([]);
+  const [combinedInvoicesLoading, setCombinedInvoicesLoading] = useState(false);
 
   const [productQuotes, setProductQuotes] = useState([]);
   const [productQuotesLoading, setProductQuotesLoading] = useState(false);
@@ -236,7 +240,7 @@ const ClientDetailPage = () => {
   const [refundDepositTarget, setRefundDepositTarget] = useState(null);
 
   const [editingBilling, setEditingBilling] = useState(false);
-  const [billingForm, setBillingForm] = useState({ company_name: '', honorific: '' });
+  const [billingForm, setBillingForm] = useState({ company_name: '', honorific: '', display_name_source: 'FULL_NAME' });
   const [billingLoading, setBillingLoading] = useState(false);
   const [billingError, setBillingError] = useState('');
 
@@ -434,6 +438,19 @@ const ClientDetailPage = () => {
     }
   };
 
+  const fetchCombinedInvoices = async () => {
+    if (!clientId) return;
+    try {
+      setCombinedInvoicesLoading(true);
+      const res = await apiClient.getCombinedInvoices({ client_id: clientId });
+      setCombinedInvoices(Array.isArray(res?.data) ? res.data : []);
+    } catch {
+      // non-fatal
+    } finally {
+      setCombinedInvoicesLoading(false);
+    }
+  };
+
   const fetchProductQuotes = async () => {
     if (!clientId) return;
     try {
@@ -575,7 +592,7 @@ const ClientDetailPage = () => {
 
   useEffect(() => {
     if (activeSection === 'bookings') fetchBookingsPag();
-    if (activeSection === 'invoices') { fetchClientInvoices(); fetchRegFeeInvoices(); }
+    if (activeSection === 'invoices') { fetchClientInvoices(); fetchRegFeeInvoices(); fetchProductInvoices(); fetchCombinedInvoices(); }
     if (activeSection === 'products') { fetchProductQuotes(); fetchProductInvoices(); fetchRentedItems(); fetchDeposits(); }
     if (activeSection === 'quotes') fetchQuoteLineItems();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1331,9 +1348,53 @@ const ClientDetailPage = () => {
           SENT: 'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200',
           PAID: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
         };
+        const PRODUCT_INVOICE_STATUS_COLORS = {
+          PENDING: 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200',
+          PAID:    'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
+        };
+        const INVOICE_TYPE_TABS = [
+          { id: 'REG_FEE',   label: 'Registration Fee', count: regFeeInvoices.length },
+          { id: 'DAILY',     label: 'Daily Invoices',    count: clientInvoices.length },
+          { id: 'PRODUCT',   label: 'Product Invoices',  count: productInvoices.length },
+          { id: 'COMBINED',  label: 'Combined Invoices', count: combinedInvoices.length },
+        ];
+        const invoicesRefreshing = regFeeInvoicesLoading || invoicesLoading || productInvoicesLoading || combinedInvoicesLoading;
         return (
           <div className="space-y-6">
+            {/* Invoice type toggle */}
+            <div className="flex items-center justify-between gap-3">
+              <div className="inline-flex rounded-md border border-gray-200 bg-gray-50 p-1">
+                {INVOICE_TYPE_TABS.map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setInvoiceTypeView(tab.id)}
+                    className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      invoiceTypeView === tab.id
+                        ? 'bg-white text-gray-900 shadow-sm ring-1 ring-inset ring-gray-200'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    {tab.label}
+                    <span className={`rounded-full px-1.5 text-[10px] ${invoiceTypeView === tab.id ? 'bg-gray-100 text-gray-600' : 'bg-gray-200 text-gray-500'}`}>
+                      {tab.count}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => { fetchClientInvoices(); fetchRegFeeInvoices(); fetchProductInvoices(); fetchCombinedInvoices(); }}
+                disabled={invoicesRefreshing}
+                className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+              >
+                {invoicesRefreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                Refresh
+              </button>
+            </div>
+
             {/* Registration Fee Invoices */}
+            {invoiceTypeView === 'REG_FEE' && (
             <div>
               <h3 className="text-sm font-semibold text-gray-700 mb-3">Registration Fee Invoices</h3>
               {regFeeInvoicesLoading ? (
@@ -1386,8 +1447,10 @@ const ClientDetailPage = () => {
                 </div>
               )}
             </div>
+            )}
 
             {/* Daily Invoices */}
+            {invoiceTypeView === 'DAILY' && (
             <div className="space-y-4">
             <h3 className="text-sm font-semibold text-gray-700">Daily Invoices</h3>
             {/* Filters */}
@@ -1503,6 +1566,104 @@ const ClientDetailPage = () => {
               </div>
             )}
             </div>
+            )}
+
+            {/* Product Invoices */}
+            {invoiceTypeView === 'PRODUCT' && (
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">Product Invoices</h3>
+              {productInvoicesLoading ? (
+                <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading product invoicesâ€¦
+                </div>
+              ) : productInvoices.length === 0 ? (
+                <EmptyState title="No product invoices found" />
+              ) : (
+                <div className="overflow-x-auto rounded-md border border-gray-200">
+                  <table className="min-w-full divide-y divide-gray-100 text-sm">
+                    <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                      <tr>
+                        <th className="px-4 py-3 text-left">Invoice Code</th>
+                        <th className="px-4 py-3 text-left">Category</th>
+                        <th className="px-4 py-3 text-left">Status</th>
+                        <th className="px-4 py-3 text-right">Amount</th>
+                        <th className="px-4 py-3 text-left">Created</th>
+                        <th className="px-4 py-3 text-left">Paid</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 bg-white">
+                      {productInvoices.map((inv) => (
+                        <tr key={inv.invoice_id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-4 py-3 font-mono text-xs text-gray-600 whitespace-nowrap">{inv.invoice_code}</td>
+                          <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{inv.category}</td>
+                          <td className="px-4 py-3">
+                            <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${PRODUCT_INVOICE_STATUS_COLORS[inv.status] || 'bg-gray-100 text-gray-600'}`}>
+                              {inv.status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(inv.amount)}</td>
+                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{formatDate(inv.created_at)}</td>
+                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{inv.paid_at ? formatDate(inv.paid_at) : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <p className="mt-2 text-[11px] text-gray-400">Payments are recorded from the Products page.</p>
+            </div>
+            )}
+
+            {/* Combined Invoices */}
+            {invoiceTypeView === 'COMBINED' && (
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">Combined Invoices</h3>
+              <p className="mb-3 text-[11px] text-gray-400">
+                Auto-generated the first time a payment is recorded against a service quotation (registration fee + shift/daily charges, plus any linked product quote).
+              </p>
+              {combinedInvoicesLoading ? (
+                <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading combined invoices…
+                </div>
+              ) : combinedInvoices.length === 0 ? (
+                <EmptyState title="No combined invoices generated yet" />
+              ) : (
+                <div className="overflow-x-auto rounded-md border border-gray-200">
+                  <table className="min-w-full divide-y divide-gray-100 text-sm">
+                    <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                      <tr>
+                        <th className="px-4 py-3 text-left">Generated</th>
+                        <th className="px-4 py-3 text-left">Invoice Code</th>
+                        <th className="px-4 py-3 text-left">Estimate No.</th>
+                        <th className="px-4 py-3 text-right">Amount</th>
+                        <th className="px-4 py-3 text-left">Download</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 bg-white">
+                      {combinedInvoices.map((inv) => (
+                        <tr key={inv.quote_id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{formatDateTime(inv.invoice_generated_at)}</td>
+                          <td className="px-4 py-3 font-mono text-xs text-gray-600">{inv.invoice_code}</td>
+                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{inv.estimate_number || '—'}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(inv.total_amount)}</td>
+                          <td className="px-4 py-3">
+                            <a
+                              href={inv.invoice_pdf_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                            >
+                              <Download className="h-3.5 w-3.5" /> Download
+                            </a>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            )}
           </div>
         );
       }
@@ -2854,7 +3015,11 @@ const ClientDetailPage = () => {
                     {!editingBilling && (
                       <button
                         onClick={() => {
-                          setBillingForm({ company_name: clientProfile.company_name || '', honorific: clientProfile.honorific || '' });
+                          setBillingForm({
+                            company_name: clientProfile.company_name || '',
+                            honorific: clientProfile.honorific || '',
+                            display_name_source: clientProfile.display_name_source === 'COMPANY_NAME' ? 'COMPANY_NAME' : 'FULL_NAME',
+                          });
                           setBillingError('');
                           setEditingBilling(true);
                         }}
@@ -2872,11 +3037,50 @@ const ClientDetailPage = () => {
                         <input
                           type="text"
                           value={billingForm.company_name}
-                          onChange={(e) => setBillingForm(f => ({ ...f, company_name: e.target.value }))}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setBillingForm(f => ({
+                              ...f,
+                              company_name: value,
+                              display_name_source: value ? f.display_name_source : 'FULL_NAME',
+                            }));
+                          }}
                           placeholder="Leave blank for personal billing"
                           className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
                         />
                       </div>
+                      {billingForm.company_name && (
+                        <div>
+                          <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Display Name</label>
+                          <p className="text-xs text-gray-400 mb-1.5">Name used on this client's receipts, invoices, statements and quotations.</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setBillingForm(f => ({ ...f, display_name_source: 'FULL_NAME' }))}
+                              className={`px-3 py-2 rounded-md border text-left text-xs font-medium transition-all ${
+                                billingForm.display_name_source === 'FULL_NAME'
+                                  ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                  : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                              }`}
+                            >
+                              <p className="font-semibold">Client's Name</p>
+                              <p className="truncate text-gray-400">{clientProfile.full_name || 'Personal name'}</p>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setBillingForm(f => ({ ...f, display_name_source: 'COMPANY_NAME' }))}
+                              className={`px-3 py-2 rounded-md border text-left text-xs font-medium transition-all ${
+                                billingForm.display_name_source === 'COMPANY_NAME'
+                                  ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                  : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                              }`}
+                            >
+                              <p className="font-semibold">Company Name</p>
+                              <p className="truncate text-gray-400">{billingForm.company_name}</p>
+                            </button>
+                          </div>
+                        </div>
+                      )}
                       <div>
                         <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Title / Honorific</label>
                         <div className="flex flex-wrap gap-2">
@@ -2925,6 +3129,17 @@ const ClientDetailPage = () => {
                         <p className="text-[11px] text-gray-400 mb-0.5">Title</p>
                         <p className="text-sm font-medium text-gray-800">{clientProfile.honorific || <span className="text-gray-400 italic">None</span>}</p>
                       </div>
+                      {clientProfile.company_name && (
+                        <div className="sm:col-span-2">
+                          <p className="text-[11px] text-gray-400 mb-0.5">Display Name (on documents)</p>
+                          <p className="text-sm font-medium text-gray-800">
+                            {clientProfile.display_name_source === 'COMPANY_NAME' ? clientProfile.company_name : clientProfile.full_name}
+                            <span className="text-gray-400 font-normal ml-1">
+                              ({clientProfile.display_name_source === 'COMPANY_NAME' ? 'Company' : "Client's name"})
+                            </span>
+                          </p>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

@@ -752,16 +752,40 @@ exports.updateMe = async (req, res) => {
 // Admin: update company name (and optionally honorific) for a client
 exports.updateClientCompanyName = async (req, res) => {
   const { client_id } = req.params;
-  const { company_name, honorific } = req.body;
+  const { company_name, honorific, display_name_source } = req.body;
+  // Display name can only be the company when a company name is actually on file.
+  const resolvedDisplayNameSource = company_name && display_name_source === 'COMPANY_NAME'
+    ? 'COMPANY_NAME'
+    : 'FULL_NAME';
   try {
     const result = await db.query(
       `UPDATE client_profiles
-       SET company_name = $1, honorific = $2, updated_at = NOW()
-       WHERE client_profile_id = $3
-       RETURNING client_profile_id, full_name, company_name, honorific`,
-      [company_name || null, honorific || null, client_id]
+       SET company_name = $1, honorific = $2, display_name_source = $3, updated_at = NOW()
+       WHERE client_profile_id = $4
+       RETURNING client_profile_id, full_name, company_name, honorific, display_name_source`,
+      [company_name || null, honorific || null, resolvedDisplayNameSource, client_id]
     );
     if (!result.rows.length) return res.status(404).json({ message: 'Client not found.' });
+
+    try {
+      const actorName = await getActorName(req.user.user_id);
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName,
+        actorRole: extractActorRole(req.user?.role),
+        actionType: 'CLIENT_BILLING_UPDATED',
+        entityType: 'CLIENT',
+        entityId: String(client_id),
+        details: {
+          company_name: result.rows[0].company_name,
+          honorific: result.rows[0].honorific,
+          display_name_source: result.rows[0].display_name_source,
+        },
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (client billing update):', logErr.message);
+    }
+
     return res.status(200).json({ status: 'success', data: result.rows[0] });
   } catch (err) {
     console.error('updateClientCompanyName error:', err);
@@ -1195,18 +1219,23 @@ exports.getClientServiceHistory = async (req, res) => {
 
 // Admin proxy-create client (bypasses OTP)
 exports.proxyCreateClient = async (req, res) => {
-  const { full_name, email, mobile_number, gender, primary_address, client_type, honorific, company_name } = req.body;
+  const { full_name, email, mobile_number, gender, primary_address, client_type, honorific, company_name, display_name_source } = req.body;
 
-  if (!full_name || !email || !mobile_number || !gender) {
-    return res.status(400).json({ message: 'full_name, email, mobile_number, and gender are required.' });
+  if (!full_name || !mobile_number || !gender) {
+    return res.status(400).json({ message: 'full_name, mobile_number, and gender are required.' });
   }
+
+  const resolvedDisplayNameSource =
+    client_type === 'CORPORATE_PROXY' && company_name && display_name_source === 'COMPANY_NAME'
+      ? 'COMPANY_NAME'
+      : 'FULL_NAME';
 
   const bcrypt = require('bcryptjs');
   const dbClient = await db.pool.connect();
   try {
     const existing = await dbClient.query(
-      'SELECT user_id FROM users WHERE email = $1 OR mobile_number = $2',
-      [email, mobile_number]
+      'SELECT user_id FROM users WHERE ($1::varchar IS NOT NULL AND email = $1) OR mobile_number = $2',
+      [email || null, mobile_number]
     );
     if (existing.rows.length > 0) {
       return res.status(400).json({ message: 'A user with this email or mobile number already exists.' });
@@ -1221,23 +1250,43 @@ exports.proxyCreateClient = async (req, res) => {
 
     const userRes = await dbClient.query(
       `INSERT INTO users (mobile_number, password_hash, email, is_email_verified)
-       VALUES ($1, $2, $3, TRUE) RETURNING user_id`,
-      [mobile_number, hashedPassword, email]
+       VALUES ($1, $2, $3, $4) RETURNING user_id`,
+      [mobile_number, hashedPassword, email || null, !!email]
     );
     const userId = userRes.rows[0].user_id;
 
     const profileRes = await dbClient.query(
-      `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address, company_name, honorific)
-       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7) RETURNING client_profile_id`,
+      `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address, company_name, honorific, display_name_source)
+       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8) RETURNING client_profile_id`,
       [
         userId, full_name, client_type || 'INDIVIDUAL',
         gender.toUpperCase(), primary_address || null,
-        company_name || null, honorific || null,
+        company_name || null, honorific || null, resolvedDisplayNameSource,
       ]
     );
     const clientProfileId = profileRes.rows[0].client_profile_id;
 
     await dbClient.query('COMMIT');
+
+    try {
+      const actorName = await getActorName(req.user.user_id);
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName,
+        actorRole: extractActorRole(req.user?.role),
+        actionType: 'CLIENT_PROFILE_CREATED',
+        entityType: 'CLIENT',
+        entityId: String(clientProfileId),
+        details: {
+          full_name,
+          client_type: client_type || 'INDIVIDUAL',
+          company_name: company_name || null,
+          display_name_source: resolvedDisplayNameSource,
+        },
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (proxy create client):', logErr.message);
+    }
 
     // Onboard the new client exactly like a brand-new user from a staff application
     // approval / booking conversion: login credentials (mobile + temp password) go via
@@ -1487,7 +1536,7 @@ exports.sendRegFeeInvoice = async (req, res) => {
 
   try {
     const clientResult = await db.query(
-      `SELECT cp.client_profile_id, cp.full_name, cp.reg_fee_status,
+      `SELECT cp.client_profile_id, cp.full_name, cp.company_name, cp.display_name_source, cp.reg_fee_status,
               u.mobile_number
        FROM client_profiles cp
        JOIN users u ON cp.user_id = u.user_id
@@ -1500,6 +1549,8 @@ exports.sendRegFeeInvoice = async (req, res) => {
     }
 
     const client = clientResult.rows[0];
+    // The billed entity — the company itself when that's the client's chosen display name.
+    client.display_name = (client.display_name_source === 'COMPANY_NAME' && client.company_name) || client.full_name;
 
     if (!client.mobile_number) {
       return res.status(400).json({ message: 'Client does not have a mobile number on file.' });
@@ -1535,7 +1586,7 @@ exports.sendRegFeeInvoice = async (req, res) => {
     const invoicePdfUrl = await generateAndUploadRegFeeInvoice({
       invoice_code: invoiceCode,
       invoice_date: invoiceDate,
-      client_name: client.full_name,
+      client_name: client.display_name,
       amount: feeAmount,
       bank_name: bank.bank_name,
       account_holder_name: bank.account_holder_name,
@@ -1571,10 +1622,10 @@ exports.sendRegFeeInvoice = async (req, res) => {
 
     // Send notice template, then invoice template (PDF document header + bank details in body + CTA button)
     const [noticeResult, invoiceResult] = await Promise.allSettled([
-      sendRegFeeNotice(client.mobile_number, client.full_name),
+      sendRegFeeNotice(client.mobile_number, client.display_name),
       sendRegFeeInvoice(
         client.mobile_number,
-        client.full_name,
+        client.display_name,
         feeAmount,
         bank.bank_name,
         bank.account_holder_name,
@@ -1913,7 +1964,8 @@ exports.getClientInvoices = async (req, res) => {
             bdi.shift_slot_id,
             ss.label AS shift_label, ss.shift_number,
             b.booking_id, b.booking_code, b.service_type,
-            cp.full_name AS client_name
+            CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
+                 THEN cp.company_name ELSE cp.full_name END AS client_name
          FROM booking_daily_invoices bdi
          JOIN bookings b ON bdi.booking_id = b.booking_id
          LEFT JOIN booking_shift_slots ss ON bdi.shift_slot_id = ss.shift_slot_id
@@ -1973,7 +2025,9 @@ exports.getAdminInvoices = async (req, res) => {
             bdi.shift_slot_id,
             ss.label AS shift_label, ss.shift_number,
             b.booking_id, b.booking_code, b.service_type,
-            cp.full_name AS client_name, cp.client_profile_id
+            CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
+                 THEN cp.company_name ELSE cp.full_name END AS client_name,
+            cp.client_profile_id
          FROM booking_daily_invoices bdi
          JOIN bookings b ON bdi.booking_id = b.booking_id
          LEFT JOIN booking_shift_slots ss ON bdi.shift_slot_id = ss.shift_slot_id
@@ -2017,7 +2071,8 @@ exports.downloadDailyInvoicePdf = async (req, res) => {
           bdi.decided_by_name, bdi.decided_at, bdi.notes,
           ss.label AS shift_label, ss.shift_number,
           b.booking_id, b.booking_code, b.service_type,
-          cp.full_name AS client_name
+          CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
+               THEN cp.company_name ELSE cp.full_name END AS client_name
        FROM booking_daily_invoices bdi
        JOIN bookings b ON bdi.booking_id = b.booking_id
        LEFT JOIN booking_shift_slots ss ON bdi.shift_slot_id = ss.shift_slot_id
@@ -2115,7 +2170,9 @@ exports.getAllRegFeeInvoices = async (req, res) => {
     const [rows, countResult] = await Promise.all([
       db.query(
         `SELECT crfi.invoice_id, crfi.invoice_code, crfi.amount, crfi.pdf_url, crfi.status, crfi.created_at,
-                cp.client_profile_id, cp.full_name AS client_name,
+                cp.client_profile_id,
+                CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
+                     THEN cp.company_name ELSE cp.full_name END AS client_name,
                 cp.reg_fee_status AS membership_status, cp.reg_fee_expires_at AS membership_expires_at
          FROM client_reg_fee_invoices crfi
          LEFT JOIN client_profiles cp ON crfi.client_id = cp.client_profile_id

@@ -29,39 +29,72 @@ async function safeLog(params) {
 
 // POST /api/product-invoices/from-quote/:quote_id
 // Snapshots an accepted PRODUCT quotation's total into a new PENDING invoice.
+// Locks the quotations row for the duration of the check+insert so two
+// concurrent calls (e.g. PaymentAllocationModal's auto-invoice effect firing
+// twice) can't both pass the "no existing invoice" check and create
+// duplicate invoices for the same quote — the second caller blocks on the
+// row lock and then sees the first caller's insert.
 exports.createInvoiceFromQuote = async (req, res) => {
   const { quote_id } = req.params;
   const { due_date } = req.body;
+  const pgClient = await db.pool.connect();
 
   try {
-    const quoteResult = await db.query(
+    await pgClient.query('BEGIN');
+
+    const quoteResult = await pgClient.query(
       `SELECT quote_id, quote_type, client_id, walk_in_customer_id, total_amount, status
-       FROM quotations WHERE quote_id = $1`,
+       FROM quotations WHERE quote_id = $1 FOR UPDATE`,
       [quote_id]
     );
 
     if (quoteResult.rows.length === 0) {
+      await pgClient.query('ROLLBACK');
       return res.status(404).json({ message: 'Quote not found' });
     }
 
     const quote = quoteResult.rows[0];
     if (quote.quote_type !== 'PRODUCT') {
+      await pgClient.query('ROLLBACK');
       return res.status(400).json({ message: 'Only PRODUCT quotes can be invoiced through this endpoint' });
     }
 
-    const existing = await db.query('SELECT invoice_id FROM invoices WHERE quote_id = $1', [quote_id]);
+    // This endpoint only knows how to fold a quote's total_amount into one
+    // flat invoice — it has no concept of RENTAL line items, which need their
+    // own rental_agreements row + unit marked RENTED (see
+    // quoteController.acceptProductQuote / createRentalAgreementCore). If we
+    // let a rental slip through here, the client gets charged the full
+    // amount but the rental is never actually recorded as out — see the
+    // EST-1368/BED-003 incident. Route those quotes through /accept instead.
+    const rentalCheck = await pgClient.query(
+      `SELECT 1 FROM quote_line_items li
+       JOIN products p ON li.product_id = p.product_id
+       WHERE li.quote_id = $1 AND p.product_type = 'RENTAL' LIMIT 1`,
+      [quote_id]
+    );
+    if (rentalCheck.rows.length > 0) {
+      await pgClient.query('ROLLBACK');
+      return res.status(400).json({
+        message: 'This quote contains rental items and must be accepted via POST /api/quotes/product/:quote_id/accept instead — that endpoint creates the rental agreement(s) and marks the unit(s) as rented.',
+      });
+    }
+
+    const existing = await pgClient.query('SELECT invoice_id FROM invoices WHERE quote_id = $1', [quote_id]);
     if (existing.rows.length > 0) {
+      await pgClient.query('ROLLBACK');
       return res.status(409).json({ message: 'An invoice already exists for this quote', invoice_id: existing.rows[0].invoice_id });
     }
 
-    const result = await db.query(
+    const result = await pgClient.query(
       `INSERT INTO invoices (category, client_id, walk_in_customer_id, quote_id, amount, due_date, created_by)
        VALUES ('PRODUCT', $1, $2, $3, $4, $5, $6)
        RETURNING *`,
       [quote.client_id, quote.walk_in_customer_id, quote_id, quote.total_amount, due_date || null, req.user?.user_id || null]
     );
 
-    await db.query(`UPDATE quotations SET status = 'ACCEPTED' WHERE quote_id = $1`, [quote_id]);
+    await pgClient.query(`UPDATE quotations SET status = 'ACCEPTED' WHERE quote_id = $1`, [quote_id]);
+
+    await pgClient.query('COMMIT');
 
     await safeLog({
       actorUserId: req.user?.user_id,
@@ -74,8 +107,11 @@ exports.createInvoiceFromQuote = async (req, res) => {
 
     res.status(201).json({ status: 'success', data: result.rows[0] });
   } catch (error) {
+    await pgClient.query('ROLLBACK');
     console.error('Create Invoice From Quote Error:', error);
     res.status(500).json({ message: 'Failed to create invoice' });
+  } finally {
+    pgClient.release();
   }
 };
 
@@ -112,7 +148,9 @@ exports.listInvoices = async (req, res) => {
 
     const result = await db.query(
       `SELECT i.*, q.estimate_number,
-              cp.full_name as client_name, u.mobile_number as client_mobile,
+              CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
+                   THEN cp.company_name ELSE cp.full_name END as client_name,
+              u.mobile_number as client_mobile,
               wc.full_name as walk_in_name, wc.mobile_number as walk_in_mobile
        FROM invoices i
        LEFT JOIN quotations q ON i.quote_id = q.quote_id
@@ -138,7 +176,9 @@ exports.getInvoice = async (req, res) => {
   try {
     const result = await db.query(
       `SELECT i.*, q.estimate_number,
-              cp.full_name as client_name, u.mobile_number as client_mobile,
+              CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
+                   THEN cp.company_name ELSE cp.full_name END as client_name,
+              u.mobile_number as client_mobile,
               wc.full_name as walk_in_name, wc.mobile_number as walk_in_mobile,
               COALESCE(json_agg(
                   json_build_object(
@@ -155,7 +195,7 @@ exports.getInvoice = async (req, res) => {
        LEFT JOIN walk_in_customers wc ON i.walk_in_customer_id = wc.walk_in_customer_id
        LEFT JOIN quote_line_items li ON i.quote_id = li.quote_id
        WHERE i.invoice_id = $1
-       GROUP BY i.invoice_id, q.estimate_number, cp.full_name, u.mobile_number, wc.full_name, wc.mobile_number`,
+       GROUP BY i.invoice_id, q.estimate_number, cp.full_name, cp.company_name, cp.display_name_source, u.mobile_number, wc.full_name, wc.mobile_number`,
       [invoice_id]
     );
 
@@ -179,7 +219,10 @@ exports.getInvoice = async (req, res) => {
 // same estimateTemplate/invoice_code_seq numbering.
 async function ensureInvoicePdf(invoiceId) {
   const invRes = await db.query(
-    `SELECT i.*, cp.full_name as client_name, u.mobile_number as client_mobile,
+    `SELECT i.*,
+            CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
+                 THEN cp.company_name ELSE cp.full_name END as client_name,
+            u.mobile_number as client_mobile,
             wc.full_name as walk_in_name, wc.mobile_number as walk_in_mobile
      FROM invoices i
      LEFT JOIN client_profiles cp ON i.client_id = cp.client_profile_id

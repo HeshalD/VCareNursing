@@ -17,6 +17,8 @@ const STATUS_META = {
   scheduled: { bar: '#D5CFC4', label: 'Scheduled',    pillBg: 'rgba(255,255,255,.12)',pillColor: '#CFC9BE' },
   off:       { bar: 'transparent', label: 'Off',      pillBg: 'rgba(255,255,255,.10)', pillColor: '#BCB6AB' },
   leave:     { bar: '#8C5AA6', label: 'On leave',     pillBg: 'rgba(140,90,166,.24)', pillColor: '#D2B4E2' },
+  moved:     { bar: '#B4AEA3', label: 'Moved',        pillBg: 'rgba(180,174,163,.24)',pillColor: '#CFC9BE' },
+  makeup:    { bar: '#3F77B5', label: 'Makeup shift',  pillBg: 'rgba(63,119,181,.24)', pillColor: '#A9C8E6' },
 };
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -27,9 +29,12 @@ const toLocalISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStar
 const moneyFmt = (n) => `Rs ${Math.round(Number(n || 0)).toLocaleString('en-US')}`;
 
 // Props:
-//   assignments       — rows from GET /staff/:id/attendance-calendar (booking_staff_assignments + booking/client/patient joins)
-//   attendanceRecords — rows from the same endpoint (staff_daily_attendance)
-const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], leaveDays = [], interactive = true }) => {
+//   assignments       — rows from GET /staff/:id/attendance-calendar (booking_staff_assignments + booking/client/patient joins,
+//                        including shift_slot_id/shift_number/shift_label/reschedule_id for SHIFT_BASED bookings)
+//   attendanceRecords — rows from the same endpoint (staff_daily_attendance, including shift_slot_id/reschedule_id)
+//   reschedules       — rows from the same endpoint (shift_reschedules touching this staff's assignments) — moved-away
+//                        origins render as "Moved"; makeup occurrences render on their new date
+const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], reschedules = [], leaveDays = [], interactive = true }) => {
   const [monthOffset, setMonthOffset] = useState(0);
   const [hoveredKey, setHoveredKey] = useState(null);
   const navigate = useNavigate();
@@ -54,16 +59,31 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], leaveDays
     return map;
   }, [assignments]);
 
-  // ── Attendance lookup: (assignment_id, dateISO) -> record ────────────────
+  // ── Attendance lookup: (assignment_id, shift_slot_id|'', dateISO) -> record ─
   const attendanceByKey = useMemo(() => {
     const map = new Map();
     attendanceRecords.forEach((r) => {
       const dateISO = r.service_date?.slice(0, 10);
       if (!dateISO) return;
-      map.set(`${r.assignment_id}__${dateISO}`, r);
+      map.set(`${r.assignment_id}__${r.shift_slot_id || ''}__${dateISO}`, r);
     });
     return map;
   }, [attendanceRecords]);
+
+  const attendanceByReschedule = useMemo(() => {
+    const map = new Map();
+    attendanceRecords.forEach((r) => { if (r.reschedule_id) map.set(r.reschedule_id, r); });
+    return map;
+  }, [attendanceRecords]);
+
+  // ── Reschedules touching this staff — moved origins + makeup occurrences ──
+  const movedOrigins = useMemo(() => {
+    const set = new Set();
+    reschedules.forEach((r) => set.add(`${r.shift_slot_id}__${r.original_date?.slice(0, 10)}`));
+    return set;
+  }, [reschedules]);
+
+  const assignmentById = useMemo(() => new Map(assignments.map((a) => [a.assignment_id, a])), [assignments]);
 
   // ── Approved leave lookup: set of ISO date strings the staff is off ───────
   const leaveSet = useMemo(() => {
@@ -79,32 +99,50 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], leaveDays
     return set;
   }, [leaveDays]);
 
-  // Among all assignments covering this date, pick the latest-starting one —
-  // mirrors CareTimeline's getNurseForDay so swaps/back-to-back bookings resolve correctly.
-  const getAssignmentForDate = (date) => {
-    let best = null, bestStart = null;
+  // Among assignments sharing the same shift_slot_id (or, for non-shift bookings,
+  // no slot at all) covering this date, pick the latest-starting one per slot —
+  // mirrors CareTimeline's getNurseForDay so swaps/back-to-back bookings resolve
+  // correctly. Returns one entry per distinct shift slot (or one overall for
+  // non-shift bookings), since a staff member can work several shifts in one day.
+  const getShiftsForDate = (date) => {
+    const dateISO = toLocalISO(date);
+    const bestBySlot = new Map(); // key: shift_slot_id || booking_id (non-shift) -> { assignment, start }
     for (const a of assignments) {
       if (!a.service_start_date) continue;
       if (a.assignment_status === 'CANCELLED') continue;
       const start = new Date(a.service_start_date); start.setHours(0, 0, 0, 0);
-      // service_end_date stays NULL until a scheduled completion/termination's cron
-      // actually runs — until then, fall back to the scheduled_actions effective_date
-      // (pending_end_date) so the assignment doesn't render as open-ended forever; the
-      // staff shows free again starting the day *after* that date, since the booking is
-      // still active/billed through the end date itself.
       const endSource = a.service_end_date || a.pending_end_date;
       const end = endSource ? new Date(endSource) : null;
       if (end) end.setHours(23, 59, 59, 999);
-      if (date >= start && (!end || date <= end)) {
-        if (!bestStart || start > bestStart) { bestStart = start; best = a; }
-      }
+      if (date < start || (end && date > end)) continue;
+
+      const key = a.shift_slot_id || `booking:${a.booking_id}`;
+      const existing = bestBySlot.get(key);
+      if (!existing || start > existing.start) bestBySlot.set(key, { assignment: a, start });
     }
-    return best;
+
+    const shifts = [];
+    for (const [key, { assignment }] of bestBySlot.entries()) {
+      if (assignment.shift_slot_id && movedOrigins.has(`${assignment.shift_slot_id}__${dateISO}`)) {
+        shifts.push({ kind: 'MOVED', assignment, shiftSlotId: assignment.shift_slot_id, key: `moved-${key}` });
+        continue;
+      }
+      shifts.push({ kind: 'NATURAL', assignment, shiftSlotId: assignment.shift_slot_id || null, key });
+    }
+
+    // Makeup occurrences landing on this date, where the makeup assignment belongs to this staff
+    reschedules.forEach((r) => {
+      if (r.new_date?.slice(0, 10) !== dateISO) return;
+      const makeupAssignment = assignmentById.get(r.assignment_id);
+      if (!makeupAssignment) return;
+      shifts.push({ kind: 'MAKEUP', assignment: makeupAssignment, shiftSlotId: r.shift_slot_id, rescheduleId: r.reschedule_id, key: `makeup-${r.reschedule_id}` });
+    });
+
+    return shifts;
   };
 
   const buildDay = (date) => {
     const dateISO = toLocalISO(date);
-    const assignment = getAssignmentForDate(date);
     const isToday = date.getTime() === today.getTime();
     const isFuture = date.getTime() > today.getTime();
 
@@ -113,23 +151,44 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], leaveDays
       return { date, dateISO, isToday, isWork: false, isLeave: true, status: 'leave' };
     }
 
-    if (!assignment) {
+    const rawShifts = getShiftsForDate(date);
+    if (rawShifts.length === 0) {
       return { date, dateISO, isToday, isWork: false, status: 'off' };
     }
 
-    const color = bookingColorMap.get(assignment.booking_id) || BOOKING_COLORS[0];
-    const record = attendanceByKey.get(`${assignment.assignment_id}__${dateISO}`);
+    const shifts = rawShifts.map((s) => {
+      const { assignment, kind, shiftSlotId, rescheduleId } = s;
+      const color = bookingColorMap.get(assignment.booking_id) || BOOKING_COLORS[0];
 
-    let status;
-    if (isFuture) status = 'scheduled';
-    else if (record?.salary_status === 'PAID') status = 'paid';
-    else if (record?.salary_status === 'SKIPPED') status = 'skipped';
-    else status = 'pending'; // delivered day with no decision yet (or not logged at all)
+      if (kind === 'MOVED') {
+        return {
+          key: s.key, kind, assignment, color, status: 'moved',
+          clientShort: (assignment.client_name || '').split(' ').slice(-1)[0] || assignment.client_name,
+          shiftLabel: assignment.shift_label || (assignment.shift_number ? `Shift ${assignment.shift_number}` : null),
+        };
+      }
 
-    return {
-      date, dateISO, isToday, isWork: true, status, assignment, record, color,
-      clientShort: (assignment.client_name || '').split(' ').slice(-1)[0] || assignment.client_name,
-    };
+      const record = rescheduleId
+        ? attendanceByReschedule.get(rescheduleId)
+        : attendanceByKey.get(`${assignment.assignment_id}__${shiftSlotId || ''}__${dateISO}`);
+
+      let status;
+      if (kind === 'MAKEUP' && !record) status = 'makeup';
+      else if (isFuture) status = 'scheduled';
+      else if (record?.salary_status === 'PAID') status = 'paid';
+      else if (record?.salary_status === 'SKIPPED') status = 'skipped';
+      else status = 'pending';
+
+      return {
+        key: s.key, kind, assignment, record, color, status,
+        clientShort: (assignment.client_name || '').split(' ').slice(-1)[0] || assignment.client_name,
+        shiftLabel: assignment.shift_label || (assignment.shift_number ? `Shift ${assignment.shift_number}` : null),
+      };
+    });
+
+    shifts.sort((a, b) => (a.assignment.shift_number || 0) - (b.assignment.shift_number || 0));
+
+    return { date, dateISO, isToday, isWork: true, shifts, color: shifts[0].color };
   };
 
   const monthGrid = useMemo(() => {
@@ -153,16 +212,18 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], leaveDays
     }
     return weeks;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleMonth, assignments, attendanceByKey, bookingColorMap, leaveSet, today]);
+  }, [visibleMonth, assignments, attendanceByKey, attendanceByReschedule, bookingColorMap, leaveSet, movedOrigins, reschedules, today]);
 
   const monthAgg = useMemo(() => {
     let paid = 0, pending = 0, skipped = 0, scheduled = 0, earned = 0, potential = 0;
     monthGrid.forEach((week) => week.days.forEach((c) => {
       if (c.blank || !c.isWork) return;
-      if (c.status === 'paid') { paid++; earned += Number(c.record?.salary_amount || c.assignment.daily_rate || 0); }
-      else if (c.status === 'pending') pending++;
-      else if (c.status === 'skipped') skipped++;
-      else if (c.status === 'scheduled') { scheduled++; potential += Number(c.assignment.daily_rate || 0); }
+      (c.shifts || []).forEach((s) => {
+        if (s.status === 'paid') { paid++; earned += Number(s.record?.salary_amount || s.assignment.daily_rate || 0); }
+        else if (s.status === 'pending' || s.status === 'makeup') pending++;
+        else if (s.status === 'skipped') skipped++;
+        else if (s.status === 'scheduled') { scheduled++; potential += Number(s.assignment.daily_rate || 0); }
+      });
     }));
     return { paid, pending, skipped, scheduled, earned, potential, worked: paid + pending + skipped };
   }, [monthGrid]);
@@ -172,10 +233,12 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], leaveDays
     const result = [];
     monthGrid.forEach((week) => week.days.forEach((c) => {
       if (c.blank || !c.isWork) return;
-      const id = c.assignment.booking_id;
-      if (seen.has(id)) return;
-      seen.add(id);
-      result.push({ id, name: c.assignment.client_name || 'Client', color: c.color });
+      (c.shifts || []).forEach((s) => {
+        const id = s.assignment.booking_id;
+        if (seen.has(id)) return;
+        seen.add(id);
+        result.push({ id, name: s.assignment.client_name || 'Client', color: s.color });
+      });
     }));
     return result;
   }, [monthGrid]);
@@ -190,9 +253,9 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], leaveDays
         <div>
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-bold text-[#2A2722] tracking-tight">Work & pay calendar</h2>
-            <span className="text-xs font-semibold text-[#9A9488] hidden sm:inline">Hover a day for the booking worked</span>
+            <span className="text-xs font-semibold text-[#9A9488] hidden sm:inline">Hover a day for the shifts worked</span>
           </div>
-          <p className="text-sm text-[#6F6A60] mt-1">Each block is one calendar day. Colour shows the booking; the bar below shows pay status.</p>
+          <p className="text-sm text-[#6F6A60] mt-1">Each block is one calendar day; multiple shifts on the same day stack as separate bars. Colour shows the booking.</p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           {monthOffset !== 0 && (
@@ -228,7 +291,7 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], leaveDays
               {visibleMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
             </span>
             <span className="text-sm text-[#6F6A60]">
-              {monthAgg.worked} days worked · {moneyFmt(monthAgg.earned)} earned
+              {monthAgg.worked} shift{monthAgg.worked !== 1 ? 's' : ''} worked · {moneyFmt(monthAgg.earned)} earned
               {monthAgg.scheduled > 0 && ` · ${monthAgg.scheduled} scheduled (${moneyFmt(monthAgg.potential)} forecast)`}
             </span>
           </div>
@@ -279,8 +342,8 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], leaveDays
                 }
 
                 const isHovered = hoveredKey === cell.dateISO;
-                const meta = STATUS_META[cell.status];
-                const isClickable = interactive && cell.isWork && Boolean(cell.assignment?.booking_id);
+                const shifts = cell.shifts || [];
+                const isClickable = interactive && cell.isWork && shifts.some((s) => s.assignment?.booking_id && s.kind !== 'MOVED');
 
                 return (
                   <div
@@ -297,7 +360,10 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], leaveDays
                     }}
                     onMouseEnter={() => setHoveredKey(cell.dateISO)}
                     onMouseLeave={() => setHoveredKey(null)}
-                    onClick={isClickable ? () => navigate(`/admin/bookings/${cell.assignment.booking_id}/detail`) : undefined}
+                    onClick={isClickable ? () => {
+                      const target = shifts.find((s) => s.kind !== 'MOVED');
+                      if (target) navigate(`/admin/bookings/${target.assignment.booking_id}/detail`);
+                    } : undefined}
                   >
                     <div className="flex items-center justify-between">
                       <span
@@ -306,17 +372,31 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], leaveDays
                       >
                         {cell.date.getDate()}
                       </span>
-                      {cell.isWork && (
-                        <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full flex-shrink-0" style={{ background: cell.color.solid }} />
-                      )}
+                      <div className="flex items-center gap-0.5 flex-shrink-0">
+                        {shifts.map((s) => (
+                          <span
+                            key={s.key}
+                            className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full flex-shrink-0"
+                            style={{ background: s.color.solid, opacity: s.kind === 'MOVED' ? 0.35 : 1 }}
+                          />
+                        ))}
+                      </div>
                     </div>
 
                     {cell.isWork ? (
                       <div>
                         <div className="text-[9px] sm:text-[10px] leading-tight truncate font-medium" style={{ color: cell.isToday ? '#137A6B' : '#8B857A' }}>
-                          {cell.clientShort}
+                          {shifts.length > 1 ? `${shifts.length} shifts` : shifts[0].clientShort}
                         </div>
-                        <div className="rounded-full w-full mt-1" style={{ height: 4, background: meta.bar, opacity: cell.status === 'scheduled' ? 0.75 : 1 }} />
+                        <div className="flex flex-col gap-[2px] mt-1">
+                          {shifts.map((s) => (
+                            <div
+                              key={s.key}
+                              className="rounded-full w-full"
+                              style={{ height: 3, background: STATUS_META[s.status]?.bar || '#D5CFC4', opacity: s.status === 'scheduled' || s.kind === 'MOVED' ? 0.55 : 1 }}
+                            />
+                          ))}
+                        </div>
                       </div>
                     ) : cell.isLeave ? (
                       <div className="text-[10px] font-semibold mt-auto" style={{ color: '#8C5AA6' }}>Leave</div>
@@ -329,7 +409,7 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], leaveDays
                       <div
                         className="absolute pointer-events-none"
                         style={{
-                          bottom: 'calc(100% + 10px)', left: '50%', transform: 'translateX(-50%)', width: 200,
+                          bottom: 'calc(100% + 10px)', left: '50%', transform: 'translateX(-50%)', width: 220,
                           background: '#23211C', borderRadius: 12, padding: '12px 13px',
                           boxShadow: '0 18px 38px rgba(28,23,15,.36)', border: '1px solid rgba(255,255,255,.08)', zIndex: 50,
                         }}
@@ -337,48 +417,52 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], leaveDays
                         <div className="text-xs font-bold text-white">{fmtFull(cell.date)}{cell.isToday ? ' · Today' : ''}</div>
 
                         {cell.isWork ? (
-                          <>
-                            <div className="flex items-center gap-1.5 mt-2">
-                              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: cell.color.solid }} />
-                              <span className="text-xs font-semibold text-[#F2EFE8] truncate">{cell.assignment.client_name || 'Client'}</span>
-                            </div>
-                            {cell.assignment.patient_name && (
-                              <div className="text-[11px] text-[#A8A299] ml-3.5">Patient: {cell.assignment.patient_name}</div>
-                            )}
-                            <div className="text-[11px] text-[#A8A299] ml-3.5">{cell.assignment.service_type || cell.assignment.service_model || ''}</div>
-                            {cell.assignment.booking_code && (
-                              <div className="font-mono text-[10.5px] text-[#8E887E] ml-3.5 mt-0.5">{cell.assignment.booking_code}</div>
-                            )}
-                            <div className="h-px my-2" style={{ background: 'rgba(255,255,255,.12)' }} />
-                            <div className="flex items-center justify-between">
-                              <span className="text-[11px] text-[#A8A299]">{cell.status === 'scheduled' ? 'Will earn' : 'Daily rate'}</span>
-                              <span className="text-xs font-bold text-white">
-                                {moneyFmt(cell.record?.salary_amount ?? cell.assignment.daily_rate)}
-                              </span>
-                            </div>
-                            {cell.record?.hours_served != null && (
-                              <div className="flex items-center justify-between mt-1">
-                                <span className="text-[11px] text-[#A8A299]">Hours served</span>
-                                <span className="text-xs font-bold text-white">{Number(cell.record.hours_served)}h</span>
+                          shifts.map((s, i) => {
+                            const meta = STATUS_META[s.status] || STATUS_META.pending;
+                            return (
+                              <div key={s.key} style={{ marginTop: 10 }}>
+                                {i > 0 && <div className="h-px mb-2" style={{ background: 'rgba(255,255,255,.12)' }} />}
+                                <div className="flex items-center gap-1.5">
+                                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: s.color.solid }} />
+                                  <span className="text-xs font-semibold text-[#F2EFE8] truncate">{s.assignment.client_name || 'Client'}</span>
+                                  {s.shiftLabel && <span className="text-[10px] text-[#A8A299]">· {s.shiftLabel}</span>}
+                                </div>
+                                {s.assignment.patient_name && (
+                                  <div className="text-[11px] text-[#A8A299] ml-3.5">Patient: {s.assignment.patient_name}</div>
+                                )}
+                                {s.kind === 'MOVED' ? (
+                                  <div className="mt-1.5">
+                                    <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: meta.pillBg, color: meta.pillColor }}>
+                                      Moved to another date
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div className="flex items-center justify-between mt-1.5">
+                                      <span className="text-[11px] text-[#A8A299]">{s.status === 'scheduled' ? 'Will earn' : 'Rate'}</span>
+                                      <span className="text-xs font-bold text-white">
+                                        {moneyFmt(s.record?.salary_amount ?? s.assignment.daily_rate)}
+                                      </span>
+                                    </div>
+                                    {s.record?.hours_served != null && (
+                                      <div className="flex items-center justify-between mt-1">
+                                        <span className="text-[11px] text-[#A8A299]">Hours served</span>
+                                        <span className="text-xs font-bold text-white">{Number(s.record.hours_served)}h</span>
+                                      </div>
+                                    )}
+                                    <div className="mt-1.5 flex items-center justify-between">
+                                      <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: meta.pillBg, color: meta.pillColor }}>
+                                        {s.kind === 'MAKEUP' ? 'Makeup shift' : meta.label}
+                                      </span>
+                                    </div>
+                                    {s.record?.decided_by_name && (
+                                      <div className="text-[10px] text-[#8E887E] mt-1">by {s.record.decided_by_name}</div>
+                                    )}
+                                  </>
+                                )}
                               </div>
-                            )}
-                            <div className="mt-2 flex items-center justify-between">
-                              <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: meta.pillBg, color: meta.pillColor }}>
-                                {meta.label}
-                              </span>
-                              {cell.record?.entry_mode === 'AUTO' && (
-                                <span className="text-[10px] text-[#8E887E]">Auto</span>
-                              )}
-                            </div>
-                            {cell.record?.decided_by_name && (
-                              <div className="text-[10px] text-[#8E887E] mt-1.5">by {cell.record.decided_by_name}</div>
-                            )}
-                            {isClickable && (
-                              <div className="flex items-center gap-1 text-[10px] text-[#A8A299] mt-2">
-                                <ArrowUpRight style={{ width: 10, height: 10 }} /> Click to open booking
-                              </div>
-                            )}
-                          </>
+                            );
+                          })
                         ) : cell.isLeave ? (
                           <div className="mt-2">
                             <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: STATUS_META.leave.pillBg, color: STATUS_META.leave.pillColor }}>
@@ -387,6 +471,12 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], leaveDays
                           </div>
                         ) : (
                           <div className="text-[11px] text-[#A8A299] mt-2">No assignment this day</div>
+                        )}
+
+                        {isClickable && (
+                          <div className="flex items-center gap-1 text-[10px] text-[#A8A299] mt-2">
+                            <ArrowUpRight style={{ width: 10, height: 10 }} /> Click to open booking
+                          </div>
                         )}
 
                         <div className="absolute" style={{ top: '100%', left: '50%', transform: 'translateX(-50%)', width: 0, height: 0, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderTop: '7px solid #23211C' }} />
@@ -425,6 +515,9 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], leaveDays
         </div>
         <div className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">
           <span className="w-4 h-1.5 rounded-full inline-block" style={{ background: STATUS_META.scheduled.bar }} />Scheduled
+        </div>
+        <div className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">
+          <span className="w-4 h-1.5 rounded-full inline-block" style={{ background: STATUS_META.moved.bar }} />Moved
         </div>
         <div className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">
           <span className="w-3 h-3 rounded-sm inline-block" style={{ background: STATUS_META.leave.bar }} />On leave

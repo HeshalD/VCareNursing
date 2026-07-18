@@ -21,11 +21,14 @@ import {
   Package,
   ShoppingBag,
   BadgeDollarSign,
+  CalendarClock,
+  Clock3,
 } from 'lucide-react';
 import PresetItemSelector from '../service_quotes/PresetItemSelector';
 import PresetManager from '../service_quotes/PresetManager';
 import LineItemRow from '../service_quotes/LineItemRow';
 import RegistrationFeeRow from '../service_quotes/RegistrationFeeRow';
+import RateLineItemRow from '../service_quotes/RateLineItemRow';
 import ProductLineItemRow from '../service_quotes/ProductLineItemRow';
 
 // ---------------------------------------------------------------------------
@@ -452,6 +455,27 @@ const ModularQuoteBuilder = () => {
   const registrationFeeAlreadySettled = ['PAID', 'WAIVED'].includes(clientProfile?.reg_fee_status);
   const canAddRegistrationFee = !!serviceRequest?.client_id && !hasRegistrationFeeItem && !registrationFeeAlreadySettled;
 
+  // Dedicated rate line items — item_subtype is what quoteController reads to
+  // populate quotations.daily_rate/per_shift_rate; one of each per quote.
+  const isShiftBased = serviceRequest?.service_model === 'SHIFT_BASED';
+  const isDailyModel = ['LIVE_IN', 'VISITING'].includes(serviceRequest?.service_model);
+  const hasShiftRateItem = lineItems.some(i => i.item_subtype === 'RATE_SHIFT');
+  const hasDailyRateItem = lineItems.some(i => i.item_subtype === 'RATE_DAILY');
+  const canAddShiftRate = isShiftBased && !hasShiftRateItem;
+  const canAddDailyRate = isDailyModel && !hasDailyRateItem;
+
+  const addShiftRateItem = () =>
+    setLineItems(prev => [
+      ...prev,
+      { item_type: 'CHARGE', description: 'Shift Rate', quantity: 7, unit_price: '', amount: 0, item_subtype: 'RATE_SHIFT', sort_order: prev.length },
+    ]);
+
+  const addDailyRateItem = () =>
+    setLineItems(prev => [
+      ...prev,
+      { item_type: 'CHARGE', description: 'Care Rate', quantity: 7, unit_price: '', amount: 0, item_subtype: 'RATE_DAILY', sort_order: prev.length },
+    ]);
+
   const addRegistrationFeeItem = () => {
     const amount = parseFloat(clientProfile?.reg_fee_amount) || 10000;
     setLineItems(prev => [
@@ -830,6 +854,14 @@ const ModularQuoteBuilder = () => {
                                 onUpdate={(updated) => updateLineItem(index, updated)}
                                 onDelete={() => deleteLineItem(index)}
                               />
+                            ) : item.item_subtype === 'RATE_DAILY' || item.item_subtype === 'RATE_SHIFT' ? (
+                              <RateLineItemRow
+                                key={`svc-${index}`}
+                                item={item}
+                                index={index}
+                                onUpdate={(updated) => updateLineItem(index, updated)}
+                                onDelete={() => deleteLineItem(index)}
+                              />
                             ) : (
                               <LineItemRow
                                 key={`svc-${index}`}
@@ -881,6 +913,30 @@ const ModularQuoteBuilder = () => {
                     </>
                   ) : registrationFeeAlreadySettled && (
                     <span className="text-[11px] text-gray-400">Registration fee already settled for this client</span>
+                  )}
+                  {canAddShiftRate && (
+                    <>
+                      <button
+                        onClick={addShiftRateItem}
+                        className="inline-flex items-center gap-1.5 text-[13px] text-indigo-600 hover:text-indigo-800 font-medium transition-colors"
+                      >
+                        <Clock3 className="w-3.5 h-3.5" />
+                        Add Shift Rate
+                      </button>
+                      <span className="text-gray-200 select-none">|</span>
+                    </>
+                  )}
+                  {canAddDailyRate && (
+                    <>
+                      <button
+                        onClick={addDailyRateItem}
+                        className="inline-flex items-center gap-1.5 text-[13px] text-blue-700 hover:text-blue-900 font-medium transition-colors"
+                      >
+                        <CalendarClock className="w-3.5 h-3.5" />
+                        Add Care Rate
+                      </button>
+                      <span className="text-gray-200 select-none">|</span>
+                    </>
                   )}
                   <button
                     onClick={() => addItem('CHARGE')}

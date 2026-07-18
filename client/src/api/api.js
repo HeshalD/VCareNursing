@@ -303,10 +303,10 @@ class ApiClient {
     return this.request(`/client/${clientId}/detail`);
   }
 
-  async updateClientBilling(clientId, { company_name, honorific }) {
+  async updateClientBilling(clientId, { company_name, honorific, display_name_source }) {
     return this.request(`/client/${clientId}/billing`, {
       method: 'PATCH',
-      body: JSON.stringify({ company_name, honorific }),
+      body: JSON.stringify({ company_name, honorific, display_name_source }),
     });
   }
 
@@ -512,8 +512,9 @@ class ApiClient {
     return this.request(`/quotes/${quoteId}/payment-progress`);
   }
 
-  async getCombinedInvoices() {
-    return this.request('/quotes/invoices/list');
+  async getCombinedInvoices(filters = {}) {
+    const qs = new URLSearchParams(filters).toString();
+    return this.request(qs ? `/quotes/invoices/list?${qs}` : '/quotes/invoices/list');
   }
 
   async sendCombinedInvoice(quoteId) {
@@ -1424,6 +1425,50 @@ class ApiClient {
     });
   }
 
+  // ── Per-shift billing (SHIFT_BASED bookings) ──────────────────────
+  async getBookingShiftSchedule(bookingId, from, to) {
+    const qs = new URLSearchParams({ from, to }).toString();
+    return this.request(`/bookings/${bookingId}/shift-schedule?${qs}`);
+  }
+
+  async getBookingShiftReschedules(bookingId) {
+    return this.request(`/bookings/${bookingId}/shift-reschedules`);
+  }
+
+  async waiveShiftOccurrence(bookingId, payload) {
+    return this.request(`/bookings/${bookingId}/shift-occurrences/waive`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async rescheduleShiftOccurrence(bookingId, payload) {
+    return this.request(`/bookings/${bookingId}/shift-occurrences/reschedule`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async cancelShiftReschedule(bookingId, rescheduleId) {
+    return this.request(`/bookings/${bookingId}/shift-occurrences/${rescheduleId}/cancel`, {
+      method: 'POST',
+    });
+  }
+
+  async markBookingOverdue(bookingId, payload) {
+    return this.request(`/bookings/${bookingId}/mark-overdue`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async resolveBookingOverdue(bookingId, payload = {}) {
+    return this.request(`/bookings/${bookingId}/resolve-overdue`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   async getActiveBookingByClientID(clientId = '') {
     const endpoint = clientId ? `/client/active-bookings/${clientId}` : '/client/active-bookings';
     return this.request(endpoint);
@@ -1757,6 +1802,40 @@ class ApiClient {
 
   async getCreditAlertsSummary() {
     return this.request('/finances/credit-alerts-summary');
+  }
+
+  async getReceivablesAging() {
+    return this.request('/finances/receivables-aging');
+  }
+
+  async getPayablesAging() {
+    return this.request('/finances/payables-aging');
+  }
+
+  async getProfitLoss({ mode = 'month', date } = {}) {
+    const qs = new URLSearchParams({ mode, ...(date && { date }) }).toString();
+    return this.request(`/finances/profit-loss?${qs}`);
+  }
+
+  async downloadProfitLossPdf({ mode = 'month', date } = {}) {
+    const qs = new URLSearchParams({ mode, ...(date && { date }) }).toString();
+    const url = `${this.baseURL}/finances/profit-loss/pdf?${qs}`;
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          ...(this.token && { Authorization: `Bearer ${this.token}` }),
+        },
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Profit & Loss PDF download failed');
+      }
+      return await response.blob();
+    } catch (error) {
+      console.error('Profit & Loss PDF Download Error:', error);
+      throw error;
+    }
   }
 
   // Bank Account Management endpoints

@@ -62,7 +62,7 @@ exports.getBookingAttendance = async (req, res) => {
  */
 exports.upsertAttendance = async (req, res) => {
     const { booking_id } = req.params;
-    const { assignment_id, service_date, in_time, out_time, notes, shift_slot_id } = req.body;
+    const { assignment_id, service_date, in_time, out_time, notes, shift_slot_id, reschedule_id } = req.body;
 
     if (!assignment_id || !service_date || !in_time || !out_time) {
         return res.status(400).json({
@@ -107,11 +107,23 @@ exports.upsertAttendance = async (req, res) => {
             return res.status(400).json({ status: 'error', message: 'This assignment is not shift-based; shift_slot_id must not be provided' });
         }
 
-        const existing = await db.query(
-            `SELECT attendance_id, salary_status FROM staff_daily_attendance
-             WHERE assignment_id = $1 AND service_date = $2`,
-            [assignment_id, service_date]
-        );
+        if (reschedule_id) {
+            const rescheduleCheck = await db.query(
+                `SELECT reschedule_id FROM shift_reschedules WHERE reschedule_id = $1 AND booking_id = $2 AND status = 'ACTIVE'`,
+                [reschedule_id, booking_id]
+            );
+            if (rescheduleCheck.rows.length === 0) {
+                return res.status(404).json({ status: 'error', message: 'Reschedule not found for this booking' });
+            }
+        }
+
+        const existing = reschedule_id
+            ? await db.query(`SELECT attendance_id, salary_status FROM staff_daily_attendance WHERE reschedule_id = $1`, [reschedule_id])
+            : await db.query(
+                `SELECT attendance_id, salary_status FROM staff_daily_attendance
+                 WHERE assignment_id = $1 AND service_date = $2 AND reschedule_id IS NULL`,
+                [assignment_id, service_date]
+            );
 
         if (existing.rows.length > 0 && existing.rows[0].salary_status !== 'PENDING') {
             return res.status(409).json({
@@ -122,35 +134,50 @@ exports.upsertAttendance = async (req, res) => {
 
         const staffProfileId = assignmentCheck.rows[0].staff_profile_id;
 
-        const result = assignmentShiftSlotId
+        const result = reschedule_id
             ? await db.query(
                 `INSERT INTO staff_daily_attendance (
                     booking_id, assignment_id, staff_profile_id, service_date,
-                    in_time, out_time, hours_served, entry_mode, notes, shift_slot_id
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'MANUAL', $8, $9)
-                ON CONFLICT (assignment_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL
+                    in_time, out_time, hours_served, entry_mode, notes, shift_slot_id, reschedule_id
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'MANUAL', $8, $9, $10)
+                ON CONFLICT (reschedule_id) WHERE reschedule_id IS NOT NULL
                 DO UPDATE SET in_time = EXCLUDED.in_time,
                               out_time = EXCLUDED.out_time,
                               hours_served = EXCLUDED.hours_served,
                               notes = EXCLUDED.notes,
                               updated_at = NOW()
                 RETURNING *`,
-                [booking_id, assignment_id, staffProfileId, service_date, in_time, out_time, hoursServed.toFixed(2), notes || null, assignmentShiftSlotId]
+                [booking_id, assignment_id, staffProfileId, service_date, in_time, out_time, hoursServed.toFixed(2), notes || null, assignmentShiftSlotId, reschedule_id]
             )
-            : await db.query(
-                `INSERT INTO staff_daily_attendance (
-                    booking_id, assignment_id, staff_profile_id, service_date,
-                    in_time, out_time, hours_served, entry_mode, notes
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'MANUAL', $8)
-                ON CONFLICT (assignment_id, service_date) WHERE shift_slot_id IS NULL
-                DO UPDATE SET in_time = EXCLUDED.in_time,
-                              out_time = EXCLUDED.out_time,
-                              hours_served = EXCLUDED.hours_served,
-                              notes = EXCLUDED.notes,
-                              updated_at = NOW()
-                RETURNING *`,
-                [booking_id, assignment_id, staffProfileId, service_date, in_time, out_time, hoursServed.toFixed(2), notes || null]
-            );
+            : assignmentShiftSlotId
+                ? await db.query(
+                    `INSERT INTO staff_daily_attendance (
+                        booking_id, assignment_id, staff_profile_id, service_date,
+                        in_time, out_time, hours_served, entry_mode, notes, shift_slot_id
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'MANUAL', $8, $9)
+                    ON CONFLICT (assignment_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL
+                    DO UPDATE SET in_time = EXCLUDED.in_time,
+                                  out_time = EXCLUDED.out_time,
+                                  hours_served = EXCLUDED.hours_served,
+                                  notes = EXCLUDED.notes,
+                                  updated_at = NOW()
+                    RETURNING *`,
+                    [booking_id, assignment_id, staffProfileId, service_date, in_time, out_time, hoursServed.toFixed(2), notes || null, assignmentShiftSlotId]
+                )
+                : await db.query(
+                    `INSERT INTO staff_daily_attendance (
+                        booking_id, assignment_id, staff_profile_id, service_date,
+                        in_time, out_time, hours_served, entry_mode, notes
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'MANUAL', $8)
+                    ON CONFLICT (assignment_id, service_date) WHERE shift_slot_id IS NULL
+                    DO UPDATE SET in_time = EXCLUDED.in_time,
+                                  out_time = EXCLUDED.out_time,
+                                  hours_served = EXCLUDED.hours_served,
+                                  notes = EXCLUDED.notes,
+                                  updated_at = NOW()
+                    RETURNING *`,
+                    [booking_id, assignment_id, staffProfileId, service_date, in_time, out_time, hoursServed.toFixed(2), notes || null]
+                );
 
         res.status(200).json({ status: 'success', data: result.rows[0] });
     } catch (error) {

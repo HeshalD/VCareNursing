@@ -880,11 +880,12 @@ exports.getAttendanceCalendar = async (req, res) => {
             }
         }
 
-        const [assignmentsRes, attendanceRes] = await Promise.all([
+        const [assignmentsRes, attendanceRes, reschedulesRes] = await Promise.all([
             db.query(`
                 SELECT
                     bsa.assignment_id, bsa.booking_id, bsa.service_start_date, bsa.service_end_date,
-                    bsa.daily_rate, bsa.status as assignment_status,
+                    bsa.daily_rate, bsa.status as assignment_status, bsa.shift_slot_id, bsa.reschedule_id,
+                    ss.shift_number, ss.label as shift_label, ss.start_time as shift_start_time,
                     b.booking_code, b.status as booking_status, b.service_type, b.service_model,
                     c.full_name as client_name, p.full_name as patient_name,
                     pending_end.effective_date as pending_end_date, pending_end.action_type as pending_end_action_type
@@ -892,6 +893,7 @@ exports.getAttendanceCalendar = async (req, res) => {
                 LEFT JOIN bookings b ON bsa.booking_id = b.booking_id
                 LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
                 LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+                LEFT JOIN booking_shift_slots ss ON bsa.shift_slot_id = ss.shift_slot_id
                 LEFT JOIN LATERAL (
                     SELECT sa.effective_date, sa.action_type
                     FROM scheduled_actions sa
@@ -908,10 +910,16 @@ exports.getAttendanceCalendar = async (req, res) => {
                 SELECT
                     attendance_id, booking_id, assignment_id, service_date::text as service_date,
                     in_time, out_time, hours_served, entry_mode, salary_status, salary_amount,
-                    decided_by_name, decided_at, notes
+                    decided_by_name, decided_at, notes, shift_slot_id, reschedule_id
                 FROM staff_daily_attendance
                 WHERE staff_profile_id = $1
                 ORDER BY service_date ASC
+            `, [staff_profile_id]),
+            db.query(`
+                SELECT r.reschedule_id, r.booking_id, r.shift_slot_id, r.original_date::text, r.new_date::text, r.new_start_time::text
+                FROM shift_reschedules r
+                JOIN booking_staff_assignments bsa ON bsa.booking_id = r.booking_id
+                WHERE bsa.staff_profile_id = $1 AND r.status = 'ACTIVE'
             `, [staff_profile_id])
         ]);
 
@@ -919,7 +927,8 @@ exports.getAttendanceCalendar = async (req, res) => {
             status: 'success',
             data: {
                 assignments: assignmentsRes.rows,
-                attendance: attendanceRes.rows
+                attendance: attendanceRes.rows,
+                reschedules: reschedulesRes.rows
             }
         });
     } catch (error) {

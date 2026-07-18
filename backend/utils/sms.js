@@ -8,10 +8,13 @@ const formatSriLankaNumber = (mobileNumber) => {
   return number;
 };
 
+// TEMPORARY KILL SWITCH — SMS sending is blocked. Remove this block to re-enable.
+const MESSAGING_BLOCKED = true;
+
 const sendSmsOtp = async (mobileNumber, otp) => {
-  if (process.env.SMS_ENABLED === 'false') {
-    console.log(`[SMS disabled] Skipped OTP SMS to ${mobileNumber}`);
-    return { skipped: true };
+  if (MESSAGING_BLOCKED) {
+    console.log(`[SMS] BLOCKED (messaging disabled): OTP to ${mobileNumber}`);
+    return { blocked: true };
   }
   const number = formatSriLankaNumber(mobileNumber);
 
@@ -37,9 +40,9 @@ const sendSmsOtp = async (mobileNumber, otp) => {
 };
 
 const sendSms = async (mobileNumber, message) => {
-  if (process.env.SMS_ENABLED === 'false') {
-    console.log(`[SMS disabled] Skipped SMS to ${mobileNumber}`);
-    return { skipped: true };
+  if (MESSAGING_BLOCKED) {
+    console.log(`[SMS] BLOCKED (messaging disabled): to ${mobileNumber}`);
+    return { blocked: true };
   }
   const number = formatSriLankaNumber(mobileNumber);
 

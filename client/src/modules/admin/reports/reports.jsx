@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Download, TrendingUp, Users, Calendar, ReceiptText, PieChart, Wallet, ArrowRight, ClipboardList } from 'lucide-react';
+import { Download, TrendingUp, Users, Calendar, ReceiptText, PieChart, Wallet, ArrowRight, ClipboardList, AlertTriangle, Banknote } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import AdminLayout from '../components/AdminLayout';
 
@@ -80,13 +80,36 @@ const Reports = () => {
               <h3 className="font-bold text-lg text-slate-900">Available Reports</h3>
               <p className="text-sm text-slate-500 mt-1">Open a report to review client, booking, and financial breakdowns.</p>
             </div>
-            <Link
-              to="/admin/reports/sales-by-customer"
-              className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 transition-colors"
-            >
-              Sales by Customer
-              <ArrowRight className="h-4 w-4" />
-            </Link>
+            <div className="flex flex-wrap gap-2">
+              <Link
+                to="/admin/reports/sales-by-customer"
+                className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 transition-colors"
+              >
+                Sales by Customer
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+              <Link
+                to="/admin/reports/receivables-aging"
+                className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100 transition-colors"
+              >
+                Receivables Aging
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+              <Link
+                to="/admin/reports/payables-aging"
+                className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-100 transition-colors"
+              >
+                Payables Aging
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+              <Link
+                to="/admin/reports/profit-loss"
+                className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors"
+              >
+                Profit &amp; Loss
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
           </div>
         </div>
         <div className="overflow-x-auto">
@@ -102,7 +125,9 @@ const Reports = () => {
             <tbody className="divide-y divide-slate-100 bg-white">
               {[
                 { title: 'Sales by Customer', desc: 'See each customer and their sales contribution.', icon: Users, color: 'text-blue-600 bg-blue-50', category: 'Customers', action: () => navigate('/admin/reports/sales-by-customer') },
-                { title: 'Monthly Financial Summary', desc: 'Detailed breakdown of earnings and payouts for the selected period.', icon: TrendingUp, color: 'text-emerald-600 bg-emerald-50', category: 'Finance' },
+                { title: 'Receivables Aging', desc: 'All overdue booking balances and invoices, grouped by how long they have been outstanding.', icon: AlertTriangle, color: 'text-red-600 bg-red-50', category: 'Finance', action: () => navigate('/admin/reports/receivables-aging') },
+                { title: 'Payables Aging', desc: 'All unpaid staff salary balances, grouped by how long they have been outstanding.', icon: Banknote, color: 'text-violet-600 bg-violet-50', category: 'Finance', action: () => navigate('/admin/reports/payables-aging') },
+                { title: 'Profit & Loss', desc: 'Service and product revenue, cost of goods sold, and operating expenses, previewable by month, 6 months, or year.', icon: TrendingUp, color: 'text-emerald-600 bg-emerald-50', category: 'Finance', action: () => navigate('/admin/reports/profit-loss') },
                 { title: 'Booking Performance', desc: 'Review completion rates, cancellations, and average durations.', icon: Calendar, color: 'text-amber-600 bg-amber-50', category: 'Operations' },
                 { title: 'Payment Tracking', desc: 'Monitor payments, balances, and overdue amounts across clients.', icon: ReceiptText, color: 'text-violet-600 bg-violet-50', category: 'Finance' },
                 { title: 'Service Mix', desc: 'Understand which services are generating the most activity.', icon: PieChart, color: 'text-sky-600 bg-sky-50', category: 'Operations' },

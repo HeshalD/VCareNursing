@@ -64,11 +64,11 @@ const calculateVisitingCharge = (booking) => {
   };
 };
 
-// Per-shift client charge default for SHIFT_BASED bookings with a defined pattern —
-// the per-shift rate set at assign-staff time (no proration), same flat-rate
-// convention confirmSalary already uses for staff pay on the same booking.
-const calculateShiftSlotCharge = (slotAssignment) => ({
-  amount: parseFloat(slotAssignment.daily_rate),
+// Per-shift client charge default for SHIFT_BASED bookings — bookings.shift_rate,
+// the client-facing per-shift price, which is independent of the staff's own
+// per-shift pay rate (booking_staff_assignments.daily_rate).
+const calculateShiftSlotCharge = (booking) => ({
+  amount: parseFloat(booking.shift_rate),
   notes: 'Shift charge'
 });
 

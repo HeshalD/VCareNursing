@@ -165,6 +165,26 @@ const BookingDetailPageV2 = () => {
   const [swapModalSlotId, setSwapModalSlotId]         = useState(null); // set => modal targets a shift slot, not the whole booking
   const [swapModalIsAssign, setSwapModalIsAssign]     = useState(false); // true => slot has no current staff (assign, not reassign)
 
+  // reschedule modal — moves one shift occurrence to a different date, with an
+  // optional staff change for the makeup occurrence
+  const [showRescheduleModal, setShowRescheduleModal]       = useState(false);
+  const [rescheduleModalSlotId, setRescheduleModalSlotId]   = useState(null);
+  const [rescheduleModalDate, setRescheduleModalDate]       = useState('');
+  const [rescheduleModalTime, setRescheduleModalTime]       = useState('');
+  const [rescheduleModalChangeStaff, setRescheduleModalChangeStaff] = useState(false);
+  const [rescheduleModalStaffId, setRescheduleModalStaffId] = useState('');
+  const [rescheduleModalReason, setRescheduleModalReason]   = useState('');
+  const [rescheduleModalSubmitting, setRescheduleModalSubmitting] = useState(false);
+  const [rescheduleModalError, setRescheduleModalError]     = useState('');
+
+  // manual overdue flag — SHIFT_BASED only, no automatic cron detection for this model
+  const [showOverdueModal, setShowOverdueModal]         = useState(false);
+  const [overdueModalDate, setOverdueModalDate]         = useState('');
+  const [overdueModalReason, setOverdueModalReason]     = useState('');
+  const [overdueModalSubmitting, setOverdueModalSubmitting] = useState(false);
+  const [overdueModalError, setOverdueModalError]       = useState('');
+  const [resolveOverdueBusy, setResolveOverdueBusy]     = useState(false);
+
   // scheduled actions for this booking (terminations, completions, swaps, etc.)
   const [bookingScheduledActions, setBookingScheduledActions] = useState([]);
 
@@ -219,6 +239,9 @@ const BookingDetailPageV2 = () => {
   // daily attendance / manual invoicing
   const [attendanceRecords, setAttendanceRecords]   = useState([]);
   const [dailyInvoiceRecords, setDailyInvoiceRecords] = useState([]);
+  const [shiftReschedules, setShiftReschedules]     = useState([]);
+  const [reschedulesBusy, setReschedulesBusy]       = useState('');
+  const [reschedulesError, setReschedulesError]     = useState('');
   const [dayModal, setDayModal]                     = useState(null); // { dateISO, dayNum }
   const [dayModalError, setDayModalError]           = useState('');
   const [dayModalBusy, setDayModalBusy]              = useState('');
@@ -300,8 +323,33 @@ const BookingDetailPageV2 = () => {
   const statementClientId = clientDetails.client_profile_id || bookingSummary.client_profile_id || bookingSummary.client_id;
   const lastPaymentDate   = paymentSummary.last_payment_at || paymentSummary.last_payment_date || null;
 
-  const paidDays = dailyRate > 0 ? Math.floor(totalPaid / dailyRate) : 0;
-  const plannedDays = useMemo(() => (!dailyRate ? 0 : Math.floor(totalPaid / dailyRate)), [totalPaid, dailyRate]);
+  // Shift bank — SHIFT_BASED bookings are billed per shift rather than per day.
+  // "Paid" is derived from money in (never stored), "used" from confirmed
+  // invoices, "waived" from skipped ones — so the client can always be told
+  // exactly how many of the shifts they paid for have been delivered.
+  const shiftRate = Number(bookingSummary.shift_rate || 0);
+  const shiftBank = useMemo(() => {
+    if (!isShiftBased) return null;
+    const used = dailyInvoiceRecords.filter(r => r.shift_slot_id && r.status === 'INVOICED').length;
+    const waived = dailyInvoiceRecords.filter(r => r.shift_slot_id && r.status === 'SKIPPED').length;
+    const paid = shiftRate > 0 ? Math.floor(totalPaid / shiftRate) : 0;
+    return { paid, used, waived, remaining: paid - used };
+  }, [isShiftBased, dailyInvoiceRecords, shiftRate, totalPaid]);
+
+  // SHIFT_BASED days are worth shift_rate × shifts/day — dailyRate never applies.
+  const shiftsPerDay = shiftSlots.length || 0;
+  const perDayCharge = isShiftBased ? shiftRate * shiftsPerDay : dailyRate;
+  const paidDays = perDayCharge > 0 ? Math.floor(totalPaid / perDayCharge) : 0;
+  // Plan length: for shift bookings the paid shifts spill onto a final partial
+  // day when they don't divide evenly (e.g. 7 shifts @ 2/day = 4 days, last day
+  // one shift) — ceil, so that odd shift isn't silently truncated off the plan.
+  const plannedDays = useMemo(() => {
+    if (isShiftBased) {
+      if (!shiftRate || !shiftsPerDay) return 0;
+      return Math.ceil(Math.floor(totalPaid / shiftRate) / shiftsPerDay);
+    }
+    return !dailyRate ? 0 : Math.floor(totalPaid / dailyRate);
+  }, [isShiftBased, totalPaid, shiftRate, shiftsPerDay, dailyRate]);
   const servedDays = useMemo(() => {
     if (!bookingSummary.start_date) return 0;
     const today = new Date(); today.setHours(0,0,0,0);
@@ -316,10 +364,20 @@ const BookingDetailPageV2 = () => {
     return Math.max(0, Math.floor((e - s) / 86400000) + 1);
   }, [simDate, bookingSummary.start_date]);
 
+  // Shifts elapsed (servedDays × shifts/day) — what the "Shifts served" stat and
+  // shift-based overdue projections use instead of dailyRate-based day math.
+  const servedShifts = servedDays * shiftsPerDay;
+  const simServedShifts = simServedDays !== null ? simServedDays * shiftsPerDay : null;
+  const shiftsPaidCount = shiftBank?.paid ?? 0;
+
   const simOutstanding = useMemo(() => {
+    if (isShiftBased) {
+      if (simServedShifts === null || !shiftRate) return null;
+      return Math.max(0, simServedShifts * shiftRate - totalPaid);
+    }
     if (simServedDays === null || !dailyRate) return null;
     return Math.max(0, simServedDays * dailyRate - totalPaid);
-  }, [simServedDays, dailyRate, totalPaid]);
+  }, [isShiftBased, simServedDays, simServedShifts, dailyRate, shiftRate, totalPaid]);
 
   // ── Forward-projected settlement balance ──────────────────────────────────
   // `remainingBalance` (totalPaid - totalInvoiced) only reflects invoicing already recorded.
@@ -523,12 +581,17 @@ const BookingDetailPageV2 = () => {
   const fetchDailyRecords = async () => {
     try {
       apiClient.setToken(adminToken);
-      const [attRes, invRes] = await Promise.all([
+      // Always fetched (not gated on isShiftBased) — bookingSummary may not have
+      // resolved yet on the very first call, and this query is a cheap no-op
+      // for non-shift bookings anyway (no shift_slot_id rows to match).
+      const [attRes, invRes, rescheduleRes] = await Promise.all([
         apiClient.getBookingAttendance(bookingId),
         apiClient.getBookingDailyInvoices(bookingId),
+        apiClient.getBookingShiftReschedules(bookingId),
       ]);
       setAttendanceRecords(Array.isArray(attRes?.data) ? attRes.data : []);
       setDailyInvoiceRecords(Array.isArray(invRes?.data) ? invRes.data : []);
+      setShiftReschedules(Array.isArray(rescheduleRes?.data) ? rescheduleRes.data : []);
     } catch {
       // non-fatal — the timeline still renders without these
     }
@@ -564,6 +627,15 @@ const BookingDetailPageV2 = () => {
     }
   };
 
+  // Shift-slot occurrences moved away from their original date via the Reschedule
+  // modal — the standing assignment is open-ended, so without this it would still
+  // show up in the attendance form on the date it no longer runs on.
+  const movedOriginsForDay = useMemo(() => {
+    const set = new Set();
+    shiftReschedules.forEach(r => set.add(`${r.shift_slot_id}__${r.original_date?.slice(0, 10)}`));
+    return set;
+  }, [shiftReschedules]);
+
   // Finds staff assignments (raw staff_assignment_history rows) covering a given date
   const getAssignmentsForDate = (dateISO) => {
     const day = new Date(dateISO); day.setHours(12, 0, 0, 0);
@@ -571,7 +643,11 @@ const BookingDetailPageV2 = () => {
       const start = new Date(a.service_start_date); start.setHours(0, 0, 0, 0);
       const end = a.service_end_date ? new Date(a.service_end_date) : null;
       if (end) end.setHours(23, 59, 59, 999);
-      return day >= start && (!end || day <= end);
+      if (day < start || (end && day > end)) return false;
+      // This shift's occurrence was rescheduled away from this date — it isn't
+      // due here anymore, so don't let attendance/invoicing be logged against it.
+      if (a.shift_slot_id && movedOriginsForDay.has(`${a.shift_slot_id}__${dateISO}`)) return false;
+      return true;
     });
   };
 
@@ -593,7 +669,9 @@ const BookingDetailPageV2 = () => {
         autoFilled = true;
       }
       inputs[a.assignment_id] = { date: dateISO, in_time, out_time, autoFilled };
-      if (a.shift_slot_id) invoiceInputs[a.shift_slot_id] = String(a.daily_rate || dailyRate || '');
+      // Per-shift client charge prefills from bookings.shift_rate — the staff
+      // assignment's daily_rate is their pay, never what the client is billed.
+      if (a.shift_slot_id) invoiceInputs[a.shift_slot_id] = String(shiftRate || '');
     });
     setAttendanceInputs(inputs);
     setInvoiceAmountInputsBySlot(invoiceInputs);
@@ -652,6 +730,123 @@ const BookingDetailPageV2 = () => {
       await Promise.all([fetchDailyRecords(), fetchDetail()]);
     } catch (err) { setDayModalError(err?.message || 'Failed to confirm invoice decision'); }
     finally { setDayModalBusy(''); }
+  };
+
+  // Waives a shift occurrence — skips BOTH the client invoice and the staff's
+  // pay for it in one atomic action (no charge, no pay), unlike the separate
+  // invoice-Skip/salary-Skip buttons above which only cover one side each.
+  const waiveShift = async (slotId) => {
+    const busyKey = `waive-${slotId}`;
+    const slotAssignment = dayModal.assignments.find(a => a.shift_slot_id === slotId);
+    if (!slotAssignment) return;
+    try {
+      setDayModalBusy(busyKey); setDayModalError('');
+      apiClient.setToken(adminToken);
+      await apiClient.waiveShiftOccurrence(bookingId, {
+        service_date: dayModal.dateISO,
+        shift_slot_id: slotId,
+        assignment_id: slotAssignment.assignment_id,
+      });
+      await Promise.all([fetchDailyRecords(), fetchDetail()]);
+    } catch (err) { setDayModalError(err?.message || 'Failed to waive shift'); }
+    finally { setDayModalBusy(''); }
+  };
+
+  // Opens the reschedule modal for one shift occurrence — defaults the new
+  // date to just after the booking's scheduled end, matching the backend's
+  // own default assumption for where a moved shift usually lands.
+  const openRescheduleModal = (slotId) => {
+    setRescheduleModalSlotId(slotId);
+    setRescheduleModalDate(bookingSummary.scheduled_end_time ? bookingSummary.scheduled_end_time.slice(0, 10) : toDateInput(new Date()));
+    setRescheduleModalTime('');
+    setRescheduleModalChangeStaff(false);
+    setRescheduleModalStaffId('');
+    setRescheduleModalReason('');
+    setRescheduleModalError('');
+    setShowRescheduleModal(true);
+  };
+  const closeRescheduleModal = () => { setShowRescheduleModal(false); setRescheduleModalSlotId(null); };
+
+  // Moves a missed/upcoming shift occurrence to a different date — any date
+  // within the booking — optionally handing the makeup occurrence to a
+  // different staff member.
+  const confirmReschedule = async () => {
+    if (!rescheduleModalDate) { setRescheduleModalError('Pick a date to move this shift to'); return; }
+    if (rescheduleModalChangeStaff && !rescheduleModalStaffId) { setRescheduleModalError('Select the replacement staff member'); return; }
+    try {
+      setRescheduleModalSubmitting(true); setRescheduleModalError('');
+      apiClient.setToken(adminToken);
+      await apiClient.rescheduleShiftOccurrence(bookingId, {
+        shift_slot_id: rescheduleModalSlotId,
+        original_date: dayModal.dateISO,
+        new_date: rescheduleModalDate,
+        new_start_time: rescheduleModalTime ? `${rescheduleModalTime}:00` : undefined,
+        new_staff_profile_id: rescheduleModalChangeStaff ? rescheduleModalStaffId : undefined,
+        reason: rescheduleModalReason.trim() || undefined,
+      });
+      await Promise.all([fetchDailyRecords(), fetchDetail()]);
+      closeRescheduleModal();
+      closeDayModal();
+    } catch (err) {
+      setRescheduleModalError(err?.message || 'Failed to reschedule shift');
+    } finally {
+      setRescheduleModalSubmitting(false);
+    }
+  };
+
+  // Cancels a pending reschedule (Reschedules tab) — only allowed while
+  // neither side of the makeup shift has been decided yet; the backend
+  // enforces this and returns a 409 otherwise.
+  const cancelReschedule = async (rescheduleId) => {
+    setReschedulesBusy(rescheduleId); setReschedulesError('');
+    try {
+      apiClient.setToken(adminToken);
+      await apiClient.cancelShiftReschedule(bookingId, rescheduleId);
+      await Promise.all([fetchDailyRecords(), fetchDetail()]);
+    } catch (err) { setReschedulesError(err?.message || 'Failed to cancel reschedule'); }
+    finally { setReschedulesBusy(''); }
+  };
+
+  // Manual overdue flag for SHIFT_BASED bookings — the admin picks the date
+  // shifts delivered started exceeding what's paid for. No automatic cron
+  // detection exists for this model; the Shift Bank panel above is the trigger.
+  const openOverdueModal = () => {
+    setOverdueModalDate(toDateInput(new Date()));
+    setOverdueModalReason('');
+    setOverdueModalError('');
+    setShowOverdueModal(true);
+  };
+  const closeOverdueModal = () => setShowOverdueModal(false);
+
+  const confirmMarkOverdue = async () => {
+    if (!overdueModalDate) { setOverdueModalError('Pick the date it went overdue'); return; }
+    try {
+      setOverdueModalSubmitting(true); setOverdueModalError('');
+      apiClient.setToken(adminToken);
+      await apiClient.markBookingOverdue(bookingId, {
+        as_of_date: overdueModalDate,
+        reason: overdueModalReason.trim() || undefined,
+      });
+      await fetchDetail();
+      closeOverdueModal();
+    } catch (err) {
+      setOverdueModalError(err?.message || 'Failed to mark booking overdue');
+    } finally {
+      setOverdueModalSubmitting(false);
+    }
+  };
+
+  const resolveOverdue = async () => {
+    try {
+      setResolveOverdueBusy(true);
+      apiClient.setToken(adminToken);
+      await apiClient.resolveBookingOverdue(bookingId);
+      await fetchDetail();
+    } catch (err) {
+      window.alert(err?.message || 'Failed to resolve overdue status');
+    } finally {
+      setResolveOverdueBusy(false);
+    }
   };
 
   const toggleInvoicingMode = async () => {
@@ -919,6 +1114,7 @@ const BookingDetailPageV2 = () => {
     { id: 'overview',    label: 'Overview' },
     { id: 'payments',    label: 'Payments' },
     { id: 'staff',       label: 'Staff & Swaps' },
+    ...(isShiftBased ? [{ id: 'reschedules', label: 'Reschedules' }] : []),
     { id: 'salesperson', label: 'Salesperson' },
     { id: 'client',      label: 'Client & Care' },
     { id: 'settlement',  label: 'Settlement' },
@@ -1059,14 +1255,18 @@ const BookingDetailPageV2 = () => {
           ══════════════════════════════════════════════════════ */}
           {(() => {
             const displayOutstanding = simOutstanding ?? overdueAmount;
-            const displayServed = simServedDays ?? servedDays;
-            const overrun = plannedDays && displayServed > plannedDays;
+            // SHIFT_BASED: "served" counts shifts elapsed, and "planned" is however
+            // many shifts the payments actually cover — both in shift units, never days.
+            const displayServed = isShiftBased ? (simServedShifts ?? servedShifts) : (simServedDays ?? servedDays);
+            const displayPlanned = isShiftBased ? shiftsPaidCount : plannedDays;
+            const unitWord = isShiftBased ? 'shift' : 'day';
+            const overrun = displayPlanned && displayServed > displayPlanned;
             return (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 18 }}>
                 <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '15px 16px' }}>
                   <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: '#9ca3af' }}>Total paid</div>
                   <div style={{ fontSize: bigStatSize(formatMoney(totalPaid), isMobile), fontWeight: 800, letterSpacing: '-0.02em', marginTop: 6, color: '#111827', wordBreak: 'break-word' }}>{formatMoney(totalPaid)}</div>
-                  <div style={{ fontSize: 12, color: '#6b7280', fontWeight: 500, marginTop: 3 }}>{paidDays} days covered</div>
+                  <div style={{ fontSize: 12, color: '#6b7280', fontWeight: 500, marginTop: 3 }}>{isShiftBased ? shiftsPaidCount : paidDays} {unitWord}{(isShiftBased ? shiftsPaidCount : paidDays) !== 1 ? 's' : ''} covered</div>
                 </div>
                 <div style={{ background: simDate ? '#fffbeb' : '#fff', border: simDate ? '1px solid #fde68a' : '1px solid #e5e7eb', borderRadius: 10, padding: '15px 16px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1074,23 +1274,25 @@ const BookingDetailPageV2 = () => {
                     {simDate && <span style={{ fontSize: 10, fontWeight: 700, background: '#fde68a', color: '#92400e', borderRadius: 4, padding: '1px 5px' }}>SIM</span>}
                   </div>
                   <div style={{ fontSize: bigStatSize(formatMoney(displayOutstanding), isMobile), fontWeight: 800, letterSpacing: '-0.02em', marginTop: 6, color: displayOutstanding > 0 ? '#dc2626' : '#111827', wordBreak: 'break-word' }}>{formatMoney(displayOutstanding)}</div>
-                  <div style={{ fontSize: 12, fontWeight: 500, marginTop: 3, color: displayOutstanding > 0 ? '#dc2626' : '#6b7280' }}>{displayOutstanding > 0 ? `${Math.max(0, (simServedDays ?? servedDays) - paidDays)} days overdue` : 'All clear'}</div>
+                  <div style={{ fontSize: 12, fontWeight: 500, marginTop: 3, color: displayOutstanding > 0 ? '#dc2626' : '#6b7280' }}>
+                    {displayOutstanding > 0 ? `${Math.max(0, displayServed - displayPlanned)} ${unitWord}${Math.max(0, displayServed - displayPlanned) !== 1 ? 's' : ''} overdue` : 'All clear'}
+                  </div>
                 </div>
                 <div style={{ background: simDate ? '#fffbeb' : '#fff', border: simDate ? '1px solid #fde68a' : '1px solid #e5e7eb', borderRadius: 10, padding: '15px 16px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: '#9ca3af' }}>Days served</span>
+                    <span style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: '#9ca3af' }}>{isShiftBased ? 'Shifts served' : 'Days served'}</span>
                     {simDate && <span style={{ fontSize: 10, fontWeight: 700, background: '#fde68a', color: '#92400e', borderRadius: 4, padding: '1px 5px' }}>SIM</span>}
                   </div>
                   <div style={{ fontSize: isMobile ? 20 : 24, fontWeight: 800, letterSpacing: '-0.02em', marginTop: 6, color: '#111827' }}>
-                    {displayServed} <span style={{ fontSize: isMobile ? 14 : 15, fontWeight: 500, color: overrun ? '#dc2626' : '#9ca3af' }}>/ {plannedDays || '—'}</span>
+                    {displayServed} <span style={{ fontSize: isMobile ? 14 : 15, fontWeight: 500, color: overrun ? '#dc2626' : '#9ca3af' }}>/ {displayPlanned || '—'}</span>
                   </div>
                   <div style={{ fontSize: 12, fontWeight: 500, marginTop: 3, color: overrun ? '#dc2626' : '#6b7280' }}>
-                    {overrun ? `+${displayServed - plannedDays} overrun` : `of ${plannedDays || '—'} planned`}
+                    {overrun ? `+${displayServed - displayPlanned} overrun` : `of ${displayPlanned || '—'} planned`}
                   </div>
                 </div>
                 <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '15px 16px' }}>
-                  <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: '#9ca3af' }}>Daily rate</div>
-                  <div style={{ fontSize: bigStatSize(formatMoney(dailyRate), isMobile), fontWeight: 800, letterSpacing: '-0.02em', marginTop: 6, color: '#111827', wordBreak: 'break-word' }}>{formatMoney(dailyRate)}</div>
+                  <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: '#9ca3af' }}>{isShiftBased ? 'Shift rate' : 'Daily rate'}</div>
+                  <div style={{ fontSize: bigStatSize(formatMoney(isShiftBased ? shiftRate : dailyRate), isMobile), fontWeight: 800, letterSpacing: '-0.02em', marginTop: 6, color: '#111827', wordBreak: 'break-word' }}>{formatMoney(isShiftBased ? shiftRate : dailyRate)}</div>
                   <div style={{ fontSize: 12, color: '#6b7280', fontWeight: 500, marginTop: 3 }}>{bookingSummary.service_model || '—'}</div>
                 </div>
               </div>
@@ -1162,6 +1364,87 @@ const BookingDetailPageV2 = () => {
           )}
 
           {/* ══════════════════════════════════════════════════════
+              SHIFT BANK — SHIFT_BASED only: shifts paid vs delivered
+          ══════════════════════════════════════════════════════ */}
+          {isShiftBased && shiftBank && (
+            <div style={{ marginBottom: 18, padding: '14px 18px', borderRadius: 10, background: shiftBank.remaining < 0 ? '#FDF2F2' : '#FBF9F4', border: `1px solid ${shiftBank.remaining < 0 ? '#F5C9C5' : '#EFEAE0'}` }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>Shift bank</div>
+                {shiftRate > 0 && <div style={{ fontSize: 12, color: '#6F6A60' }}>Rs {shiftRate.toLocaleString('en-US')} / shift</div>}
+              </div>
+              <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginTop: 8 }}>
+                {[
+                  { label: 'Paid for', value: shiftBank.paid, color: '#2A2722' },
+                  { label: 'Delivered', value: shiftBank.used, color: '#2F8A5B' },
+                  { label: 'Waived', value: shiftBank.waived, color: '#9A9488' },
+                  { label: 'Remaining', value: shiftBank.remaining, color: shiftBank.remaining < 0 ? '#C2483C' : '#2A2722' },
+                ].map(({ label, value, color }) => (
+                  <div key={label}>
+                    <div style={{ fontSize: 18, fontWeight: 800, color }}>{value}</div>
+                    <div style={{ fontSize: 11, color: '#8A8478', fontWeight: 600 }}>{label}</div>
+                  </div>
+                ))}
+              </div>
+              {shiftBank.remaining < 0 && (
+                <div style={{ fontSize: 12, color: '#C2483C', fontWeight: 600, marginTop: 8 }}>
+                  {Math.abs(shiftBank.remaining)} shift{Math.abs(shiftBank.remaining) !== 1 ? 's' : ''} delivered beyond what's been paid for — record a payment or waive outstanding shifts.
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+                {bookingSummary.status === 'OVERDUE' ? (
+                  <button
+                    onClick={resolveOverdue}
+                    disabled={resolveOverdueBusy}
+                    style={{ border: '1px solid #BCE0CC', background: '#fff', color: '#1F8B4C', borderRadius: 8, padding: '7px 14px', fontSize: 12.5, fontWeight: 600, cursor: resolveOverdueBusy ? 'default' : 'pointer', fontFamily: 'inherit', opacity: resolveOverdueBusy ? 0.6 : 1 }}
+                  >
+                    {resolveOverdueBusy ? 'Resolving…' : 'Resolve overdue'}
+                  </button>
+                ) : (
+                  <button
+                    onClick={openOverdueModal}
+                    style={{ border: '1px solid #F5C9C5', background: '#fff', color: '#C2483C', borderRadius: 8, padding: '7px 14px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                  >
+                    Mark overdue
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── Manual overdue modal — SHIFT_BASED only ─────────────────── */}
+          {showOverdueModal && (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60 }}>
+              <div style={{ background: '#fff', borderRadius: 12, padding: 20, width: 380, maxWidth: '90vw' }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: '#2A2722', marginBottom: 4 }}>Mark booking overdue</div>
+                <div style={{ fontSize: 12.5, color: '#6F6A60', marginBottom: 14 }}>
+                  Pick the date shifts delivered first exceeded what the client has paid for.
+                </div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>Overdue as of</label>
+                <input
+                  type="date"
+                  value={overdueModalDate}
+                  onChange={(e) => setOverdueModalDate(e.target.value)}
+                  style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 10px', fontSize: 13, fontFamily: 'inherit', marginBottom: 12 }}
+                />
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>Reason (optional)</label>
+                <textarea
+                  value={overdueModalReason}
+                  onChange={(e) => setOverdueModalReason(e.target.value)}
+                  rows={3}
+                  style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 10px', fontSize: 13, fontFamily: 'inherit', resize: 'vertical' }}
+                />
+                {overdueModalError && <div style={{ fontSize: 12.5, color: '#C2483C', marginTop: 10 }}>{overdueModalError}</div>}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+                  <button onClick={closeOverdueModal} disabled={overdueModalSubmitting} style={{ border: '1px solid #e5e7eb', background: '#fff', color: '#374151', borderRadius: 8, padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
+                  <button onClick={confirmMarkOverdue} disabled={overdueModalSubmitting} style={{ border: 'none', background: '#C2483C', color: '#fff', borderRadius: 8, padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: overdueModalSubmitting ? 'default' : 'pointer', fontFamily: 'inherit', opacity: overdueModalSubmitting ? 0.6 : 1 }}>
+                    {overdueModalSubmitting ? 'Marking…' : 'Mark overdue'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════
               CARE TIMELINE
           ══════════════════════════════════════════════════════ */}
           {bookingSummary.start_date && (
@@ -1170,6 +1453,7 @@ const BookingDetailPageV2 = () => {
                 startDate={bookingSummary.start_date}
                 plannedDays={plannedDays}
                 dailyRate={dailyRate}
+                shiftRate={shiftRate}
                 totalPaid={totalPaid}
                 staffAssignments={staffHistory}
                 serviceModel={bookingSummary.service_model}
@@ -1179,11 +1463,13 @@ const BookingDetailPageV2 = () => {
                 shiftPatternScheduled={shiftPattern?.scheduled || null}
                 bookingStatus={bookingSummary.status}
                 completionDate={bookingSummary.actual_end_time}
+                scheduledEndDate={bookingSummary.scheduled_end_time}
                 simDate={simDate}
                 onSimDateChange={setSimDate}
                 onDayClick={dayClickEnabled ? openDayModal : undefined}
                 attendanceRecords={attendanceRecords}
                 dailyInvoiceRecords={dailyInvoiceRecords}
+                reschedules={shiftReschedules}
                 manualSalaryDay={manualSalaryDay}
                 manualInvoiceDay={manualInvoiceDay}
               />
@@ -1225,7 +1511,7 @@ const BookingDetailPageV2 = () => {
                     <Field label="Service model" value={bookingSummary.service_model || '-'} />
                     <Field label="Start date"    value={formatDate(bookingSummary.start_date)} />
                     <Field label="Start time"    value={formatTime(bookingSummary.service_start_time)} />
-                    <Field label="Planned end"   value={formatDate(bookingSummary.scheduled_end_time)} />
+                    {!isShiftBased && <Field label="Planned end" value={formatDate(bookingSummary.scheduled_end_time)} />}
                     {bookingSummary.actual_end_time && <Field label="Actual end" value={formatDT(bookingSummary.actual_end_time)} />}
                     <Field label="Created"       value={formatDT(bookingSummary.created_at)} />
                   </div>
@@ -1239,7 +1525,9 @@ const BookingDetailPageV2 = () => {
                       { label: 'Total invoiced',   value: formatMoney(totalInvoiced) },
                       { label: 'Overdue amount',   value: formatMoney(overdueAmount),      red: overdueAmount > 0 },
                       { label: 'Remaining balance',value: formatMoney(remainingBalance) },
-                      { label: 'Daily rate',       value: formatMoney(dailyRate) },
+                      isShiftBased
+                        ? { label: 'Per-shift rate', value: formatMoney(shiftRate) }
+                        : { label: 'Daily rate',     value: formatMoney(dailyRate) },
                       { label: 'Quoted amount',    value: formatMoney(bookingSummary.amount_quotated ?? 0) },
                       { label: 'Registration fee', value: formatMoney(bookingSummary.registration_fee ?? 0) },
                     ].map(({ label, value, red, green }) => (
@@ -1686,6 +1974,68 @@ const BookingDetailPageV2 = () => {
           )}
 
           {/* ══════════════════════════════════════════════════════
+              TAB: RESCHEDULES — moved/makeup shifts (SHIFT_BASED only)
+          ══════════════════════════════════════════════════════ */}
+          {activeSection === 'reschedules' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <Card>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 16 }}>
+                  <div>
+                    <CardTitle>Rescheduled shifts</CardTitle>
+                    <p style={{ margin: '-10px 0 0', fontSize: 12.5, color: '#6b7280' }}>
+                      Shifts moved to a different date via the Waive/Reschedule actions on the care timeline.
+                    </p>
+                  </div>
+                </div>
+
+                {reschedulesError && (
+                  <div style={{ marginBottom: 14, borderRadius: 8, background: '#fef2f2', border: '1px solid #fecaca', padding: '9px 12px', fontSize: 12.5, color: '#b91c1c' }}>
+                    {reschedulesError}
+                  </div>
+                )}
+
+                {shiftReschedules.length === 0 ? (
+                  <Empty icon={RefreshCw} text="No shifts have been rescheduled for this booking." />
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {shiftReschedules.map((r) => {
+                      const shiftLabel = r.shift_label || (r.shift_number ? `Shift ${r.shift_number}` : 'Shift');
+                      return (
+                        <div key={r.reschedule_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, border: '1px solid #EFEAE0', borderRadius: 12, padding: '12px 14px', background: '#FBF9F4' }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>{shiftLabel}</span>
+                              <Pill tone="slate">{formatDate(r.original_date)}</Pill>
+                              <span style={{ color: '#B6AFA2', fontSize: 16 }}>→</span>
+                              <Pill tone="amber">{formatDate(r.new_date)}{r.new_start_time ? ` · ${formatTime(r.new_start_time)}` : ''}</Pill>
+                            </div>
+                            <div style={{ fontSize: 12.5, color: '#6F6A60', marginTop: 5 }}>
+                              {r.makeup_staff_name ? `Covered by ${r.makeup_staff_name}` : 'Staff unchanged'}
+                            </div>
+                            {r.reason && <div style={{ fontSize: 12.5, color: '#5A554B', marginTop: 3 }}>{r.reason}</div>}
+                          </div>
+                          {r.decided ? (
+                            <Pill tone="slate">Already decided</Pill>
+                          ) : (
+                            <button
+                              onClick={() => cancelReschedule(r.reschedule_id)}
+                              disabled={reschedulesBusy === r.reschedule_id}
+                              title="Cancels the move — the original date becomes a normal shift again"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '7px 12px', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#b91c1c', cursor: 'pointer', flexShrink: 0, opacity: reschedulesBusy === r.reschedule_id ? 0.6 : 1 }}
+                            >
+                              {reschedulesBusy === r.reschedule_id ? 'Cancelling…' : 'Cancel move'}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </Card>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════
               TAB: SALESPERSON
           ══════════════════════════════════════════════════════ */}
           {activeSection === 'salesperson' && (
@@ -1846,7 +2196,7 @@ const BookingDetailPageV2 = () => {
                       { label: 'Status',       value: bookingSummary.status       || '-' },
                       { label: 'Service',      value: bookingSummary.service_type || '-' },
                       { label: 'Start',        value: formatDate(bookingSummary.start_date) },
-                      { label: 'Planned end',  value: formatDate(bookingSummary.scheduled_end_time) },
+                      ...(isShiftBased ? [] : [{ label: 'Planned end', value: formatDate(bookingSummary.scheduled_end_time) }]),
                     ].map(({ label, value, mono }) => (
                       <div key={label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
                         <span style={{ fontSize: 13, color: '#7A756A', whiteSpace: 'nowrap' }}>{label}</span>
@@ -2370,6 +2720,123 @@ const BookingDetailPageV2 = () => {
       )}
 
       {/* ══════════════════════════════════════════════════════
+          RESCHEDULE MODAL — move one shift occurrence to a different date,
+          optionally handing the makeup to a different staff member
+      ══════════════════════════════════════════════════════ */}
+      {showRescheduleModal && (() => {
+        const slot = shiftSlots.find(s => s.shift_slot_id === rescheduleModalSlotId);
+        const slotLabel = slot?.label || (slot?.shift_number ? `Shift ${slot.shift_number}` : 'Shift');
+        const currentStaffName = slot?.assignment?.staff_name || '—';
+        const selectedStaff = availableStaff.find(s => s.staff_profile_id === rescheduleModalStaffId);
+        return (
+          // z-[60] — this opens from a button inside the Day Detail Modal (z-50, rendered
+          // later in the DOM so it would otherwise paint on top), and stays open underneath
+          // it while the admin fills it in, so it must stack strictly above that modal.
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] flex flex-col">
+              <div className="flex items-start justify-between p-6 border-b border-slate-200 shrink-0">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">Reschedule {slotLabel}</h2>
+                  <p className="text-sm text-slate-500 mt-0.5">
+                    Moving the {formatDate(dayModal?.dateISO)} occurrence to a new date.
+                  </p>
+                </div>
+                <button onClick={closeRescheduleModal} className="p-1.5 rounded-lg hover:bg-slate-100 transition shrink-0 ml-4"><XCircle className="h-5 w-5 text-slate-400" /></button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-5">
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">
+                    New date <span className="text-rose-500">*</span>
+                  </label>
+                  <DateInput
+                    value={rescheduleModalDate}
+                    onChange={e => setRescheduleModalDate(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  />
+                  <p className="text-xs text-slate-400 mt-1.5">Defaults to just after the booking's scheduled end — pick any other date if needed.</p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">New start time <span className="text-slate-400 font-normal normal-case">(optional)</span></label>
+                  <input
+                    type="time"
+                    value={rescheduleModalTime}
+                    onChange={e => setRescheduleModalTime(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  />
+                  <p className="text-xs text-slate-400 mt-1.5">Leave blank to keep the shift's usual start time ({(slot?.start_time || '').slice(0, 5) || '—'}).</p>
+                </div>
+
+                <div className="rounded-xl border border-slate-200 p-3.5">
+                  <label className="flex items-center gap-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={rescheduleModalChangeStaff}
+                      onChange={e => { setRescheduleModalChangeStaff(e.target.checked); if (!e.target.checked) setRescheduleModalStaffId(''); }}
+                      className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="text-sm font-semibold text-slate-800">Change the staff member for this shift?</span>
+                  </label>
+                  <p className="text-xs text-slate-400 mt-1.5 ml-6">Currently assigned: <span className="font-medium text-slate-600">{currentStaffName}</span></p>
+
+                  {rescheduleModalChangeStaff && (
+                    <div className="mt-3.5 ml-6 space-y-2">
+                      <select
+                        value={rescheduleModalStaffId}
+                        onChange={e => setRescheduleModalStaffId(e.target.value)}
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm outline-none focus:border-blue-500"
+                      >
+                        <option value="">Select replacement staff…</option>
+                        {availableStaff.map(s => (
+                          <option key={s.staff_profile_id} value={s.staff_profile_id}>
+                            {s.full_name}{s.designation ? ` — ${s.designation}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                      {selectedStaff && (
+                        <StaffScheduleTimeline
+                          schedule={staffSchedules[selectedStaff.staff_profile_id] || []}
+                          loading={staffSchedulesLoading}
+                          referenceDate={rescheduleModalDate}
+                          compact
+                        />
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Reason <span className="text-slate-400 font-normal normal-case">(optional)</span></label>
+                  <textarea
+                    rows={2}
+                    value={rescheduleModalReason}
+                    onChange={e => setRescheduleModalReason(e.target.value)}
+                    placeholder="e.g. Staff was unavailable, client requested a different day…"
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 resize-none"
+                  />
+                </div>
+
+                {rescheduleModalError && <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700">{rescheduleModalError}</div>}
+              </div>
+
+              <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 shrink-0">
+                <button onClick={closeRescheduleModal} className="text-sm font-medium text-slate-600 hover:text-slate-900 transition">Cancel</button>
+                <button
+                  onClick={confirmReschedule}
+                  disabled={rescheduleModalSubmitting || !rescheduleModalDate || (rescheduleModalChangeStaff && !rescheduleModalStaffId)}
+                  className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {rescheduleModalSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  {rescheduleModalSubmitting ? 'Saving…' : 'Confirm Reschedule'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ══════════════════════════════════════════════════════
           SHIFT PATTERN MODAL
       ══════════════════════════════════════════════════════ */}
       {showPatternModal && (
@@ -2510,6 +2977,13 @@ const BookingDetailPageV2 = () => {
                 {dayModalError && (
                   <div className="mx-6 mt-4 rounded-lg bg-red-50 border border-red-200 px-4 py-2.5 text-xs text-red-700">{dayModalError}</div>
                 )}
+
+                {/* Shifts moved away from this date — explains why fewer shifts show below */}
+                {shiftReschedules.filter(r => r.original_date?.slice(0, 10) === dayModal.dateISO).map(r => (
+                  <div key={r.reschedule_id} className="mx-6 mt-4 rounded-lg bg-blue-50 border border-blue-200 px-4 py-2.5 text-xs text-blue-700">
+                    {r.shift_label || (r.shift_number ? `Shift ${r.shift_number}` : 'A shift')} was rescheduled to {formatDate(r.new_date)} — it no longer runs on this date.
+                  </div>
+                ))}
 
                 {/* ── Staff Attendance Table ── */}
                 {manualSalaryDay && (
@@ -2661,9 +3135,10 @@ const BookingDetailPageV2 = () => {
                                   <input type="number" min="0" step="0.01" value={invoiceAmountInputsBySlot[slotId] || ''} onChange={e => setInvoiceAmountInputsBySlot(p => ({ ...p, [slotId]: e.target.value }))} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-32" placeholder="0.00" />
                                 </td>
                                 <td className={tdCls}>
-                                  <div className="flex gap-1.5">
+                                  <div className="flex flex-wrap gap-1.5">
                                     <button onClick={() => decideInvoice(true, slotId)} disabled={dayModalBusy === busyKey || !invoiceAmountInputsBySlot[slotId]} className="px-2.5 py-1 text-[11px] font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded transition disabled:opacity-50">Confirm</button>
-                                    <button onClick={() => decideInvoice(false, slotId)} disabled={dayModalBusy === busyKey} className="px-2.5 py-1 text-[11px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded transition disabled:opacity-50">Skip</button>
+                                    <button onClick={() => waiveShift(slotId)} disabled={dayModalBusy === `waive-${slotId}`} title="Skips both the client charge and the staff's pay for this shift" className="px-2.5 py-1 text-[11px] font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 rounded transition disabled:opacity-50">Waive</button>
+                                    <button onClick={() => openRescheduleModal(slotId)} title="Move this shift to a different date" className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition disabled:opacity-50">Reschedule</button>
                                   </div>
                                 </td>
                               </tr>

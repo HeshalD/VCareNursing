@@ -89,6 +89,7 @@ const CareTimeline = ({
   startDate,
   plannedDays,
   dailyRate,
+  shiftRate = 0,         // SHIFT_BASED: client charge per shift — daily figures derive from this, never dailyRate
   totalPaid,
   staffAssignments = [],
   serviceModel,          // 'LIVE_IN' | 'VISITING' | 'SHIFT_BASED'
@@ -98,11 +99,13 @@ const CareTimeline = ({
   shiftPatternScheduled = null, // { effective_from_date, shift_count } | null
   bookingStatus = null,   // bookings.status — used to detect COMPLETED/TERMINATED
   completionDate = null,  // bookings.actual_end_time — the real (not just planned) end date
+  scheduledEndDate = null, // bookings.scheduled_end_time — planned end; bounds natural occurrences (LIVE_IN/VISITING only — SHIFT_BASED has no booking end date, see naturalEndDayNum)
   simDate = null,
   onSimDateChange,
   onDayClick,
   attendanceRecords = [],
   dailyInvoiceRecords = [],
+  reschedules = [],      // [{ reschedule_id, shift_slot_id, original_date, new_date, new_start_time, assignment_id, makeup_staff_name, shift_number, shift_label }]
   manualSalaryDay = false,
   manualInvoiceDay = false,
 }) => {
@@ -135,10 +138,16 @@ const CareTimeline = ({
     return Math.max(0, Math.floor((effectiveToday - start) / 86400000) + 1);
   }, [start, effectiveToday]);
 
+  // SHIFT_BASED bookings are billed per shift, so a "day" of payment covers one
+  // full pattern of shifts (shift_rate × shifts/day) — dailyRate plays no part.
+  const effectiveDayRate = useMemo(() => (
+    isShiftBased ? Number(shiftRate || 0) * (shiftSlots.length || 0) : Number(dailyRate || 0)
+  ), [isShiftBased, shiftRate, shiftSlots, dailyRate]);
+
   const paidDays = useMemo(() => {
-    if (!dailyRate || dailyRate <= 0) return 0;
-    return Math.floor(Number(totalPaid || 0) / dailyRate);
-  }, [totalPaid, dailyRate]);
+    if (!effectiveDayRate || effectiveDayRate <= 0) return 0;
+    return Math.floor(Number(totalPaid || 0) / effectiveDayRate);
+  }, [totalPaid, effectiveDayRate]);
 
   // Latest day-number implied by any known future event (a SCHEDULED staff start,
   // an admin-scheduled action, a pending termination request, or a queued shift
@@ -162,8 +171,12 @@ const CareTimeline = ({
     terminationRequests.forEach((tr) => consider(tr.requested_end_date));
     if (shiftPatternScheduled?.effective_from_date) consider(shiftPatternScheduled.effective_from_date);
     if (completionDate) consider(completionDate);
+    // A makeup shift's new_date is often past the booking's current plan (rescheduling
+    // defaults to just after the scheduled end) — without this, that date falls outside
+    // displayDays and renders as a plain "outside booking" cell instead of the makeup shift.
+    reschedules.forEach((r) => consider(r.new_date));
     return max;
-  }, [start, staffAssignments, scheduledActions, terminationRequests, shiftPatternScheduled, completionDate]);
+  }, [start, staffAssignments, scheduledActions, terminationRequests, shiftPatternScheduled, completionDate, reschedules]);
 
   const hasPlan = (plannedDays || 0) > 0;
   const displayDays  = Math.max(plannedDays || 0, servedDays, maxEventDayNum);
@@ -173,6 +186,65 @@ const CareTimeline = ({
   const overrunDays  = hasPlan ? Math.max(0, servedDays - plannedDays) : 0;
   const overdueCount  = Math.max(0, servedDays - paidDays);
   const upcomingCount = Math.max(0, (plannedDays || 0) - servedDays);
+
+  // Last day-number the booking naturally covers. Standing shift assignments are
+  // open-ended in the DB (service_end_date stays NULL until completion actually
+  // runs), so without this bound they'd render as working shifts on every day
+  // the grid shows — including days past the planned end that only exist in the
+  // grid because a makeup shift was scheduled there. scheduled_end_time and the
+  // payment-derived plannedDays can disagree by a day (different derivations), so
+  // take whichever reaches further — matching the extent the rest of the calendar
+  // has always painted as "the booking".
+  const naturalEndDayNum = useMemo(() => {
+    // SHIFT_BASED has no booking end date at all — the shift-derived plannedDays
+    // is the only natural bound. Before any payment/plan exists there is nothing
+    // to bound against, so natural occurrences render on every day the grid reaches.
+    if (isShiftBased) return (plannedDays || 0) > 0 ? plannedDays : null;
+
+    let schedEnd = 0;
+    if (start && scheduledEndDate) {
+      const d = new Date(scheduledEndDate);
+      if (!isNaN(d)) {
+        d.setHours(0, 0, 0, 0);
+        schedEnd = Math.round((d - start) / 86400000) + 1;
+      }
+    }
+    const end = Math.max(schedEnd, plannedDays || 0);
+    return end > 0 ? end : null;
+  }, [start, scheduledEndDate, plannedDays, isShiftBased]);
+
+  // Future days past the booking's natural end carry no shift occurrences of
+  // their own — the grid only reaches them because something explicit (e.g. a
+  // makeup shift) was scheduled there. Delivered overrun days keep showing
+  // staff: the booking genuinely ran on.
+  const isBeyondNaturalFuture = (dayNum) =>
+    naturalEndDayNum !== null && dayNum > naturalEndDayNum && dayNum > servedDays;
+
+  // The paid shifts may not divide evenly into days (e.g. 7 shifts @ 2/day):
+  // the plan then ends on a partial day carrying only the leftover shift(s).
+  // plannedDays already ceils to include that day (see BookingDetailPageV2);
+  // this pins down which day it is and how many shifts of it are actually paid,
+  // so the grid doesn't paint the full pattern there.
+  const partialLastDay = useMemo(() => {
+    if (!isShiftBased || !shiftRate || !shiftSlots.length || !plannedDays) return null;
+    const paidShifts = Math.floor(Number(totalPaid || 0) / shiftRate);
+    const remainder = paidShifts - (plannedDays - 1) * shiftSlots.length;
+    if (remainder <= 0 || remainder >= shiftSlots.length) return null;
+    return { day: plannedDays, count: remainder };
+  }, [isShiftBased, shiftRate, shiftSlots, plannedDays, totalPaid]);
+
+  // ── Reschedules — moved-away origins + makeup occurrences ────────────────
+  const movedOrigins = useMemo(() => {
+    const set = new Set();
+    reschedules.forEach((r) => set.add(`${r.shift_slot_id}__${r.original_date?.slice(0, 10)}`));
+    return set;
+  }, [reschedules]);
+
+  const assignmentByIdForReschedule = useMemo(() => {
+    const map = new Map();
+    staffAssignments.forEach((a) => map.set(a.assignment_id || a.id, a));
+    return map;
+  }, [staffAssignments]);
 
   // ── Nurse colour pool ─────────────────────────────────────────────────────
 
@@ -364,8 +436,15 @@ const CareTimeline = ({
     }
 
     // SHIFT_BASED: collect all assignments active on this day, one per shift slot
+    const dateISO = toLocalISO(dayDate);
     const matches = [];
-    for (const a of staffAssignments) {
+
+    for (const a of isBeyondNaturalFuture(dayNum) ? [] : staffAssignments) {
+      // A makeup-only assignment (created just to cover one rescheduled shift)
+      // is rendered separately below, keyed off the reschedule's new_date —
+      // skip it here so it doesn't also show up on its own service_start_date.
+      if (a.reschedule_id) continue;
+
       const aStart = new Date(a.service_start_date || a.startDate);
       aStart.setHours(0, 0, 0, 0);
       const aEnd = (a.service_end_date || a.endDate) ? new Date(a.service_end_date || a.endDate) : null;
@@ -373,16 +452,59 @@ const CareTimeline = ({
       if (dayDate >= aStart && (!aEnd || dayDate <= aEnd)) {
         const id   = a.staff_profile_id || a.staffId || a.id;
         const slot = shiftSlots.find((s) => s.shift_slot_id === a.shift_slot_id);
+        const shiftLabel = slot?.label || (slot?.shift_number ? `Shift ${slot.shift_number}` : 'Shift');
+
+        // This shift's origin occurrence was moved to a different date —
+        // render it as "moved" rather than a normal working shift, so it
+        // doesn't look like the client was billed/served here.
+        if (a.shift_slot_id && movedOrigins.has(`${a.shift_slot_id}__${dateISO}`)) {
+          matches.push({
+            name: a.full_name || a.staff_name || a.name || 'Staff',
+            designation: '', color: NURSE_COLORS[0], kind: 'MOVED',
+            shiftLabel, shiftStartTime: null, shiftNumber: slot?.shift_number ?? 999,
+          });
+          continue;
+        }
+
         matches.push({
           name:           a.full_name || a.staff_name || a.name || 'Staff',
           designation:    a.designation || '',
           color:          nurseColorMap.get(id) || NURSE_COLORS[0],
-          shiftLabel:     slot?.label || (slot?.shift_number ? `Shift ${slot.shift_number}` : 'Shift'),
+          shiftLabel,
           shiftStartTime: slot?.start_time || null,
           shiftNumber:    slot?.shift_number ?? 999,
+          kind: 'NATURAL',
         });
       }
     }
+
+    // Final partial plan day: only the leftover paid shift(s) belong here — trim
+    // the natural pattern down to that count (lowest shift numbers first). Only
+    // for future days; once a day is delivered, show what actually ran.
+    if (partialLastDay && dayNum === partialLastDay.day && dayNum > servedDays) {
+      matches.sort((a, b) => a.shiftNumber - b.shiftNumber);
+      let kept = 0;
+      const trimmed = matches.filter((n) => n.kind !== 'NATURAL' || ++kept <= partialLastDay.count);
+      matches.length = 0;
+      matches.push(...trimmed);
+    }
+
+    // Makeup occurrences landing on this date
+    reschedules.forEach((r) => {
+      if (r.new_date?.slice(0, 10) !== dateISO) return;
+      const makeupAssignment = assignmentByIdForReschedule.get(r.assignment_id);
+      const id = makeupAssignment?.staff_profile_id || makeupAssignment?.staffId || makeupAssignment?.id;
+      matches.push({
+        name: r.makeup_staff_name || makeupAssignment?.full_name || makeupAssignment?.staff_name || 'Staff',
+        designation: makeupAssignment?.designation || '',
+        color: nurseColorMap.get(id) || NURSE_COLORS[0],
+        shiftLabel: r.shift_label || (r.shift_number ? `Shift ${r.shift_number}` : 'Shift'),
+        shiftStartTime: r.new_start_time || null,
+        shiftNumber: r.shift_number ?? 999,
+        kind: 'MAKEUP',
+      });
+    });
+
     matches.sort((a, b) => a.shiftNumber - b.shiftNumber);
     return matches;
   };
@@ -443,10 +565,14 @@ const CareTimeline = ({
       const dayNum    = Math.round((cellDate - start) / 86400000) + 1;
       const inBooking = dayNum >= 1 && dayNum <= displayDays;
 
-      if (!inBooking) {
+      const nurses = inBooking ? getNursesForDay(dayNum) : [];
+
+      // Days past the booking's natural end are only "in" the grid because a
+      // makeup shift somewhere extended it — the in-between days (no makeup of
+      // their own) are not booking days and grey out like any outside day.
+      if (!inBooking || (isBeyondNaturalFuture(dayNum) && nurses.length === 0)) {
         cells.push({ type: 'outside', calDay: d, dateISO });
       } else {
-        const nurses    = getNursesForDay(dayNum);
         const isToday   = dayNum === servedDays;
         const delivered = dayNum <= servedDays;
         const isOverrun = hasPlan && dayNum > plannedDays;
@@ -473,7 +599,7 @@ const CareTimeline = ({
       calRows: rows,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clampedMonthIdx, bookingMonths, start, displayDays, plannedDays, paidDays, servedDays, nurseColorMap, attendanceByDate, invoiceByDate, manualSalaryDay, manualInvoiceDay, shiftSlots, eventsByDate]);
+  }, [clampedMonthIdx, bookingMonths, start, displayDays, plannedDays, paidDays, servedDays, nurseColorMap, attendanceByDate, invoiceByDate, manualSalaryDay, manualInvoiceDay, shiftSlots, eventsByDate, staffAssignments, reschedules, movedOrigins, assignmentByIdForReschedule, naturalEndDayNum, partialLastDay]);
 
   const activeCell = useMemo(() => {
     if (hoveredDay == null) return null;
@@ -706,13 +832,17 @@ const CareTimeline = ({
 
               const isHovered    = hoveredDay === cell.dayNum;
               const nurses       = cell.nurses;
-              const primaryNurse = nurses[0] || null;
+              // Moved-away shifts aren't actually delivered here — exclude them
+              // from background/border/legend math, but still list them (and any
+              // makeup shift landing here) in the dots and tooltip below.
+              const workingNurses = nurses.filter((n) => n.kind !== 'MOVED');
+              const primaryNurse = workingNurses[0] || null;
               const pill         = PILL[cell.status];
               const isClickable  = Boolean(onDayClick) && cell.delivered;
-              const multiShift   = isShiftBased && nurses.length > 1;
+              const multiShift   = isShiftBased && workingNurses.length > 1;
 
               // Background
-              let cellBg = buildCellBackground(nurses, cell.delivered, serviceModel);
+              let cellBg = buildCellBackground(workingNurses, cell.delivered, serviceModel);
 
               // Border — computed per-side to support the VISITING accent stripe
               let borderStyle = {};
@@ -788,12 +918,19 @@ const CareTimeline = ({
                       {cell.invoiceMeta && (
                         <Receipt style={{ width: 8, height: 8, color: META_COLOR[cell.invoiceMeta.status] }} />
                       )}
-                      {/* One dot per nurse (shift) */}
+                      {/* One dot per nurse (shift) — hollow for a moved-away shift,
+                          ringed for a makeup shift, solid otherwise */}
                       {nurses.map((n, i) => (
                         <span
                           key={i}
                           className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full flex-shrink-0"
-                          style={{ background: n.color.solid, opacity: cell.delivered ? 1 : 0.4 }}
+                          style={
+                            n.kind === 'MOVED'
+                              ? { background: 'transparent', border: '1px solid #B4AEA3', opacity: 0.7 }
+                              : n.kind === 'MAKEUP'
+                                ? { background: n.color.solid, boxShadow: '0 0 0 1.5px #3F77B5', opacity: cell.delivered ? 1 : 0.4 }
+                                : { background: n.color.solid, opacity: cell.delivered ? 1 : 0.4 }
+                          }
                         />
                       ))}
                       {/* One diamond per event type */}
@@ -858,13 +995,23 @@ const CareTimeline = ({
                           {nurses.map((nurse, i) => (
                             <div key={i} style={{ marginTop: i > 0 ? 6 : 0 }}>
                               <div className="flex items-center gap-1.5">
-                                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: nurse.color.solid }} />
+                                <span
+                                  className="w-2 h-2 rounded-full flex-shrink-0"
+                                  style={nurse.kind === 'MOVED' ? { background: 'transparent', border: '1px solid #B4AEA3' } : { background: nurse.color.solid }}
+                                />
                                 <span className="text-xs font-semibold text-[#F2EFE8] truncate">{nurse.name}</span>
+                                {nurse.kind === 'MOVED' && (
+                                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(180,174,163,.24)', color: '#CFC9BE' }}>Moved</span>
+                                )}
+                                {nurse.kind === 'MAKEUP' && (
+                                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(63,119,181,.24)', color: '#A9C8E6' }}>Makeup</span>
+                                )}
                               </div>
                               {(nurse.shiftLabel || nurse.designation) && (
                                 <div className="text-[10px] text-[#A8A299] ml-3.5">
                                   {[nurse.shiftLabel, nurse.shiftStartTime ? `from ${nurse.shiftStartTime}` : null].filter(Boolean).join(' · ')}
                                   {nurse.designation ? ` — ${nurse.designation}` : ''}
+                                  {nurse.kind === 'MOVED' ? ' — moved to another date' : ''}
                                 </div>
                               )}
                             </div>
@@ -887,8 +1034,12 @@ const CareTimeline = ({
 
                       <div className="h-px my-2" style={{ background: 'rgba(255,255,255,.12)' }} />
                       <div className="flex items-center justify-between">
-                        <span className="text-[11px] text-[#A8A299]">Billed</span>
-                        <span className="text-xs font-bold text-white">Rs {Number(dailyRate || 0).toLocaleString('en-US')}</span>
+                        <span className="text-[11px] text-[#A8A299]">
+                          {isShiftBased ? `Billed (${workingNurses.length} shift${workingNurses.length !== 1 ? 's' : ''})` : 'Billed'}
+                        </span>
+                        <span className="text-xs font-bold text-white">
+                          Rs {Number(isShiftBased ? shiftRate * workingNurses.length : dailyRate || 0).toLocaleString('en-US')}
+                        </span>
                       </div>
                       <div className="mt-2">
                         <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: pill.bg, color: pill.color }}>
@@ -958,7 +1109,7 @@ const CareTimeline = ({
       {isMobile && activeCell && (() => {
         const cell        = activeCell;
         const nurses      = cell.nurses;
-        const primaryNurse = nurses[0] || null;
+        const workingNurses = nurses.filter((n) => n.kind !== 'MOVED');
         const pill        = PILL[cell.status];
         const isClickable = Boolean(onDayClick) && cell.delivered;
         return (
@@ -981,12 +1132,22 @@ const CareTimeline = ({
                 {nurses.map((nurse, i) => (
                   <div key={i}>
                     <div className="flex items-center gap-1.5">
-                      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: nurse.color.solid }} />
+                      <span
+                        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                        style={nurse.kind === 'MOVED' ? { background: 'transparent', border: '1px solid #B4AEA3' } : { background: nurse.color.solid }}
+                      />
                       <span className="text-sm font-semibold text-[#3A362F] truncate">{nurse.name}</span>
+                      {nurse.kind === 'MOVED' && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(180,174,163,.16)', color: '#8A8478' }}>Moved</span>
+                      )}
+                      {nurse.kind === 'MAKEUP' && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(63,119,181,.16)', color: '#3F77B5' }}>Makeup</span>
+                      )}
                     </div>
                     {(nurse.shiftLabel || nurse.shiftStartTime || nurse.designation) && (
                       <div className="text-xs text-[#9A9488] ml-4">
                         {[nurse.shiftLabel, nurse.shiftStartTime ? `from ${nurse.shiftStartTime}` : null, nurse.designation].filter(Boolean).join(' · ')}
+                        {nurse.kind === 'MOVED' ? ' — moved to another date' : ''}
                       </div>
                     )}
                   </div>
@@ -1010,8 +1171,12 @@ const CareTimeline = ({
             <div className="h-px my-3" style={{ background: '#EFEAE0' }} />
 
             <div className="flex items-center justify-between">
-              <span className="text-xs text-[#6F6A60]">Billed</span>
-              <span className="text-sm font-bold text-[#2A2722]">Rs {Number(dailyRate || 0).toLocaleString('en-US')}</span>
+              <span className="text-xs text-[#6F6A60]">
+                {isShiftBased ? `Billed (${workingNurses.length} shift${workingNurses.length !== 1 ? 's' : ''})` : 'Billed'}
+              </span>
+              <span className="text-sm font-bold text-[#2A2722]">
+                Rs {Number(isShiftBased ? shiftRate * workingNurses.length : dailyRate || 0).toLocaleString('en-US')}
+              </span>
             </div>
             <div className="mt-2">
               <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: pill.bg, color: pill.color }}>
@@ -1088,6 +1253,16 @@ const CareTimeline = ({
         <div className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">
           <span className="w-4 h-1.5 rounded-full inline-block" style={{ background: '#D5CFC4' }} />Upcoming
         </div>
+        {reschedules.length > 0 && (
+          <>
+            <div className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">
+              <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: 'transparent', border: '1px solid #B4AEA3' }} />Moved
+            </div>
+            <div className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">
+              <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: '#8C8C8C', boxShadow: '0 0 0 1.5px #3F77B5' }} />Makeup
+            </div>
+          </>
+        )}
         {(manualSalaryDay || manualInvoiceDay) && (
           <>
             <div className="w-px h-4 inline-block flex-shrink-0" style={{ background: '#E7E1D6' }} />

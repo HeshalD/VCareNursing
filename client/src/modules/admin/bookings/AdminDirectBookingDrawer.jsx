@@ -184,6 +184,7 @@ const AdminDirectBookingDrawer = ({
   const [startDate, setStartDate] = useState('');
   const [scheduledEndDate, setScheduledEndDate] = useState('');
   const [dailyRate, setDailyRate] = useState('');
+  const [shiftRate, setShiftRate] = useState('');
 
   // Admin notes
   const [adminNotes, setAdminNotes] = useState('');
@@ -256,6 +257,8 @@ const AdminDirectBookingDrawer = ({
     if (!startDate) errs.startDate = 'Start date is required.';
     if (!dailyRate || isNaN(parseFloat(dailyRate)) || parseFloat(dailyRate) < 0)
       errs.dailyRate = 'Enter a valid daily rate.';
+    if (serviceModel === 'SHIFT_BASED' && (!shiftRate || isNaN(parseFloat(shiftRate)) || parseFloat(shiftRate) < 0))
+      errs.shiftRate = 'Enter a valid per-shift rate.';
     return errs;
   };
 
@@ -274,7 +277,9 @@ const AdminDirectBookingDrawer = ({
       preferred_gender: preferredGender,
       start_date: startDate,
       daily_rate: parseFloat(dailyRate),
-      ...(scheduledEndDate ? { scheduled_end_date: scheduledEndDate } : {}),
+      ...(serviceModel === 'SHIFT_BASED' ? { shift_rate: parseFloat(shiftRate) } : {}),
+      // SHIFT_BASED bookings have no booking end date — billing is purely shift-count-derived.
+      ...(serviceModel !== 'SHIFT_BASED' && scheduledEndDate ? { scheduled_end_date: scheduledEndDate } : {}),
       ...(adminNotes ? { admin_notes: adminNotes } : {}),
     };
 
@@ -573,14 +578,16 @@ const AdminDirectBookingDrawer = ({
                   className={inputCls(!!errors.startDate)}
                 />
               </Field>
-              <Field label="Scheduled End Date (optional)">
-                <DateInput
-                  value={scheduledEndDate}
-                  min={startDate || todayISO()}
-                  onChange={(e) => setScheduledEndDate(e.target.value)}
-                  className={inputCls(false)}
-                />
-              </Field>
+              {serviceModel !== 'SHIFT_BASED' && (
+                <Field label="Scheduled End Date (optional)">
+                  <DateInput
+                    value={scheduledEndDate}
+                    min={startDate || todayISO()}
+                    onChange={(e) => setScheduledEndDate(e.target.value)}
+                    className={inputCls(false)}
+                  />
+                </Field>
+              )}
               <Field label="Daily Rate" required error={errors.dailyRate}>
                 <div className="flex">
                   <span className="inline-flex items-center px-3 text-sm text-slate-700 bg-slate-50 border border-r-0 border-slate-200 rounded-l-lg">
@@ -602,6 +609,30 @@ const AdminDirectBookingDrawer = ({
                 </div>
                 {errors.dailyRate && <p className="text-xs text-red-600 mt-1">{errors.dailyRate}</p>}
               </Field>
+              {serviceModel === 'SHIFT_BASED' && (
+                <Field label="Per-Shift Rate (client charge)" required error={errors.shiftRate}>
+                  <div className="flex">
+                    <span className="inline-flex items-center px-3 text-sm text-slate-700 bg-slate-50 border border-r-0 border-slate-200 rounded-l-lg">
+                      LKR
+                    </span>
+                    <input
+                      type="number"
+                      value={shiftRate}
+                      onChange={(e) => { setShiftRate(e.target.value); setErrors((err) => ({ ...err, shiftRate: undefined })); }}
+                      min="0"
+                      step="0.01"
+                      placeholder="e.g. 3500.00"
+                      className={`flex-1 px-3 py-2 text-sm text-slate-800 border rounded-r-lg outline-none focus:ring-2 focus:border-blue-400 transition-colors ${
+                        errors.shiftRate
+                          ? 'border-red-400 bg-red-50 focus:ring-red-100'
+                          : 'border-slate-200 focus:ring-blue-100'
+                      }`}
+                    />
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">What the client is charged per shift — independent of staff pay.</p>
+                  {errors.shiftRate && <p className="text-xs text-red-600 mt-1">{errors.shiftRate}</p>}
+                </Field>
+              )}
             </div>
 
             {/* ── Section 5: Admin Notes ────────────────────────────────── */}
