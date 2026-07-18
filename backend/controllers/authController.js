@@ -20,7 +20,7 @@ function parseRoles(rawRole) {
 }
 
 exports.registerClient = async (req, res, next) => {
-  const { mobile_number, password, full_name, client_type, terms_accepted, email, gender, primary_address, company_name, honorific } = req.body;
+  const { mobile_number, password, full_name, client_type, terms_accepted, email, gender, primary_address, company_name, honorific, display_name_source } = req.body;
 
   try {
     if (!terms_accepted) {
@@ -29,6 +29,12 @@ exports.registerClient = async (req, res, next) => {
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res.status(400).json({ message: "Valid email address is required." });
     }
+
+    // Display name only makes sense once a company name exists; otherwise it's always the person's name.
+    const resolvedDisplayNameSource =
+      client_type === 'CORPORATE_PROXY' && company_name && display_name_source === 'COMPANY_NAME'
+        ? 'COMPANY_NAME'
+        : 'FULL_NAME';
 
     // Block mobile numbers already registered in users table
     const userCheck = await db.query(
@@ -48,24 +54,25 @@ exports.registerClient = async (req, res, next) => {
     // Upsert into pending_registrations — overwrite any previous attempt from the same number
     await db.query(
       `INSERT INTO pending_registrations
-         (mobile_number, password_hash, email, full_name, client_type, gender, primary_address, company_name, honorific, otp_code, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         (mobile_number, password_hash, email, full_name, client_type, gender, primary_address, company_name, honorific, display_name_source, otp_code, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        ON CONFLICT (mobile_number) DO UPDATE
-         SET password_hash   = EXCLUDED.password_hash,
-             email           = EXCLUDED.email,
-             full_name       = EXCLUDED.full_name,
-             client_type     = EXCLUDED.client_type,
-             gender          = EXCLUDED.gender,
-             primary_address = EXCLUDED.primary_address,
-             company_name    = EXCLUDED.company_name,
-             honorific       = EXCLUDED.honorific,
-             otp_code        = EXCLUDED.otp_code,
-             expires_at      = EXCLUDED.expires_at,
-             created_at      = NOW()`,
+         SET password_hash       = EXCLUDED.password_hash,
+             email               = EXCLUDED.email,
+             full_name           = EXCLUDED.full_name,
+             client_type         = EXCLUDED.client_type,
+             gender              = EXCLUDED.gender,
+             primary_address     = EXCLUDED.primary_address,
+             company_name        = EXCLUDED.company_name,
+             honorific           = EXCLUDED.honorific,
+             display_name_source = EXCLUDED.display_name_source,
+             otp_code            = EXCLUDED.otp_code,
+             expires_at          = EXCLUDED.expires_at,
+             created_at          = NOW()`,
       [
         mobile_number, hashedPassword, email, full_name,
         client_type || 'INDIVIDUAL', gender, primary_address,
-        company_name || null, honorific || null, otp, expiresAt,
+        company_name || null, honorific || null, resolvedDisplayNameSource, otp, expiresAt,
       ]
     );
 
@@ -163,12 +170,12 @@ exports.verifyOtp = async (req, res) => {
     const userId = newUser.rows[0].user_id;
 
     const newProfile = await dbClient.query(
-      `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address, company_name, honorific)
-       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7) RETURNING client_profile_id`,
+      `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address, company_name, honorific, display_name_source)
+       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8) RETURNING client_profile_id`,
       [
         userId, pending.full_name, pending.client_type,
         pending.gender, pending.primary_address,
-        pending.company_name, pending.honorific,
+        pending.company_name, pending.honorific, pending.display_name_source,
       ]
     );
     const profileId = newProfile.rows[0].client_profile_id;
@@ -434,8 +441,12 @@ exports.getMyAccountInfo = async (req, res) => {
 // account. Locked/known fields (name, gender, address) are always read server-side
 // from staff_profiles — never taken from the request body — so they can't be tampered with.
 exports.createClientProfileForExistingUser = async (req, res) => {
-  const { client_type, company_name, honorific, terms_accepted } = req.body;
+  const { client_type, company_name, honorific, terms_accepted, display_name_source } = req.body;
   const userId = req.user.user_id;
+  const resolvedDisplayNameSource =
+    client_type === 'CORPORATE_PROXY' && company_name && display_name_source === 'COMPANY_NAME'
+      ? 'COMPANY_NAME'
+      : 'FULL_NAME';
 
   if (!terms_accepted) {
     return res.status(400).json({ message: 'You must accept the Terms & Conditions.' });
@@ -465,8 +476,8 @@ exports.createClientProfileForExistingUser = async (req, res) => {
     }
 
     const newProfile = await dbClient.query(
-      `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address, company_name, honorific)
-       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7) RETURNING client_profile_id`,
+      `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address, company_name, honorific, display_name_source)
+       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8) RETURNING client_profile_id`,
       [
         userId,
         staffProfile.full_name,
@@ -475,6 +486,7 @@ exports.createClientProfileForExistingUser = async (req, res) => {
         staffProfile.home_address,
         client_type === 'CORPORATE_PROXY' ? (company_name || null) : null,
         honorific || null,
+        resolvedDisplayNameSource,
       ]
     );
 

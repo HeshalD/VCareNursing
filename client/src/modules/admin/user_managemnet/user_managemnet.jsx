@@ -31,7 +31,7 @@ const CLIENT_TYPES = ['INDIVIDUAL', 'CORPORATE_PROXY'];
 const BLANK_FORM = {
   full_name: '', email: '', mobile_number: '',
   gender: '', primary_address: '', client_type: 'INDIVIDUAL',
-  honorific: '', company_name: '',
+  honorific: '', company_name: '', display_name_source: 'FULL_NAME',
 };
 
 const SectionHeader = ({ title }) => (
@@ -119,12 +119,17 @@ const ClientManagement = () => {
 
   const handleInput = (e) => {
     const { name, value } = e.target;
-    setFormData(p => ({ ...p, [name]: value }));
+    setFormData(p => ({
+      ...p,
+      [name]: value,
+      ...(name === 'client_type' && value !== 'CORPORATE_PROXY' ? { company_name: '', display_name_source: 'FULL_NAME' } : {}),
+      ...(name === 'company_name' && !value ? { display_name_source: 'FULL_NAME' } : {}),
+    }));
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.full_name || !formData.email || !formData.mobile_number || !formData.gender) {
+    if (!formData.full_name || !formData.mobile_number || !formData.gender) {
       setFormError('Please fill in all required fields.');
       return;
     }
@@ -134,13 +139,16 @@ const ClientManagement = () => {
     try {
       const payload = {
         full_name: formData.full_name,
-        email: formData.email,
+        email: formData.email || undefined,
         mobile_number: formData.mobile_number,
         gender: formData.gender,
         primary_address: formData.primary_address || undefined,
         client_type: formData.client_type || 'INDIVIDUAL',
         honorific: formData.honorific || undefined,
         company_name: formData.company_name || undefined,
+        display_name_source: formData.client_type === 'CORPORATE_PROXY' && formData.company_name
+          ? formData.display_name_source
+          : 'FULL_NAME',
       };
       const res = await apiClient.createClientProfile(payload);
       setFormSuccess(`Temporary password: ${res.data?.tempPassword ?? '(check server)'}`);
@@ -374,18 +382,53 @@ const ClientManagement = () => {
                     {CLIENT_TYPES.map(t => <option key={t} value={t}>{t.charAt(0) + t.slice(1).toLowerCase()}</option>)}
                   </select>
                 </Field>
-                {formData.client_type === 'CORPORATE' && (
-                  <Field label="Company Name">
-                    <input type="text" name="company_name" value={formData.company_name} onChange={handleInput}
-                      placeholder="e.g. ABC Holdings (Pvt) Ltd" className={inputCls(false)} />
-                  </Field>
+                {formData.client_type === 'CORPORATE_PROXY' && (
+                  <>
+                    <Field label="Company Name">
+                      <input type="text" name="company_name" value={formData.company_name} onChange={handleInput}
+                        placeholder="e.g. ABC Holdings (Pvt) Ltd" className={inputCls(false)} />
+                    </Field>
+                    {formData.company_name && (
+                      <Field label="Display Name">
+                        <p className="text-xs text-slate-400 mb-1.5">
+                          Name printed on this client's receipts, invoices, statements and quotations. Switchable anytime from the client's detail page.
+                        </p>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setFormData(p => ({ ...p, display_name_source: 'FULL_NAME' }))}
+                            className={`px-3 py-2 rounded-lg border text-left text-xs font-medium transition-all ${
+                              formData.display_name_source === 'FULL_NAME'
+                                ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                            }`}
+                          >
+                            <p className="font-semibold">Client's Name</p>
+                            <p className="truncate text-slate-400">{formData.full_name || 'Personal name'}</p>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setFormData(p => ({ ...p, display_name_source: 'COMPANY_NAME' }))}
+                            className={`px-3 py-2 rounded-lg border text-left text-xs font-medium transition-all ${
+                              formData.display_name_source === 'COMPANY_NAME'
+                                ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                            }`}
+                          >
+                            <p className="font-semibold">Company Name</p>
+                            <p className="truncate text-slate-400">{formData.company_name}</p>
+                          </button>
+                        </div>
+                      </Field>
+                    )}
+                  </>
                 )}
               </div>
 
               {/* Contact */}
               <SectionHeader title="Contact" />
               <div className="px-5 pt-4 pb-2 space-y-3">
-                <Field label="Email" required>
+                <Field label="Email">
                   <input type="email" name="email" value={formData.email} onChange={handleInput}
                     placeholder="e.g. saman@example.com" className={inputCls(false)} />
                 </Field>

@@ -4,7 +4,7 @@ const { logActivity } = require('../utils/activityLogger');
 const { createPaymentReceipt } = require('../services/receiptService');
 const { sendSms } = require('../utils/sms');
 const { sendClientWelcomeNew } = require('../utils/metaWhatsapp');
-const { ensureCombinedInvoice } = require('./quoteController');
+const { ensureCombinedInvoice, ensureRegFeeInvoiceRecord } = require('./quoteController');
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const { computeRegFeeSplit, settleRegistrationFee } = require('../services/registrationFeeSplit');
 
@@ -639,6 +639,19 @@ const recordPayment = async (req, res) => {
     ensureCombinedInvoice(quote_id).catch((e) =>
       console.error('[Invoice] Generation error (recordPayment):', e.message)
     );
+
+    // The registration fee gets its own standalone invoice as soon as
+    // cumulative payments cover it — independent of the combined Invoice
+    // above, which may still be waiting on the rest of the quote.
+    if (regFeeSplit.regFeeItem && new_total >= parseFloat(regFeeSplit.regFeeItem.amount)) {
+      ensureRegFeeInvoiceRecord(quote_id, {
+        clientId: client_id,
+        registrationFee: regFeeSplit.regFeeItem.amount,
+        payerName: clientBootstrap.payer_name,
+      }).catch((e) =>
+        console.error('[Invoice] Reg fee invoice generation error (recordPayment):', e.message)
+      );
+    }
 
     await safeLog({
       actorUserId: req.user?.user_id,

@@ -31,12 +31,15 @@ const formatDateForBackend = (value) => {
   return `${year}-${month}-${day}`;
 };
 
-// Converts a YYYY-MM-DD string (as returned by the backend) into DD/MM/YYYY for display/editing
+// Converts a backend date (often a full UTC timestamp, e.g. "2026-07-13T18:30:00.000Z"
+// for a local 14/07 date) into DD/MM/YYYY for display/editing. Must go through
+// Date so the value resolves in the browser's timezone — slicing the raw ISO
+// string reads the UTC day, which is one day early for timezones ahead of UTC.
 const formatDateForDisplay = (value) => {
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value || '');
-  if (!match) return '';
-  const [, year, month, day] = match;
-  return `${day}/${month}/${year}`;
+  if (!value) return '';
+  const d = new Date(value);
+  if (isNaN(d)) return '';
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
 };
 
 const NOTE_TYPE_LABEL = {
@@ -122,6 +125,16 @@ const BookingStaffAssignmentPage = () => {
   );
 
   const isShiftBased = formData?.booking?.service_model === 'SHIFT_BASED';
+
+  // How many shifts the client's payments cover — amount paid ÷ per-shift rate.
+  // (bookings.amount_paid mirrors verified quote payments on conversion; fall back
+  // to payment_info.total_verified for bookings where it hasn't been synced.)
+  const shiftsPaid = useMemo(() => {
+    const rate = parseFloat(formData?.booking?.shift_rate) || 0;
+    if (!rate) return null;
+    const paid = parseFloat(formData?.booking?.amount_paid) || parseFloat(formData?.payment_info?.total_verified) || 0;
+    return Math.floor(paid / rate);
+  }, [formData]);
 
   const handleShiftCountChange = (count) => {
     setShiftSlots((prev) => {
@@ -370,7 +383,17 @@ const BookingStaffAssignmentPage = () => {
                   />
                   <Stat label="Paid"       value={money(formData.booking.amount_paid)} />
                   <Stat label="Quoted"     value={money(formData.booking.amount_quotated)} />
-                  <Stat label="Daily Rate" value={money(formData.booking.quote_daily_rate || 0)} />
+                  {isShiftBased ? (
+                    <>
+                      <Stat label="Shift Rate" value={money(formData.booking.shift_rate || 0)} />
+                      <Stat
+                        label="Shifts Paid"
+                        value={shiftsPaid !== null ? `${shiftsPaid} shift${shiftsPaid !== 1 ? 's' : ''}` : 'N/A'}
+                      />
+                    </>
+                  ) : (
+                    <Stat label="Daily Rate" value={money(formData.booking.quote_daily_rate || 0)} />
+                  )}
                 </div>
               </div>
 
@@ -448,6 +471,7 @@ const BookingStaffAssignmentPage = () => {
                           step="0.01"
                           value={assignment.daily_rate}
                           onChange={(e) => setAssignment({ ...assignment, daily_rate: e.target.value })}
+                          onWheel={(e) => e.currentTarget.blur()}
                           className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         />
                       </FormField>
@@ -458,6 +482,7 @@ const BookingStaffAssignmentPage = () => {
                           step="0.01"
                           value={assignment.ot_rate}
                           onChange={(e) => setAssignment({ ...assignment, ot_rate: e.target.value })}
+                          onWheel={(e) => e.currentTarget.blur()}
                           className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         />
                       </FormField>
@@ -542,6 +567,7 @@ const BookingStaffAssignmentPage = () => {
                                     step="0.5"
                                     value={slot.duration_hours}
                                     onChange={(e) => updateShiftSlot(idx, 'duration_hours', e.target.value)}
+                                    onWheel={(e) => e.currentTarget.blur()}
                                     className="w-full rounded-md border border-gray-200 px-2.5 py-1.5 text-sm text-gray-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                                   />
                                 </td>
@@ -578,6 +604,7 @@ const BookingStaffAssignmentPage = () => {
                                     placeholder={defaultRate || '0.00'}
                                     value={slot.daily_rate}
                                     onChange={(e) => updateShiftSlot(idx, 'daily_rate', e.target.value)}
+                                    onWheel={(e) => e.currentTarget.blur()}
                                     className="w-full rounded-md border border-gray-200 px-2.5 py-1.5 text-sm text-gray-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                                   />
                                 </td>

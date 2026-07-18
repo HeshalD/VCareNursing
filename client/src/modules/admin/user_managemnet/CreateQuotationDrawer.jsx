@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import {
-  X, Plus, Send, CheckCircle, AlertCircle, Loader2, Package, BadgeDollarSign, Percent, ShoppingBag,
+  X, Plus, Send, CheckCircle, AlertCircle, Loader2, Package, BadgeDollarSign, Percent, ShoppingBag, CalendarClock, Clock3,
 } from 'lucide-react';
 import apiClient from '../../../api/api';
 import PresetItemSelector from '../service_quotes/PresetItemSelector';
 import LineItemRow from '../service_quotes/LineItemRow';
 import RegistrationFeeRow from '../service_quotes/RegistrationFeeRow';
+import RateLineItemRow from '../service_quotes/RateLineItemRow';
 import ProductLineItemRow from '../service_quotes/ProductLineItemRow';
 
 const emptyProductLine = () => ({
@@ -43,6 +44,7 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
   const [error, setError] = useState('');
   const [createdQuote, setCreatedQuote] = useState(null);
   const [createdProductQuote, setCreatedProductQuote] = useState(null);
+  const [existingServiceModel, setExistingServiceModel] = useState(null); // edit mode only — from getQuoteWithLineItems
 
   useEffect(() => {
     if (!open) {
@@ -110,6 +112,31 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
   const registrationFeeAlreadySettled = ['PAID', 'WAIVED'].includes(clientProfile?.reg_fee_status);
   const canAddRegistrationFee = !hasRegistrationFeeItem && !registrationFeeAlreadySettled;
 
+  // Dedicated rate line items — item_subtype is what quoteController reads to
+  // populate quotations.daily_rate/per_shift_rate; one of each per quote.
+  // In edit mode the model comes from the quote itself (existingServiceModel);
+  // in create mode it comes from whichever service request was picked.
+  const selectedRequest = serviceRequests.find((r) => r.request_id === selectedRequestId);
+  const activeServiceModel = existingServiceModel || selectedRequest?.service_model;
+  const isShiftBased = activeServiceModel === 'SHIFT_BASED';
+  const isDailyModel = ['LIVE_IN', 'VISITING'].includes(activeServiceModel);
+  const hasShiftRateItem = lineItems.some((i) => i.item_subtype === 'RATE_SHIFT');
+  const hasDailyRateItem = lineItems.some((i) => i.item_subtype === 'RATE_DAILY');
+  const canAddShiftRate = isShiftBased && !hasShiftRateItem;
+  const canAddDailyRate = isDailyModel && !hasDailyRateItem;
+
+  const addShiftRateItem = () =>
+    setLineItems((prev) => [
+      ...prev,
+      { item_type: 'CHARGE', description: 'Shift Rate', quantity: 7, unit_price: '', amount: 0, item_subtype: 'RATE_SHIFT', sort_order: prev.length },
+    ]);
+
+  const addDailyRateItem = () =>
+    setLineItems((prev) => [
+      ...prev,
+      { item_type: 'CHARGE', description: 'Care Rate', quantity: 7, unit_price: '', amount: 0, item_subtype: 'RATE_DAILY', sort_order: prev.length },
+    ]);
+
   const addRegistrationFeeItem = () => {
     const amount = parseFloat(clientProfile?.reg_fee_amount) || 10000;
     setLineItems((prev) => [
@@ -174,6 +201,7 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
       const quote = res.data;
       setLineItems(Array.isArray(quote.line_items) ? quote.line_items : []);
       setTermsConditions(quote.terms_conditions || 'The initial estimated amount is non-refundable.');
+      setExistingServiceModel(quote.service_model || null);
     } catch {
       setError('Failed to load quotation details');
     } finally {
@@ -598,6 +626,14 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
                                 onUpdate={(updated) => updateLineItem(index, updated)}
                                 onDelete={() => deleteLineItem(index)}
                               />
+                            ) : item.item_subtype === 'RATE_DAILY' || item.item_subtype === 'RATE_SHIFT' ? (
+                              <RateLineItemRow
+                                key={`svc-${index}`}
+                                item={item}
+                                index={index}
+                                onUpdate={(updated) => updateLineItem(index, updated)}
+                                onDelete={() => deleteLineItem(index)}
+                              />
                             ) : (
                               <LineItemRow
                                 key={`svc-${index}`}
@@ -650,6 +686,32 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
                     </>
                   ) : registrationFeeAlreadySettled && (
                     <span className="text-[11px] text-gray-400">Registration fee already settled for this client</span>
+                  )}
+                  {canAddShiftRate && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={addShiftRateItem}
+                        className="inline-flex items-center gap-1.5 text-[13px] text-indigo-600 hover:text-indigo-800 font-medium transition-colors"
+                      >
+                        <Clock3 className="w-3.5 h-3.5" />
+                        Add Shift Rate
+                      </button>
+                      <span className="text-gray-200 select-none">|</span>
+                    </>
+                  )}
+                  {canAddDailyRate && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={addDailyRateItem}
+                        className="inline-flex items-center gap-1.5 text-[13px] text-blue-700 hover:text-blue-900 font-medium transition-colors"
+                      >
+                        <CalendarClock className="w-3.5 h-3.5" />
+                        Add Care Rate
+                      </button>
+                      <span className="text-gray-200 select-none">|</span>
+                    </>
                   )}
                   <button
                     type="button"

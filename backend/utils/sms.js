@@ -8,7 +8,14 @@ const formatSriLankaNumber = (mobileNumber) => {
   return number;
 };
 
+// TEMPORARY KILL SWITCH — SMS sending is blocked. Remove this block to re-enable.
+const MESSAGING_BLOCKED = true;
+
 const sendSmsOtp = async (mobileNumber, otp) => {
+  if (MESSAGING_BLOCKED) {
+    console.log(`[SMS] BLOCKED (messaging disabled): OTP to ${mobileNumber}`);
+    return { blocked: true };
+  }
   const number = formatSriLankaNumber(mobileNumber);
 
   const response = await axios.post(
@@ -33,6 +40,10 @@ const sendSmsOtp = async (mobileNumber, otp) => {
 };
 
 const sendSms = async (mobileNumber, message) => {
+  if (MESSAGING_BLOCKED) {
+    console.log(`[SMS] BLOCKED (messaging disabled): to ${mobileNumber}`);
+    return { blocked: true };
+  }
   const number = formatSriLankaNumber(mobileNumber);
 
   const response = await axios.post(

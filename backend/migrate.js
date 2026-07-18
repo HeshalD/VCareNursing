@@ -1153,6 +1153,13 @@ async function runMigration() {
     ADD COLUMN IF NOT EXISTS product_type product_type_enum NOT NULL DEFAULT 'ITEM'
   `);
 
+  // Cost basis for the Profit & Loss report's COGS line (products only had a
+  // sale price before — no way to know what a sold item actually cost).
+  await db.query(`
+    ALTER TABLE products
+    ADD COLUMN IF NOT EXISTS cost_price NUMERIC(12,2) NOT NULL DEFAULT 0
+  `);
+
   // Walk-in customers: people who buy/rent a product but never create a
   // login account. Kept separate from client_profiles (which requires a
   // users row with mobile/password) rather than forcing fake credentials.
@@ -1187,6 +1194,11 @@ async function runMigration() {
   // Optional link from a quote line item back to the catalog product it
   // was pulled from (free-text description/qty/price stay editable as before).
   await db.query(`ALTER TABLE quote_line_items ADD COLUMN IF NOT EXISTS product_id UUID REFERENCES products(product_id)`);
+
+  // Snapshot of the product's cost at the moment this line item was created —
+  // mirrors unit_price already being frozen at creation time — so COGS on a
+  // past sale doesn't shift if the product's cost_price is edited later.
+  await db.query(`ALTER TABLE quote_line_items ADD COLUMN IF NOT EXISTS cost_price_snapshot NUMERIC(12,2)`);
 
   await db.query(`
     DO $$ BEGIN
@@ -1224,6 +1236,28 @@ async function runMigration() {
     ALTER TABLE invoices
     ALTER COLUMN invoice_code SET DEFAULT 'INV-' || LPAD(nextval('invoice_code_seq')::text, 6, '0')
   `);
+
+  // Defense-in-depth against invoiceController.createInvoiceFromQuote racing
+  // itself (was previously a plain check-then-insert with no locking) and
+  // producing two PRODUCT invoices for the same quote. Scoped to category =
+  // 'PRODUCT' only — RENTAL_ONE_TIME/RENTAL_RECURRING invoices legitimately
+  // share a quote_id across many invoices (one per rental agreement, then
+  // one per recurring billing period). Wrapped in try/catch because a
+  // database that already has duplicate PRODUCT invoices (from the bug this
+  // guards against) would otherwise fail this migration and block startup —
+  // those duplicates must be reconciled manually before this index can apply.
+  try {
+    await db.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_product_quote_unique
+      ON invoices(quote_id) WHERE category = 'PRODUCT'
+    `);
+  } catch (err) {
+    console.error(
+      'Could not create idx_invoices_product_quote_unique — likely existing duplicate PRODUCT invoices for the same quote_id. ' +
+      'Find and reconcile them (SELECT quote_id, COUNT(*) FROM invoices WHERE category = \'PRODUCT\' GROUP BY quote_id HAVING COUNT(*) > 1), then restart to retry this index.',
+      err.message
+    );
+  }
 
   // A combined Invoice document for a SERVICE quote (and its linked PRODUCT
   // quote, if any — e.g. daily-rate charges + a rental + its deposit) — one
@@ -2223,6 +2257,84 @@ async function runMigration() {
     ON booking_daily_invoices(shift_slot_id);
   `);
 
+  // ── Per-shift billing (client rate independent of staff pay rate) ──────────
+  // bookings.shift_rate: what the client is charged per shift on SHIFT_BASED
+  // bookings, separate from booking_staff_assignments.daily_rate (staff pay,
+  // unchanged). quotations.per_shift_rate/qty_shifts mirror daily_rate/qty_days
+  // for the SHIFT_BASED quoting path.
+  await db.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS shift_rate NUMERIC(10,2)`);
+  await db.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS per_shift_rate NUMERIC(12,2)`);
+  await db.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS qty_shifts INTEGER`);
+
+  // Marks a quote_line_items row as the authoritative rate line for a quote —
+  // 'RATE_DAILY' or 'RATE_SHIFT' — so quoteController can read daily_rate/
+  // per_shift_rate directly off a tagged row instead of pattern-matching the
+  // free-text description (fragile: broke silently whenever an admin didn't
+  // happen to type "daily"/"shift" in the description). NULL for ordinary
+  // charge/discount/product line items.
+  await db.query(`ALTER TABLE quote_line_items ADD COLUMN IF NOT EXISTS item_subtype VARCHAR(20)`);
+
+  // ── Shift rescheduling ───────────────────────────────────────────────────
+  // A missed/moved shift occurrence (originally implicit — pattern × calendar
+  // date) becomes an explicit exception: the original date+slot renders as
+  // "moved", and a makeup occurrence is added at new_date. assignment_id points
+  // at whichever assignment's attendance/invoice should represent the makeup —
+  // either the slot's existing standing assignment (staff unchanged) or a new
+  // makeup-only assignment row (staff changed, see booking_staff_assignments.reschedule_id).
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS shift_reschedules (
+      reschedule_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      booking_id UUID NOT NULL REFERENCES bookings(booking_id) ON DELETE CASCADE,
+      shift_slot_id UUID NOT NULL REFERENCES booking_shift_slots(shift_slot_id),
+      original_date DATE NOT NULL,
+      new_date DATE NOT NULL,
+      new_start_time TIME,
+      assignment_id UUID REFERENCES booking_staff_assignments(assignment_id),
+      status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+      reason TEXT,
+      created_by UUID REFERENCES users(user_id),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_shift_reschedules_booking_id
+    ON shift_reschedules(booking_id);
+  `);
+  // At most one ACTIVE reschedule per origin occurrence (can't move the same
+  // missed shift twice without cancelling the first move).
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_reschedule_origin
+      ON shift_reschedules (booking_id, shift_slot_id, original_date)
+      WHERE status = 'ACTIVE'
+  `);
+
+  // A makeup-only assignment (reschedule_id set) exists purely to cover one
+  // moved shift — it must NOT collide with the slot's standing ACTIVE assignment.
+  await db.query(`ALTER TABLE booking_staff_assignments ADD COLUMN IF NOT EXISTS reschedule_id UUID REFERENCES shift_reschedules(reschedule_id)`);
+  await db.query(`DROP INDEX IF EXISTS uniq_active_slot_assignment`);
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_slot_assignment
+      ON booking_staff_assignments (shift_slot_id)
+      WHERE status = 'ACTIVE' AND shift_slot_id IS NOT NULL AND reschedule_id IS NULL
+  `);
+
+  // Attendance/invoice rows for a makeup occurrence are keyed by reschedule_id
+  // instead of (assignment_id/booking_id, service_date, shift_slot_id) — the
+  // makeup lands on new_date, which may already have its own natural occurrence
+  // for the same slot/assignment, so the normal keys can't disambiguate it.
+  await db.query(`ALTER TABLE staff_daily_attendance ADD COLUMN IF NOT EXISTS reschedule_id UUID REFERENCES shift_reschedules(reschedule_id)`);
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_attendance_reschedule
+      ON staff_daily_attendance (reschedule_id)
+      WHERE reschedule_id IS NOT NULL
+  `);
+  await db.query(`ALTER TABLE booking_daily_invoices ADD COLUMN IF NOT EXISTS reschedule_id UUID REFERENCES shift_reschedules(reschedule_id)`);
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_daily_invoice_reschedule
+      ON booking_daily_invoices (reschedule_id)
+      WHERE reschedule_id IS NOT NULL
+  `);
+
   // Same treatment as staff_daily_attendance above: allow one invoice row per
   // shift slot per day for SHIFT_BASED, keep the old one-per-day guarantee otherwise.
   await db.query(`
@@ -2244,6 +2356,12 @@ async function runMigration() {
 
   await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS company_name VARCHAR(150)`);
   await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS honorific VARCHAR(10)`);
+
+  // Which name to print on receipts/invoices/statements/quotations for this client:
+  // 'FULL_NAME' (the person) or 'COMPANY_NAME' (their company_name). Chosen at
+  // registration for corporate proxies, switchable anytime by an admin.
+  await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS display_name_source VARCHAR(20) NOT NULL DEFAULT 'FULL_NAME'`);
+  await db.query(`ALTER TABLE pending_registrations ADD COLUMN IF NOT EXISTS display_name_source VARCHAR(20) NOT NULL DEFAULT 'FULL_NAME'`);
 
   // Registration fee invoicing — standalone fee sent directly without a booking.
   // reg_fee_receipt_token is the public upload portal key (like doc_upload_token for staff).
@@ -2305,6 +2423,7 @@ async function runMigration() {
       primary_address TEXT,
       company_name  VARCHAR(150),
       honorific     VARCHAR(10),
+      display_name_source VARCHAR(20) NOT NULL DEFAULT 'FULL_NAME',
       otp_code      VARCHAR(10)  NOT NULL,
       expires_at    TIMESTAMPTZ  NOT NULL,
       created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()

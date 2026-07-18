@@ -21,7 +21,8 @@ const RegisterPage = () => {
     terms_accepted: false,
     gender: '',
     primary_address: '',
-    company_name: ''
+    company_name: '',
+    display_name_source: 'FULL_NAME'
   });
 
   const [fieldErrors, setFieldErrors] = useState({
@@ -145,7 +146,7 @@ const RegisterPage = () => {
 
     // Validate all fields
     Object.keys(formData).forEach(key => {
-      if (key !== 'client_type' && key !== 'terms_accepted' && key !== 'honorific' && key !== 'company_name') {
+      if (key !== 'client_type' && key !== 'terms_accepted' && key !== 'honorific' && key !== 'company_name' && key !== 'display_name_source') {
         const error = validateField(key, formData[key]);
         if (error) errors[key] = error;
       }
@@ -188,6 +189,9 @@ const RegisterPage = () => {
         gender: formData.gender,
         primary_address: formData.primary_address,
         company_name: formData.client_type === 'CORPORATE_PROXY' ? (formData.company_name || undefined) : undefined,
+        display_name_source: formData.client_type === 'CORPORATE_PROXY' && formData.company_name
+          ? formData.display_name_source
+          : 'FULL_NAME',
       });
 
       // Registration successful
@@ -268,7 +272,7 @@ const RegisterPage = () => {
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     type="button"
-                    onClick={() => handleInputChange('client_type', 'INDIVIDUAL')}
+                    onClick={() => setFormData(prev => ({ ...prev, client_type: 'INDIVIDUAL', company_name: '', display_name_source: 'FULL_NAME' }))}
                     className={`px-4 py-3 rounded-lg border-2 transition-all font-medium text-sm ${
                       formData.client_type === 'INDIVIDUAL'
                         ? 'border-blue-500 bg-blue-50 text-blue-700'
@@ -294,18 +298,67 @@ const RegisterPage = () => {
               {/* Company Name — only for corporate */}
               {formData.client_type === 'CORPORATE_PROXY' && (
                 <div className="space-y-1">
-                  <label className="text-sm font-medium text-slate-700 block">Company Name <span className="text-slate-400 font-normal">(used on receipts &amp; statements)</span></label>
+                  <label className="text-sm font-medium text-slate-700 block">Company Name</label>
                   <div className="relative">
                     <input
                       type="text"
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
                       placeholder="e.g. Acme Holdings Ltd."
                       value={formData.company_name}
-                      onChange={(e) => handleInputChange('company_name', e.target.value)}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setFormData(prev => ({
+                          ...prev,
+                          company_name: value,
+                          display_name_source: value ? prev.display_name_source : 'FULL_NAME',
+                        }));
+                      }}
                     />
                     <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">
                       <Building2 className="w-5 h-5" />
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Display Name — which name appears on documents */}
+              {formData.client_type === 'CORPORATE_PROXY' && (
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-700 block">Display Name</label>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    This is the name we'll print on your receipts, invoices, statements and quotations.
+                    Choose your own name if you're the one being billed personally, or your company name
+                    if invoices should be issued to the company. You (or our admin team) can change this
+                    anytime from your account.
+                  </p>
+                  <div className="grid grid-cols-2 gap-3 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => handleInputChange('display_name_source', 'FULL_NAME')}
+                      className={`px-4 py-3 rounded-lg border-2 transition-all text-left ${
+                        formData.display_name_source === 'FULL_NAME'
+                          ? 'border-blue-500 bg-blue-50 text-blue-700'
+                          : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                      }`}
+                    >
+                      <p className="text-sm font-semibold">Your Name</p>
+                      <p className="text-xs text-slate-500 mt-0.5 truncate">{formData.fullName || 'Personal name'}</p>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!formData.company_name}
+                      onClick={() => handleInputChange('display_name_source', 'COMPANY_NAME')}
+                      className={`px-4 py-3 rounded-lg border-2 transition-all text-left ${
+                        !formData.company_name
+                          ? 'border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed'
+                          : formData.display_name_source === 'COMPANY_NAME'
+                            ? 'border-blue-500 bg-blue-50 text-blue-700'
+                            : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                      }`}
+                    >
+                      <p className="text-sm font-semibold">Company Name</p>
+                      <p className="text-xs mt-0.5 truncate">{formData.company_name || 'Enter company name above'}</p>
+                    </button>
                   </div>
                 </div>
               )}

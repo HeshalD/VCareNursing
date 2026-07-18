@@ -5,6 +5,7 @@ const { sendClientQuotation, sendClientProductQuotation, sendClientInvoice } = r
 const { uploadBufferToS3 } = require('../config/s3Config');
 const { logActivity } = require('../utils/activityLogger');
 const { createRentalAgreementCore, RentalAgreementError } = require('./rentalController');
+const { generateAndUploadRegFeeInvoice } = require('../utils/regFeeInvoicePdf');
 
 function extractActorRole(role) {
   const raw = Array.isArray(role) ? role[0] : role;
@@ -25,16 +26,21 @@ async function safeLog(params) {
 }
 
 exports.createQuotation = async (req, res) => {
-    const { request_id, daily_rate, qty_days, transport_fee, registration_fee } = req.body;
+    const { request_id, daily_rate, qty_days, per_shift_rate, qty_shifts, transport_fee, registration_fee } = req.body;
 
     try {
-        // 1. Setup constants based on Sample Estimate 
+        // 1. Setup constants based on Sample Estimate
         const regFee = (registration_fee !== undefined && registration_fee !== '' && registration_fee !== null) ? parseFloat(registration_fee) : 0;
-        const days = qty_days || 7;
-        const transport = transport_fee || 1000.00; // Based on sample 
+        const transport = transport_fee || 1000.00; // Based on sample
 
-        // 2. Calculate Totals 
-        const item2Amount = daily_rate * days;
+        // Shift-based bookings are priced per shift instead of per day —
+        // per_shift_rate/qty_shifts take precedence when supplied.
+        const isShiftBased = per_shift_rate !== undefined && per_shift_rate !== null && per_shift_rate !== '';
+        const days = qty_days || 7;
+        const shifts = qty_shifts || 7;
+
+        // 2. Calculate Totals
+        const item2Amount = isShiftBased ? parseFloat(per_shift_rate) * shifts : (daily_rate || 0) * days;
         const subTotal = regFee + item2Amount + transport;
 
         // Generate a unique estimate number (e.g., EST-1001)
@@ -43,16 +49,16 @@ exports.createQuotation = async (req, res) => {
         // 3. Insert into Database
         const query = `
             INSERT INTO quotations (
-                estimate_number, request_id, registration_fee, 
-                daily_rate, qty_days, transport_fee, 
+                estimate_number, request_id, registration_fee,
+                daily_rate, qty_days, per_shift_rate, qty_shifts, transport_fee,
                 sub_total, total_amount
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING *;
         `;
 
         const result = await db.query(query, [
             estimateNumber, request_id, regFee,
-            daily_rate, days, transport,
+            daily_rate || 0, days, isShiftBased ? parseFloat(per_shift_rate) : null, isShiftBased ? shifts : null, transport,
             subTotal, subTotal
         ]);
 
@@ -466,6 +472,21 @@ exports.createModularQuotation = async (req, res) => {
         // Terms are per-line-item, not per-quote, so a quote can freely mix
         // several rental items (each with different terms) with ordinary
         // one-off purchases.
+        // product_id -> cost_price, used to snapshot each line item's cost basis
+        // below (for both product and service quotes, since either can carry
+        // product-backed line items).
+        let productCostById = new Map();
+        {
+            const allProductIds = [...new Set(line_items.map(i => i.product_id).filter(Boolean))];
+            if (allProductIds.length > 0) {
+                const costResult = await db.query(
+                    `SELECT product_id, cost_price FROM products WHERE product_id = ANY($1::uuid[])`,
+                    [allProductIds]
+                );
+                productCostById = new Map(costResult.rows.map(p => [p.product_id, p.cost_price]));
+            }
+        }
+
         if (isProductQuote) {
             const productIds = [...new Set(line_items.map(i => i.product_id).filter(Boolean))];
             if (productIds.length > 0) {
@@ -519,7 +540,8 @@ exports.createModularQuotation = async (req, res) => {
                 quantity,
                 unit_price,
                 amount,
-                sort_order: item.sort_order !== undefined ? item.sort_order : index
+                sort_order: item.sort_order !== undefined ? item.sort_order : index,
+                cost_price_snapshot: item.product_id ? (productCostById.get(item.product_id) ?? 0) : null,
             };
         });
 
@@ -531,11 +553,19 @@ exports.createModularQuotation = async (req, res) => {
             i.description.toLowerCase().includes('registration')
         )?.amount || 0;
 
-        const dailyRateItem = processedItems.find(i =>
-            i.description.toLowerCase().includes('daily') || i.description.toLowerCase().includes('care rate')
-        );
+        // A tagged item_subtype is the authoritative signal (added via the
+        // dedicated "Add Care Rate"/"Add Shift Rate" buttons in the quote
+        // builder) — description text-matching only remains as a fallback for
+        // older callers that don't send item_subtype.
+        const dailyRateItem = processedItems.find(i => i.item_subtype === 'RATE_DAILY')
+            || processedItems.find(i => i.description.toLowerCase().includes('daily') || i.description.toLowerCase().includes('care rate'));
         const daily_rate = dailyRateItem?.unit_price || 0;
         const qty_days = dailyRateItem?.quantity || 1;
+
+        const shiftRateItem = processedItems.find(i => i.item_subtype === 'RATE_SHIFT')
+            || processedItems.find(i => i.description.toLowerCase().includes('shift'));
+        const per_shift_rate = shiftRateItem?.unit_price || null;
+        const qty_shifts = shiftRateItem?.quantity || null;
 
         const transport_fee = processedItems.find(i =>
             i.description.toLowerCase().includes('transport')
@@ -544,14 +574,14 @@ exports.createModularQuotation = async (req, res) => {
         // Insert quotation
         const quoteQuery = `
             INSERT INTO quotations (
-                estimate_number, request_id, registration_fee, daily_rate, qty_days, transport_fee,
+                estimate_number, request_id, registration_fee, daily_rate, qty_days, per_shift_rate, qty_shifts, transport_fee,
                 sub_total, total_amount, terms_conditions, quote_type, client_id, walk_in_customer_id, linked_quote_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             RETURNING *;
         `;
 
         const quoteResult = await db.query(quoteQuery, [
-            estimateNumber, isProductQuote ? null : request_id, registration_fee, daily_rate, qty_days, transport_fee,
+            estimateNumber, isProductQuote ? null : request_id, registration_fee, daily_rate, qty_days, per_shift_rate, qty_shifts, transport_fee,
             sub_total, sub_total, terms_conditions || 'The initial estimated amount is non-refundable.',
             isProductQuote ? 'PRODUCT' : 'SERVICE',
             isProductQuote ? (client_id || null) : null,
@@ -568,9 +598,9 @@ exports.createModularQuotation = async (req, res) => {
                 INSERT INTO quote_line_items (
                     quote_id, item_type, description, quantity, unit_price, amount, sort_order, product_id,
                     rental_billing_type, rental_start_date, rental_end_date, deposit_amount, unit_id,
-                    is_registration_fee, salesperson_id
+                    is_registration_fee, salesperson_id, item_subtype, cost_price_snapshot
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             `, [
                 quote_id, item.item_type, item.description, item.quantity, item.unit_price, item.amount, item.sort_order, item.product_id || null,
                 item.rental_billing_type || null,
@@ -580,6 +610,8 @@ exports.createModularQuotation = async (req, res) => {
                 item.unit_id || null,
                 !!item.is_registration_fee,
                 item.salesperson_id || null,
+                item.item_subtype || null,
+                item.cost_price_snapshot,
             ]);
         }
 
@@ -601,7 +633,8 @@ exports.createModularQuotation = async (req, res) => {
                         'rental_end_date', li.rental_end_date,
                         'deposit_amount', li.deposit_amount,
                         'unit_id', li.unit_id,
-                        'unit_code', ru.unit_code
+                        'unit_code', ru.unit_code,
+                        'item_subtype', li.item_subtype
                     ) ORDER BY li.sort_order
                 ) FILTER (WHERE li.line_item_id IS NOT NULL), '[]') as line_items
             FROM quotations q
@@ -643,7 +676,7 @@ exports.getQuoteWithLineItems = async (req, res) => {
 
     try {
         const result = await db.query(`
-            SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type,
+            SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, s.service_model,
                 s.client_id as request_client_id,
                 pq.quote_id as product_quote_id,
                 COALESCE(json_agg(
@@ -655,7 +688,8 @@ exports.getQuoteWithLineItems = async (req, res) => {
                         'unit_price', li.unit_price,
                         'amount', li.amount,
                         'sort_order', li.sort_order,
-                        'is_registration_fee', li.is_registration_fee
+                        'is_registration_fee', li.is_registration_fee,
+                        'item_subtype', li.item_subtype
                     ) ORDER BY li.sort_order
                 ) FILTER (WHERE li.line_item_id IS NOT NULL), '[]') as line_items
             FROM quotations q
@@ -663,7 +697,7 @@ exports.getQuoteWithLineItems = async (req, res) => {
             LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
             LEFT JOIN quotations pq ON pq.linked_quote_id = q.quote_id AND pq.quote_type = 'PRODUCT'
             WHERE q.quote_id = $1
-            GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, s.client_id, pq.quote_id
+            GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, s.service_model, s.client_id, pq.quote_id
         `, [quote_id]);
 
         if (result.rows.length === 0) {
@@ -693,6 +727,7 @@ exports.updateQuoteLineItems = async (req, res) => {
 
         // Recalculate and insert new line items
         let sub_total = 0;
+        const processedItems = [];
         for (let i = 0; i < line_items.length; i++) {
             const item = line_items[i];
             const quantity = parseFloat(item.quantity) || 1;
@@ -702,25 +737,41 @@ exports.updateQuoteLineItems = async (req, res) => {
                 : quantity * unit_price;
 
             sub_total += amount;
+            processedItems.push({ ...item, quantity, unit_price, amount });
 
             await db.query(`
-                INSERT INTO quote_line_items (quote_id, item_type, description, quantity, unit_price, amount, sort_order, is_registration_fee, salesperson_id)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            `, [quote_id, item.item_type, item.description, quantity, unit_price, amount, item.sort_order || i, !!item.is_registration_fee, item.salesperson_id || null]);
+                INSERT INTO quote_line_items (quote_id, item_type, description, quantity, unit_price, amount, sort_order, is_registration_fee, salesperson_id, item_subtype)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            `, [quote_id, item.item_type, item.description, quantity, unit_price, amount, item.sort_order || i, !!item.is_registration_fee, item.salesperson_id || null, item.item_subtype || null]);
         }
 
-        // Update quotation totals
+        // Re-derive the legacy rate columns from the (possibly changed) line
+        // items — without this, editing a quote's rate never reaches
+        // quotations.daily_rate/per_shift_rate, and a booking created from it
+        // afterwards would silently use the stale value from creation time.
+        const registration_fee = processedItems.find(i => i.description.toLowerCase().includes('registration'))?.amount || 0;
+        const dailyRateItem = processedItems.find(i => i.item_subtype === 'RATE_DAILY')
+            || processedItems.find(i => i.description.toLowerCase().includes('daily') || i.description.toLowerCase().includes('care rate'));
+        const daily_rate = dailyRateItem?.unit_price || 0;
+        const qty_days = dailyRateItem?.quantity || 1;
+        const shiftRateItem = processedItems.find(i => i.item_subtype === 'RATE_SHIFT')
+            || processedItems.find(i => i.description.toLowerCase().includes('shift'));
+        const per_shift_rate = shiftRateItem?.unit_price || null;
+        const qty_shifts = shiftRateItem?.quantity || null;
+
+        // Update quotation totals + legacy rate columns
         await db.query(`
-            UPDATE quotations 
-            SET sub_total = $1, total_amount = $1, terms_conditions = $2, updated_at = CURRENT_TIMESTAMP
-            WHERE quote_id = $3
-        `, [sub_total, terms_conditions, quote_id]);
+            UPDATE quotations
+            SET sub_total = $1, total_amount = $1, terms_conditions = $2, updated_at = CURRENT_TIMESTAMP,
+                registration_fee = $3, daily_rate = $4, qty_days = $5, per_shift_rate = $6, qty_shifts = $7
+            WHERE quote_id = $8
+        `, [sub_total, terms_conditions, registration_fee, daily_rate, qty_days, per_shift_rate, qty_shifts, quote_id]);
 
         await db.query('COMMIT');
 
         // Return updated quote
         const result = await db.query(`
-            SELECT q.*, 
+            SELECT q.*,
                 COALESCE(json_agg(
                     json_build_object(
                         'line_item_id', li.line_item_id,
@@ -730,7 +781,8 @@ exports.updateQuoteLineItems = async (req, res) => {
                         'unit_price', li.unit_price,
                         'amount', li.amount,
                         'sort_order', li.sort_order,
-                        'is_registration_fee', li.is_registration_fee
+                        'is_registration_fee', li.is_registration_fee,
+                        'item_subtype', li.item_subtype
                     ) ORDER BY li.sort_order
                 ) FILTER (WHERE li.line_item_id IS NOT NULL), '[]') as line_items
             FROM quotations q
@@ -814,7 +866,7 @@ exports.submitProductInterest = async (req, res) => {
         const client_id = clientResult.rows[0].client_profile_id;
 
         const productResult = await db.query(
-            'SELECT product_id, name, price FROM products WHERE product_id = $1 AND is_available = true',
+            'SELECT product_id, name, price, cost_price FROM products WHERE product_id = $1 AND is_available = true',
             [product_id]
         );
         if (productResult.rows.length === 0) {
@@ -837,9 +889,9 @@ exports.submitProductInterest = async (req, res) => {
         const quote_id = quoteResult.rows[0].quote_id;
 
         await db.query(
-            `INSERT INTO quote_line_items (quote_id, item_type, description, quantity, unit_price, amount, product_id)
-             VALUES ($1, 'PRODUCT', $2, $3, $4, $5, $6)`,
-            [quote_id, product.name, qty, product.price, amount, product_id]
+            `INSERT INTO quote_line_items (quote_id, item_type, description, quantity, unit_price, amount, product_id, cost_price_snapshot)
+             VALUES ($1, 'PRODUCT', $2, $3, $4, $5, $6, $7)`,
+            [quote_id, product.name, qty, product.price, amount, product_id, product.cost_price]
         );
 
         await safeLog({
@@ -869,7 +921,9 @@ exports.getProductQuoteWithLineItems = async (req, res) => {
     try {
         const result = await db.query(`
             SELECT q.*,
-                   cp.full_name as client_name, u.mobile_number as client_mobile,
+                   CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
+                        THEN cp.company_name ELSE cp.full_name END as client_name,
+                   u.mobile_number as client_mobile,
                    wc.full_name as walk_in_name, wc.mobile_number as walk_in_mobile,
                 COALESCE(json_agg(
                     json_build_object(
@@ -896,7 +950,7 @@ exports.getProductQuoteWithLineItems = async (req, res) => {
             LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
             LEFT JOIN rental_units ru ON li.unit_id = ru.unit_id
             WHERE q.quote_id = $1 AND q.quote_type = 'PRODUCT'
-            GROUP BY q.quote_id, cp.full_name, u.mobile_number, wc.full_name, wc.mobile_number
+            GROUP BY q.quote_id, cp.full_name, cp.company_name, cp.display_name_source, u.mobile_number, wc.full_name, wc.mobile_number
         `, [quote_id]);
 
         if (result.rows.length === 0) {
@@ -932,7 +986,9 @@ exports.listProductQuotes = async (req, res) => {
 
         const result = await db.query(`
             SELECT q.*,
-                   cp.full_name as client_name, u.mobile_number as client_mobile,
+                   CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
+                        THEN cp.company_name ELSE cp.full_name END as client_name,
+                   u.mobile_number as client_mobile,
                    wc.full_name as walk_in_name, wc.mobile_number as walk_in_mobile,
                    sq.estimate_number as linked_estimate_number,
                    COALESCE((
@@ -1035,7 +1091,9 @@ function expandProductLineItemsForDisplay(rawLineItems, baseTotal) {
 async function buildProductQuotePdfData(quote_id) {
     const result = await db.query(`
         SELECT q.*,
-               cp.full_name as client_name, u.mobile_number as client_mobile,
+               CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
+                    THEN cp.company_name ELSE cp.full_name END as client_name,
+               u.mobile_number as client_mobile,
                wc.full_name as walk_in_name, wc.mobile_number as walk_in_mobile,
                COALESCE(json_agg(
                    json_build_object(
@@ -1058,7 +1116,7 @@ async function buildProductQuotePdfData(quote_id) {
         LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
         LEFT JOIN rental_units ru ON li.unit_id = ru.unit_id
         WHERE q.quote_id = $1 AND q.quote_type = 'PRODUCT'
-        GROUP BY q.quote_id, cp.full_name, u.mobile_number, wc.full_name, wc.mobile_number
+        GROUP BY q.quote_id, cp.full_name, cp.company_name, cp.display_name_source, u.mobile_number, wc.full_name, wc.mobile_number
     `, [quote_id]);
 
     if (result.rows.length === 0) return null;
@@ -1123,6 +1181,59 @@ async function mergeProductQuoteIntoData(data, product_quote_id) {
 // receiptController.sendReceiptWhatsApp so it can be sent alongside the
 // receipt. Reuses the same invoice_code_seq as the standalone `invoices`
 // table for one consistent numbering sequence.
+// Creates (once) a standalone registration-fee-only invoice, separate from
+// the combined Invoice, so the fee has its own document in the client's
+// "Registration Fee Invoices" list — mirrors the manual clientController
+// .sendRegFeeInvoice flow but skips the WhatsApp send/bank-account prompt.
+// Called as soon as cumulative verified payments cross the registration fee
+// line item's own amount (see paymentTrackingController.recordPayment),
+// independently of the combined Invoice — which may still be pending the
+// rest of the quote getting paid off. Idempotent: keyed on a deterministic
+// invoice_code derived from the quote.
+async function ensureRegFeeInvoiceRecord(serviceQuoteId, { clientId, registrationFee, payerName }) {
+    if (!clientId || !registrationFee || parseFloat(registrationFee) <= 0) return;
+
+    const invoiceCode = `REGFEE-${serviceQuoteId.slice(0, 8).toUpperCase()}`;
+    const existing = await db.query(
+        `SELECT invoice_id FROM client_reg_fee_invoices WHERE client_id = $1 AND invoice_code = $2`,
+        [clientId, invoiceCode]
+    );
+    if (existing.rows.length > 0) return;
+
+    const bankResult = await db.query(
+        `SELECT ba.account_id, ba.bank_name, ba.account_holder_name, ba.account_number, ba.branch_name
+         FROM payment_tracking pt
+         JOIN bank_accounts ba ON pt.bank_account_id = ba.account_id
+         WHERE pt.quote_id = $1
+         ORDER BY pt.payment_date ASC LIMIT 1`,
+        [serviceQuoteId]
+    );
+    const bank = bankResult.rows[0] || {};
+    const feeAmount = parseFloat(registrationFee).toFixed(2);
+
+    try {
+        const pdfUrl = await generateAndUploadRegFeeInvoice({
+            invoice_code: invoiceCode,
+            invoice_date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+            client_name: payerName,
+            amount: feeAmount,
+            bank_name: bank.bank_name || '',
+            account_holder_name: bank.account_holder_name || '',
+            account_number: bank.account_number || '',
+            branch_name: bank.branch_name || '—',
+            upload_url: '',
+        });
+
+        await db.query(
+            `INSERT INTO client_reg_fee_invoices (client_id, invoice_code, amount, pdf_url, bank_account_id, status)
+             VALUES ($1, $2, $3, $4, $5, 'PAID')`,
+            [clientId, invoiceCode, feeAmount, pdfUrl, bank.account_id || null]
+        );
+    } catch (err) {
+        console.error('Failed to generate standalone registration fee invoice:', err.message);
+    }
+}
+
 async function ensureCombinedInvoice(serviceQuoteId) {
     const existing = await db.query(
         `SELECT q.invoice_code, q.invoice_pdf_url, q.total_amount,
@@ -1144,7 +1255,7 @@ async function ensureCombinedInvoice(serviceQuoteId) {
         );
         let totalAmount = parseFloat(row.total_amount) || 0;
         if (productLink.rows.length > 0) {
-            const stub = { total_amount: totalAmount };
+            const stub = { total_amount: totalAmount, sub_total: totalAmount, line_items: [] };
             await mergeProductQuoteIntoData(stub, productLink.rows[0].quote_id).catch(() => {});
             totalAmount = parseFloat(stub.total_amount) || totalAmount;
         }
@@ -1178,6 +1289,19 @@ async function ensureCombinedInvoice(serviceQuoteId) {
     `, [serviceQuoteId]);
     if (result.rows.length === 0) return null;
     const data = result.rows[0];
+
+    // Only generate once the quotation itself is paid off in full — a
+    // partial payment (e.g. just crossing the registration-fee threshold)
+    // should not trigger this; see paymentTrackingController.recordPayment,
+    // which now calls this on every payment regardless of amount.
+    const paidResult = await db.query(
+        `SELECT COALESCE(SUM(amount_received), 0) AS total_paid
+         FROM payment_tracking WHERE quote_id = $1 AND status = 'VERIFIED'`,
+        [serviceQuoteId]
+    );
+    const totalPaid = parseFloat(paidResult.rows[0].total_paid) || 0;
+    const totalDue = parseFloat(data.total_amount) || 0;
+    if (totalPaid < totalDue) return null;
 
     const productLink = await db.query(
         `SELECT quote_id FROM quotations WHERE linked_quote_id = $1 AND quote_type = 'PRODUCT'`,
@@ -1214,6 +1338,7 @@ async function ensureCombinedInvoice(serviceQuoteId) {
     };
 }
 exports.ensureCombinedInvoice = ensureCombinedInvoice;
+exports.ensureRegFeeInvoiceRecord = ensureRegFeeInvoiceRecord;
 
 // GET /api/quotes/invoices/list — every SERVICE quote that has had a
 // combined Invoice generated (see ensureCombinedInvoice), for the admin
@@ -1222,16 +1347,23 @@ exports.ensureCombinedInvoice = ensureCombinedInvoice;
 // items are reflected even though quotations.total_amount itself only ever
 // holds the SERVICE quote's own amount.
 exports.listCombinedInvoices = async (req, res) => {
+    const { client_id } = req.query;
     try {
+        const params = [];
+        let where = `WHERE q.invoice_code IS NOT NULL AND q.invoice_pdf_url IS NOT NULL`;
+        if (client_id) {
+            params.push(client_id);
+            where += ` AND s.client_id = $${params.length}`;
+        }
         const result = await db.query(`
             SELECT q.quote_id, q.estimate_number, q.total_amount, q.invoice_code,
                    q.invoice_pdf_url, q.invoice_generated_at,
                    s.payer_name, s.payer_mobile
             FROM quotations q
             JOIN service_requests s ON q.request_id = s.request_id
-            WHERE q.invoice_code IS NOT NULL AND q.invoice_pdf_url IS NOT NULL
+            ${where}
             ORDER BY q.invoice_generated_at DESC
-        `);
+        `, params);
 
         const rows = await Promise.all(result.rows.map(async (row) => {
             const productLink = await db.query(
@@ -1240,7 +1372,7 @@ exports.listCombinedInvoices = async (req, res) => {
             );
             let total_amount = parseFloat(row.total_amount) || 0;
             if (productLink.rows.length > 0) {
-                const stub = { total_amount };
+                const stub = { total_amount, sub_total: total_amount, line_items: [] };
                 await mergeProductQuoteIntoData(stub, productLink.rows[0].quote_id).catch(() => {});
                 total_amount = parseFloat(stub.total_amount) || total_amount;
             }
@@ -1265,7 +1397,11 @@ exports.sendCombinedInvoice = async (req, res) => {
     try {
         const invoice = await ensureCombinedInvoice(quote_id);
         if (!invoice) {
-            return res.status(404).json({ message: 'Quote not found' });
+            const quoteCheck = await db.query(`SELECT quote_id FROM quotations WHERE quote_id = $1`, [quote_id]);
+            if (quoteCheck.rows.length === 0) {
+                return res.status(404).json({ message: 'Quote not found' });
+            }
+            return res.status(400).json({ message: 'This quotation is not fully paid yet — the combined Invoice is only generated once it is.' });
         }
         if (!invoice.payer_mobile) {
             return res.status(400).json({ message: 'No mobile number on file for this quote\'s payer' });

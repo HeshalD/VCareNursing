@@ -10,10 +10,12 @@ const { runPreBillingScheduledActions, runPostBillingScheduledActions } = requir
 
 const getActiveBookingBalances = async (client) => {
   return client.query(
-    `SELECT 
+    `SELECT
         b.booking_id,
         b.client_id,
         b.daily_rate,
+        b.shift_rate,
+        b.service_model,
         cp.full_name as client_name,
         uc.mobile_number as client_mobile,
         COALESCE(SUM(CASE WHEN t.transaction_type = 'CREDIT' AND COALESCE(t.category::text, '') != 'STAFF_SALARY' THEN t.amount ELSE 0 END), 0) as total_paid,
@@ -25,10 +27,9 @@ const getActiveBookingBalances = async (client) => {
      JOIN users uc ON cp.user_id = uc.user_id
      LEFT JOIN transactions t ON b.booking_id = t.booking_id
      WHERE b.status = 'ACTIVE'
-       AND b.daily_rate IS NOT NULL
-       AND b.daily_rate > 0
-     GROUP BY 
-        b.booking_id, b.client_id, b.daily_rate, 
+       AND ((b.daily_rate IS NOT NULL AND b.daily_rate > 0) OR (b.shift_rate IS NOT NULL AND b.shift_rate > 0))
+     GROUP BY
+        b.booking_id, b.client_id, b.daily_rate, b.shift_rate, b.service_model,
         cp.full_name, uc.mobile_number`
   );
 };
@@ -36,10 +37,14 @@ const getActiveBookingBalances = async (client) => {
 // ─── Overdue Detection ─────────────────────────────────────────────────────────
 
 const flagOverdueBookings = async (client) => {
-  // Find ACTIVE bookings where total DEBITs exceed total CREDITs (new rule)
+  // Find ACTIVE bookings where total DEBITs exceed total CREDITs (new rule).
+  // SHIFT_BASED is excluded — its day-level debit/credit comparison is only an
+  // approximation (the Shift Bank ledger is authoritative), so overdue for
+  // SHIFT_BASED is now purely a manual admin action (markShiftBookingOverdue).
   const overdueRes = await getActiveBookingBalances(client);
   const overdueRows = overdueRes.rows.filter(
-    booking => parseFloat(booking.total_debits) > parseFloat(booking.total_credits)
+    booking => booking.service_model !== 'SHIFT_BASED'
+      && parseFloat(booking.total_debits) > parseFloat(booking.total_credits)
   );
 
   if (overdueRows.length === 0) return 0;
@@ -235,31 +240,15 @@ const startDailyInvoicing = () => {
         }
       }
 
-      // ===== SEED PENDING INVOICES (SHIFT_BASED, VISITING, LIVE_IN MANUAL) =====
+      // ===== SEED PENDING INVOICES (VISITING, LIVE_IN MANUAL) =====
       // Creates a PENDING row for every non-AUTO booking so admins have a queue
       // to approve/reject the next morning. ON CONFLICT DO NOTHING ensures:
       //   - rows already decided (INVOICED/SKIPPED) are never overwritten
       //   - running the cron twice doesn't create duplicates
+      // SHIFT_BASED is intentionally excluded — its billing is per-shift and
+      // fully manual (no seeded rows). See bookingController.getShiftSchedule,
+      // which derives occurrences live from the shift pattern instead.
       let pendingSeededCount = 0;
-
-      // SHIFT_BASED: one PENDING row per shift slot (each assignment has its own slot)
-      for (const assignment of activeAssignments) {
-        const bookingData = bookingMap.get(assignment.booking_id);
-        if (!bookingData || bookingData.service_model !== 'SHIFT_BASED') continue;
-        if (!assignment.shift_slot_id) continue;
-
-        try {
-          await client.query(
-            `INSERT INTO booking_daily_invoices (booking_id, service_date, entry_mode, status, amount, shift_slot_id)
-             VALUES ($1, $2, 'MANUAL', 'PENDING', $3, $4)
-             ON CONFLICT (booking_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL DO NOTHING`,
-            [assignment.booking_id, today, parseFloat(assignment.daily_rate), assignment.shift_slot_id]
-          );
-          pendingSeededCount++;
-        } catch (seedErr) {
-          console.error(`❌ Pending seed failed (SHIFT_BASED) booking ${assignment.booking_id}:`, seedErr);
-        }
-      }
 
       // VISITING and LIVE_IN MANUAL: one PENDING row per booking per day
       for (const [bookingId, bookingData] of bookingMap.entries()) {
@@ -324,13 +313,15 @@ const runCreditMonitor = async (client) => {
   for (const booking of result.rows) {
     const totalPaid = parseFloat(booking.total_paid);
     const totalInvoiced = parseFloat(booking.total_invoiced);
-    const dailyRate = parseFloat(booking.daily_rate);
+    const isShiftBased = booking.service_model === 'SHIFT_BASED';
+    const unitRate = isShiftBased ? parseFloat(booking.shift_rate) : parseFloat(booking.daily_rate);
+    const unitLabel = isShiftBased ? 'shifts' : 'days';
 
     const remainingBalance = totalPaid - totalInvoiced;
-    const remainingDays = dailyRate > 0 ? remainingBalance / dailyRate : null;
+    const remainingDays = unitRate > 0 ? remainingBalance / unitRate : null;
 
-    // Log remainingDays for visibility
-    console.log(`ℹ️  Booking ${booking.booking_id} remainingDays: ${remainingDays === null ? 'N/A' : remainingDays.toFixed(2)}`);
+    // Log remainingDays (or remaining shifts, for SHIFT_BASED) for visibility
+    console.log(`ℹ️  Booking ${booking.booking_id} remaining${isShiftBased ? 'Shifts' : 'Days'}: ${remainingDays === null ? 'N/A' : remainingDays.toFixed(2)} ${unitLabel}`);
 
     // Determine alert type based on strict totals comparison per new rule
     const isNegative = totalPaid < totalInvoiced;

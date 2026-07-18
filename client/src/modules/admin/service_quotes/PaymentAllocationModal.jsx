@@ -14,6 +14,20 @@ const SectionHeader = ({ title }) => (
 
 const inputCls = 'w-full rounded-lg border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-colors';
 
+// Sums a product quote's line items for the combined Summary total below —
+// a rental item's own amount plus its refundable deposit (deposit_amount is
+// a separate field, not folded into amount) both count toward the total.
+const productLineItemsTotal = (items) => {
+  let total = 0;
+  for (const li of items || []) {
+    total += parseFloat(li.amount) || 0;
+    if (li.rental_billing_type) {
+      total += parseFloat(li.deposit_amount) || 0;
+    }
+  }
+  return total;
+};
+
 // Registration fee is treated as the first "bucket" any payment against the
 // SERVICE quote fills (see paymentTrackingController.recordPayment) — the
 // threshold basis is the SERVICE-only paid amount, not the combined
@@ -56,7 +70,9 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
   const [servicePaid, setServicePaid] = useState(0);
   const [serviceRemaining, setServiceRemaining] = useState(0);
   const [regFeeInfo, setRegFeeInfo] = useState(null);
-  const [productInvoice, setProductInvoice] = useState(null); // { invoice_id, invoice_code, amount, status }
+  const [productInvoices, setProductInvoices] = useState([]); // unpaid [{ invoice_id, invoice_code, amount, status }, ...]
+  const [productTotal, setProductTotal] = useState(0);
+  const [productPaid, setProductPaid] = useState(0);
 
   const [bankAccounts, setBankAccounts] = useState([]);
   const [payService, setPayService] = useState(true);
@@ -109,29 +125,58 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
         setBankAccounts(banksRes?.data || []);
 
         const productQuoteId = quote?.product_quote_id;
-        if (productQuoteId && !locked) {
-          let invRes = await apiClient.getProductInvoices({ quote_id: productQuoteId });
-          let invoices = Array.isArray(invRes?.data) ? invRes.data : [];
-          let unpaid = invoices.find((i) => i.status !== 'PAID') || null;
-
-          // A linked PRODUCT quote only gets its own `invoices` row once
-          // someone explicitly "accepts & invoices" it (normally done from
-          // the Products page). Accepting the SERVICE quote here doesn't do
-          // that, so without this the product portion would silently never
-          // show up in this modal. Auto-generate it here instead.
-          if (!unpaid) {
-            try {
-              await apiClient.createInvoiceFromQuote(productQuoteId);
-              invRes = await apiClient.getProductInvoices({ quote_id: productQuoteId });
-              invoices = Array.isArray(invRes?.data) ? invRes.data : [];
-              unpaid = invoices.find((i) => i.status !== 'PAID') || null;
-            } catch {
-              // Already invoiced under a race, or quote isn't invoiceable yet — ignore.
-            }
+        if (productQuoteId) {
+          // Product total is pulled independently of the registration-fee
+          // lock so the Summary panel's combined Total reflects products &
+          // deposits even while the lock prevents actually paying them yet.
+          try {
+            const productDetail = await apiClient.getProductQuote(productQuoteId);
+            setProductTotal(productLineItemsTotal(productDetail?.data?.line_items));
+          } catch {
+            setProductTotal(0);
           }
 
-          setProductInvoice(unpaid);
-          setPayProduct(!!unpaid);
+          try {
+            let invRes = await apiClient.getProductInvoices({ quote_id: productQuoteId });
+            let invoices = Array.isArray(invRes?.data) ? invRes.data : [];
+            setProductPaid(invoices.filter((i) => i.status === 'PAID').reduce((s, i) => s + (parseFloat(i.amount) || 0), 0));
+
+            if (!locked) {
+              let unpaidList = invoices.filter((i) => i.status !== 'PAID');
+
+              // A linked PRODUCT quote only gets its own `invoices` row(s) once
+              // someone explicitly accepts it (normally done from the Products
+              // page). Accepting the SERVICE quote here doesn't do that, so
+              // without this the product portion would silently never show up
+              // in this modal. Accept it here instead — via acceptProductQuote,
+              // NOT createInvoiceFromQuote: a quote can contain RENTAL line
+              // items, and only acceptProductQuote knows how to create the
+              // rental_agreements row(s) and mark the unit(s) RENTED. Using
+              // the flat invoice-only endpoint here previously let a rental
+              // get fully paid for while never being recorded as rented (see
+              // the EST-1368/BED-003 incident).
+              if (invoices.length === 0) {
+                try {
+                  await apiClient.acceptProductQuote(productQuoteId);
+                } catch {
+                  // Already accepted under a race, or quote isn't acceptable yet
+                  // — either way, re-fetch below to pick up whatever exists now.
+                }
+                try {
+                  invRes = await apiClient.getProductInvoices({ quote_id: productQuoteId });
+                  invoices = Array.isArray(invRes?.data) ? invRes.data : [];
+                  unpaidList = invoices.filter((i) => i.status !== 'PAID');
+                } catch {
+                  unpaidList = [];
+                }
+              }
+
+              setProductInvoices(unpaidList);
+              setPayProduct(unpaidList.length > 0);
+            }
+          } catch {
+            setProductPaid(0);
+          }
         }
       } catch (err) {
         setError(err.message || 'Failed to load payment details');
@@ -182,8 +227,10 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
       if (payService && svcAmt > 0) {
         await apiClient.recordQuotePayment(quoteId, { ...sharedFields, amount_received: svcAmt }, slipFile);
       }
-      if (payProduct && !regFeeLocked && productInvoice) {
-        await apiClient.recordProductInvoicePayment(productInvoice.invoice_id, sharedFields, slipFile);
+      if (payProduct && !regFeeLocked && productInvoices.length > 0) {
+        for (const inv of productInvoices) {
+          await apiClient.recordProductInvoicePayment(inv.invoice_id, sharedFields, slipFile);
+        }
       }
 
       onRecorded();
@@ -221,7 +268,9 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
               <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700">{error}</div>
             )}
 
-            {/* Summary */}
+            {/* Summary — combined total = service charges (incl. registration
+                fee) + products/rentals + refundable deposits, matching the
+                figure shown on the Quotations and Quotation Details pages. */}
             <div>
               <SectionHeader title="Summary" />
               <div className="grid grid-cols-3 gap-2">
@@ -229,19 +278,19 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                   <div className="flex items-center gap-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
                     <Receipt className="h-3 w-3" /> Total
                   </div>
-                  <p className="text-sm font-semibold text-slate-900 mt-0.5">{money(serviceTotal)}</p>
+                  <p className="text-sm font-semibold text-slate-900 mt-0.5">{money(serviceTotal + productTotal)}</p>
                 </div>
                 <div className="bg-slate-50 border border-slate-100 rounded-lg p-2.5">
                   <div className="flex items-center gap-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
                     <CheckCircle2 className="h-3 w-3" /> Paid
                   </div>
-                  <p className="text-sm font-semibold text-emerald-700 mt-0.5">{money(servicePaid)}</p>
+                  <p className="text-sm font-semibold text-emerald-700 mt-0.5">{money(servicePaid + productPaid)}</p>
                 </div>
                 <div className="bg-slate-50 border border-slate-100 rounded-lg p-2.5">
                   <div className="flex items-center gap-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
                     <Clock3 className="h-3 w-3" /> Remaining
                   </div>
-                  <p className="text-sm font-semibold text-amber-700 mt-0.5">{money(serviceRemaining)}</p>
+                  <p className="text-sm font-semibold text-amber-700 mt-0.5">{money(Math.max((serviceTotal + productTotal) - (servicePaid + productPaid), 0))}</p>
                 </div>
               </div>
             </div>
@@ -293,7 +342,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                     </div>
                     <p className="mt-1">
                       The registration fee must be settled before other service charges
-                      {productInvoice !== null ? ' or products & rentals' : ''} can be paid.
+                      {productInvoices.length > 0 ? ' or products & rentals' : ''} can be paid.
                       {serviceOtherRemaining > 0 && <> {money(serviceOtherRemaining)} in other service charges is waiting.</>}
                     </p>
                   </div>
@@ -320,11 +369,12 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                       </div>
                     )}
 
-                    {productInvoice && (
+                    {productInvoices.length > 0 && (
                       <div className="rounded-lg border border-purple-200 bg-purple-50/40 p-3">
                         <label className="flex items-center gap-2 text-sm font-medium text-purple-800">
                           <input type="checkbox" checked={payProduct} onChange={(e) => setPayProduct(e.target.checked)} />
-                          Products &amp; Rentals ({productInvoice.invoice_code}) — full amount {money(productInvoice.amount)}
+                          Products &amp; Rentals ({productInvoices.map((i) => i.invoice_code).join(', ')}) — full amount{' '}
+                          {money(productInvoices.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0))}
                         </label>
                         <p className="mt-1 pl-6 text-[11px] text-purple-600">
                           Must be paid in full — partial payment isn&apos;t supported for this portion.
@@ -332,7 +382,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                       </div>
                     )}
 
-                    {serviceRemaining <= 0 && !productInvoice && (
+                    {serviceRemaining <= 0 && productInvoices.length === 0 && (
                       <p className="text-xs text-slate-500">This quotation is already fully paid.</p>
                     )}
                   </>

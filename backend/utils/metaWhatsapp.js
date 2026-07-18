@@ -10,7 +10,14 @@ const formatNumber = (mobileNumber) => {
   return number;
 };
 
+// TEMPORARY KILL SWITCH — WhatsApp sending is blocked. Remove this block to re-enable.
+const MESSAGING_BLOCKED = true;
+
 const sendDocument = async (mobileNumber, documentUrl, filename, caption = '') => {
+  if (MESSAGING_BLOCKED) {
+    console.log(`[Meta WA] BLOCKED (messaging disabled): document "${filename}" to ${mobileNumber}`);
+    return { blocked: true };
+  }
   const to = formatNumber(mobileNumber);
   const response = await axios.post(
     API_URL,
@@ -38,6 +45,10 @@ const sendDocument = async (mobileNumber, documentUrl, filename, caption = '') =
 };
 
 const sendTemplate = async (to, templateName, languageCode, bodyParams, headerParams = null, buttonComponents = null) => {
+  if (MESSAGING_BLOCKED) {
+    console.log(`[Meta WA] BLOCKED (messaging disabled): template "${templateName}" to ${to}`);
+    return { blocked: true };
+  }
   try {
     const components = [];
     if (headerParams) {

@@ -39,6 +39,9 @@ import Financials from './modules/admin/financial/financial';
 import BankAccounts from './modules/admin/back_accounts/bank_accounts';
 import Reports from './modules/admin/reports/reports';
 import SalesByCustomer from './modules/admin/reports/sales_by_customer';
+import ReceivablesAging from './modules/admin/reports/receivables_aging';
+import PayablesAging from './modules/admin/reports/payables_aging';
+import ProfitLoss from './modules/admin/reports/profit_loss';
 import Settings from './modules/admin/settings/settings';
 import AdminLoginPage from './modules/admin/AdminLoginPage';
 import DeviceActivationPage from './modules/admin/DeviceActivationPage';
@@ -304,6 +307,21 @@ function App() {
             } />
             <Route path="/admin/reports/sales_by_customer" element={
               <Navigate to="/admin/reports/sales-by-customer" replace />
+            } />
+            <Route path="/admin/reports/receivables-aging" element={
+              <AdminAuthProvider>
+                <ReceivablesAging />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/reports/payables-aging" element={
+              <AdminAuthProvider>
+                <PayablesAging />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/reports/profit-loss" element={
+              <AdminAuthProvider>
+                <ProfitLoss />
+              </AdminAuthProvider>
             } />
             <Route path="/admin/bookings" element={
               <AdminAuthProvider>

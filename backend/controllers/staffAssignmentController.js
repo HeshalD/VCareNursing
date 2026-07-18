@@ -66,6 +66,8 @@ exports.getAssignmentFormData = async (req, res) => {
         q.estimate_number,
         COALESCE(q.daily_rate, b.daily_rate) AS quote_daily_rate,
         q.qty_days,
+        COALESCE(b.shift_rate, q.per_shift_rate) AS shift_rate,
+        q.qty_shifts,
         q.total_amount,
         COALESCE(cp.full_name, sr.payer_name) AS client_name,
         COALESCE(pp.full_name, sr.patient_name) AS patient_name,
@@ -172,6 +174,8 @@ exports.getAssignmentFormData = async (req, res) => {
           service_type: booking.service_type,
           quote_daily_rate: parseFloat(booking.quote_daily_rate || 0),
           qty_days: parseInt(booking.qty_days || 0, 10),
+          shift_rate: parseFloat(booking.shift_rate || 0),
+          qty_shifts: parseInt(booking.qty_shifts || 0, 10),
           amount_quotated: parseFloat(booking.amount_quotated),
           amount_paid: parseFloat(booking.amount_paid),
           total_amount: parseFloat(booking.total_amount)

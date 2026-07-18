@@ -52,13 +52,16 @@ async function createPaymentReceipt({
 }) {
     let receipt;
     try {
-        // Snapshot the billing name for the "Received From" field.
-        // Use company_name when set (corporate clients), otherwise fall back to full_name.
+        // Snapshot the billing name for the "Received From" field, respecting the
+        // client's chosen display name (their own name, or their company name).
         const clientRes = await db.query(
-            'SELECT full_name, company_name FROM client_profiles WHERE client_profile_id = $1',
+            'SELECT full_name, company_name, display_name_source FROM client_profiles WHERE client_profile_id = $1',
             [client_id]
         );
-        const received_from = clientRes.rows[0]?.company_name || clientRes.rows[0]?.full_name || 'Valued Client';
+        const clientRow = clientRes.rows[0];
+        const received_from = (clientRow?.display_name_source === 'COMPANY_NAME' && clientRow?.company_name)
+            || clientRow?.full_name
+            || 'Valued Client';
 
         const insertRes = await db.query(
             `INSERT INTO payment_receipts

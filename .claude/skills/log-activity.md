@@ -124,5 +124,7 @@ Replace:
 | `TRANSACTION_CREATED` | `TRANSACTION` |
 | `PATIENT_CREATED` | `PATIENT` |
 | `PATIENT_UPDATED` | `PATIENT` |
+| `CLIENT_PROFILE_CREATED` | `CLIENT` | admin proxy-creates a client (`clientController.proxyCreateClient`) |
+| `CLIENT_BILLING_UPDATED` | `CLIENT` | admin edits company name / honorific / display name (`clientController.updateClientCompanyName`) |
 
 Follow the same naming pattern: `<NOUN>_<PAST_TENSE_VERB>`.

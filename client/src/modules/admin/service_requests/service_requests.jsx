@@ -30,8 +30,11 @@ const STATUS_CONFIG = {
   BOOKING_CREATED: { dot: 'bg-indigo-500', text: 'text-indigo-700', label: 'Booking Created' },
 };
 
+// PENDING here means the booking exists but no staff has been assigned yet
+// (bookings.status flips to ACTIVE once staffAssignmentController assigns
+// staff — see staffAssignmentController.js:410).
 const BOOKING_STATUS_CONFIG = {
-  PENDING: { dot: 'bg-amber-400',   text: 'text-amber-700',   label: 'Pending' },
+  PENDING: { dot: 'bg-amber-400',   text: 'text-amber-700',   label: 'Yet to Assign Staff' },
   ACTIVE:  { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Active' },
 };
 

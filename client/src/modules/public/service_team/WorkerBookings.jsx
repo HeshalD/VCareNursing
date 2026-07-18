@@ -73,6 +73,7 @@ const WorkerBookings = () => {
   const [staffProfileId, setStaffProfileId] = useState(null);
   const [timelineAssignments, setTimelineAssignments] = useState([]);
   const [timelineAttendance, setTimelineAttendance] = useState([]);
+  const [timelineReschedules, setTimelineReschedules] = useState([]);
   const [timelineLeaveDays, setTimelineLeaveDays] = useState([]);
 
   useEffect(() => {
@@ -141,6 +142,7 @@ const WorkerBookings = () => {
       ]);
       setTimelineAssignments(calendarRes?.data?.assignments || []);
       setTimelineAttendance(calendarRes?.data?.attendance || []);
+      setTimelineReschedules(calendarRes?.data?.reschedules || []);
       setTimelineLeaveDays(leaveRes?.data?.approved_leaves || []);
     } catch (err) {
       console.error('Error fetching work & pay calendar:', err);
@@ -258,6 +260,7 @@ const WorkerBookings = () => {
               <StaffCareTimeline
                 assignments={timelineAssignments}
                 attendanceRecords={timelineAttendance}
+                reschedules={timelineReschedules}
                 leaveDays={timelineLeaveDays}
                 interactive={false}
               />

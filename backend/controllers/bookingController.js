@@ -397,56 +397,86 @@ const convertToBookingInternal = async (req, res) => {
         const scheduledEndTime = new Date(startDate);
         scheduledEndTime.setDate(scheduledEndTime.getDate() + parseInt(quoteData.qty_days));
 
-        // 2. SMART CHECK: Create User (Payer) if they don't exist
-        let userId;
-        const userCheck = await client.query('SELECT user_id FROM users WHERE mobile_number = $1', [reqData.payer_mobile]);
-
-        if (userCheck.rows.length === 0) {
-            const tempPassword = Math.random().toString(36).slice(-8);
-            const hashedPassword = await bcrypt.hash(tempPassword, 12);
-
-            const newUser = await client.query(
-                `INSERT INTO users (mobile_number, password_hash, email, role, is_active) 
-                 VALUES ($1, $2, $3, $4, $5) RETURNING user_id`,
-                [reqData.payer_mobile, hashedPassword, null, ['CLIENT'], true]
-            );
-            userId = newUser.rows[0].user_id;
-            reqData.tempPassword = tempPassword; // Store for the welcome SMS/WhatsApp after commit
-        } else {
-            userId = userCheck.rows[0].user_id;
-        }
-
-        // 3. Create/Ensure Client Profile (Billing Profile)
+        // 2 & 3. Resolve the billing profile — prefer service_requests.client_id
+        // (already set at request-creation time, or by payment recording via
+        // getOrCreateClientProfileForQuotation) over a mobile-number lookup.
+        // Falling back to mobile matching here as the primary path is what
+        // spun up a duplicate client profile: a payer_mobile that differs
+        // from the client's on-file number by even one digit (formatting,
+        // typo) fails the lookup and silently creates a second profile +
+        // user for the same person.
         let clientProfileId;
-        const profileCheck = await client.query('SELECT client_profile_id, is_registration_fee_paid FROM client_profiles WHERE user_id = $1', [userId]);
-
-        if (profileCheck.rows.length === 0) {
-            const regFeePaid = Number(quoteData.registration_fee) > 0;
-            const newProfile = await client.query(
-                `INSERT INTO client_profiles
-                   (user_id, full_name, primary_address, is_registration_fee_paid, reg_fee_status, reg_fee_paid_at, reg_fee_expires_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING client_profile_id`,
-                [
-                    userId, reqData.payer_name, reqData.location_address, regFeePaid, regFeePaid ? 'PAID' : 'PENDING',
-                    regFeePaid ? new Date() : null,
-                    regFeePaid ? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) : null,
-                ]
-            );
-            clientProfileId = newProfile.rows[0].client_profile_id;
-        } else {
-            clientProfileId = profileCheck.rows[0].client_profile_id;
+        if (reqData.client_id) {
+            clientProfileId = reqData.client_id;
 
             // If the quote included a registration fee, mark the client profile as fully paid
             // and start its 365-day membership countdown.
-            const clientProfile = profileCheck.rows[0];
-            if (!clientProfile.is_registration_fee_paid && Number(quoteData.registration_fee) > 0) {
-                await client.query(
-                    `UPDATE client_profiles
-                     SET is_registration_fee_paid = TRUE, reg_fee_status = 'PAID',
-                         reg_fee_paid_at = NOW(), reg_fee_expires_at = NOW() + INTERVAL '365 days'
-                     WHERE client_profile_id = $1`,
+            if (registrationFeeAmount > 0) {
+                const clientProfile = await client.query(
+                    'SELECT is_registration_fee_paid FROM client_profiles WHERE client_profile_id = $1',
                     [clientProfileId]
                 );
+                if (clientProfile.rows.length > 0 && !clientProfile.rows[0].is_registration_fee_paid) {
+                    await client.query(
+                        `UPDATE client_profiles
+                         SET is_registration_fee_paid = TRUE, reg_fee_status = 'PAID',
+                             reg_fee_paid_at = NOW(), reg_fee_expires_at = NOW() + INTERVAL '365 days'
+                         WHERE client_profile_id = $1`,
+                        [clientProfileId]
+                    );
+                }
+            }
+        } else {
+            // SMART CHECK: Create User (Payer) if they don't exist
+            let userId;
+            const userCheck = await client.query('SELECT user_id FROM users WHERE mobile_number = $1', [reqData.payer_mobile]);
+
+            if (userCheck.rows.length === 0) {
+                const tempPassword = Math.random().toString(36).slice(-8);
+                const hashedPassword = await bcrypt.hash(tempPassword, 12);
+
+                const newUser = await client.query(
+                    `INSERT INTO users (mobile_number, password_hash, email, role, is_active)
+                     VALUES ($1, $2, $3, $4, $5) RETURNING user_id`,
+                    [reqData.payer_mobile, hashedPassword, null, ['CLIENT'], true]
+                );
+                userId = newUser.rows[0].user_id;
+                reqData.tempPassword = tempPassword; // Store for the welcome SMS/WhatsApp after commit
+            } else {
+                userId = userCheck.rows[0].user_id;
+            }
+
+            // Create/Ensure Client Profile (Billing Profile)
+            const profileCheck = await client.query('SELECT client_profile_id, is_registration_fee_paid FROM client_profiles WHERE user_id = $1', [userId]);
+
+            if (profileCheck.rows.length === 0) {
+                const regFeePaid = registrationFeeAmount > 0;
+                const newProfile = await client.query(
+                    `INSERT INTO client_profiles
+                       (user_id, full_name, primary_address, is_registration_fee_paid, reg_fee_status, reg_fee_paid_at, reg_fee_expires_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING client_profile_id`,
+                    [
+                        userId, reqData.payer_name, reqData.location_address, regFeePaid, regFeePaid ? 'PAID' : 'PENDING',
+                        regFeePaid ? new Date() : null,
+                        regFeePaid ? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) : null,
+                    ]
+                );
+                clientProfileId = newProfile.rows[0].client_profile_id;
+            } else {
+                clientProfileId = profileCheck.rows[0].client_profile_id;
+
+                // If the quote included a registration fee, mark the client profile as fully paid
+                // and start its 365-day membership countdown.
+                const clientProfile = profileCheck.rows[0];
+                if (!clientProfile.is_registration_fee_paid && registrationFeeAmount > 0) {
+                    await client.query(
+                        `UPDATE client_profiles
+                         SET is_registration_fee_paid = TRUE, reg_fee_status = 'PAID',
+                             reg_fee_paid_at = NOW(), reg_fee_expires_at = NOW() + INTERVAL '365 days'
+                         WHERE client_profile_id = $1`,
+                        [clientProfileId]
+                    );
+                }
             }
         }
 
@@ -494,15 +524,37 @@ const convertToBookingInternal = async (req, res) => {
             ORDER BY payment_date ASC
         `, [bookingQuoteId]);
 
-        const amountPaid = paymentRes.rows.reduce((sum, payment) => sum + parseFloat(payment.amount_received || 0), 0);
+        // Registration fee money already collected (via recordPayment's own
+        // regFeeSplit — see paymentTrackingController.js) must not be
+        // double-counted here: it belongs to the client's one-time reg fee,
+        // not this booking's service charges. Look it up per payment_tracking
+        // row so a payment that only partially crossed the reg-fee threshold
+        // is handled correctly too.
+        const regFeeByPaymentRes = await client.query(
+            `SELECT payment_tracking_id, amount FROM transactions
+             WHERE quote_id = $1 AND category = 'REGISTRATION_FEE' AND transaction_type = 'CREDIT' AND status = 'COMPLETED'`,
+            [bookingQuoteId]
+        );
+        const regFeeByPayment = new Map(
+            regFeeByPaymentRes.rows.map((r) => [r.payment_tracking_id, parseFloat(r.amount) || 0])
+        );
+
+        const amountPaid = paymentRes.rows.reduce((sum, payment) => {
+            const regFeePortion = regFeeByPayment.get(payment.payment_id) || 0;
+            return sum + Math.max(0, parseFloat(payment.amount_received || 0) - regFeePortion);
+        }, 0);
 
         // 6. Create Booking Record with PENDING status (No staff assignment yet)
         // NOTE: assigned_staff_id is NULL - staff assignment happens in separate step via staffAssignmentController
+        // SHIFT_BASED bookings have no booking end date — billing is purely
+        // shift-count-derived, never date-derived (see governing rule at the
+        // top of this file's shift-billing section).
+        const isShiftBasedBooking = (reqData.service_model || 'SHIFT_BASED') === 'SHIFT_BASED';
         const newBooking = await client.query(
-            `INSERT INTO bookings (client_id, patient_id, service_type, service_model, start_date, assigned_staff_id, status, preferred_gender, request_id, service_mode, scheduled_end_time, actual_end_time, ot_rate, daily_rate, amount_quotated, amount_paid) 
-             VALUES ($1, $2, $3, $4::service_model_enum, $5, NULL, 'PENDING', $6::gender_preference_enum, $7, $8, $9, NULL, $10, $11, $12, $13)
+            `INSERT INTO bookings (client_id, patient_id, service_type, service_model, start_date, assigned_staff_id, status, preferred_gender, request_id, service_mode, scheduled_end_time, actual_end_time, ot_rate, daily_rate, shift_rate, amount_quotated, amount_paid)
+             VALUES ($1, $2, $3, $4::service_model_enum, $5, NULL, 'PENDING', $6::gender_preference_enum, $7, $8, $9, NULL, $10, $11, $12, $13, $14)
              RETURNING booking_id, booking_code`,
-            [clientProfileId, patientId, reqData.service_type, reqData.service_model || 'SHIFT_BASED', reqData.start_date, reqData.preferred_gender || 'ANY', request_id, null, scheduledEndTime, 500.00, quoteData.daily_rate, quoteData.total_amount, 0]
+            [clientProfileId, patientId, reqData.service_type, reqData.service_model || 'SHIFT_BASED', reqData.start_date, reqData.preferred_gender || 'ANY', request_id, null, isShiftBasedBooking ? null : scheduledEndTime, 500.00, quoteData.daily_rate, quoteData.per_shift_rate, parseFloat(quoteData.total_amount || 0) - registrationFeeAmount, 0]
         );
 
         const bookingId = newBooking.rows[0].booking_id;
@@ -550,6 +602,14 @@ const convertToBookingInternal = async (req, res) => {
         }
 
         for (const payment of paymentRes.rows) {
+            // Only mirror the portion of this payment that isn't already
+            // accounted for as the registration fee (see regFeeByPayment
+            // above) — otherwise that money gets double-counted as booking
+            // income on top of its existing REGISTRATION_FEE credit.
+            const regFeePortion = regFeeByPayment.get(payment.payment_id) || 0;
+            const mirrorAmount = Math.max(0, parseFloat(payment.amount_received || 0) - regFeePortion);
+            if (mirrorAmount <= 0) continue;
+
             try {
                 await client.query(
                 `INSERT INTO booking_payment_tracking (
@@ -591,7 +651,7 @@ const convertToBookingInternal = async (req, res) => {
                     bookingId,
                     bookingQuoteId,
                     clientProfileId,
-                    payment.amount_received,
+                    mirrorAmount,
                     payment.payment_method,
                     payment.bank_account_id || null,
                     payment.cheque_number || null,
@@ -647,7 +707,7 @@ const convertToBookingInternal = async (req, res) => {
                     bookingId,
                     bookingQuoteId,
                     'BOOKING_PAYMENT',
-                    payment.amount_received,
+                    mirrorAmount,
                     payment.payment_method,
                     payment.bank_account_id || null,
                     payment.cheque_number || null,
@@ -900,6 +960,7 @@ exports.getAdminBookingDetail = async (req, res) => {
             b.created_at,
             b.assigned_staff_id,
             b.daily_rate,
+            b.shift_rate,
             b.ot_rate,
             b.amount_quotated,
             b.amount_paid,
@@ -1079,6 +1140,7 @@ exports.getAdminBookingDetail = async (req, res) => {
                     actual_end_time: booking.actual_end_time,
                     created_at: booking.created_at,
                     daily_rate: booking.daily_rate,
+                    shift_rate: booking.shift_rate,
                     ot_rate: booking.ot_rate,
                     amount_quotated: booking.amount_quotated,
                     amount_paid: booking.amount_paid,
@@ -1398,7 +1460,7 @@ exports.getBookingDailyInvoices = async (req, res) => {
  */
 exports.confirmDailyInvoice = async (req, res) => {
     const { booking_id } = req.params;
-    const { service_date, approve, amount, shift_slot_id } = req.body;
+    const { service_date, approve, amount, shift_slot_id, reschedule_id } = req.body;
 
     if (!service_date || typeof approve !== 'boolean') {
         return res.status(400).json({ status: 'error', message: 'service_date and approve (boolean) are required' });
@@ -1410,7 +1472,7 @@ exports.confirmDailyInvoice = async (req, res) => {
         await client.query('BEGIN');
 
         const bookingRes = await client.query(
-            `SELECT booking_id, client_id, daily_rate, service_model FROM bookings WHERE booking_id = $1`,
+            `SELECT booking_id, client_id, daily_rate, shift_rate, service_model FROM bookings WHERE booking_id = $1`,
             [booking_id]
         );
 
@@ -1430,7 +1492,6 @@ exports.confirmDailyInvoice = async (req, res) => {
             return res.status(400).json({ status: 'error', message: 'shift_slot_id must not be provided for this booking type' });
         }
 
-        let slotAssignment = null;
         if (shift_slot_id) {
             const slotCheck = await client.query(
                 `SELECT s.shift_slot_id FROM booking_shift_slots s
@@ -1442,23 +1503,33 @@ exports.confirmDailyInvoice = async (req, res) => {
                 await client.query('ROLLBACK');
                 return res.status(404).json({ status: 'error', message: 'Shift slot not found for this booking' });
             }
-
-            const assignmentRes = await client.query(
-                `SELECT daily_rate FROM booking_staff_assignments WHERE shift_slot_id = $1 AND status = 'ACTIVE'`,
-                [shift_slot_id]
-            );
-            slotAssignment = assignmentRes.rows[0] || null;
         }
 
-        const existing = shift_slot_id
-            ? await client.query(
-                `SELECT * FROM booking_daily_invoices WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id = $3 FOR UPDATE`,
-                [booking_id, service_date, shift_slot_id]
-            )
-            : await client.query(
-                `SELECT * FROM booking_daily_invoices WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id IS NULL FOR UPDATE`,
-                [booking_id, service_date]
+        if (reschedule_id) {
+            const rescheduleCheck = await client.query(
+                `SELECT reschedule_id FROM shift_reschedules WHERE reschedule_id = $1 AND booking_id = $2 AND status = 'ACTIVE'`,
+                [reschedule_id, booking_id]
             );
+            if (rescheduleCheck.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({ status: 'error', message: 'Reschedule not found for this booking' });
+            }
+        }
+
+        const existing = reschedule_id
+            ? await client.query(
+                `SELECT * FROM booking_daily_invoices WHERE reschedule_id = $1 FOR UPDATE`,
+                [reschedule_id]
+            )
+            : shift_slot_id
+                ? await client.query(
+                    `SELECT * FROM booking_daily_invoices WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id = $3 AND reschedule_id IS NULL FOR UPDATE`,
+                    [booking_id, service_date, shift_slot_id]
+                )
+                : await client.query(
+                    `SELECT * FROM booking_daily_invoices WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id IS NULL AND reschedule_id IS NULL FOR UPDATE`,
+                    [booking_id, service_date]
+                );
 
         if (existing.rows.length > 0 && existing.rows[0].status !== 'PENDING') {
             await client.query('ROLLBACK');
@@ -1473,8 +1544,8 @@ exports.confirmDailyInvoice = async (req, res) => {
         if (approve) {
             if (amount !== undefined && amount !== null && amount !== '') {
                 finalAmount = parseFloat(amount);
-            } else if (slotAssignment) {
-                finalAmount = calculateShiftSlotCharge(slotAssignment).amount;
+            } else if (shift_slot_id) {
+                finalAmount = calculateShiftSlotCharge(booking).amount;
             } else {
                 finalAmount = parseFloat(booking.daily_rate);
             }
@@ -1488,17 +1559,17 @@ exports.confirmDailyInvoice = async (req, res) => {
                 booking_id,
                 client_id: booking.client_id,
                 amount: finalAmount,
-                notes: `Manually confirmed daily charge for ${service_date}`
+                notes: `Manually confirmed ${shift_slot_id ? 'shift' : 'daily'} charge for ${service_date}`
             });
         }
 
-        const result = shift_slot_id
+        const result = reschedule_id
             ? await client.query(
                 `INSERT INTO booking_daily_invoices (
                     booking_id, service_date, entry_mode, status, amount, transaction_id,
-                    decided_by_user_id, decided_by_name, decided_at, shift_slot_id
-                ) VALUES ($1, $2, 'MANUAL', $3, $4, $5, $6, $7, NOW(), $8)
-                ON CONFLICT (booking_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL
+                    decided_by_user_id, decided_by_name, decided_at, shift_slot_id, reschedule_id
+                ) VALUES ($1, $2, 'MANUAL', $3, $4, $5, $6, $7, NOW(), $8, $9)
+                ON CONFLICT (reschedule_id) WHERE reschedule_id IS NOT NULL
                 DO UPDATE SET status = EXCLUDED.status,
                               amount = EXCLUDED.amount,
                               transaction_id = EXCLUDED.transaction_id,
@@ -1507,24 +1578,41 @@ exports.confirmDailyInvoice = async (req, res) => {
                               decided_at = NOW(),
                               updated_at = NOW()
                 RETURNING *`,
-                [booking_id, service_date, approve ? 'INVOICED' : 'SKIPPED', finalAmount, transactionId, req.user?.user_id || null, decidedByName, shift_slot_id]
+                [booking_id, service_date, approve ? 'INVOICED' : 'SKIPPED', finalAmount, transactionId, req.user?.user_id || null, decidedByName, shift_slot_id, reschedule_id]
             )
-            : await client.query(
-                `INSERT INTO booking_daily_invoices (
-                    booking_id, service_date, entry_mode, status, amount, transaction_id,
-                    decided_by_user_id, decided_by_name, decided_at
-                ) VALUES ($1, $2, 'MANUAL', $3, $4, $5, $6, $7, NOW())
-                ON CONFLICT (booking_id, service_date) WHERE shift_slot_id IS NULL
-                DO UPDATE SET status = EXCLUDED.status,
-                              amount = EXCLUDED.amount,
-                              transaction_id = EXCLUDED.transaction_id,
-                              decided_by_user_id = EXCLUDED.decided_by_user_id,
-                              decided_by_name = EXCLUDED.decided_by_name,
-                              decided_at = NOW(),
-                              updated_at = NOW()
-                RETURNING *`,
-                [booking_id, service_date, approve ? 'INVOICED' : 'SKIPPED', finalAmount, transactionId, req.user?.user_id || null, decidedByName]
-            );
+            : shift_slot_id
+                ? await client.query(
+                    `INSERT INTO booking_daily_invoices (
+                        booking_id, service_date, entry_mode, status, amount, transaction_id,
+                        decided_by_user_id, decided_by_name, decided_at, shift_slot_id
+                    ) VALUES ($1, $2, 'MANUAL', $3, $4, $5, $6, $7, NOW(), $8)
+                    ON CONFLICT (booking_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL
+                    DO UPDATE SET status = EXCLUDED.status,
+                                  amount = EXCLUDED.amount,
+                                  transaction_id = EXCLUDED.transaction_id,
+                                  decided_by_user_id = EXCLUDED.decided_by_user_id,
+                                  decided_by_name = EXCLUDED.decided_by_name,
+                                  decided_at = NOW(),
+                                  updated_at = NOW()
+                    RETURNING *`,
+                    [booking_id, service_date, approve ? 'INVOICED' : 'SKIPPED', finalAmount, transactionId, req.user?.user_id || null, decidedByName, shift_slot_id]
+                )
+                : await client.query(
+                    `INSERT INTO booking_daily_invoices (
+                        booking_id, service_date, entry_mode, status, amount, transaction_id,
+                        decided_by_user_id, decided_by_name, decided_at
+                    ) VALUES ($1, $2, 'MANUAL', $3, $4, $5, $6, $7, NOW())
+                    ON CONFLICT (booking_id, service_date) WHERE shift_slot_id IS NULL
+                    DO UPDATE SET status = EXCLUDED.status,
+                                  amount = EXCLUDED.amount,
+                                  transaction_id = EXCLUDED.transaction_id,
+                                  decided_by_user_id = EXCLUDED.decided_by_user_id,
+                                  decided_by_name = EXCLUDED.decided_by_name,
+                                  decided_at = NOW(),
+                                  updated_at = NOW()
+                    RETURNING *`,
+                    [booking_id, service_date, approve ? 'INVOICED' : 'SKIPPED', finalAmount, transactionId, req.user?.user_id || null, decidedByName]
+                );
 
         await client.query('COMMIT');
         res.status(200).json({ status: 'success', data: result.rows[0] });
@@ -1534,6 +1622,472 @@ exports.confirmDailyInvoice = async (req, res) => {
         res.status(500).json({ status: 'error', message: 'Failed to confirm daily invoice decision' });
     } finally {
         client.release();
+    }
+};
+
+/**
+ * @route   GET /api/bookings/:booking_id/shift-schedule?from&to
+ * @desc    Derives every shift occurrence for a SHIFT_BASED booking across a date
+ *          range from the active pattern (× calendar dates), overlaid with any
+ *          reschedules (moved-away origins hidden, makeup occurrences added) and
+ *          merged with attendance/invoice status. Replaces the old cron-seeded
+ *          PENDING queue — nothing is pre-created, this is the live source of truth
+ *          for both the admin confirm/waive/reschedule UI and the care calendars.
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ */
+exports.getShiftSchedule = async (req, res) => {
+    const { booking_id } = req.params;
+    const { from, to } = req.query;
+
+    if (!from || !to) {
+        return res.status(400).json({ status: 'error', message: 'from and to query params are required (YYYY-MM-DD)' });
+    }
+
+    try {
+        const bookingRes = await db.query(
+            `SELECT booking_id, service_model, shift_rate FROM bookings WHERE booking_id = $1`,
+            [booking_id]
+        );
+        if (bookingRes.rows.length === 0) {
+            return res.status(404).json({ status: 'error', message: 'Booking not found' });
+        }
+        const booking = bookingRes.rows[0];
+        if (booking.service_model !== 'SHIFT_BASED') {
+            return res.status(400).json({ status: 'error', message: 'shift-schedule is only available for SHIFT_BASED bookings' });
+        }
+
+        const patternsRes = await db.query(
+            `SELECT p.pattern_id, p.effective_from_date::text, p.effective_to_date::text,
+                    s.shift_slot_id, s.shift_number, s.start_time, s.duration_hours, s.label
+             FROM booking_shift_patterns p
+             JOIN booking_shift_slots s ON s.pattern_id = p.pattern_id
+             WHERE p.booking_id = $1 AND p.status IN ('ACTIVE', 'SUPERSEDED')
+             ORDER BY p.effective_from_date ASC, s.shift_number ASC`,
+            [booking_id]
+        );
+
+        const assignmentsRes = await db.query(
+            `SELECT bsa.assignment_id, bsa.shift_slot_id, bsa.staff_profile_id, bsa.status,
+                    bsa.service_start_date::text, bsa.service_end_date::text, bsa.reschedule_id,
+                    sp.full_name as staff_name
+             FROM booking_staff_assignments bsa
+             JOIN staff_profiles sp ON sp.staff_profile_id = bsa.staff_profile_id
+             WHERE bsa.booking_id = $1`,
+            [booking_id]
+        );
+
+        const reschedulesRes = await db.query(
+            `SELECT r.*, sp.full_name as makeup_staff_name
+             FROM shift_reschedules r
+             LEFT JOIN booking_staff_assignments bsa ON bsa.assignment_id = r.assignment_id
+             LEFT JOIN staff_profiles sp ON sp.staff_profile_id = bsa.staff_profile_id
+             WHERE r.booking_id = $1 AND r.status = 'ACTIVE'
+               AND (r.original_date BETWEEN $2 AND $3 OR r.new_date BETWEEN $2 AND $3)`,
+            [booking_id, from, to]
+        );
+
+        const attendanceRes = await db.query(
+            `SELECT attendance_id, assignment_id, shift_slot_id, service_date::text, salary_status,
+                    salary_amount, hours_served, decided_by_name, reschedule_id
+             FROM staff_daily_attendance
+             WHERE booking_id = $1 AND service_date BETWEEN $2 AND $3`,
+            [booking_id, from, to]
+        );
+
+        const invoicesRes = await db.query(
+            `SELECT daily_invoice_id, shift_slot_id, service_date::text, status, amount,
+                    decided_by_name, reschedule_id
+             FROM booking_daily_invoices
+             WHERE booking_id = $1 AND service_date BETWEEN $2 AND $3`,
+            [booking_id, from, to]
+        );
+
+        const movedOrigins = new Set(
+            reschedulesRes.rows.map((r) => `${r.shift_slot_id}__${r.original_date}`)
+        );
+
+        const standingAssignmentBySlot = new Map();
+        assignmentsRes.rows.forEach((a) => {
+            if (a.status === 'ACTIVE' && !a.reschedule_id) standingAssignmentBySlot.set(a.shift_slot_id, a);
+        });
+        const assignmentById = new Map(assignmentsRes.rows.map((a) => [a.assignment_id, a]));
+        const attendanceByAssignmentSlotDate = new Map();
+        const attendanceByReschedule = new Map();
+        attendanceRes.rows.forEach((r) => {
+            if (r.reschedule_id) attendanceByReschedule.set(r.reschedule_id, r);
+            else attendanceByAssignmentSlotDate.set(`${r.assignment_id}__${r.shift_slot_id}__${r.service_date}`, r);
+        });
+        const invoiceBySlotDate = new Map();
+        const invoiceByReschedule = new Map();
+        invoicesRes.rows.forEach((r) => {
+            if (r.reschedule_id) invoiceByReschedule.set(r.reschedule_id, r);
+            else invoiceBySlotDate.set(`${r.shift_slot_id}__${r.service_date}`, r);
+        });
+
+        const patternsBySlot = new Map();
+        patternsRes.rows.forEach((row) => {
+            const arr = patternsBySlot.get(row.shift_slot_id) || [];
+            arr.push(row);
+            patternsBySlot.set(row.shift_slot_id, arr);
+        });
+
+        const occurrences = [];
+        const fromD = new Date(`${from}T00:00:00`);
+        const toD = new Date(`${to}T00:00:00`);
+
+        for (const [slotId, patternRows] of patternsBySlot.entries()) {
+            const slotMeta = patternRows[0];
+            for (let d = new Date(fromD); d <= toD; d.setDate(d.getDate() + 1)) {
+                const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                const active = patternRows.find((p) =>
+                    p.effective_from_date <= dateStr && (!p.effective_to_date || p.effective_to_date >= dateStr)
+                );
+                if (!active) continue;
+                if (movedOrigins.has(`${slotId}__${dateStr}`)) {
+                    occurrences.push({
+                        shift_slot_id: slotId, shift_number: slotMeta.shift_number, label: slotMeta.label,
+                        start_time: slotMeta.start_time, service_date: dateStr, kind: 'MOVED',
+                        staff_name: null, assignment_id: null, attendance: null, invoice: null,
+                    });
+                    continue;
+                }
+                const assignment = standingAssignmentBySlot.get(slotId);
+                const attendance = assignment
+                    ? attendanceByAssignmentSlotDate.get(`${assignment.assignment_id}__${slotId}__${dateStr}`) || null
+                    : null;
+                const invoice = invoiceBySlotDate.get(`${slotId}__${dateStr}`) || null;
+                occurrences.push({
+                    shift_slot_id: slotId, shift_number: slotMeta.shift_number, label: slotMeta.label,
+                    start_time: slotMeta.start_time, service_date: dateStr, kind: 'NATURAL',
+                    staff_name: assignment?.staff_name || null,
+                    assignment_id: assignment?.assignment_id || null,
+                    attendance, invoice,
+                });
+            }
+        }
+
+        // Makeup occurrences from reschedules landing in range
+        reschedulesRes.rows.forEach((r) => {
+            if (r.new_date < from || r.new_date > to) return;
+            const slotMeta = patternsRes.rows.find((p) => p.shift_slot_id === r.shift_slot_id);
+            const assignment = r.assignment_id ? assignmentById.get(r.assignment_id) : standingAssignmentBySlot.get(r.shift_slot_id);
+            occurrences.push({
+                shift_slot_id: r.shift_slot_id,
+                shift_number: slotMeta?.shift_number ?? null,
+                label: slotMeta?.label ?? null,
+                start_time: r.new_start_time || slotMeta?.start_time || null,
+                service_date: r.new_date,
+                kind: 'MAKEUP',
+                reschedule_id: r.reschedule_id,
+                staff_name: r.makeup_staff_name || assignment?.staff_name || null,
+                assignment_id: r.assignment_id || assignment?.assignment_id || null,
+                attendance: attendanceByReschedule.get(r.reschedule_id) || null,
+                invoice: invoiceByReschedule.get(r.reschedule_id) || null,
+                original_date: r.original_date,
+            });
+        });
+
+        occurrences.sort((a, b) => a.service_date.localeCompare(b.service_date) || (a.shift_number || 0) - (b.shift_number || 0));
+
+        res.status(200).json({ status: 'success', data: { shift_rate: parseFloat(booking.shift_rate) || 0, occurrences } });
+    } catch (error) {
+        console.error('Get shift schedule error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to build shift schedule' });
+    }
+};
+
+/**
+ * @route   POST /api/bookings/:booking_id/shift-occurrences/waive
+ * @desc    Waives one shift occurrence — no client charge AND no staff pay for it,
+ *          per admin decision (e.g. staff no-show that isn't being made up). Skips
+ *          both sides atomically; does not require attendance to have been logged.
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ * @body    service_date, shift_slot_id, assignment_id, reschedule_id (optional), reason (optional)
+ */
+exports.waiveShiftOccurrence = async (req, res) => {
+    const { booking_id } = req.params;
+    const { service_date, shift_slot_id, assignment_id, reschedule_id, reason } = req.body;
+
+    if (!service_date || !shift_slot_id || !assignment_id) {
+        return res.status(400).json({ status: 'error', message: 'service_date, shift_slot_id and assignment_id are required' });
+    }
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const bookingRes = await client.query(
+            `SELECT booking_id, client_id, service_model FROM bookings WHERE booking_id = $1`,
+            [booking_id]
+        );
+        if (bookingRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Booking not found' });
+        }
+        if (bookingRes.rows[0].service_model !== 'SHIFT_BASED') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ status: 'error', message: 'Waiving individual shifts only applies to SHIFT_BASED bookings' });
+        }
+
+        const assignmentRes = await client.query(
+            `SELECT staff_profile_id FROM booking_staff_assignments WHERE assignment_id = $1 AND booking_id = $2`,
+            [assignment_id, booking_id]
+        );
+        if (assignmentRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Assignment not found for this booking' });
+        }
+        const staff_profile_id = assignmentRes.rows[0].staff_profile_id;
+        const decidedByName = await getActorName(req.user?.user_id);
+
+        const existingInvoice = reschedule_id
+            ? await client.query(`SELECT status FROM booking_daily_invoices WHERE reschedule_id = $1 FOR UPDATE`, [reschedule_id])
+            : await client.query(`SELECT status FROM booking_daily_invoices WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id = $3 AND reschedule_id IS NULL FOR UPDATE`, [booking_id, service_date, shift_slot_id]);
+        if (existingInvoice.rows.length > 0 && existingInvoice.rows[0].status !== 'PENDING') {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ status: 'error', message: 'This shift has already been decided' });
+        }
+
+        const notes = reason ? `Shift waived — ${reason}` : 'Shift waived by admin';
+
+        if (reschedule_id) {
+            await client.query(
+                `INSERT INTO booking_daily_invoices (booking_id, service_date, entry_mode, status, shift_slot_id, reschedule_id, decided_by_user_id, decided_by_name, decided_at, notes)
+                 VALUES ($1, $2, 'MANUAL', 'SKIPPED', $3, $4, $5, $6, NOW(), $7)
+                 ON CONFLICT (reschedule_id) WHERE reschedule_id IS NOT NULL
+                 DO UPDATE SET status = 'SKIPPED', decided_by_user_id = EXCLUDED.decided_by_user_id, decided_by_name = EXCLUDED.decided_by_name, decided_at = NOW(), notes = EXCLUDED.notes, updated_at = NOW()`,
+                [booking_id, service_date, shift_slot_id, reschedule_id, req.user?.user_id || null, decidedByName, notes]
+            );
+            await client.query(
+                `INSERT INTO staff_daily_attendance (booking_id, assignment_id, staff_profile_id, service_date, entry_mode, salary_status, shift_slot_id, reschedule_id, decided_by_user_id, decided_by_name, decided_at, notes)
+                 VALUES ($1, $2, $3, $4, 'MANUAL', 'SKIPPED', $5, $6, $7, $8, NOW(), $9)
+                 ON CONFLICT (reschedule_id) WHERE reschedule_id IS NOT NULL
+                 DO UPDATE SET salary_status = 'SKIPPED', decided_by_user_id = EXCLUDED.decided_by_user_id, decided_by_name = EXCLUDED.decided_by_name, decided_at = NOW(), notes = EXCLUDED.notes, updated_at = NOW()`,
+                [booking_id, assignment_id, staff_profile_id, service_date, shift_slot_id, reschedule_id, req.user?.user_id || null, decidedByName, notes]
+            );
+        } else {
+            await client.query(
+                `INSERT INTO booking_daily_invoices (booking_id, service_date, entry_mode, status, shift_slot_id, decided_by_user_id, decided_by_name, decided_at, notes)
+                 VALUES ($1, $2, 'MANUAL', 'SKIPPED', $3, $4, $5, NOW(), $6)
+                 ON CONFLICT (booking_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL
+                 DO UPDATE SET status = 'SKIPPED', decided_by_user_id = EXCLUDED.decided_by_user_id, decided_by_name = EXCLUDED.decided_by_name, decided_at = NOW(), notes = EXCLUDED.notes, updated_at = NOW()`,
+                [booking_id, service_date, shift_slot_id, req.user?.user_id || null, decidedByName, notes]
+            );
+            await client.query(
+                `INSERT INTO staff_daily_attendance (booking_id, assignment_id, staff_profile_id, service_date, entry_mode, salary_status, shift_slot_id, decided_by_user_id, decided_by_name, decided_at, notes)
+                 VALUES ($1, $2, $3, $4, 'MANUAL', 'SKIPPED', $5, $6, $7, NOW(), $8)
+                 ON CONFLICT (assignment_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL
+                 DO UPDATE SET salary_status = 'SKIPPED', decided_by_user_id = EXCLUDED.decided_by_user_id, decided_by_name = EXCLUDED.decided_by_name, decided_at = NOW(), notes = EXCLUDED.notes, updated_at = NOW()`,
+                [booking_id, assignment_id, staff_profile_id, service_date, shift_slot_id, req.user?.user_id || null, decidedByName, notes]
+            );
+        }
+
+        await client.query('COMMIT');
+        res.status(200).json({ status: 'success', message: 'Shift waived — no charge and no pay recorded' });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Waive shift occurrence error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to waive shift' });
+    } finally {
+        client.release();
+    }
+};
+
+/**
+ * @route   POST /api/bookings/:booking_id/shift-occurrences/reschedule
+ * @desc    Moves a missed/upcoming shift occurrence to a different date (any date
+ *          within the same booking — doesn't have to fall within the paid plan;
+ *          defaults to just after the booking's scheduled end in the frontend).
+ *          Staff can optionally change for the makeup occurrence; if unchanged,
+ *          the slot's standing assignment covers it.
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ * @body    shift_slot_id, original_date, new_date, new_start_time (optional),
+ *          new_staff_profile_id (optional), reason (optional)
+ */
+exports.rescheduleShiftOccurrence = async (req, res) => {
+    const { booking_id } = req.params;
+    const { shift_slot_id, original_date, new_date, new_start_time, new_staff_profile_id, reason } = req.body;
+
+    if (!shift_slot_id || !original_date || !new_date) {
+        return res.status(400).json({ status: 'error', message: 'shift_slot_id, original_date and new_date are required' });
+    }
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const bookingRes = await client.query(
+            `SELECT booking_id, service_model FROM bookings WHERE booking_id = $1`,
+            [booking_id]
+        );
+        if (bookingRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Booking not found' });
+        }
+        if (bookingRes.rows[0].service_model !== 'SHIFT_BASED') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ status: 'error', message: 'Rescheduling only applies to SHIFT_BASED bookings' });
+        }
+
+        const slotCheck = await client.query(
+            `SELECT s.shift_slot_id FROM booking_shift_slots s
+             JOIN booking_shift_patterns p ON s.pattern_id = p.pattern_id
+             WHERE s.shift_slot_id = $1 AND p.booking_id = $2`,
+            [shift_slot_id, booking_id]
+        );
+        if (slotCheck.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Shift slot not found for this booking' });
+        }
+
+        const dupeCheck = await client.query(
+            `SELECT reschedule_id FROM shift_reschedules WHERE booking_id = $1 AND shift_slot_id = $2 AND original_date = $3 AND status = 'ACTIVE'`,
+            [booking_id, shift_slot_id, original_date]
+        );
+        if (dupeCheck.rows.length > 0) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ status: 'error', message: 'This shift has already been rescheduled — cancel that move first' });
+        }
+
+        const standingRes = await client.query(
+            `SELECT assignment_id, staff_profile_id, daily_rate FROM booking_staff_assignments
+             WHERE shift_slot_id = $1 AND status = 'ACTIVE' AND reschedule_id IS NULL`,
+            [shift_slot_id]
+        );
+        const standing = standingRes.rows[0] || null;
+
+        let makeupAssignmentId = standing?.assignment_id || null;
+
+        const rescheduleRes = await client.query(
+            `INSERT INTO shift_reschedules (booking_id, shift_slot_id, original_date, new_date, new_start_time, reason, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+            [booking_id, shift_slot_id, original_date, new_date, new_start_time || null, reason || null, req.user?.user_id || null]
+        );
+        const reschedule = rescheduleRes.rows[0];
+
+        if (new_staff_profile_id && new_staff_profile_id !== standing?.staff_profile_id) {
+            const newAssignmentRes = await client.query(
+                `INSERT INTO booking_staff_assignments (booking_id, staff_profile_id, shift_slot_id, daily_rate, service_start_date, service_end_date, status, reschedule_id)
+                 VALUES ($1, $2, $3, $4, $5, $5, 'ACTIVE', $6) RETURNING assignment_id`,
+                [booking_id, new_staff_profile_id, shift_slot_id, standing?.daily_rate || 0, new_date, reschedule.reschedule_id]
+            );
+            makeupAssignmentId = newAssignmentRes.rows[0].assignment_id;
+        }
+
+        await client.query(
+            `UPDATE shift_reschedules SET assignment_id = $1 WHERE reschedule_id = $2`,
+            [makeupAssignmentId, reschedule.reschedule_id]
+        );
+
+        await client.query('COMMIT');
+        res.status(201).json({
+            status: 'success',
+            data: { ...reschedule, assignment_id: makeupAssignmentId }
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Reschedule shift occurrence error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to reschedule shift' });
+    } finally {
+        client.release();
+    }
+};
+
+/**
+ * @route   POST /api/bookings/:booking_id/shift-occurrences/:reschedule_id/cancel
+ * @desc    Cancels a pending reschedule — the original occurrence becomes normal
+ *          again (no longer "moved"), and the makeup occurrence disappears. Only
+ *          allowed while neither side has been invoiced/paid yet.
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ */
+exports.cancelShiftReschedule = async (req, res) => {
+    const { booking_id, reschedule_id } = req.params;
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const rescheduleRes = await client.query(
+            `SELECT * FROM shift_reschedules WHERE reschedule_id = $1 AND booking_id = $2 AND status = 'ACTIVE' FOR UPDATE`,
+            [reschedule_id, booking_id]
+        );
+        if (rescheduleRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Active reschedule not found' });
+        }
+        const reschedule = rescheduleRes.rows[0];
+
+        const invDecided = await client.query(
+            `SELECT 1 FROM booking_daily_invoices WHERE reschedule_id = $1 AND status != 'PENDING'`,
+            [reschedule_id]
+        );
+        const attDecided = await client.query(
+            `SELECT 1 FROM staff_daily_attendance WHERE reschedule_id = $1 AND salary_status != 'PENDING'`,
+            [reschedule_id]
+        );
+        if (invDecided.rows.length > 0 || attDecided.rows.length > 0) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ status: 'error', message: 'This makeup shift has already been decided — it cannot be cancelled' });
+        }
+
+        await client.query(`DELETE FROM booking_daily_invoices WHERE reschedule_id = $1`, [reschedule_id]);
+        await client.query(`DELETE FROM staff_daily_attendance WHERE reschedule_id = $1`, [reschedule_id]);
+        await client.query(`UPDATE shift_reschedules SET status = 'CANCELLED' WHERE reschedule_id = $1`, [reschedule_id]);
+        if (reschedule.assignment_id) {
+            await client.query(
+                `UPDATE booking_staff_assignments SET status = 'CANCELLED' WHERE assignment_id = $1 AND reschedule_id = $2`,
+                [reschedule.assignment_id, reschedule_id]
+            );
+        }
+
+        await client.query('COMMIT');
+        res.status(200).json({ status: 'success', message: 'Reschedule cancelled' });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Cancel shift reschedule error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to cancel reschedule' });
+    } finally {
+        client.release();
+    }
+};
+
+/**
+ * @route   GET /api/bookings/:booking_id/shift-reschedules
+ * @desc    All ACTIVE shift reschedules for a booking — lets calendars (CareTimeline,
+ *          StaffCareTimeline) mark a moved-away origin date/slot distinctly instead of
+ *          rendering it as a normal working day, and show the makeup occurrence on its
+ *          new date. Unlike getShiftSchedule (date-range-bounded, derives full occurrence
+ *          lists), this is a lightweight lookup covering the whole booking at once.
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ */
+exports.getShiftReschedules = async (req, res) => {
+    const { booking_id } = req.params;
+    try {
+        const result = await db.query(
+            `SELECT
+                r.reschedule_id, r.booking_id, r.shift_slot_id,
+                r.original_date::text, r.new_date::text, r.new_start_time::text,
+                r.assignment_id, r.reason, r.status,
+                ss.shift_number, ss.label as shift_label,
+                sp.full_name as makeup_staff_name,
+                -- Cancelling a reschedule is only allowed while neither side of
+                -- the makeup shift has been decided yet (mirrors cancelShiftReschedule's
+                -- own guard) — surfaced here so the UI can disable/hide the action
+                -- instead of letting the admin hit the 409.
+                COALESCE(bdi.status != 'PENDING', false) OR COALESCE(sda.salary_status != 'PENDING', false) as decided
+             FROM shift_reschedules r
+             LEFT JOIN booking_shift_slots ss ON ss.shift_slot_id = r.shift_slot_id
+             LEFT JOIN booking_staff_assignments bsa ON bsa.assignment_id = r.assignment_id
+             LEFT JOIN staff_profiles sp ON sp.staff_profile_id = bsa.staff_profile_id
+             LEFT JOIN booking_daily_invoices bdi ON bdi.reschedule_id = r.reschedule_id
+             LEFT JOIN staff_daily_attendance sda ON sda.reschedule_id = r.reschedule_id
+             WHERE r.booking_id = $1 AND r.status = 'ACTIVE'
+             ORDER BY r.original_date ASC`,
+            [booking_id]
+        );
+        res.status(200).json({ status: 'success', data: result.rows });
+    } catch (error) {
+        console.error('Get shift reschedules error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to fetch shift reschedules' });
     }
 };
 
@@ -2413,6 +2967,14 @@ exports.extendBooking = async (req, res) => {
 
     const booking = bookingRes.rows[0];
 
+    if (booking.service_model === 'SHIFT_BASED') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        status: 'error',
+        message: 'SHIFT_BASED bookings have no booking end date to extend. Use mark-overdue / resolve-overdue instead.'
+      });
+    }
+
     if (!['ACTIVE', 'OVERDUE'].includes(booking.status)) {
       await client.query('ROLLBACK');
       return res.status(400).json({
@@ -2523,6 +3085,126 @@ exports.extendBooking = async (req, res) => {
     await client.query('ROLLBACK');
     console.error('extendBooking error:', error);
     res.status(500).json({ status: 'error', message: 'Failed to extend booking' });
+  } finally {
+    client.release();
+  }
+};
+
+/**
+ * @route   POST /api/bookings/:booking_id/mark-overdue
+ * @desc    Manual overdue flag for SHIFT_BASED bookings. There is no automatic
+ *          cron-driven overdue detection for this model (the day-level paid-vs-
+ *          delivered comparison is only an approximation — the Shift Bank ledger
+ *          is authoritative). An admin who sees more shifts delivered than paid
+ *          for picks the date it went over and flags the booking OVERDUE by hand.
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ */
+exports.markShiftBookingOverdue = async (req, res) => {
+  const { booking_id } = req.params;
+  const { as_of_date, reason } = req.body;
+
+  if (!as_of_date) {
+    return res.status(400).json({ status: 'error', message: 'as_of_date is required' });
+  }
+
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const bookingRes = await client.query(
+      `SELECT booking_id, client_id, service_model, status FROM bookings WHERE booking_id = $1 FOR UPDATE`,
+      [booking_id]
+    );
+    if (!bookingRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ status: 'error', message: 'Booking not found' });
+    }
+    const booking = bookingRes.rows[0];
+
+    if (booking.service_model !== 'SHIFT_BASED') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ status: 'error', message: 'Manual overdue marking only applies to SHIFT_BASED bookings' });
+    }
+    if (!['ACTIVE', 'OVERDUE'].includes(booking.status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ status: 'error', message: `Cannot mark a booking with status ${booking.status} as overdue` });
+    }
+
+    await client.query(`UPDATE bookings SET status = 'OVERDUE' WHERE booking_id = $1`, [booking_id]);
+
+    await client.query(
+      `INSERT INTO client_alerts (booking_id, client_id, alert_type, message, sent_at)
+       VALUES ($1, $2, 'MANUAL_OVERDUE', $3, NOW())`,
+      [
+        booking_id,
+        booking.client_id,
+        `Manually flagged overdue as of ${as_of_date} by ${req.user?.email || req.user?.mobile_number || 'admin'}${reason ? ` — ${reason}` : ''}`
+      ]
+    );
+
+    await client.query('COMMIT');
+    res.status(200).json({ status: 'success', message: 'Booking flagged as OVERDUE', data: { booking_id, status: 'OVERDUE' } });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('markShiftBookingOverdue error:', error);
+    res.status(500).json({ status: 'error', message: 'Failed to mark booking overdue' });
+  } finally {
+    client.release();
+  }
+};
+
+/**
+ * @route   POST /api/bookings/:booking_id/resolve-overdue
+ * @desc    Clears a manually-set OVERDUE flag on a SHIFT_BASED booking back to
+ *          ACTIVE (e.g. once the client tops up payment). Purely manual, mirrors
+ *          markShiftBookingOverdue.
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ */
+exports.resolveShiftBookingOverdue = async (req, res) => {
+  const { booking_id } = req.params;
+  const { notes } = req.body;
+
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const bookingRes = await client.query(
+      `SELECT booking_id, client_id, service_model, status FROM bookings WHERE booking_id = $1 FOR UPDATE`,
+      [booking_id]
+    );
+    if (!bookingRes.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ status: 'error', message: 'Booking not found' });
+    }
+    const booking = bookingRes.rows[0];
+
+    if (booking.service_model !== 'SHIFT_BASED') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ status: 'error', message: 'Manual overdue resolution only applies to SHIFT_BASED bookings' });
+    }
+    if (booking.status !== 'OVERDUE') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ status: 'error', message: 'Booking is not currently OVERDUE' });
+    }
+
+    await client.query(`UPDATE bookings SET status = 'ACTIVE' WHERE booking_id = $1`, [booking_id]);
+
+    await client.query(
+      `INSERT INTO client_alerts (booking_id, client_id, alert_type, message, sent_at)
+       VALUES ($1, $2, 'MANUAL_OVERDUE_RESOLVED', $3, NOW())`,
+      [
+        booking_id,
+        booking.client_id,
+        `Overdue flag cleared by ${req.user?.email || req.user?.mobile_number || 'admin'}${notes ? ` — ${notes}` : ''}`
+      ]
+    );
+
+    await client.query('COMMIT');
+    res.status(200).json({ status: 'success', message: 'Booking resolved back to ACTIVE', data: { booking_id, status: 'ACTIVE' } });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('resolveShiftBookingOverdue error:', error);
+    res.status(500).json({ status: 'error', message: 'Failed to resolve overdue booking' });
   } finally {
     client.release();
   }
@@ -3074,6 +3756,7 @@ exports.adminDirectBooking = async (req, res) => {
         start_date,
         scheduled_end_date,
         daily_rate,
+        shift_rate,
         admin_notes,
     } = req.body;
 
@@ -3130,12 +3813,17 @@ exports.adminDirectBooking = async (req, res) => {
             }
         }
 
-        const scheduledEndTime = scheduled_end_date ? new Date(scheduled_end_date) : null;
+        // SHIFT_BASED bookings have no booking end date — billing is purely
+        // shift-count-derived, never date-derived.
+        const scheduledEndTime = (service_model === 'SHIFT_BASED')
+            ? null
+            : (scheduled_end_date ? new Date(scheduled_end_date) : null);
         const parsedDailyRate = daily_rate ? parseFloat(daily_rate) : 0;
+        const parsedShiftRate = shift_rate ? parseFloat(shift_rate) : null;
 
         const bookingRes = await dbClient.query(
-            `INSERT INTO bookings (client_id, patient_id, service_type, service_model, start_date, assigned_staff_id, status, preferred_gender, request_id, service_mode, scheduled_end_time, ot_rate, daily_rate, amount_quotated, amount_paid)
-             VALUES ($1, $2, $3, $4::service_model_enum, $5, NULL, 'PENDING', $6::gender_preference_enum, NULL, NULL, $7, 500.00, $8, 0, 0)
+            `INSERT INTO bookings (client_id, patient_id, service_type, service_model, start_date, assigned_staff_id, status, preferred_gender, request_id, service_mode, scheduled_end_time, ot_rate, daily_rate, shift_rate, amount_quotated, amount_paid)
+             VALUES ($1, $2, $3, $4::service_model_enum, $5, NULL, 'PENDING', $6::gender_preference_enum, NULL, NULL, $7, 500.00, $8, $9, 0, 0)
              RETURNING booking_id, booking_code`,
             [
                 client_profile_id, finalPatientId, service_type,
@@ -3143,6 +3831,7 @@ exports.adminDirectBooking = async (req, res) => {
                 preferred_gender || 'ANY',
                 scheduledEndTime,
                 parsedDailyRate,
+                parsedShiftRate,
             ]
         );
         const { booking_id, booking_code } = bookingRes.rows[0];
