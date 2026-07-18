@@ -241,16 +241,33 @@ exports.assignStaffToSlot = async (req, res) => {
         }
         const staff = staffRes.rows[0];
         if (staff.current_status !== 'AVAILABLE') {
-            // Not a real conflict if what's holding them "ASSIGNED" is another shift (or
-            // the pattern being replaced) on this SAME booking — e.g. keeping the same
-            // staff on a shift pattern change, or adding a new shift alongside their
-            // existing one. Only block on a genuinely other booking.
-            const sameBookingRes = await client.query(
-                `SELECT 1 FROM booking_staff_assignments
-                 WHERE staff_profile_id = $1 AND booking_id = $2 AND status IN ('ACTIVE', 'SCHEDULED') LIMIT 1`,
-                [staff_profile_id, booking_id]
+            // current_status is a live snapshot that only flips back to AVAILABLE when the
+            // cron closes out the old assignment, so it lags a staff member whose existing
+            // commitment(s) will have ended before this shift's start date. Not a real
+            // conflict either if what's holding them "ASSIGNED" is another shift (or the
+            // pattern being replaced) on this SAME booking. Only block on a genuine
+            // date-overlapping assignment elsewhere.
+            const conflictRes = await client.query(
+                `SELECT 1
+                 FROM booking_staff_assignments bsa
+                 LEFT JOIN LATERAL (
+                     SELECT effective_date FROM scheduled_actions
+                     WHERE booking_id = bsa.booking_id
+                       AND action_type IN ('TERMINATION', 'COMPLETION')
+                       AND status = 'SCHEDULED'
+                     ORDER BY effective_date ASC
+                     LIMIT 1
+                 ) sa ON bsa.service_end_date IS NULL
+                 WHERE bsa.staff_profile_id = $1
+                   AND bsa.booking_id != $2
+                   AND bsa.status IN ('ACTIVE', 'SCHEDULED')
+                   AND bsa.service_start_date <= $3::date
+                   AND (COALESCE(bsa.service_end_date, sa.effective_date) IS NULL
+                        OR COALESCE(bsa.service_end_date, sa.effective_date) >= $3::date)
+                 LIMIT 1`,
+                [staff_profile_id, booking_id, toDateStr(service_start_date)]
             );
-            if (sameBookingRes.rows.length === 0) {
+            if (conflictRes.rows.length > 0) {
                 await client.query('ROLLBACK');
                 return res.status(400).json({ status: 'error', message: `${staff.full_name} is not available (status: ${staff.current_status})` });
             }
@@ -362,14 +379,31 @@ exports.reassignSlotStaff = async (req, res) => {
         }
         const newStaff = newStaffRes.rows[0];
         if (newStaff.current_status !== 'AVAILABLE') {
-            // Same exception as assignStaffToSlot — being tied up on THIS booking
-            // (another shift, or the pattern being replaced) isn't a real conflict.
-            const sameBookingRes = await client.query(
-                `SELECT 1 FROM booking_staff_assignments
-                 WHERE staff_profile_id = $1 AND booking_id = $2 AND status IN ('ACTIVE', 'SCHEDULED') LIMIT 1`,
-                [new_staff_id, booking_id]
+            // Same exception as assignStaffToSlot — being tied up on THIS booking (another
+            // shift, or the pattern being replaced) isn't a real conflict, and neither is a
+            // stale current_status if the staff member's other commitments end before this
+            // shift's effective date.
+            const conflictRes = await client.query(
+                `SELECT 1
+                 FROM booking_staff_assignments bsa
+                 LEFT JOIN LATERAL (
+                     SELECT effective_date FROM scheduled_actions
+                     WHERE booking_id = bsa.booking_id
+                       AND action_type IN ('TERMINATION', 'COMPLETION')
+                       AND status = 'SCHEDULED'
+                     ORDER BY effective_date ASC
+                     LIMIT 1
+                 ) sa ON bsa.service_end_date IS NULL
+                 WHERE bsa.staff_profile_id = $1
+                   AND bsa.booking_id != $2
+                   AND bsa.status IN ('ACTIVE', 'SCHEDULED')
+                   AND bsa.service_start_date <= $3::date
+                   AND (COALESCE(bsa.service_end_date, sa.effective_date) IS NULL
+                        OR COALESCE(bsa.service_end_date, sa.effective_date) >= $3::date)
+                 LIMIT 1`,
+                [new_staff_id, booking_id, toDateStr(effective_date)]
             );
-            if (sameBookingRes.rows.length === 0) {
+            if (conflictRes.rows.length > 0) {
                 await client.query('ROLLBACK');
                 return res.status(400).json({ status: 'error', message: `${newStaff.full_name} is not available (status: ${newStaff.current_status})` });
             }

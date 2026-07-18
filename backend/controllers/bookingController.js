@@ -3330,19 +3330,46 @@ exports.swapStaff = async (req, res) => {
 
         const newStaff = newStaffRes.rows[0];
 
-        if (newStaff.current_status !== 'AVAILABLE') {
-            await client.query('ROLLBACK');
-            return res.status(400).json({
-                status: 'error',
-                message: `${newStaff.full_name} is not available for assignment (status: ${newStaff.current_status})`
-            });
-        }
-
         // 2.5 If the incoming staff's start date is in the future, defer the swap:
         //     reserve them now, keep the current nurse working/billed, and let the
         //     cron flip the booking over on the effective date.
         const businessDate = await getBusinessDate(client);
         const requestedSwapDateStr = new_staff_start_date ? toDateStr(new_staff_start_date) : null;
+        const swapReferenceDateStr = requestedSwapDateStr || businessDate;
+
+        if (newStaff.current_status !== 'AVAILABLE') {
+            // current_status is a live snapshot that only flips back to AVAILABLE when the
+            // cron closes out an old assignment, so it lags a staff member whose other
+            // commitment(s) will have ended before this swap's effective date. Only block
+            // on a genuine date-overlapping assignment elsewhere.
+            const conflictRes = await client.query(
+                `SELECT 1
+                 FROM booking_staff_assignments bsa
+                 LEFT JOIN LATERAL (
+                     SELECT effective_date FROM scheduled_actions
+                     WHERE booking_id = bsa.booking_id
+                       AND action_type IN ('TERMINATION', 'COMPLETION')
+                       AND status = 'SCHEDULED'
+                     ORDER BY effective_date ASC
+                     LIMIT 1
+                 ) sa ON bsa.service_end_date IS NULL
+                 WHERE bsa.staff_profile_id = $1
+                   AND bsa.booking_id != $2
+                   AND bsa.status IN ('ACTIVE', 'SCHEDULED')
+                   AND bsa.service_start_date <= $3::date
+                   AND (COALESCE(bsa.service_end_date, sa.effective_date) IS NULL
+                        OR COALESCE(bsa.service_end_date, sa.effective_date) >= $3::date)
+                 LIMIT 1`,
+                [new_staff_id, booking_id, swapReferenceDateStr]
+            );
+            if (conflictRes.rows.length > 0) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    status: 'error',
+                    message: `${newStaff.full_name} is not available for assignment (status: ${newStaff.current_status})`
+                });
+            }
+        }
 
         if (requestedSwapDateStr && isFutureDate(requestedSwapDateStr, businessDate)) {
             const alreadyScheduled = await hasOpenAction(client, booking_id, 'STAFF_SWAP');
