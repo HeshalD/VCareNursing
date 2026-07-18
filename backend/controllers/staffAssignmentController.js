@@ -132,7 +132,10 @@ exports.getAssignmentFormData = async (req, res) => {
     const totalAllocated = currentAssignments.reduce((sum, a) => sum + parseFloat(a.amount_allocated || 0), 0);
     const remainingBudget = booking.amount_paid - totalAllocated;
 
-    // Get available staff (service-team roles) with their profiles
+    // Get available staff (service-team roles) with their profiles. A staff member whose
+    // current_status is ASSIGNED can still be offered here if their existing commitment(s)
+    // end before this booking's start date — current_status alone is a live snapshot and
+    // doesn't reflect assignments that are scheduled to release the staff member in time.
     const staffQuery = `
       SELECT
         sp.staff_profile_id,
@@ -145,11 +148,27 @@ exports.getAssignmentFormData = async (req, res) => {
       FROM staff_profiles sp
       JOIN users u ON sp.user_id = u.user_id
       WHERE sp.is_active = true
-        AND sp.current_status = 'AVAILABLE'
         AND u.role && ARRAY['NURSE'::user_role_enum, 'CARETAKER'::user_role_enum, 'NANNY'::user_role_enum, 'NURSING_ASSISTANT'::user_role_enum, 'PHYSIOTHERAPIST'::user_role_enum, 'COUNSELLOR'::user_role_enum]
+        AND NOT EXISTS (
+          SELECT 1
+          FROM booking_staff_assignments bsa
+          LEFT JOIN LATERAL (
+            SELECT effective_date FROM scheduled_actions
+            WHERE booking_id = bsa.booking_id
+              AND action_type IN ('TERMINATION', 'COMPLETION')
+              AND status = 'SCHEDULED'
+            ORDER BY effective_date ASC
+            LIMIT 1
+          ) sa ON bsa.service_end_date IS NULL
+          WHERE bsa.staff_profile_id = sp.staff_profile_id
+            AND bsa.status IN ('ACTIVE', 'SCHEDULED')
+            AND bsa.service_start_date <= $1::date
+            AND (COALESCE(bsa.service_end_date, sa.effective_date) IS NULL
+                 OR COALESCE(bsa.service_end_date, sa.effective_date) >= $1::date)
+        )
       ORDER BY sp.full_name ASC
     `;
-    const staffResult = await db.query(staffQuery);
+    const staffResult = await db.query(staffQuery, [booking.start_date || new Date()]);
     const availableStaff = staffResult.rows.map(s => ({
       staff_profile_id: s.staff_profile_id,
       staff_name: s.full_name,
@@ -299,13 +318,13 @@ exports.assignStaffToBooking = async (req, res) => {
 
     // Get staff profile details
     const staffQuery = `
-      SELECT 
+      SELECT
         sp.staff_profile_id,
         sp.current_status,
         sp.full_name,
         sp.designation
       FROM staff_profiles sp
-      WHERE sp.staff_profile_id = $1 AND sp.current_status = 'AVAILABLE'
+      WHERE sp.staff_profile_id = $1
     `;
     const staffResult = await db.query(staffQuery, [staff_profile_id]);
 
@@ -317,6 +336,40 @@ exports.assignStaffToBooking = async (req, res) => {
     }
 
     const staff = staffResult.rows[0];
+
+    if (staff.current_status !== 'AVAILABLE') {
+      // current_status is a live snapshot that only flips back to AVAILABLE when the cron
+      // closes out an old assignment, so it lags a staff member whose other commitment(s)
+      // will have ended before this booking's start date. Only block on a genuine
+      // date-overlapping assignment elsewhere.
+      const conflictRes = await db.query(
+        `SELECT 1
+         FROM booking_staff_assignments bsa
+         LEFT JOIN LATERAL (
+             SELECT effective_date FROM scheduled_actions
+             WHERE booking_id = bsa.booking_id
+               AND action_type IN ('TERMINATION', 'COMPLETION')
+               AND status = 'SCHEDULED'
+             ORDER BY effective_date ASC
+             LIMIT 1
+         ) sa ON bsa.service_end_date IS NULL
+         WHERE bsa.staff_profile_id = $1
+           AND bsa.booking_id != $2
+           AND bsa.status IN ('ACTIVE', 'SCHEDULED')
+           AND bsa.service_start_date <= $3::date
+           AND (COALESCE(bsa.service_end_date, sa.effective_date) IS NULL
+                OR COALESCE(bsa.service_end_date, sa.effective_date) >= $3::date)
+         LIMIT 1`,
+        [staff_profile_id, booking_id, toDateStr(service_start_date)]
+      );
+      if (conflictRes.rows.length > 0) {
+        return res.status(400).json({
+          status: 'error',
+          message: `${staff.full_name} is not available (status: ${staff.current_status})`
+        });
+      }
+    }
+
     const staffDailyRate = daily_rate || parseFloat(booking.quote_daily_rate);
 
     const bookingOtRate = ot_rate !== undefined && ot_rate !== null

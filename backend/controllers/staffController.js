@@ -799,7 +799,8 @@ exports.getStaffSchedules = async (req, res) => {
     try {
         const result = await db.query(`
             SELECT bsa.staff_profile_id, bsa.booking_id, bsa.status,
-                   bsa.service_start_date, bsa.service_end_date,
+                   bsa.service_start_date,
+                   COALESCE(bsa.service_end_date, sa.effective_date) AS service_end_date,
                    b.booking_code, b.service_model,
                    c.full_name AS client_name, p.full_name AS patient_name,
                    s.shift_number, s.label AS shift_label
@@ -808,6 +809,14 @@ exports.getStaffSchedules = async (req, res) => {
             LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
             LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
             LEFT JOIN booking_shift_slots s ON bsa.shift_slot_id = s.shift_slot_id
+            LEFT JOIN LATERAL (
+                SELECT effective_date FROM scheduled_actions
+                WHERE booking_id = bsa.booking_id
+                  AND action_type IN ('TERMINATION', 'COMPLETION')
+                  AND status = 'SCHEDULED'
+                ORDER BY effective_date ASC
+                LIMIT 1
+            ) sa ON bsa.service_end_date IS NULL
             WHERE bsa.staff_profile_id = ANY($1::uuid[])
               AND bsa.status IN ('ACTIVE', 'SCHEDULED')
             ORDER BY bsa.staff_profile_id, bsa.service_start_date ASC
