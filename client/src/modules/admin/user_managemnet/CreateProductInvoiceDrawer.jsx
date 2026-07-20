@@ -320,7 +320,7 @@ const CreateProductInvoiceDrawer = ({ open, onClose, clientId, clientProfile, on
                           >
                             <option value="">Custom item…</option>
                             {products.map((p) => (
-                              <option key={p.product_id} value={p.product_id}>{p.name}{p.product_type === 'RENTAL' ? ' (Rental)' : ''}</option>
+                              <option key={p.product_id} value={p.product_id}>{p.name}{p.product_type === 'RENTAL' ? ' (Rental)' : p.product_type === 'ONE_TIME_SERVICE' ? ' (Service)' : ''}</option>
                             ))}
                           </select>
                           <input

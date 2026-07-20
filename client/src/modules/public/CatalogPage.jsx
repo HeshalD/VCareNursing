@@ -34,9 +34,11 @@ const ProductCard = ({ product, delay }) => (
       <div className="p-6">
         <div className="flex items-center gap-2 mb-2">
           <span className={`inline-flex px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
-            product.product_type === 'RENTAL' ? 'bg-purple-50 text-purple-600' : 'bg-blue-50 text-blue-600'
+            product.product_type === 'RENTAL' ? 'bg-purple-50 text-purple-600' :
+            product.product_type === 'ONE_TIME_SERVICE' ? 'bg-emerald-50 text-emerald-600' :
+            'bg-blue-50 text-blue-600'
           }`}>
-            {product.product_type === 'RENTAL' ? 'Rental' : 'For Sale'}
+            {product.product_type === 'RENTAL' ? 'Rental' : product.product_type === 'ONE_TIME_SERVICE' ? 'Service' : 'For Sale'}
           </span>
           {product.category_name && (
             <span className="text-[11px] text-slate-400">{product.category_name}</span>
@@ -67,7 +69,7 @@ const CatalogPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  const [typeFilter, setTypeFilter] = useState('ALL'); // 'ALL' | 'ITEM' | 'RENTAL'
+  const [typeFilter, setTypeFilter] = useState('ALL'); // 'ALL' | 'ITEM' | 'RENTAL' | 'ONE_TIME_SERVICE'
 
   useEffect(() => {
     (async () => {
@@ -144,6 +146,7 @@ const CatalogPage = () => {
               { id: 'ALL', label: 'All' },
               { id: 'ITEM', label: 'For Sale' },
               { id: 'RENTAL', label: 'Rentals' },
+              { id: 'ONE_TIME_SERVICE', label: 'Services' },
             ].map(({ id, label }) => (
               <button
                 key={id}

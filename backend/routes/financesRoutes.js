@@ -1,6 +1,6 @@
 const express = require('express');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
-const { getOverview, getAdvancesSummary, getStaffWalletsSummary, getCreditAlertsSummary, getRevenueChart, getPaymentMethodsChart, getTransactionCategoriesChart, getReceivablesAging, getPayablesAging, getProfitLoss, getProfitLossPdf } = require('../controllers/financesController');
+const { getOverview, getAdvancesSummary, getStaffWalletsSummary, getCreditAlertsSummary, getRevenueChart, getPaymentMethodsChart, getTransactionCategoriesChart, getReceivablesAging, getPayablesAging, getProfitLoss, getProfitLossPdf, getBalanceSheet, getBalanceSheetPdf, getSalesByCustomer, getSalesByCustomerPdf, getCashFlowSummary, getIncomeExpenseChart, getTopExpenses } = require('../controllers/financesController');
 
 const router = express.Router();
 
@@ -40,5 +40,26 @@ router.get('/profit-loss', getProfitLoss);
 
 // GET /api/finances/profit-loss/pdf - Get the Profit & Loss report as a downloadable PDF
 router.get('/profit-loss/pdf', getProfitLossPdf);
+
+// GET /api/finances/balance-sheet - Get the Balance Sheet as of a date
+router.get('/balance-sheet', getBalanceSheet);
+
+// GET /api/finances/balance-sheet/pdf - Get the Balance Sheet as a downloadable PDF
+router.get('/balance-sheet/pdf', getBalanceSheetPdf);
+
+// GET /api/finances/sales-by-customer - Get sales grouped by customer for a date range
+router.get('/sales-by-customer', getSalesByCustomer);
+
+// GET /api/finances/sales-by-customer/pdf - Get the Sales by Customer report as a downloadable PDF
+router.get('/sales-by-customer/pdf', getSalesByCustomerPdf);
+
+// GET /api/finances/cash-flow - Get the dashboard Cash Flow chart for a period
+router.get('/cash-flow', getCashFlowSummary);
+
+// GET /api/finances/income-expense-chart - Get the dashboard Income & Expense chart for a period
+router.get('/income-expense-chart', getIncomeExpenseChart);
+
+// GET /api/finances/top-expenses - Get the dashboard Top Expenses breakdown for a period
+router.get('/top-expenses', getTopExpenses);
 
 module.exports = router;

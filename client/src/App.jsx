@@ -42,6 +42,7 @@ import SalesByCustomer from './modules/admin/reports/sales_by_customer';
 import ReceivablesAging from './modules/admin/reports/receivables_aging';
 import PayablesAging from './modules/admin/reports/payables_aging';
 import ProfitLoss from './modules/admin/reports/profit_loss';
+import BalanceSheet from './modules/admin/reports/balance_sheet';
 import Settings from './modules/admin/settings/settings';
 import AdminLoginPage from './modules/admin/AdminLoginPage';
 import DeviceActivationPage from './modules/admin/DeviceActivationPage';
@@ -321,6 +322,11 @@ function App() {
             <Route path="/admin/reports/profit-loss" element={
               <AdminAuthProvider>
                 <ProfitLoss />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/reports/balance-sheet" element={
+              <AdminAuthProvider>
+                <BalanceSheet />
               </AdminAuthProvider>
             } />
             <Route path="/admin/bookings" element={

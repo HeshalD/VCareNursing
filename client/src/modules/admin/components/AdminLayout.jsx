@@ -3,7 +3,7 @@ import {
   Users, Calendar, DollarSign, Activity,
   Settings, LogOut, Bell, Search,
   ShieldCheck, FileText, SendHorizontal, Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet, Landmark,
-  ChevronLeft, ChevronRight, ClipboardList, History, HeartPulse, ArrowLeftRight, Banknote, Star, Lock, UserCog, CalendarClock, Briefcase, Receipt, CalendarOff, MonitorSmartphone,
+  ChevronLeft, ChevronRight, ChevronDown, ClipboardList, History, HeartPulse, ArrowLeftRight, Banknote, Star, Lock, UserCog, CalendarClock, Briefcase, Receipt, CalendarOff, MonitorSmartphone,
   Menu, X, ReceiptText, Package
 } from 'lucide-react';
 import logo from '../../../assets/Logo/VCareLogo.png';
@@ -17,38 +17,82 @@ const ROLE_LABELS = {
   ACCOUNTS: 'Accounts',
 };
 
-// Single source of truth for nav items, shared by the desktop sidebar and the mobile drawer.
-const NAV_ITEMS = [
-  { icon: Activity, label: 'Overview', path: '/admin/dashboard' },
-  { icon: Users, label: 'Client Management', path: '/admin/users', match: (p) => p === '/admin/users' || p.startsWith('/admin/users/') },
-  { icon: UserCog, label: 'Staff Management', path: '/admin/staff-management', match: (p) => p === '/admin/staff-management' || p === '/admin/proxy-user-management' },
-  { icon: Settings, label: 'Internal Staff', path: '/admin/internal-staff' },
-  { icon: Briefcase, label: 'Salespersons', path: '/admin/salespersons' },
-  { icon: SendHorizontal, label: 'Service Requests', path: '/admin/service-requests' },
-  { icon: AlertTriangle, label: 'Termination Requests', path: '/admin/termination-requests' },
-  { icon: CalendarClock, label: 'Upcoming Events', path: '/admin/upcoming-events' },
-  { icon: CalendarOff, label: 'Leave Requests', path: '/admin/leave-requests' },
-  { icon: CalendarDays, label: 'Bookings', path: '/admin/bookings' },
-  { icon: ReceiptText, label: 'Invoices', path: '/admin/invoices' },
-  { icon: FileText, label: 'Statements', path: '/admin/statements' },
-  { icon: Wallet, label: 'Advance Requests', path: '/admin/advance-requests' },
-  { icon: ShieldCheck, label: 'Worker Verification', path: '/admin/workers' },
-  { icon: DollarSign, label: 'Financials', path: '/admin/financial' },
-  { icon: ArrowLeftRight, label: 'Transactions', path: '/admin/transactions' },
-  { icon: Receipt, label: 'Client Payments', path: '/admin/client-payments' },
-  { icon: Banknote, label: 'Staff Salaries', path: '/admin/salaries' },
-  { icon: FileText, label: 'Salary Sheets', path: '/admin/salary-sheets' },
-  { icon: Landmark, label: 'Bank Accounts', path: '/admin/bank-accounts' },
-  { icon: FileText, label: 'Quotations', path: '/admin/quotations' },
-  { icon: Package, label: 'Products', path: '/admin/products' },
-  { icon: FileText, label: 'Reports', path: '/admin/reports', match: (p) => p.startsWith('/admin/reports') },
-  { icon: HeartPulse, label: 'Care Profiles', path: '/admin/patients' },
-  { icon: ClipboardList, label: 'Change Requests', path: '/admin/change-requests' },
-  { icon: Star, label: 'Reviews', path: '/admin/reviews' },
-  { icon: Lock, label: 'Permissions', path: '/admin/permissions' },
-  { icon: MonitorSmartphone, label: 'Active Sessions', path: '/admin/active-sessions' },
-  { icon: History, label: 'Activity Log', path: '/admin/activity-log' },
+// Single source of truth for nav sections, shared by the desktop sidebar and the mobile drawer.
+// A section with `section: null` renders as a standalone top-level link (no header/collapse).
+const NAV_SECTIONS = [
+  {
+    section: null,
+    items: [
+      { icon: Activity, label: 'Overview', path: '/admin/dashboard' },
+    ],
+  },
+  {
+    section: 'People',
+    icon: Users,
+    items: [
+      { icon: Users, label: 'Client Management', path: '/admin/users', match: (p) => p === '/admin/users' || p.startsWith('/admin/users/') },
+      { icon: UserCog, label: 'Staff Management', path: '/admin/staff-management', match: (p) => p === '/admin/staff-management' || p === '/admin/proxy-user-management' },
+      { icon: Settings, label: 'Internal Staff', path: '/admin/internal-staff' },
+      { icon: Briefcase, label: 'Salespersons', path: '/admin/salespersons' },
+    ],
+  },
+  {
+    section: 'Operations',
+    icon: SendHorizontal,
+    items: [
+      { icon: SendHorizontal, label: 'Service Requests', path: '/admin/service-requests' },
+      { icon: AlertTriangle, label: 'Termination Requests', path: '/admin/termination-requests' },
+      { icon: CalendarOff, label: 'Leave Requests', path: '/admin/leave-requests' },
+      { icon: CalendarClock, label: 'Upcoming Events', path: '/admin/upcoming-events' },
+      { icon: CalendarDays, label: 'Bookings', path: '/admin/bookings' },
+    ],
+  },
+  {
+    section: 'Sales',
+    icon: ReceiptText,
+    items: [
+      { icon: FileText, label: 'Quotations', path: '/admin/quotations' },
+      { icon: Package, label: 'Products', path: '/admin/products' },
+      { icon: ReceiptText, label: 'Invoices', path: '/admin/invoices' },
+      { icon: FileText, label: 'Statements', path: '/admin/statements' },
+    ],
+  },
+  {
+    section: 'Finance',
+    icon: DollarSign,
+    items: [
+      { icon: DollarSign, label: 'Financials', path: '/admin/financial' },
+      { icon: ArrowLeftRight, label: 'Transactions', path: '/admin/transactions' },
+      { icon: Receipt, label: 'Client Payments', path: '/admin/client-payments' },
+      { icon: Wallet, label: 'Advance Requests', path: '/admin/advance-requests' },
+      { icon: Banknote, label: 'Staff Salaries', path: '/admin/salaries' },
+      { icon: FileText, label: 'Salary Sheets', path: '/admin/salary-sheets' },
+      { icon: Landmark, label: 'Bank Accounts', path: '/admin/bank-accounts' },
+    ],
+  },
+  {
+    section: 'Care',
+    icon: HeartPulse,
+    items: [
+      { icon: HeartPulse, label: 'Care Profiles', path: '/admin/patients' },
+      { icon: ClipboardList, label: 'Change Requests', path: '/admin/change-requests' },
+      { icon: ShieldCheck, label: 'Worker Verification', path: '/admin/workers' },
+      { icon: Star, label: 'Reviews', path: '/admin/reviews' },
+    ],
+  },
+  {
+    section: 'System',
+    icon: Settings,
+    items: [
+      { icon: Lock, label: 'Permissions', path: '/admin/permissions' },
+      { icon: MonitorSmartphone, label: 'Active Sessions', path: '/admin/active-sessions' },
+      { icon: History, label: 'Activity Log', path: '/admin/activity-log' },
+      { icon: FileText, label: 'Reports', path: '/admin/reports', match: (p) => p.startsWith('/admin/reports') },
+    ],
+  },
 ];
+
+const SECTION_STORAGE_KEY = 'adminSidebarCollapsedSections';
 
 const parseToken = (token) => {
   try {
@@ -64,6 +108,31 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
   const { adminToken } = useAdminAuth();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [collapsedSections, setCollapsedSections] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(SECTION_STORAGE_KEY)) || {};
+    } catch {
+      return {};
+    }
+  });
+
+  const toggleSection = (section) => {
+    setCollapsedSections((prev) => {
+      const next = { ...prev, [section]: !prev[section] };
+      localStorage.setItem(SECTION_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  // Expanding a section from the collapsed (icon-only) sidebar should open the full sidebar with that section visible.
+  const expandSection = (section) => {
+    setCollapsed(false);
+    setCollapsedSections((prev) => {
+      const next = { ...prev, [section]: false };
+      localStorage.setItem(SECTION_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
 
   const adminInfo = useMemo(() => {
     if (!adminToken) return { name: 'Admin User', roleLabel: 'Admin' };
@@ -115,15 +184,18 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
           </button>
         </div>
 
-        <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
-          {NAV_ITEMS.map((item) => (
-            <SidebarItem
-              key={item.path}
-              icon={item.icon}
-              label={item.label}
-              path={item.path}
-              active={itemActive(item)}
+        <nav className="flex-1 p-2 space-y-1 overflow-y-auto scrollbar-hide">
+          {NAV_SECTIONS.map((group, idx) => (
+            <SidebarSection
+              key={group.section || `top-${idx}`}
+              section={group.section}
+              sectionIcon={group.icon}
+              items={group.items}
+              itemActive={itemActive}
               collapsed={collapsed}
+              isOpen={!collapsedSections[group.section]}
+              onToggle={() => toggleSection(group.section)}
+              onExpand={() => expandSection(group.section)}
             />
           ))}
         </nav>
@@ -158,15 +230,18 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
-              {NAV_ITEMS.map((item) => (
-                <SidebarItem
-                  key={item.path}
-                  icon={item.icon}
-                  label={item.label}
-                  path={item.path}
-                  active={itemActive(item)}
+            <nav className="flex-1 p-2 space-y-1 overflow-y-auto scrollbar-hide">
+              {NAV_SECTIONS.map((group, idx) => (
+                <SidebarSection
+                  key={group.section || `top-${idx}`}
+                  section={group.section}
+                  sectionIcon={group.icon}
+                  items={group.items}
+                  itemActive={itemActive}
                   collapsed={false}
+                  isOpen={!collapsedSections[group.section]}
+                  onToggle={() => toggleSection(group.section)}
+                  onExpand={() => {}}
                 />
               ))}
             </nav>
@@ -251,18 +326,81 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
   );
 };
 
-const SidebarItem = ({ icon: Icon, label, path, active, badge, collapsed }) => (
+const SidebarSection = ({ section, sectionIcon, items, itemActive, collapsed, isOpen, onToggle, onExpand }) => {
+  // Standalone links (no section label, e.g. "Overview") always render flat - they're already a "main topic".
+  if (!section) {
+    return items.map((item) => (
+      <SidebarItem
+        key={item.path}
+        icon={item.icon}
+        label={item.label}
+        path={item.path}
+        active={itemActive(item)}
+        collapsed={collapsed}
+      />
+    ));
+  }
+
+  // When the sidebar itself is icon-only, only show one icon per main topic (section), not every item inside it.
+  if (collapsed) {
+    const active = items.some(itemActive);
+    return (
+      <button
+        onClick={onExpand}
+        title={section}
+        className={`w-full flex items-center justify-center px-3 py-2 rounded-lg mb-1 transition-colors duration-200 ${active
+            ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50'
+            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+          }`}
+      >
+        {sectionIcon && React.createElement(sectionIcon, { className: 'w-4 h-4' })}
+      </button>
+    );
+  }
+
+  return (
+    <div className="mb-2">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500 hover:text-slate-300 transition-colors"
+      >
+        <span className="flex items-center gap-2">
+          {sectionIcon && React.createElement(sectionIcon, { className: 'w-3.5 h-3.5' })}
+          {section}
+        </span>
+        <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isOpen ? '' : '-rotate-90'}`} />
+      </button>
+      {isOpen && (
+        <div className="space-y-0.5 mt-0.5 pl-2 border-l border-slate-800 ml-3">
+          {items.map((item) => (
+            <SidebarItem
+              key={item.path}
+              icon={item.icon}
+              label={item.label}
+              path={item.path}
+              active={itemActive(item)}
+              collapsed={collapsed}
+              nested
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const SidebarItem = ({ icon: Icon, label, path, active, badge, collapsed, nested }) => (
   <Link
     to={path}
     title={label}
-    className={`w-full flex items-center ${collapsed ? 'justify-center' : 'justify-between'} px-3 py-2 rounded-lg mb-1 transition-colors duration-200 ${active
+    className={`w-full flex items-center ${collapsed ? 'justify-center' : 'justify-between'} px-3 ${nested ? 'py-1.5' : 'py-2'} rounded-lg mb-1 transition-colors duration-200 ${active
         ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50'
         : 'text-slate-300 hover:bg-slate-800 hover:text-white'
       }`}
   >
-    <div className={`flex items-center gap-3 ${collapsed ? 'justify-center' : ''}`}>
-      <Icon className="w-5 h-5" />
-      {!collapsed && <span className="font-medium text-sm">{label}</span>}
+    <div className={`flex items-center gap-2.5 ${collapsed ? 'justify-center' : ''}`}>
+      <Icon className="w-4 h-4" />
+      {!collapsed && <span className="font-medium text-xs">{label}</span>}
     </div>
     {!collapsed && badge && (
       <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">{badge}</span>

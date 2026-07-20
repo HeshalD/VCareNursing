@@ -81,9 +81,11 @@ const ProductDetailPage = () => {
             >
               <div className="flex items-center gap-2 mb-4">
                 <span className={`inline-flex px-3 py-1 rounded-full text-xs font-semibold ${
-                  product.product_type === 'RENTAL' ? 'bg-purple-50 text-purple-600' : 'bg-blue-50 text-blue-600'
+                  product.product_type === 'RENTAL' ? 'bg-purple-50 text-purple-600' :
+                  product.product_type === 'ONE_TIME_SERVICE' ? 'bg-emerald-50 text-emerald-600' :
+                  'bg-blue-50 text-blue-600'
                 }`}>
-                  {product.product_type === 'RENTAL' ? 'Rental' : 'For Sale'}
+                  {product.product_type === 'RENTAL' ? 'Rental' : product.product_type === 'ONE_TIME_SERVICE' ? 'Service' : 'For Sale'}
                 </span>
                 {product.category_name && (
                   <span className="text-xs font-medium text-slate-400">{product.category_name}</span>
@@ -116,8 +118,9 @@ const ProductDetailPage = () => {
 
               <div className="rounded-2xl border border-blue-100 bg-blue-50/60 px-6 py-6">
                 <p className="text-sm font-semibold text-slate-800 mb-4">
-                  To {product.product_type === 'RENTAL' ? 'rent' : 'buy'} this item, please contact our
-                  administration team directly.
+                  {product.product_type === 'ONE_TIME_SERVICE'
+                    ? 'To book this service, please contact our administration team directly.'
+                    : `To ${product.product_type === 'RENTAL' ? 'rent' : 'buy'} this item, please contact our administration team directly.`}
                 </p>
                 <div className="space-y-2.5">
                   <a

@@ -18,6 +18,13 @@ router.post(
 );
 
 router.post(
+  '/:invoice_id/resend',
+  protect,
+  restrictTo(...ADMIN_ROLES),
+  invoiceController.resendInvoice
+);
+
+router.post(
   '/:invoice_id/record-payment',
   protect,
   restrictTo(...ADMIN_ROLES),

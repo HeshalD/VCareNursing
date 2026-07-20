@@ -259,6 +259,23 @@ router.post(
 );
 
 /**
+ * @route   POST /api/quotes/:quote_id/record-payment-allocated
+ * @desc    Record one payment and split it across Registration Fee / Service
+ *          Charges / Products & Rentals buckets in a single action
+ * @access  Private (SUPER_ADMIN, ACCOUNTS, COORDINATOR)
+ * @body    amount_received, allocations ({ reg_fee, service, products } as JSON), payment_method,
+ *          bank_account_id (conditional), cheque_number (optional), cheque_date (optional),
+ *          reference_number (optional), slip_url (optional), notes (optional)
+ */
+router.post(
+    '/:quote_id/record-payment-allocated',
+    protect,
+    restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'),
+    upload.single('payment_slip'),
+    paymentTrackingController.recordAllocatedPayment
+);
+
+/**
  * @route   GET /api/quotes/:quote_id/payments
  * @desc    Get all payments for a quotation
  * @access  Private (SUPER_ADMIN, ACCOUNTS, COORDINATOR)

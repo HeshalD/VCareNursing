@@ -615,6 +615,34 @@ class ApiClient {
     });
   }
 
+  // amount_received: number, allocations: { reg_fee, service, products },
+  // overflow (optional): { type: 'WALLET' } | { type: 'BOOKING_PAYOFF', booking_id }.
+  // Backend expects allocations/overflow as JSON strings when sent via
+  // multipart (paymentSlipFile present), and accepts them as plain objects otherwise.
+  async recordAllocatedQuotePayment(quoteId, paymentData, paymentSlipFile = null) {
+    if (paymentSlipFile) {
+      const formData = new FormData();
+      Object.entries(paymentData).forEach(([key, value]) => {
+        if (value === null || value === undefined || value === '') return;
+        formData.append(key, ['allocations', 'overflow'].includes(key) ? JSON.stringify(value) : value);
+      });
+      formData.append('payment_slip', paymentSlipFile);
+
+      return this.request(`/quotes/${quoteId}/record-payment-allocated`, {
+        method: 'POST',
+        headers: {
+          ...(this.token && { Authorization: `Bearer ${this.token}` }),
+        },
+        body: formData,
+      });
+    }
+
+    return this.request(`/quotes/${quoteId}/record-payment-allocated`, {
+      method: 'POST',
+      body: JSON.stringify(paymentData),
+    });
+  }
+
   async recordBookingPayment(bookingId, paymentData, paymentSlipFile = null) {
     if (paymentSlipFile) {
       const formData = new FormData();
@@ -1388,6 +1416,14 @@ class ApiClient {
     return this.request(`/client/${clientId}/reg-fee-invoices`);
   }
 
+  async resendRegFeeInvoice(invoiceId) {
+    return this.request(`/client/reg-fee-invoices/${invoiceId}/resend`, { method: 'POST' });
+  }
+
+  async resendDailyInvoice(dailyInvoiceId) {
+    return this.request(`/client/invoice/${dailyInvoiceId}/resend`, { method: 'POST' });
+  }
+
   async getAllRegFeeInvoices(filters = {}) {
     const qs = new URLSearchParams(filters).toString();
     return this.request(qs ? `/client/all-reg-fee-invoices?${qs}` : '/client/all-reg-fee-invoices');
@@ -1838,6 +1874,58 @@ class ApiClient {
     }
   }
 
+  async getBalanceSheet({ date } = {}) {
+    const qs = new URLSearchParams({ ...(date && { date }) }).toString();
+    return this.request(`/finances/balance-sheet${qs ? `?${qs}` : ''}`);
+  }
+
+  async downloadBalanceSheetPdf({ date } = {}) {
+    const qs = new URLSearchParams({ ...(date && { date }) }).toString();
+    const url = `${this.baseURL}/finances/balance-sheet/pdf${qs ? `?${qs}` : ''}`;
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          ...(this.token && { Authorization: `Bearer ${this.token}` }),
+        },
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Balance Sheet PDF download failed');
+      }
+      return await response.blob();
+    } catch (error) {
+      console.error('Balance Sheet PDF Download Error:', error);
+      throw error;
+    }
+  }
+
+  async getSalesByCustomer({ from, to } = {}) {
+    const qs = new URLSearchParams({ ...(from && { from }), ...(to && { to }) }).toString();
+    return this.request(`/finances/sales-by-customer${qs ? `?${qs}` : ''}`);
+  }
+
+  async downloadSalesByCustomerPdf({ from, to } = {}) {
+    const qs = new URLSearchParams({ ...(from && { from }), ...(to && { to }) }).toString();
+    const url = `${this.baseURL}/finances/sales-by-customer/pdf${qs ? `?${qs}` : ''}`;
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          ...(this.token && { Authorization: `Bearer ${this.token}` }),
+        },
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || 'Sales by Customer PDF download failed');
+      }
+      return await response.blob();
+    } catch (error) {
+      console.error('Sales by Customer PDF Download Error:', error);
+      throw error;
+    }
+  }
+
   // Bank Account Management endpoints
   async getBankAccounts() {
     return this.request('/bank-accounts');
@@ -1875,6 +1963,13 @@ class ApiClient {
     return this.request(`/bank-accounts/${accountId}/reconciliation`);
   }
 
+  async verifyBankAccountTransaction(accountId, transactionId, verified) {
+    return this.request(`/bank-accounts/${accountId}/transactions/${transactionId}/verify`, {
+      method: 'PATCH',
+      body: JSON.stringify({ verified }),
+    });
+  }
+
   async getStoreSummary() {
     return this.request('/finances/store-summary');
   }
@@ -1887,6 +1982,21 @@ class ApiClient {
 
   async getTransactionCategoriesChart() {
     return this.request('/finances/transaction-categories-chart');
+  }
+
+  async getCashFlowSummary({ period = 'this_fiscal_year' } = {}) {
+    const qs = new URLSearchParams({ period }).toString();
+    return this.request(`/finances/cash-flow?${qs}`);
+  }
+
+  async getIncomeExpenseChart({ period = 'this_fiscal_year' } = {}) {
+    const qs = new URLSearchParams({ period }).toString();
+    return this.request(`/finances/income-expense-chart?${qs}`);
+  }
+
+  async getTopExpenses({ period = 'this_fiscal_year' } = {}) {
+    const qs = new URLSearchParams({ period }).toString();
+    return this.request(`/finances/top-expenses?${qs}`);
   }
 
   // Client-specific endpoints
@@ -1920,6 +2030,10 @@ class ApiClient {
 
   async getClientBookings(clientId) {
     return this.request(`/bookings/client/${clientId}`);
+  }
+
+  async getClientOverdueBookings(clientId) {
+    return this.request(`/bookings/client/${clientId}/overdue-bookings`);
   }
 
   async getStaffBookings(staffId) {
@@ -2130,6 +2244,10 @@ class ApiClient {
     return this.request(`/product-invoices/${invoiceId}/pdf`);
   }
 
+  async resendProductInvoice(invoiceId) {
+    return this.request(`/product-invoices/${invoiceId}/resend`, { method: 'POST' });
+  }
+
   async createInvoiceFromQuote(quoteId, dueDate = null) {
     return this.request(`/product-invoices/from-quote/${quoteId}`, {
       method: 'POST',
@@ -2213,10 +2331,11 @@ class ApiClient {
     });
   }
 
-  async forfeitDeposit(depositId, notes) {
+  async forfeitDeposit(depositId, payload) {
+    const body = typeof payload === 'string' || payload === undefined ? { notes: payload } : payload;
     return this.request(`/rentals/deposits/${depositId}/forfeit`, {
       method: 'POST',
-      body: JSON.stringify({ notes }),
+      body: JSON.stringify(body),
     });
   }
 

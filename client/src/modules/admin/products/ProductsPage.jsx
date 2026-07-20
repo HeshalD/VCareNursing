@@ -4,11 +4,17 @@ import {
   Loader2, X, Plus, Package, Image as ImageIcon, Trash2, Pencil,
   ShoppingBag, FileText, CreditCard, Search, Check, AlertCircle,
   Repeat, RotateCcw, Wrench, Undo2, Wallet, Download, History, Eye,
-  ExternalLink, ChevronDown,
+  ExternalLink, ChevronDown, Upload, ChevronLeft, ChevronRight, Tag,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import DateInput from '../../../components/common/DateInput';
+import ImageCropModal from '../../../components/common/ImageCropModal';
+
+// Matches the public CatalogPage product card image box exactly: a fixed
+// h-48 (192px) tall slot inside a 3-column lg grid within a max-w-7xl
+// container — the resulting card width/height ratio works out to 2:1.
+const CATALOG_CARD_IMAGE_ASPECT = 2;
 
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
 const formatMoney = (v) => money.format(Number(v || 0));
@@ -141,7 +147,8 @@ function CatalogTab() {
   };
 
   const rentalProducts = products.filter((p) => p.product_type === 'RENTAL');
-  const itemProducts = products.filter((p) => p.product_type !== 'RENTAL');
+  const serviceProducts = products.filter((p) => p.product_type === 'ONE_TIME_SERVICE');
+  const itemProducts = products.filter((p) => p.product_type === 'ITEM');
 
   return (
     <>
@@ -242,6 +249,79 @@ function CatalogTab() {
                               {p.stock_quantity ?? '—'}
                             </span>
                           </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${p.is_available ? 'text-emerald-700' : 'text-slate-500'}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${p.is_available ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                              {p.is_available ? 'Available' : 'Deactivated'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center justify-end gap-0.5">
+                              <button type="button" onClick={() => setHistoryProduct(p)} title="Purchase history" className={iconBtnCls}>
+                                <History className="h-3.5 w-3.5" />
+                              </button>
+                              <button type="button" onClick={() => openEdit(p)} title="Edit product" className={iconBtnCls}>
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              {p.is_available && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeactivate(p)}
+                                  title="Deactivate product"
+                                  className="inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div>
+            <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800">
+              <Wrench className="h-4 w-4 text-emerald-500" /> One-Time Services
+              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-600">{serviceProducts.length}</span>
+            </h3>
+            {serviceProducts.length === 0 ? (
+              <div className="rounded-lg border border-slate-200 bg-white p-6 text-center text-sm text-slate-400">
+                No one-time services yet.
+              </div>
+            ) : (
+              <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50">
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Image</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Name</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Category</th>
+                        <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Price</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
+                        <th className="px-4 py-3" />
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {serviceProducts.map((p) => (
+                        <tr key={p.product_id} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-3">
+                            {p.image_url ? (
+                              <img src={p.image_url} alt={p.name} className="h-9 w-9 rounded object-cover border border-slate-200" />
+                            ) : (
+                              <div className="h-9 w-9 rounded bg-slate-100 flex items-center justify-center text-slate-300">
+                                <ImageIcon className="h-4 w-4" />
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 font-semibold text-slate-900">{p.name}</td>
+                          <td className="px-4 py-3 text-slate-500">{p.category_name || '—'}</td>
+                          <td className="px-4 py-3 text-right font-medium text-slate-800 whitespace-nowrap">{formatMoney(p.price)}</td>
                           <td className="px-4 py-3 whitespace-nowrap">
                             <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${p.is_available ? 'text-emerald-700' : 'text-slate-500'}`}>
                               <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${p.is_available ? 'bg-emerald-500' : 'bg-slate-400'}`} />
@@ -582,6 +662,166 @@ function RentalProductPanel({ product, units, onEdit, onDeactivate, onChanged, s
   );
 }
 
+const CATEGORY_PAGE_SIZE = 6;
+
+// Paginated, searchable list of existing categories the admin can pick from,
+// plus an inline "add new" row — replaces the old bare <select> which gave
+// no sense of how many categories existed or let you search them.
+function CategoryPicker({ categories, value, onChange, onCreated }) {
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [addingNew, setAddingNew] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
+
+  const filtered = categories.filter((c) => c.name.toLowerCase().includes(search.toLowerCase()));
+  const totalPages = Math.max(1, Math.ceil(filtered.length / CATEGORY_PAGE_SIZE));
+  const pageItems = filtered.slice((page - 1) * CATEGORY_PAGE_SIZE, page * CATEGORY_PAGE_SIZE);
+
+  useEffect(() => { setPage(1); }, [search]);
+
+  const selected = categories.find((c) => String(c.category_id) === String(value));
+
+  const handleCreate = async () => {
+    if (!newName.trim()) return;
+    setCreating(true);
+    setCreateError('');
+    try {
+      const res = await apiClient.createProductCategory({ name: newName.trim() });
+      onCreated(res.data);
+      onChange(res.data.category_id);
+      setNewName('');
+      setAddingNew(false);
+    } catch (err) {
+      setCreateError(err.message || 'Failed to create category');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <div>
+      <label className="block text-[11px] font-medium text-slate-500 mb-1">Category</label>
+
+      {selected && (
+        <div className="mb-2 flex items-center gap-1.5 rounded-md border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-medium text-blue-700 w-fit">
+          <Tag className="h-3 w-3" /> {selected.name}
+          <button type="button" onClick={() => onChange('')} className="ml-1 text-blue-400 hover:text-blue-600">
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      )}
+
+      <div className="rounded-md border border-slate-300 bg-white overflow-hidden">
+        <div className="flex items-center gap-1.5 border-b border-slate-100 px-2 py-1.5">
+          <Search className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search categories…"
+            className="w-full text-xs text-slate-700 placeholder-slate-400 outline-none"
+          />
+        </div>
+
+        <div className="divide-y divide-slate-50">
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className={`w-full flex items-center px-2.5 py-1.5 text-left text-xs transition-colors ${
+              !value ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-500 hover:bg-slate-50'
+            }`}
+          >
+            — None —
+          </button>
+          {pageItems.length === 0 ? (
+            <p className="px-2.5 py-3 text-center text-xs text-slate-400">No categories found.</p>
+          ) : (
+            pageItems.map((c) => (
+              <button
+                key={c.category_id}
+                type="button"
+                onClick={() => onChange(c.category_id)}
+                className={`w-full flex items-center justify-between px-2.5 py-1.5 text-left text-xs transition-colors ${
+                  String(value) === String(c.category_id) ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                {c.name}
+                {String(value) === String(c.category_id) && <Check className="h-3 w-3 shrink-0" />}
+              </button>
+            ))
+          )}
+        </div>
+
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between border-t border-slate-100 px-2 py-1.5">
+            <button
+              type="button"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              className="rounded p-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-30 disabled:hover:text-slate-400"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+            <span className="text-[10px] text-slate-400">Page {page} of {totalPages}</span>
+            <button
+              type="button"
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              className="rounded p-0.5 text-slate-400 hover:text-slate-700 disabled:opacity-30 disabled:hover:text-slate-400"
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
+        <div className="border-t border-slate-100 px-2 py-1.5">
+          {addingNew ? (
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  autoFocus
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCreate(); } }}
+                  placeholder="New category name"
+                  className="w-full rounded border border-slate-200 px-2 py-1 text-xs outline-none focus:border-blue-400"
+                />
+                <button
+                  type="button"
+                  onClick={handleCreate}
+                  disabled={creating || !newName.trim()}
+                  className="shrink-0 rounded bg-blue-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {creating ? '…' : 'Add'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setAddingNew(false); setNewName(''); setCreateError(''); }}
+                  className="shrink-0 text-slate-400 hover:text-slate-600"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              {createError && <p className="text-[10px] text-red-600">{createError}</p>}
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setAddingNew(true)}
+              className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700"
+            >
+              <Plus className="h-3 w-3" /> Add new category
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProductModal({ product, categories, onClose, onSaved }) {
   const isEdit = !!product;
   const [form, setForm] = useState({
@@ -593,10 +833,21 @@ function ProductModal({ product, categories, onClose, onSaved }) {
     cost_price: product?.cost_price ?? '',
     stock_quantity: product?.stock_quantity ?? 0,
   });
+  const [localCategories, setLocalCategories] = useState(categories);
   const [imageFile, setImageFile] = useState(null);
-  const [newCategoryName, setNewCategoryName] = useState('');
+  const [imagePreview, setImagePreview] = useState(product?.image_url || '');
+  const [imageToCrop, setImageToCrop] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  const handleImageSelect = (file) => { if (file) setImageToCrop(file); };
+  const handleImageCropComplete = (croppedFile) => {
+    setImageToCrop(null);
+    setImageFile(croppedFile);
+    const reader = new FileReader();
+    reader.onloadend = () => setImagePreview(reader.result);
+    reader.readAsDataURL(croppedFile);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -607,12 +858,7 @@ function ProductModal({ product, categories, onClose, onSaved }) {
     }
     setSaving(true);
     try {
-      let categoryId = form.category_id;
-      if (newCategoryName.trim()) {
-        const catRes = await apiClient.createProductCategory({ name: newCategoryName.trim() });
-        categoryId = catRes.data.category_id;
-      }
-      const payload = { ...form, category_id: categoryId || '' };
+      const payload = { ...form, category_id: form.category_id || '' };
       if (isEdit) {
         await apiClient.updateProduct(product.product_id, { ...payload, is_available: product.is_available }, imageFile);
       } else {
@@ -627,59 +873,63 @@ function ProductModal({ product, categories, onClose, onSaved }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-          <h3 className="text-sm font-semibold text-slate-800">{isEdit ? 'Edit Product' : 'New Product'}</h3>
-          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
+    <div className="fixed inset-0 z-50 flex">
+      <div className="flex-1 bg-black/30" onClick={onClose} />
+
+      <div className="w-full max-w-lg bg-white flex flex-col shadow-2xl overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 flex-shrink-0">
+          <h3 className="text-sm font-semibold text-slate-900">{isEdit ? 'Edit Product' : 'New Product'}</h3>
+          <button type="button" onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors">
             <X className="h-4 w-4" />
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4 px-5 py-4">
+
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto">
           {error && (
-            <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            <div className="mx-5 mt-4 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
               <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {error}
             </div>
           )}
 
-          <div>
-            <label className="block text-[11px] font-medium text-slate-500 mb-1">Name *</label>
-            <input
-              type="text"
-              value={form.name}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
+          <div className="px-5 pt-4 pb-2 space-y-4">
             <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-1">Type</label>
-              <select
-                value={form.product_type}
-                onChange={(e) => setForm((f) => ({ ...f, product_type: e.target.value }))}
-                className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              >
-                <option value="ITEM">Item (customer keeps it)</option>
-                <option value="RENTAL">Rental</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-1">
-                {form.product_type === 'RENTAL' ? 'Rental Price *' : 'Price *'}
-              </label>
+              <label className="block text-[11px] font-medium text-slate-500 mb-1">Name *</label>
               <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={form.price}
-                onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
+                type="text"
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                 className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               />
             </div>
-          </div>
 
-          <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-medium text-slate-500 mb-1">Type</label>
+                <select
+                  value={form.product_type}
+                  onChange={(e) => setForm((f) => ({ ...f, product_type: e.target.value }))}
+                  className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                >
+                  <option value="ITEM">Item (customer keeps it)</option>
+                  <option value="RENTAL">Rental</option>
+                  <option value="ONE_TIME_SERVICE">One-Time Service</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-medium text-slate-500 mb-1">
+                  {form.product_type === 'RENTAL' ? 'Rental Price *' : 'Price *'}
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.price}
+                  onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
+                  className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+              </div>
+            </div>
+
             <div>
               <label className="block text-[11px] font-medium text-slate-500 mb-1">Cost Price</label>
               <input
@@ -692,89 +942,106 @@ function ProductModal({ product, categories, onClose, onSaved }) {
               />
               <p className="mt-1 text-[10px] text-slate-400">What this item costs the business — used for the Profit &amp; Loss report's COGS.</p>
             </div>
-          </div>
 
-          <div className="grid grid-cols-2 gap-3">
+            <CategoryPicker
+              categories={localCategories}
+              value={form.category_id}
+              onChange={(id) => setForm((f) => ({ ...f, category_id: id }))}
+              onCreated={(cat) => setLocalCategories((prev) => [...prev, cat].sort((a, b) => a.name.localeCompare(b.name)))}
+            />
+
             <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-1">Category</label>
-              <select
-                value={form.category_id}
-                onChange={(e) => setForm((f) => ({ ...f, category_id: e.target.value }))}
+              <label className="block text-[11px] font-medium text-slate-500 mb-1">Description</label>
+              <textarea
+                rows={3}
+                value={form.description}
+                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
                 className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              >
-                <option value="">— None —</option>
-                {categories.map((c) => (
-                  <option key={c.category_id} value={c.category_id}>{c.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-1">Or new category</label>
-              <input
-                type="text"
-                placeholder="e.g. Transport"
-                value={newCategoryName}
-                onChange={(e) => setNewCategoryName(e.target.value)}
-                className="w-full rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               />
             </div>
-          </div>
 
-          <div>
-            <label className="block text-[11px] font-medium text-slate-500 mb-1">Description</label>
-            <textarea
-              rows={3}
-              value={form.description}
-              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-              className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            />
-          </div>
-
-          {form.product_type === 'ITEM' && (
-            <div>
-              <label className="block text-[11px] font-medium text-slate-500 mb-1">Stock Quantity</label>
-              <input
-                type="number"
-                min="0"
-                value={form.stock_quantity}
-                onChange={(e) => setForm((f) => ({ ...f, stock_quantity: e.target.value }))}
-                className="w-40 rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              />
-            </div>
-          )}
-
-          <div>
-            <label className="block text-[11px] font-medium text-slate-500 mb-1">Image</label>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={(e) => setImageFile(e.target.files?.[0] || null)}
-              className="w-full text-sm text-slate-600"
-            />
-            {product?.image_url && !imageFile && (
-              <p className="mt-1 text-[11px] text-slate-400">Leave empty to keep the current image.</p>
+            {form.product_type === 'ITEM' && (
+              <div>
+                <label className="block text-[11px] font-medium text-slate-500 mb-1">Stock Quantity</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={form.stock_quantity}
+                  onChange={(e) => setForm((f) => ({ ...f, stock_quantity: e.target.value }))}
+                  className="w-40 rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+              </div>
             )}
-          </div>
 
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-            >
-              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {isEdit ? 'Save Changes' : 'Create Product'}
-            </button>
+            <div>
+              <label className="block text-[11px] font-medium text-slate-500 mb-1">Image</label>
+              <p className="mb-1.5 text-[10px] text-slate-400">Crop to match how it appears on the public catalog card.</p>
+              {imagePreview ? (
+                <div className="relative w-fit">
+                  <img
+                    src={imagePreview}
+                    alt="preview"
+                    className="h-24 rounded-lg border border-slate-200 object-cover"
+                    style={{ aspectRatio: CATALOG_CARD_IMAGE_ASPECT }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => { setImagePreview(''); setImageFile(null); }}
+                    className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                  <div className="mt-1.5">
+                    <input type="file" id="product-image-change" className="hidden" accept="image/*"
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageSelect(f); }} />
+                    <label htmlFor="product-image-change"
+                      className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 text-slate-600 rounded text-xs font-medium hover:bg-slate-200 cursor-pointer transition-colors">
+                      <Upload className="w-3 h-3" /> Change
+                    </label>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <input type="file" id="product-image-upload" className="hidden" accept="image/*"
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageSelect(f); }} />
+                  <label htmlFor="product-image-upload"
+                    className="flex flex-col items-center justify-center w-full h-24 border border-dashed border-slate-300 rounded-lg bg-slate-50 hover:bg-slate-100 cursor-pointer transition-colors group">
+                    <Upload className="w-5 h-5 text-slate-400 group-hover:text-blue-500 mb-1 transition-colors" />
+                    <p className="text-xs font-medium text-slate-500">Click to upload</p>
+                    <p className="text-xs text-slate-400">JPG, PNG</p>
+                  </label>
+                </div>
+              )}
+            </div>
           </div>
         </form>
+
+        <div className="flex items-center gap-2 px-5 py-4 border-t border-slate-200 bg-slate-50 flex-shrink-0">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 px-4 py-2 border border-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-100 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={saving}
+            className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500 transition-colors disabled:opacity-50"
+          >
+            {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {isEdit ? 'Save Changes' : 'Create Product'}
+          </button>
+        </div>
       </div>
+
+      <ImageCropModal
+        imageFile={imageToCrop}
+        aspect={CATALOG_CARD_IMAGE_ASPECT}
+        onCancel={() => setImageToCrop(null)}
+        onCropComplete={handleImageCropComplete}
+      />
     </div>
   );
 }
@@ -1631,7 +1898,7 @@ function NewProductQuoteModal({ onClose, onCreated }) {
                       >
                         <option value="">Custom item…</option>
                         {products.map((p) => (
-                          <option key={p.product_id} value={p.product_id}>{p.name}{p.product_type === 'RENTAL' ? ' (Rental)' : ''}</option>
+                          <option key={p.product_id} value={p.product_id}>{p.name}{p.product_type === 'RENTAL' ? ' (Rental)' : p.product_type === 'ONE_TIME_SERVICE' ? ' (Service)' : ''}</option>
                         ))}
                       </select>
                       <input
@@ -1931,6 +2198,7 @@ const RENTAL_AGREEMENT_STATUS_COLORS = {
 const DEPOSIT_STATUS_DOT = {
   HELD: { dot: 'bg-amber-400', text: 'text-amber-700' },
   REFUNDED: { dot: 'bg-emerald-500', text: 'text-emerald-700' },
+  PARTIALLY_REFUNDED: { dot: 'bg-violet-500', text: 'text-violet-700' },
   FORFEITED: { dot: 'bg-red-400', text: 'text-red-600' },
 };
 
@@ -1938,10 +2206,15 @@ const DEPOSIT_STATUS_DOT = {
 // bank-transfer refund is paid from, so the debit shows up correctly against
 // that account's ledger/reconciliation (previously refunds were never linked
 // to any bank account at all).
+// Full amount is refunded by default; the admin can lower it to refund only
+// part of the deposit and keep ("forfeit") the rest as a charge — e.g. a
+// repair or transport fee deducted from the deposit before returning it.
 export function RefundDepositModal({ deposit, onClose, onRefunded }) {
+  const totalAmount = parseFloat(deposit.amount) || 0;
   const [bankAccounts, setBankAccounts] = useState([]);
   const [paymentMethod, setPaymentMethod] = useState('CASH');
   const [bankAccountId, setBankAccountId] = useState('');
+  const [refundAmount, setRefundAmount] = useState(String(totalAmount));
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -1950,10 +2223,18 @@ export function RefundDepositModal({ deposit, onClose, onRefunded }) {
     apiClient.getBankAccounts().then((res) => setBankAccounts(Array.isArray(res?.data) ? res.data : [])).catch(() => setBankAccounts([]));
   }, []);
 
+  const refundAmt = parseFloat(refundAmount) || 0;
+  const retainedAmt = Math.max(0, Math.round((totalAmount - refundAmt) * 100) / 100);
+  const isPartial = retainedAmt > 0;
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
+    if (refundAmt <= 0 || refundAmt > totalAmount) {
+      setError(`Refund amount must be greater than 0 and at most ${formatMoney(totalAmount)}`);
+      return;
+    }
     if (paymentMethod === 'BANK_TRANSFER' && !bankAccountId) {
       setError('Please select a bank account');
       return;
@@ -1965,6 +2246,7 @@ export function RefundDepositModal({ deposit, onClose, onRefunded }) {
         payment_method: paymentMethod,
         company_bank_account_id: bankAccountId || undefined,
         notes: notes || undefined,
+        refund_amount: refundAmt,
       });
       onRefunded();
     } catch (err) {
@@ -1978,7 +2260,7 @@ export function RefundDepositModal({ deposit, onClose, onRefunded }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-md rounded-lg bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-          <h3 className="text-sm font-semibold text-slate-800">Refund Deposit — {formatMoney(deposit.amount)}</h3>
+          <h3 className="text-sm font-semibold text-slate-800">Refund Deposit — {formatMoney(totalAmount)} held</h3>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
             <X className="h-4 w-4" />
           </button>
@@ -1989,6 +2271,24 @@ export function RefundDepositModal({ deposit, onClose, onRefunded }) {
               <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {error}
             </div>
           )}
+
+          <div>
+            <label className="block text-[11px] font-medium text-slate-500 mb-1">Amount to Refund</label>
+            <input
+              type="number"
+              min="0.01"
+              max={totalAmount}
+              step="0.01"
+              value={refundAmount}
+              onChange={(e) => setRefundAmount(e.target.value)}
+              className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+            />
+            {isPartial && (
+              <p className="mt-1 text-[11px] text-amber-600">
+                {formatMoney(retainedAmt)} will be kept by the company as a charge instead of returned.
+              </p>
+            )}
+          </div>
 
           <div>
             <label className="block text-[11px] font-medium text-slate-500 mb-1">Refund Via</label>
@@ -2020,12 +2320,13 @@ export function RefundDepositModal({ deposit, onClose, onRefunded }) {
           )}
 
           <div>
-            <label className="block text-[11px] font-medium text-slate-500 mb-1">Notes</label>
+            <label className="block text-[11px] font-medium text-slate-500 mb-1">Notes{isPartial ? ' (reason for withheld amount)' : ''}</label>
             <textarea
               rows={2}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+              placeholder={isPartial ? 'e.g. repair fee, transport fee' : undefined}
+              className="w-full rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
             />
           </div>
 
@@ -2039,7 +2340,155 @@ export function RefundDepositModal({ deposit, onClose, onRefunded }) {
               className="inline-flex items-center gap-1.5 rounded bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
             >
               {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              Confirm Refund
+              {isPartial ? 'Confirm Partial Refund' : 'Confirm Refund'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// Mirror of RefundDepositModal for the forfeit direction: full amount is
+// kept by default, but the admin can lower it to keep only part and refund
+// the rest back to the client (which then needs a payment method/account,
+// same as a regular refund).
+export function ForfeitDepositModal({ deposit, onClose, onForfeited }) {
+  const totalAmount = parseFloat(deposit.amount) || 0;
+  const [bankAccounts, setBankAccounts] = useState([]);
+  const [paymentMethod, setPaymentMethod] = useState('CASH');
+  const [bankAccountId, setBankAccountId] = useState('');
+  const [forfeitAmount, setForfeitAmount] = useState(String(totalAmount));
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    apiClient.getBankAccounts().then((res) => setBankAccounts(Array.isArray(res?.data) ? res.data : [])).catch(() => setBankAccounts([]));
+  }, []);
+
+  const forfeitAmt = parseFloat(forfeitAmount) || 0;
+  const refundAmt = Math.max(0, Math.round((totalAmount - forfeitAmt) * 100) / 100);
+  const isPartial = refundAmt > 0;
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+
+    if (forfeitAmt <= 0 || forfeitAmt > totalAmount) {
+      setError(`Forfeit amount must be greater than 0 and at most ${formatMoney(totalAmount)}`);
+      return;
+    }
+    if (isPartial && paymentMethod === 'BANK_TRANSFER' && !bankAccountId) {
+      setError('Please select a bank account');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await apiClient.forfeitDeposit(deposit.deposit_id, {
+        forfeit_amount: forfeitAmt,
+        notes: notes || undefined,
+        payment_method: isPartial ? paymentMethod : undefined,
+        company_bank_account_id: isPartial ? (bankAccountId || undefined) : undefined,
+      });
+      onForfeited();
+    } catch (err) {
+      setError(err.message || 'Failed to forfeit deposit');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-lg bg-white shadow-xl">
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+          <h3 className="text-sm font-semibold text-slate-800">Forfeit Deposit — {formatMoney(totalAmount)} held</h3>
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-3 px-5 py-4">
+          {error && (
+            <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {error}
+            </div>
+          )}
+
+          <div>
+            <label className="block text-[11px] font-medium text-slate-500 mb-1">Amount to Keep (Forfeit)</label>
+            <input
+              type="number"
+              min="0.01"
+              max={totalAmount}
+              step="0.01"
+              value={forfeitAmount}
+              onChange={(e) => setForfeitAmount(e.target.value)}
+              className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+            />
+            <p className="mt-1 text-[11px] text-slate-500">
+              {isPartial
+                ? `The remaining ${formatMoney(refundAmt)} will be refunded back to the client.`
+                : 'The full deposit stays with the company — no refund transaction is created.'}
+            </p>
+          </div>
+
+          {isPartial && (
+            <>
+              <div>
+                <label className="block text-[11px] font-medium text-slate-500 mb-1">Refund Remainder Via</label>
+                <select
+                  value={paymentMethod}
+                  onChange={(e) => setPaymentMethod(e.target.value)}
+                  className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+                >
+                  <option value="CASH">Cash</option>
+                  <option value="CHEQUE">Cheque</option>
+                  <option value="BANK_TRANSFER">Bank Transfer</option>
+                </select>
+              </div>
+
+              {paymentMethod === 'BANK_TRANSFER' && (
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-500 mb-1">Refund From (Company Bank Account)</label>
+                  <select
+                    value={bankAccountId}
+                    onChange={(e) => setBankAccountId(e.target.value)}
+                    className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+                  >
+                    <option value="">Select…</option>
+                    {bankAccounts.map((b) => (
+                      <option key={b.account_id} value={b.account_id}>{b.account_nickname} — {b.bank_name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </>
+          )}
+
+          <div>
+            <label className="block text-[11px] font-medium text-slate-500 mb-1">Reason{isPartial ? ' (for withheld amount)' : ' (optional)'}</label>
+            <textarea
+              rows={2}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder={isPartial ? 'e.g. repair fee, transport fee' : undefined}
+              className="w-full rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose} className="rounded border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="inline-flex items-center gap-1.5 rounded bg-red-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+            >
+              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {isPartial ? 'Confirm Partial Forfeit' : 'Confirm Forfeit'}
             </button>
           </div>
         </form>
@@ -2237,9 +2686,7 @@ function DepositsPanel() {
   const [deposits, setDeposits] = useState([]);
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState('HELD');
-  const [busyDepositId, setBusyDepositId] = useState('');
   const [forfeitTarget, setForfeitTarget] = useState(null);
-  const [forfeitNotes, setForfeitNotes] = useState('');
   const [refundTarget, setRefundTarget] = useState(null);
   const [error, setError] = useState('');
 
@@ -2259,27 +2706,13 @@ function DepositsPanel() {
 
   const recipientName = (d) => d.client_name || d.walk_in_name || '—';
 
-  const handleForfeit = async () => {
-    setBusyDepositId(forfeitTarget.deposit_id);
-    setError('');
-    try {
-      await apiClient.forfeitDeposit(forfeitTarget.deposit_id, forfeitNotes || undefined);
-      setForfeitTarget(null);
-      setForfeitNotes('');
-      fetchDeposits();
-    } catch (err) {
-      setError(err.message || 'Failed to forfeit deposit');
-    } finally {
-      setBusyDepositId('');
-    }
-  };
-
   return (
     <>
       <div className="flex gap-0.5 rounded-lg bg-slate-100 p-1 w-fit">
         {[
           { id: 'HELD', label: 'Held' },
           { id: 'REFUNDED', label: 'Refunded' },
+          { id: 'PARTIALLY_REFUNDED', label: 'Partially Refunded' },
           { id: 'FORFEITED', label: 'Forfeited' },
           { id: '', label: 'All' },
         ].map(({ id, label }) => (
@@ -2327,7 +2760,6 @@ function DepositsPanel() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {deposits.map((d) => {
-                  const busy = busyDepositId === d.deposit_id;
                   const cfg = DEPOSIT_STATUS_DOT[d.status] || { dot: 'bg-slate-400', text: 'text-slate-500' };
                   return (
                     <tr key={d.deposit_id} className="hover:bg-slate-50 transition-colors">
@@ -2363,23 +2795,25 @@ function DepositsPanel() {
                           <div className="flex items-center justify-end gap-1.5">
                             <button
                               type="button"
-                              disabled={busy}
                               onClick={() => setRefundTarget(d)}
-                              className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-500 transition-colors disabled:opacity-50"
+                              className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-500 transition-colors"
                             >
                               <RotateCcw className="h-3 w-3" /> Refund
                             </button>
                             <button
                               type="button"
-                              disabled={busy}
                               onClick={() => setForfeitTarget(d)}
-                              className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-100 transition-colors disabled:opacity-50"
+                              className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-100 transition-colors"
                             >
                               Forfeit
                             </button>
                           </div>
                         ) : d.status === 'REFUNDED' ? (
                           <span className="text-emerald-600 text-xs font-medium">Refunded {formatDate(d.refunded_at)}</span>
+                        ) : d.status === 'PARTIALLY_REFUNDED' ? (
+                          <span className="text-violet-600 text-xs font-medium">
+                            Refunded {formatMoney(d.refunded_amount)}, kept {formatMoney(d.forfeited_amount)}
+                          </span>
                         ) : (
                           <span className="text-slate-400 text-xs">Forfeited{d.notes ? ` — ${d.notes}` : ''}</span>
                         )}
@@ -2394,46 +2828,11 @@ function DepositsPanel() {
       </div>
 
       {forfeitTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-sm rounded-lg bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-              <h3 className="text-sm font-semibold text-slate-800">Forfeit Deposit — {formatMoney(forfeitTarget.amount)}</h3>
-              <button type="button" onClick={() => setForfeitTarget(null)} className="text-slate-400 hover:text-slate-600">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="px-5 py-4 space-y-3">
-              <p className="text-xs text-slate-500">
-                The deposit stays with the company — no refund transaction is created. This cannot be undone from here.
-              </p>
-              <textarea
-                rows={2}
-                placeholder="Reason (optional)"
-                value={forfeitNotes}
-                onChange={(e) => setForfeitNotes(e.target.value)}
-                className="w-full rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-              />
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setForfeitTarget(null)}
-                  className="rounded border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  disabled={busyDepositId === forfeitTarget.deposit_id}
-                  onClick={handleForfeit}
-                  className="inline-flex items-center gap-1.5 rounded bg-red-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
-                >
-                  {busyDepositId === forfeitTarget.deposit_id && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  Confirm Forfeit
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <ForfeitDepositModal
+          deposit={forfeitTarget}
+          onClose={() => setForfeitTarget(null)}
+          onForfeited={() => { setForfeitTarget(null); fetchDeposits(); }}
+        />
       )}
 
       {refundTarget && (
@@ -2688,8 +3087,7 @@ function RentalAgreementDetailModal({ rentalAgreementId, onClose, onChanged }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [paymentModalInvoice, setPaymentModalInvoice] = useState(null);
-  const [forfeitNotes, setForfeitNotes] = useState('');
-  const [showForfeitForm, setShowForfeitForm] = useState(false);
+  const [showForfeitModal, setShowForfeitModal] = useState(false);
   const [showRefundModal, setShowRefundModal] = useState(false);
 
   const fetchDetail = useCallback(async () => {
@@ -2716,21 +3114,6 @@ function RentalAgreementDetailModal({ rentalAgreementId, onClose, onChanged }) {
       onChanged();
     } catch (err) {
       setError(err.message || 'Failed to mark as returned');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleForfeitDeposit = async () => {
-    setBusy(true);
-    setError('');
-    try {
-      await apiClient.forfeitDeposit(agreement.deposit_id, forfeitNotes || undefined);
-      setShowForfeitForm(false);
-      await fetchDetail();
-      onChanged();
-    } catch (err) {
-      setError(err.message || 'Failed to forfeit deposit');
     } finally {
       setBusy(false);
     }
@@ -2827,44 +3210,23 @@ function RentalAgreementDetailModal({ rentalAgreementId, onClose, onChanged }) {
                   </p>
 
                   {agreement.deposit_id && agreement.deposit_status === 'HELD' && (
-                    <div className="mt-3 space-y-2">
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => setShowRefundModal(true)}
-                          className="inline-flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-                        >
-                          <RotateCcw className="h-3 w-3" /> Refund Deposit
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => setShowForfeitForm((v) => !v)}
-                          className="inline-flex items-center gap-1 rounded border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-100 disabled:opacity-50"
-                        >
-                          Forfeit Deposit
-                        </button>
-                      </div>
-                      {showForfeitForm && (
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            placeholder="Reason (optional)"
-                            value={forfeitNotes}
-                            onChange={(e) => setForfeitNotes(e.target.value)}
-                            className="flex-1 rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-xs outline-none focus:border-blue-500"
-                          />
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={handleForfeitDeposit}
-                            className="rounded bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50"
-                          >
-                            Confirm Forfeit
-                          </button>
-                        </div>
-                      )}
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => setShowRefundModal(true)}
+                        className="inline-flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                      >
+                        <RotateCcw className="h-3 w-3" /> Refund Deposit
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => setShowForfeitModal(true)}
+                        className="inline-flex items-center gap-1 rounded border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-100 disabled:opacity-50"
+                      >
+                        Forfeit Deposit
+                      </button>
                     </div>
                   )}
                 </div>
@@ -2922,6 +3284,14 @@ function RentalAgreementDetailModal({ rentalAgreementId, onClose, onChanged }) {
           deposit={{ deposit_id: agreement.deposit_id, amount: agreement.deposit_collected_amount }}
           onClose={() => setShowRefundModal(false)}
           onRefunded={() => { setShowRefundModal(false); fetchDetail(); onChanged(); }}
+        />
+      )}
+
+      {showForfeitModal && agreement?.deposit_id && (
+        <ForfeitDepositModal
+          deposit={{ deposit_id: agreement.deposit_id, amount: agreement.deposit_collected_amount }}
+          onClose={() => setShowForfeitModal(false)}
+          onForfeited={() => { setShowForfeitModal(false); fetchDetail(); onChanged(); }}
         />
       )}
     </div>

@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const html_to_pdf = require('html-pdf-node');
 const { IN_CATEGORIES, OUT_CATEGORIES } = require('../utils/transactionFlow');
+const { resolvePeriodRange, CASH_FLOW_PERIODS, INCOME_EXPENSE_PERIODS, TOP_EXPENSES_PERIODS } = require('../utils/financePeriods');
 
 const getOverview = async (req, res) => {
   try {
@@ -719,14 +720,11 @@ function monthKey(d) {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
-// Shared by the JSON endpoint and the PDF export so both always agree.
-async function computeProfitLoss({ mode, date }) {
-  const numMonths = mode === 'month' ? 1 : mode === '6month' ? 6 : 12;
-  const anchor = date ? new Date(date) : new Date();
-  const anchorMonthStart = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 1));
-  const periodStart = new Date(Date.UTC(anchorMonthStart.getUTCFullYear(), anchorMonthStart.getUTCMonth() - (numMonths - 1), 1));
-  const periodEndExclusive = new Date(Date.UTC(anchorMonthStart.getUTCFullYear(), anchorMonthStart.getUTCMonth() + 1, 1));
-
+// Per-month income/expense breakdown for an arbitrary [periodStart, periodEndExclusive)
+// range. Shared by computeProfitLoss (trailing-N-months) and the dashboard's
+// Income & Expense chart (calendar-year/quarter-aware ranges via financePeriods.js)
+// so both always agree on the underlying category math.
+async function computeIncomeExpenseSeries({ periodStart, periodEndExclusive }) {
   const txQuery = `
     SELECT date_trunc('month', created_at) AS month_start, category::text AS category,
            COALESCE(SUM(amount), 0) AS amount
@@ -766,8 +764,11 @@ async function computeProfitLoss({ mode, date }) {
   const sumCategories = (catValues, cats) => cats.reduce((sum, c) => sum + (catValues[c] || 0), 0);
 
   const periods = [];
-  for (let i = 0; i < numMonths; i++) {
-    const monthStart = new Date(Date.UTC(periodStart.getUTCFullYear(), periodStart.getUTCMonth() + i, 1));
+  for (
+    let monthStart = new Date(Date.UTC(periodStart.getUTCFullYear(), periodStart.getUTCMonth(), 1));
+    monthStart < periodEndExclusive;
+    monthStart = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 1))
+  ) {
     const key = monthKey(monthStart);
     const catValues = byMonth.get(key) || {};
 
@@ -793,11 +794,22 @@ async function computeProfitLoss({ mode, date }) {
   }
 
   return {
-    mode,
     from: periodStart.toISOString().split('T')[0],
     to: new Date(periodEndExclusive.getTime() - 86400000).toISOString().split('T')[0],
     periods,
   };
+}
+
+// Shared by the JSON endpoint and the PDF export so both always agree.
+async function computeProfitLoss({ mode, date }) {
+  const numMonths = mode === 'month' ? 1 : mode === '6month' ? 6 : 12;
+  const anchor = date ? new Date(date) : new Date();
+  const anchorMonthStart = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 1));
+  const periodStart = new Date(Date.UTC(anchorMonthStart.getUTCFullYear(), anchorMonthStart.getUTCMonth() - (numMonths - 1), 1));
+  const periodEndExclusive = new Date(Date.UTC(anchorMonthStart.getUTCFullYear(), anchorMonthStart.getUTCMonth() + 1, 1));
+
+  const { from, to, periods } = await computeIncomeExpenseSeries({ periodStart, periodEndExclusive });
+  return { mode, from, to, periods };
 }
 
 const getProfitLoss = async (req, res) => {
@@ -817,6 +829,10 @@ const getProfitLoss = async (req, res) => {
 
 function fmtMoney(n) {
   return Number(n || 0).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatDMY(isoDate) {
+  return new Date(isoDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 }
 
 // Renders the same figures as getProfitLoss into a standalone HTML page styled
@@ -897,6 +913,604 @@ const getProfitLossPdf = async (req, res) => {
   }
 };
 
+// =========================================================
+// SALES BY CUSTOMER
+// =========================================================
+
+// Same revenue definition as the P&L's Total for Operating Income (service +
+// product/rental), summed regardless of transaction_type — matching
+// computeProfitLoss's txQuery so this report and P&L never disagree on what
+// counts as a sale. The system has no tax model, so "Sales" and "Sales with
+// Tax" are the same figure (kept as two columns to match the reference report).
+const SALES_CATEGORIES = [...PNL_SERVICE_CATEGORIES, ...PNL_PRODUCT_CATEGORIES];
+
+async function computeSalesByCustomer({ from, to }) {
+  const fromDate = from ? new Date(from) : null;
+  const toDate = to ? new Date(to) : null;
+  if ((from && Number.isNaN(fromDate?.getTime())) || (to && Number.isNaN(toDate?.getTime()))) {
+    throw new Error('Invalid date');
+  }
+  // Inclusive end-of-day bound for `to`.
+  const toExclusive = toDate ? new Date(toDate.getTime() + 86400000) : null;
+
+  const query = `
+    SELECT cp.client_profile_id, cp.full_name,
+           COUNT(t.transaction_id) AS invoice_count,
+           COALESCE(SUM(t.amount), 0) AS sales
+    FROM transactions t
+    JOIN client_profiles cp ON cp.client_profile_id = t.client_id
+    WHERE t.category::text = ANY($1::text[]) AND t.status = 'COMPLETED'
+      AND ($2::timestamptz IS NULL OR t.created_at >= $2)
+      AND ($3::timestamptz IS NULL OR t.created_at < $3)
+    GROUP BY cp.client_profile_id, cp.full_name
+    ORDER BY sales DESC
+  `;
+  const result = await db.query(query, [SALES_CATEGORIES, fromDate, toExclusive]);
+
+  const rows = result.rows.map(r => ({
+    client_id: r.client_profile_id,
+    name: r.full_name,
+    invoice_count: parseInt(r.invoice_count, 10),
+    sales: round2(r.sales),
+    sales_with_tax: round2(r.sales),
+  }));
+
+  const totals = rows.reduce((acc, r) => ({
+    invoice_count: acc.invoice_count + r.invoice_count,
+    sales: acc.sales + r.sales,
+    sales_with_tax: acc.sales_with_tax + r.sales_with_tax,
+  }), { invoice_count: 0, sales: 0, sales_with_tax: 0 });
+
+  return { from: from || null, to: to || null, rows, totals };
+}
+
+const getSalesByCustomer = async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const data = await computeSalesByCustomer({ from, to });
+    res.status(200).json({ status: 'success', data });
+  } catch (error) {
+    if (error.message === 'Invalid date') {
+      return res.status(400).json({ status: 'error', message: 'Invalid date' });
+    }
+    console.error('Error in getSalesByCustomer:', error);
+    res.status(500).json({ status: 'error', message: 'Internal server error while fetching sales by customer' });
+  }
+};
+
+const getSalesByCustomerPdf = async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const { rows, totals } = await computeSalesByCustomer({ from, to });
+
+    const bodyRows = rows.map(r => `
+      <tr>
+        <td style="padding:8px;">${r.name}</td>
+        <td style="text-align:right;padding:8px;">${r.invoice_count}</td>
+        <td style="text-align:right;padding:8px;">${fmtMoney(r.sales)}</td>
+        <td style="text-align:right;padding:8px;">${fmtMoney(r.sales_with_tax)}</td>
+      </tr>`).join('');
+
+    const rangeLabel = from && to
+      ? `From ${formatDMY(from)} To ${formatDMY(to)}`
+      : 'All time';
+
+    const html = `
+      <html>
+        <head><meta charset="utf-8" /></head>
+        <body style="font-family: Arial, sans-serif; color:#1f2937;">
+          <div style="text-align:center;margin-bottom:24px;">
+            <h1 style="margin:0;">Vcare Nursing</h1>
+            <h2 style="margin:4px 0;">Sales by Customer</h2>
+            <div>${rangeLabel}</div>
+          </div>
+          <table style="width:100%;border-collapse:collapse;">
+            <thead>
+              <tr style="background:#f3f4f6;">
+                <th style="text-align:left;padding:8px;">Name</th>
+                <th style="text-align:right;padding:8px;">Invoice Count</th>
+                <th style="text-align:right;padding:8px;">Sales</th>
+                <th style="text-align:right;padding:8px;">Sales with Tax</th>
+              </tr>
+            </thead>
+            <tbody>${bodyRows}</tbody>
+            <tfoot>
+              <tr style="border-top:2px solid #ccc;font-weight:bold;">
+                <td style="padding:8px;">Total</td>
+                <td style="text-align:right;padding:8px;">${totals.invoice_count}</td>
+                <td style="text-align:right;padding:8px;">${fmtMoney(totals.sales)}</td>
+                <td style="text-align:right;padding:8px;">${fmtMoney(totals.sales_with_tax)}</td>
+              </tr>
+            </tfoot>
+          </table>
+          <div style="margin-top:24px;font-size:12px;color:#6b7280;">**Amount is displayed in your base currency LKR</div>
+        </body>
+      </html>
+    `;
+
+    const pdfBuffer = await html_to_pdf.generatePdf({ content: html }, { format: 'A4' });
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="Sales_by_Customer_${from || 'all'}_to_${to || 'all'}.pdf"`,
+    });
+    res.send(pdfBuffer);
+  } catch (error) {
+    if (error.message === 'Invalid date') {
+      return res.status(400).json({ status: 'error', message: 'Invalid date' });
+    }
+    console.error('Error in getSalesByCustomerPdf:', error);
+    res.status(500).json({ status: 'error', message: 'Internal server error while generating sales by customer PDF' });
+  }
+};
+
+// =========================================================
+// BALANCE SHEET
+// =========================================================
+
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// Leaf line item and group node builders for the balance sheet tree. A group's
+// total is the sum of its children (leaf `value` or nested group `total`), so
+// every "Total for X" row on screen / CSV / PDF is derived once, here.
+const bsLeaf = (label, value) => ({ label, value: round2(value) });
+const bsGroup = (label, children) => ({
+  label,
+  children,
+  total: round2(children.reduce((sum, c) => sum + (c.children ? c.total : c.value), 0)),
+});
+
+// Signed cash movement per transaction, matching transactionFlow.js: IN
+// categories count only their CREDIT rows (REGISTRATION_FEE also has DEBIT
+// "charge" records that are not cash), OUT categories are subtracted, and
+// NEUTRAL accrual/internal categories are ignored. Note the existing bank
+// accounts page (bankAccountController.getAllBankAccounts) sums amounts
+// UNSIGNED — the signed version here is the correct one.
+const SIGNED_CASH_SQL = `CASE
+  WHEN t.category::text = ANY($2::text[]) AND t.transaction_type = 'CREDIT' THEN t.amount
+  WHEN t.category::text = ANY($3::text[]) THEN -t.amount
+  ELSE 0 END`;
+
+// Shared by the JSON endpoint and the PDF export so both always agree.
+// As-of snapshot: ledger-backed lines (bank, cash, receivables, staff wallet
+// positions, earnings) are reconstructed from transactions up to the date;
+// inventory, client wallets, and rental deposits have no dated history and
+// are reported at their current value (footnoted in the UI).
+async function computeBalanceSheet({ date }) {
+  const asOf = date ? new Date(date) : new Date();
+  if (Number.isNaN(asOf.getTime())) throw new Error('Invalid date');
+  // Exclusive upper bound = start of the day after the as-of date (UTC).
+  const asOfEnd = new Date(Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth(), asOf.getUTCDate() + 1));
+  const yearStart = new Date(Date.UTC(asOf.getUTCFullYear(), 0, 1));
+
+  const bankQuery = `
+    SELECT ba.account_id, ba.account_nickname, ba.bank_name,
+           ba.opening_balance + COALESCE(SUM(
+             CASE WHEN t.status = 'COMPLETED' AND t.created_at < $1 THEN ${SIGNED_CASH_SQL} ELSE 0 END
+           ), 0) AS balance
+    FROM bank_accounts ba
+    LEFT JOIN transactions t ON t.bank_account_id = ba.account_id
+    WHERE ba.is_active = true
+    GROUP BY ba.account_id
+    ORDER BY ba.account_nickname
+  `;
+
+  const cashQuery = `
+    SELECT COALESCE(SUM(${SIGNED_CASH_SQL}), 0) AS cash
+    FROM transactions t
+    WHERE t.payment_method = 'CASH' AND t.bank_account_id IS NULL
+      AND t.status = 'COMPLETED' AND t.created_at < $1
+  `;
+
+  // Booking receivables: per-booking ledger balance (DEBIT charges minus
+  // non-salary CREDITs) as of the date — same math as getReceivablesAging /
+  // getOverview, but across ALL bookings, not just OVERDUE ones: on a balance
+  // sheet any unpaid balance is a receivable regardless of due status.
+  // Overpaid bookings clamp to 0 rather than offsetting others.
+  const bookingReceivablesQuery = `
+    WITH per_booking AS (
+      SELECT booking_id,
+             SUM(CASE WHEN transaction_type = 'DEBIT' THEN amount ELSE 0 END) AS debits,
+             SUM(CASE WHEN transaction_type = 'CREDIT' AND COALESCE(category::text, '') != 'STAFF_SALARY' THEN amount ELSE 0 END) AS credits
+      FROM transactions
+      WHERE booking_id IS NOT NULL AND created_at < $1
+      GROUP BY booking_id
+    )
+    SELECT COALESCE(SUM(GREATEST(debits - credits, 0)), 0) AS amount FROM per_booking
+  `;
+
+  // Product/rental invoices issued on or before the date and not yet paid at
+  // that date (paid_at is the settlement timestamp — see invoiceController).
+  const invoiceReceivablesQuery = `
+    SELECT COALESCE(SUM(amount), 0) AS amount
+    FROM invoices
+    WHERE created_at < $1 AND (paid_at IS NULL OR paid_at >= $1)
+  `;
+
+  // Staff wallet positions as of the date, reconstructed with the same
+  // categories getPayablesAging uses (STAFF_SALARY earned vs STAFF_SALARY_PAID
+  // / STAFF_ADVANCE out). Positive balances are salaries payable (liability);
+  // negative ones mean the advance outran earnings — an employee advance asset.
+  const staffWalletQuery = `
+    WITH per_staff AS (
+      SELECT staff_profile_id,
+             SUM(CASE WHEN transaction_type = 'CREDIT' AND category::text = 'STAFF_SALARY' THEN amount
+                      WHEN transaction_type = 'DEBIT' AND category::text IN ('STAFF_SALARY_PAID', 'STAFF_ADVANCE') THEN -amount
+                      ELSE 0 END) AS balance
+      FROM transactions
+      WHERE staff_profile_id IS NOT NULL AND status = 'COMPLETED' AND created_at < $1
+      GROUP BY staff_profile_id
+    )
+    SELECT COALESCE(SUM(CASE WHEN balance > 0 THEN balance ELSE 0 END), 0) AS salaries_payable,
+           COALESCE(SUM(CASE WHEN balance < 0 THEN -balance ELSE 0 END), 0) AS employee_advances
+    FROM per_staff
+  `;
+
+  // Current-value lines (no dated history available):
+  const inventoryQuery = `
+    SELECT COALESCE(SUM(stock_quantity * cost_price), 0) AS amount
+    FROM products
+    WHERE product_type = 'ITEM'
+  `;
+  const fixedAssetsQuery = `
+    SELECT p.name, COUNT(ru.unit_id) AS units,
+           COUNT(ru.unit_id) * COALESCE(p.cost_price, 0) AS value
+    FROM rental_units ru
+    JOIN products p ON p.product_id = ru.product_id
+    GROUP BY p.product_id, p.name, p.cost_price
+    ORDER BY p.name
+  `;
+  const clientWalletsQuery = `
+    SELECT COALESCE(SUM(GREATEST(wallet_balance, 0)), 0) AS amount FROM client_profiles
+  `;
+  const depositsHeldQuery = `
+    SELECT COALESCE(SUM(amount), 0) AS amount FROM deposits WHERE status = 'HELD'
+  `;
+
+  // Earnings split at Jan 1 of the as-of year: before = retained earnings,
+  // after = current year earnings. Same category groupings as computeProfitLoss.
+  const earningsTxQuery = `
+    SELECT (created_at >= $1) AS current_year, category::text AS category,
+           COALESCE(SUM(amount), 0) AS amount
+    FROM transactions
+    WHERE created_at < $2 AND status = 'COMPLETED'
+    GROUP BY 1, 2
+  `;
+  const earningsCogsQuery = `
+    SELECT (t.created_at >= $1) AS current_year,
+           COALESCE(SUM(qli.quantity * COALESCE(qli.cost_price_snapshot, 0)), 0) AS cogs
+    FROM transactions t
+    JOIN quote_line_items qli ON qli.quote_id = t.quote_id
+    WHERE t.category::text = ANY($3::text[])
+      AND t.created_at < $2 AND t.status = 'COMPLETED'
+    GROUP BY 1
+  `;
+
+  const flowParams = [asOfEnd, IN_CATEGORIES, OUT_CATEGORIES];
+  const [
+    bankResult, cashResult, bookingRecvResult, invoiceRecvResult, staffWalletResult,
+    inventoryResult, fixedAssetsResult, clientWalletsResult, depositsResult,
+    earningsTxResult, earningsCogsResult,
+  ] = await Promise.all([
+    db.query(bankQuery, flowParams),
+    db.query(cashQuery, flowParams),
+    db.query(bookingReceivablesQuery, [asOfEnd]),
+    db.query(invoiceReceivablesQuery, [asOfEnd]),
+    db.query(staffWalletQuery, [asOfEnd]),
+    db.query(inventoryQuery),
+    db.query(fixedAssetsQuery),
+    db.query(clientWalletsQuery),
+    db.query(depositsHeldQuery),
+    db.query(earningsTxQuery, [yearStart, asOfEnd]),
+    db.query(earningsCogsQuery, [yearStart, asOfEnd, PNL_PRODUCT_CATEGORIES]),
+  ]);
+
+  // Net profit per earnings bucket (false = before this year, true = this year)
+  const catsByBucket = { true: {}, false: {} };
+  for (const row of earningsTxResult.rows) {
+    catsByBucket[row.current_year][row.category] = parseFloat(row.amount);
+  }
+  const cogsByBucket = { true: 0, false: 0 };
+  for (const row of earningsCogsResult.rows) {
+    cogsByBucket[row.current_year] = parseFloat(row.cogs);
+  }
+  const sumCats = (catValues, cats) => cats.reduce((sum, c) => sum + (catValues[c] || 0), 0);
+  const netProfitOf = (bucket) => {
+    const cv = catsByBucket[bucket];
+    const income = sumCats(cv, PNL_SERVICE_CATEGORIES) + sumCats(cv, PNL_PRODUCT_CATEGORIES)
+      + sumCats(cv, PNL_OTHER_INCOME_CATEGORIES);
+    const expenses = sumCats(cv, PNL_SALARY_CATEGORIES) + sumCats(cv, PNL_OTHER_EXPENSE_CATEGORIES);
+    return income - cogsByBucket[bucket] - expenses;
+  };
+  const retainedEarnings = netProfitOf(false);
+  const currentYearEarnings = netProfitOf(true);
+
+  // ── Assemble the tree ──
+  const staffWallets = staffWalletResult.rows[0];
+
+  const assets = bsGroup('Assets', [
+    bsGroup('Current Assets', [
+      bsGroup('Cash and Cash Equivalents', [
+        bsGroup('Cash', [bsLeaf('Cash on Hand', parseFloat(cashResult.rows[0].cash))]),
+        bsGroup('Bank', bankResult.rows.map(r => bsLeaf(r.account_nickname, parseFloat(r.balance)))),
+      ]),
+      bsGroup('Accounts Receivable', [
+        bsLeaf('Booking Receivables', parseFloat(bookingRecvResult.rows[0].amount)),
+        bsLeaf('Invoice Receivables', parseFloat(invoiceRecvResult.rows[0].amount)),
+      ]),
+      bsGroup('Other Current Assets', [
+        bsLeaf('Employee Advances', parseFloat(staffWallets.employee_advances)),
+        bsLeaf('Inventory Asset', parseFloat(inventoryResult.rows[0].amount)),
+      ]),
+    ]),
+    bsGroup('Non Current Assets', []),
+    bsGroup('Fixed Assets', fixedAssetsResult.rows.map(r => bsLeaf(`${r.name} (${r.units} units)`, parseFloat(r.value)))),
+    bsGroup('Other Assets', []),
+  ]);
+
+  const liabilities = bsGroup('Liabilities', [
+    bsGroup('Current Liabilities', [
+      bsGroup('Accounts Payable', [bsLeaf('Salaries Payable', parseFloat(staffWallets.salaries_payable))]),
+      bsGroup('Other Current Liabilities', [
+        bsLeaf('Unearned Revenue (Client Wallets)', parseFloat(clientWalletsResult.rows[0].amount)),
+        bsLeaf('Rental Deposits Held', parseFloat(depositsResult.rows[0].amount)),
+      ]),
+    ]),
+    bsGroup('Non Current Liabilities', []),
+    bsGroup('Other Liabilities', []),
+  ]);
+
+  // The system isn't double-entry, so equity won't balance on its own —
+  // the adjustments line absorbs bank opening balances and any ledger
+  // asymmetries so Assets always equals Liabilities & Equities.
+  const openingAdjustments = assets.total - liabilities.total - retainedEarnings - currentYearEarnings;
+  const equities = bsGroup('Equities', [
+    bsLeaf('Retained Earnings', retainedEarnings),
+    bsLeaf('Current Year Earnings', currentYearEarnings),
+    bsLeaf('Opening Balances & Adjustments', openingAdjustments),
+  ]);
+
+  const liabilitiesAndEquities = bsGroup('Liabilities & Equities', [liabilities, equities]);
+
+  return {
+    asOf: new Date(asOfEnd.getTime() - 86400000).toISOString().split('T')[0],
+    sections: [assets, liabilitiesAndEquities],
+  };
+}
+
+const getBalanceSheet = async (req, res) => {
+  try {
+    const { date } = req.query;
+    const data = await computeBalanceSheet({ date });
+    res.status(200).json({ status: 'success', data });
+  } catch (error) {
+    if (error.message === 'Invalid date') {
+      return res.status(400).json({ status: 'error', message: 'Invalid date' });
+    }
+    console.error('Error in getBalanceSheet:', error);
+    res.status(500).json({ status: 'error', message: 'Internal server error while fetching balance sheet' });
+  }
+};
+
+// Flattens the tree into [{label, value, depth, bold}] rows: group header,
+// its children, then a bold "Total for X" row — shared by the PDF below and
+// mirrored by the frontend/CSV so all outputs render identical rows.
+function flattenBalanceSheet(node, depth = 0, rows = []) {
+  if (node.children) {
+    rows.push({ label: node.label, value: null, depth, bold: depth === 0 });
+    node.children.forEach(child => flattenBalanceSheet(child, depth + 1, rows));
+    rows.push({ label: `Total for ${node.label}`, value: node.total, depth, bold: true });
+  } else {
+    rows.push({ label: node.label, value: node.value, depth, bold: false });
+  }
+  return rows;
+}
+
+const getBalanceSheetPdf = async (req, res) => {
+  try {
+    const { date } = req.query;
+    const { asOf, sections } = await computeBalanceSheet({ date });
+
+    const rows = sections.flatMap(section => flattenBalanceSheet(section));
+    const bodyRows = rows.map(row => `
+      <tr style="${row.bold ? 'border-top:1px solid #ccc;' : ''}">
+        <td style="padding:6px 8px;padding-left:${8 + row.depth * 18}px;${row.bold ? 'font-weight:bold;' : ''}">${row.label}</td>
+        <td style="text-align:right;padding:6px 8px;${row.bold ? 'font-weight:bold;' : ''}">${row.value === null ? '' : fmtMoney(row.value)}</td>
+      </tr>`).join('');
+
+    const asOfLabel = new Date(asOf).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+    const html = `
+      <html>
+        <head><meta charset="utf-8" /></head>
+        <body style="font-family: Arial, sans-serif; color:#1f2937;">
+          <div style="text-align:center;margin-bottom:24px;">
+            <h1 style="margin:0;">Vcare Nursing</h1>
+            <h2 style="margin:4px 0;">Balance Sheet</h2>
+            <div style="color:#6b7280;">Basis: Accrual</div>
+            <div>As of ${asOfLabel}</div>
+          </div>
+          <table style="width:100%;border-collapse:collapse;">
+            <thead>
+              <tr style="background:#f3f4f6;">
+                <th style="text-align:left;padding:8px;">Account</th>
+                <th style="text-align:right;padding:8px;">Total</th>
+              </tr>
+            </thead>
+            <tbody>${bodyRows}</tbody>
+          </table>
+          <div style="margin-top:24px;font-size:12px;color:#6b7280;">**Amount is displayed in your base currency LKR</div>
+        </body>
+      </html>
+    `;
+
+    const pdfBuffer = await html_to_pdf.generatePdf({ content: html }, { format: 'A4' });
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="BalanceSheet_${asOf}.pdf"`,
+    });
+    res.send(pdfBuffer);
+  } catch (error) {
+    if (error.message === 'Invalid date') {
+      return res.status(400).json({ status: 'error', message: 'Invalid date' });
+    }
+    console.error('Error in getBalanceSheetPdf:', error);
+    res.status(500).json({ status: 'error', message: 'Internal server error while generating balance sheet PDF' });
+  }
+};
+
+// =========================================================
+// DASHBOARD WIDGETS (Cash Flow / Income & Expense / Top Expenses)
+// =========================================================
+
+// Total cash (bank accounts + cash-in-hand) as of an exclusive date boundary —
+// same "opening_balance + signed transactions before date" math as
+// computeBalanceSheet's bank/cash lines, collapsed to a single grand total.
+async function computeCashAsOf(asOfExclusive) {
+  const query = `
+    SELECT
+      COALESCE((SELECT SUM(ba.opening_balance) FROM bank_accounts ba WHERE ba.is_active = true), 0)
+      + COALESCE((
+          SELECT SUM(${SIGNED_CASH_SQL})
+          FROM transactions t
+          WHERE t.status = 'COMPLETED' AND t.created_at < $1
+        ), 0) AS cash
+  `;
+  const result = await db.query(query, [asOfExclusive, IN_CATEGORIES, OUT_CATEGORIES]);
+  return parseFloat(result.rows[0].cash);
+}
+
+const getCashFlowSummary = async (req, res) => {
+  try {
+    const { period = 'this_fiscal_year' } = req.query;
+    if (!CASH_FLOW_PERIODS.includes(period)) {
+      return res.status(400).json({ status: 'error', message: `Invalid period. Must be one of: ${CASH_FLOW_PERIODS.join(', ')}` });
+    }
+
+    const { start, endExclusive, months } = resolvePeriodRange(period);
+    const boundaries = months.map(m => new Date(Date.UTC(m.monthStart.getUTCFullYear(), m.monthStart.getUTCMonth() + 1, 1)));
+
+    const [openingCash, ...monthEndCashes] = await Promise.all([
+      computeCashAsOf(start),
+      ...boundaries.map(b => computeCashAsOf(b)),
+    ]);
+
+    const series = months.map((m, i) => ({ label: m.label, cash: round2(monthEndCashes[i]) }));
+    const closingCash = monthEndCashes.length ? monthEndCashes[monthEndCashes.length - 1] : openingCash;
+
+    const flowQuery = `
+      SELECT
+        COALESCE(SUM(CASE WHEN t.category::text = ANY($3::text[]) AND t.transaction_type = 'CREDIT' THEN t.amount ELSE 0 END), 0) AS total_incoming,
+        COALESCE(SUM(CASE WHEN t.category::text = ANY($4::text[]) THEN t.amount ELSE 0 END), 0) AS total_outgoing
+      FROM transactions t
+      WHERE t.status = 'COMPLETED' AND t.created_at >= $1 AND t.created_at < $2
+    `;
+    const flowResult = await db.query(flowQuery, [start, endExclusive, IN_CATEGORIES, OUT_CATEGORIES]);
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        period,
+        from: start.toISOString().split('T')[0],
+        to: new Date(endExclusive.getTime() - 86400000).toISOString().split('T')[0],
+        opening_cash: round2(openingCash),
+        closing_cash: round2(closingCash),
+        total_incoming: round2(parseFloat(flowResult.rows[0].total_incoming)),
+        total_outgoing: round2(parseFloat(flowResult.rows[0].total_outgoing)),
+        series,
+      },
+    });
+  } catch (error) {
+    console.error('Error in getCashFlowSummary:', error);
+    res.status(500).json({ status: 'error', message: 'Internal server error while fetching cash flow summary' });
+  }
+};
+
+const getIncomeExpenseChart = async (req, res) => {
+  try {
+    const { period = 'this_fiscal_year' } = req.query;
+    if (!INCOME_EXPENSE_PERIODS.includes(period)) {
+      return res.status(400).json({ status: 'error', message: `Invalid period. Must be one of: ${INCOME_EXPENSE_PERIODS.join(', ')}` });
+    }
+
+    const { start, endExclusive } = resolvePeriodRange(period);
+    const { from, to, periods } = await computeIncomeExpenseSeries({ periodStart: start, periodEndExclusive: endExclusive });
+
+    const chartPeriods = periods.map(p => ({
+      label: p.label,
+      income: round2(p.totalSales + p.otherIncome),
+      expense: round2(p.totalExpenses),
+    }));
+    const total_income = round2(chartPeriods.reduce((sum, p) => sum + p.income, 0));
+    const total_expense = round2(chartPeriods.reduce((sum, p) => sum + p.expense, 0));
+
+    res.status(200).json({
+      status: 'success',
+      data: { period, from, to, total_income, total_expense, periods: chartPeriods },
+    });
+  } catch (error) {
+    console.error('Error in getIncomeExpenseChart:', error);
+    res.status(500).json({ status: 'error', message: 'Internal server error while fetching income & expense chart data' });
+  }
+};
+
+const getTopExpenses = async (req, res) => {
+  try {
+    const { period = 'this_fiscal_year' } = req.query;
+    if (!TOP_EXPENSES_PERIODS.includes(period)) {
+      return res.status(400).json({ status: 'error', message: `Invalid period. Must be one of: ${TOP_EXPENSES_PERIODS.join(', ')}` });
+    }
+
+    const { start, endExclusive } = resolvePeriodRange(period);
+
+    const txQuery = `
+      SELECT category::text AS category, COALESCE(SUM(amount), 0) AS amount
+      FROM transactions
+      WHERE created_at >= $1 AND created_at < $2 AND status = 'COMPLETED'
+      GROUP BY category
+    `;
+    const cogsQuery = `
+      SELECT COALESCE(SUM(qli.quantity * COALESCE(qli.cost_price_snapshot, 0)), 0) AS cogs
+      FROM transactions t
+      JOIN quote_line_items qli ON qli.quote_id = t.quote_id
+      WHERE t.category::text = ANY($3::text[])
+        AND t.created_at >= $1 AND t.created_at < $2 AND t.status = 'COMPLETED'
+    `;
+    const [txResult, cogsResult] = await Promise.all([
+      db.query(txQuery, [start, endExclusive]),
+      db.query(cogsQuery, [start, endExclusive, PNL_PRODUCT_CATEGORIES]),
+    ]);
+
+    const catValues = {};
+    for (const row of txResult.rows) catValues[row.category] = parseFloat(row.amount);
+    const sumCategories = (cats) => cats.reduce((sum, c) => sum + (catValues[c] || 0), 0);
+
+    const items = [
+      { label: 'Salaries and Employee Benefits', amount: sumCategories(PNL_SALARY_CATEGORIES) },
+      { label: 'Cost of Goods Sold', amount: parseFloat(cogsResult.rows[0].cogs) },
+      { label: 'Agency Fees', amount: catValues['AGENCY_FEE'] || 0 },
+      { label: 'Other Expenses', amount: catValues['OTHER_EXPENSE'] || 0 },
+    ]
+      .filter(item => item.amount > 0)
+      .map(item => ({ ...item, amount: round2(item.amount) }))
+      .sort((a, b) => b.amount - a.amount);
+
+    const total = round2(items.reduce((sum, item) => sum + item.amount, 0));
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        period,
+        from: start.toISOString().split('T')[0],
+        to: new Date(endExclusive.getTime() - 86400000).toISOString().split('T')[0],
+        total,
+        items,
+      },
+    });
+  } catch (error) {
+    console.error('Error in getTopExpenses:', error);
+    res.status(500).json({ status: 'error', message: 'Internal server error while fetching top expenses' });
+  }
+};
+
 module.exports = {
   getOverview,
   getAdvancesSummary,
@@ -908,5 +1522,12 @@ module.exports = {
   getReceivablesAging,
   getPayablesAging,
   getProfitLoss,
-  getProfitLossPdf
+  getProfitLossPdf,
+  getBalanceSheet,
+  getBalanceSheetPdf,
+  getSalesByCustomer,
+  getSalesByCustomerPdf,
+  getCashFlowSummary,
+  getIncomeExpenseChart,
+  getTopExpenses
 };

@@ -9,11 +9,48 @@ import {
 	AlertTriangle,
 	ChevronRight,
 	Wallet,
+	ShieldCheck,
+	Download,
+	CheckCircle2,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { categoryBadge, relatedTo, flowAmountClass, flowSign } from '../../../constants/transactionCategories';
 import DateInput from '../../../components/common/DateInput';
+import { useAdminAuth } from '../../../context/AdminAuthContext';
+
+const parseToken = (token) => {
+	try {
+		return JSON.parse(atob(token.split('.')[1]));
+	} catch {
+		return null;
+	}
+};
+
+const monthOptions = () => {
+	const options = [];
+	const now = new Date();
+	for (let i = 0; i < 12; i++) {
+		const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+		const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+		const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+		options.push({ value, label });
+	}
+	return options;
+};
+
+const monthToRange = (monthValue) => {
+	const [year, month] = monthValue.split('-').map(Number);
+	const start = new Date(year, month - 1, 1);
+	const end = new Date(year, month, 0);
+	const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+	return { start_date: fmt(start), end_date: fmt(end) };
+};
+
+const csvEscape = (value) => {
+	const str = String(value ?? '');
+	return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+};
 
 const initialFormState = {
 	account_nickname: '',
@@ -86,6 +123,16 @@ const StatTile = ({ label, value, tone = 'slate' }) => {
 };
 
 const BankAccounts = () => {
+	const { adminToken } = useAdminAuth();
+	const isSuperAdmin = useMemo(() => {
+		if (!adminToken) return false;
+		const payload = parseToken(adminToken);
+		const rawRole = typeof payload?.role === 'string'
+			? payload.role.replace(/[{}]/g, '').split(',')[0].trim()
+			: '';
+		return rawRole === 'SUPER_ADMIN';
+	}, [adminToken]);
+
 	const [accounts, setAccounts] = useState([]);
 	const [loading, setLoading] = useState(true);
 	const [submitting, setSubmitting] = useState(false);
@@ -103,8 +150,11 @@ const BankAccounts = () => {
 	const [transactionsFilters, setTransactionsFilters] = useState({
 		start_date: '',
 		end_date: '',
-		status: ''
+		verified: ''
 	});
+	const [monthFilter, setMonthFilter] = useState('');
+	const [auditMode, setAuditMode] = useState(false);
+	const [verifyingId, setVerifyingId] = useState(null);
 
 	const [reconciliationLoading, setReconciliationLoading] = useState(false);
 	const [reconciliationReport, setReconciliationReport] = useState(null);
@@ -217,7 +267,7 @@ const BankAccounts = () => {
 			const apiFilters = {};
 			if (filters.start_date) apiFilters.start_date = filters.start_date;
 			if (filters.end_date) apiFilters.end_date = filters.end_date;
-			if (filters.status) apiFilters.status = filters.status;
+			if (filters.verified) apiFilters.verified = filters.verified;
 
 			const response = await apiClient.getBankAccountTransactions(account.account_id, apiFilters);
 			setSelectedAccount(response.account || account);
@@ -252,11 +302,78 @@ const BankAccounts = () => {
 			return;
 		}
 		setSelectedAccount(account);
-		setTransactionsFilters({ start_date: '', end_date: '', status: '' });
+		setAuditMode(false);
+		setMonthFilter('');
+		const resetFilters = { start_date: '', end_date: '', verified: '' };
+		setTransactionsFilters(resetFilters);
 		await Promise.all([
-			loadTransactionsForAccount(account, { start_date: '', end_date: '', status: '' }),
+			loadTransactionsForAccount(account, resetFilters),
 			loadReconciliationForAccount(account)
 		]);
+	};
+
+	const handleMonthFilterChange = async (value) => {
+		setMonthFilter(value);
+		const nextFilters = value
+			? { ...transactionsFilters, ...monthToRange(value) }
+			: { ...transactionsFilters, start_date: '', end_date: '' };
+		setTransactionsFilters(nextFilters);
+		if (selectedAccount) {
+			await loadTransactionsForAccount(selectedAccount, nextFilters);
+		}
+	};
+
+	const handleVerifyTransaction = async (tx, verified) => {
+		if (!selectedAccount) return;
+		try {
+			setVerifyingId(tx.transaction_id);
+			setError('');
+			const response = await apiClient.verifyBankAccountTransaction(selectedAccount.account_id, tx.transaction_id, verified);
+			setTransactions((prev) => prev.map((t) => (
+				t.transaction_id === tx.transaction_id
+					? { ...t, ...response.data, bank_verified_by_name: verified ? t.bank_verified_by_name : null }
+					: t
+			)));
+			setTransactionsSummary((prev) => prev && ({
+				...prev,
+				verified_count: prev.verified_count + (verified ? 1 : -1),
+				unverified_count: prev.unverified_count + (verified ? -1 : 1),
+			}));
+		} catch (err) {
+			setError(err.message || 'Failed to update verification status');
+		} finally {
+			setVerifyingId(null);
+		}
+	};
+
+	const handleDownloadSheet = () => {
+		if (!selectedAccount || transactions.length === 0) return;
+		const headers = ['Date', 'Party', 'Category', 'Method', 'Reference', 'Status', 'Bank Verified', 'Verified By', 'Amount'];
+		const rows = transactions.map((tx) => {
+			const related = relatedTo(tx);
+			return [
+				new Date(tx.created_at).toLocaleString(),
+				[related.primary, related.secondary].filter(Boolean).join(' - '),
+				tx.category,
+				tx.payment_method || '',
+				tx.reference_number || '',
+				tx.status,
+				tx.bank_verified ? 'Yes' : 'No',
+				tx.bank_verified_by_name || '',
+				`${flowSign(tx.category, tx.transaction_type)}${parseFloat(tx.amount || 0).toFixed(2)}`
+			];
+		});
+		const csv = [headers, ...rows].map((row) => row.map(csvEscape).join(',')).join('\n');
+		const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+		const url = URL.createObjectURL(blob);
+		const link = document.createElement('a');
+		const suffix = monthFilter || `${transactionsFilters.start_date || 'all'}_to_${transactionsFilters.end_date || 'all'}`;
+		link.href = url;
+		link.download = `${selectedAccount.account_nickname.replace(/\s+/g, '_')}_${suffix}.csv`;
+		document.body.appendChild(link);
+		link.click();
+		document.body.removeChild(link);
+		URL.revokeObjectURL(url);
 	};
 
 	const refreshDetail = async () => {
@@ -385,6 +502,27 @@ const BankAccounts = () => {
 								<p className="text-xs text-slate-400 mt-0.5">Transactions and reconciliation status for this account</p>
 							</div>
 							<div className="flex items-center gap-1 shrink-0">
+								<button
+									onClick={handleDownloadSheet}
+									title="Download bank sheet (CSV)"
+									disabled={transactions.length === 0}
+									className={`${ghostBtnCls} disabled:opacity-50 disabled:cursor-not-allowed`}
+								>
+									<Download className="h-3.5 w-3.5" />
+									Download
+								</button>
+								{isSuperAdmin && (
+									<button
+										onClick={() => setAuditMode((prev) => !prev)}
+										title="Toggle audit mode"
+										className={auditMode
+											? 'inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-500 transition-colors'
+											: ghostBtnCls}
+									>
+										<ShieldCheck className="h-3.5 w-3.5" />
+										Audit Mode
+									</button>
+								)}
 								<button onClick={refreshDetail} title="Refresh" className={iconBtnCls}>
 									<RefreshCw className={`h-4 w-4 ${detailLoading ? 'animate-spin' : ''}`} />
 								</button>
@@ -402,37 +540,49 @@ const BankAccounts = () => {
 								<StatTile label="Pending" value={formatMoney(transactionsSummary?.total_pending)} tone="amber" />
 								<StatTile label="Closing Balance" value={formatMoney(reconciliationReport?.summary?.closing_balance)} tone="blue" />
 								<StatTile
-									label="Reconciliation"
-									value={reconciliationReport?.summary?.reconciliation_status?.replace(/_/g, ' ') || (reconciliationLoading ? '…' : '—')}
+									label="Bank Verified"
+									value={transactionsSummary ? `${transactionsSummary.verified_count} / ${transactionsSummary.transaction_count}` : '—'}
+									tone="emerald"
 								/>
 							</div>
 
 							{/* Filters — flat inline toolbar */}
 							<form onSubmit={applyTransactionFilters} className="flex flex-wrap items-end gap-3">
+								<Field label="Month">
+									<select
+										value={monthFilter}
+										onChange={(e) => handleMonthFilterChange(e.target.value)}
+										className={inputCls}
+									>
+										<option value="">Custom range</option>
+										{monthOptions().map((m) => (
+											<option key={m.value} value={m.value}>{m.label}</option>
+										))}
+									</select>
+								</Field>
 								<Field label="From">
 									<DateInput
 										value={transactionsFilters.start_date}
-										onChange={(e) => setTransactionsFilters({ ...transactionsFilters, start_date: e.target.value })}
+										onChange={(e) => { setMonthFilter(''); setTransactionsFilters({ ...transactionsFilters, start_date: e.target.value }); }}
 										className={inputCls}
 									/>
 								</Field>
 								<Field label="To">
 									<DateInput
 										value={transactionsFilters.end_date}
-										onChange={(e) => setTransactionsFilters({ ...transactionsFilters, end_date: e.target.value })}
+										onChange={(e) => { setMonthFilter(''); setTransactionsFilters({ ...transactionsFilters, end_date: e.target.value }); }}
 										className={inputCls}
 									/>
 								</Field>
-								<Field label="Status">
+								<Field label="Verification">
 									<select
-										value={transactionsFilters.status}
-										onChange={(e) => setTransactionsFilters({ ...transactionsFilters, status: e.target.value })}
+										value={transactionsFilters.verified}
+										onChange={(e) => setTransactionsFilters({ ...transactionsFilters, verified: e.target.value })}
 										className={inputCls}
 									>
-										<option value="">All Statuses</option>
-										<option value="COMPLETED">Completed</option>
-										<option value="PENDING">Pending</option>
-										<option value="REJECTED">Rejected</option>
+										<option value="">All</option>
+										<option value="true">Verified</option>
+										<option value="false">Unverified</option>
 									</select>
 								</Field>
 								<button type="submit" className={primaryBtnCls}>Apply</button>
@@ -455,12 +605,18 @@ const BankAccounts = () => {
 										<table className="w-full text-sm">
 											<thead>
 												<tr className="border-b border-slate-200 bg-slate-50">
+													{auditMode && isSuperAdmin && (
+														<th className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Verify</th>
+													)}
 													<th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Date</th>
 													<th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Party</th>
 													<th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Category</th>
 													<th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Method</th>
 													<th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Reference</th>
 													<th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
+													{!auditMode && (
+														<th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Bank Verified</th>
+													)}
 													<th className="text-right px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Amount</th>
 												</tr>
 											</thead>
@@ -468,7 +624,18 @@ const BankAccounts = () => {
 												{transactions.map((tx) => {
 													const related = relatedTo(tx);
 													return (
-														<tr key={tx.transaction_id} className="hover:bg-slate-50 transition-colors">
+														<tr key={tx.transaction_id} className={`hover:bg-slate-50 transition-colors ${tx.bank_verified ? 'bg-emerald-50/30' : ''}`}>
+															{auditMode && isSuperAdmin && (
+																<td className="px-4 py-2.5">
+																	<input
+																		type="checkbox"
+																		checked={!!tx.bank_verified}
+																		disabled={verifyingId === tx.transaction_id}
+																		onChange={(e) => handleVerifyTransaction(tx, e.target.checked)}
+																		className="h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-400 cursor-pointer disabled:opacity-50"
+																	/>
+																</td>
+															)}
 															<td className="px-4 py-2.5 text-slate-600 whitespace-nowrap">{new Date(tx.created_at).toLocaleString()}</td>
 															<td className="px-4 py-2.5 text-slate-600">
 																<p className="font-medium text-slate-700">{related.primary}</p>
@@ -478,6 +645,18 @@ const BankAccounts = () => {
 															<td className="px-4 py-2.5 text-slate-600">{tx.payment_method || '—'}</td>
 															<td className="px-4 py-2.5 text-slate-500 font-mono text-xs">{tx.reference_number || '—'}</td>
 															<td className="px-4 py-2.5 whitespace-nowrap"><StatusDot status={tx.status} /></td>
+															{!auditMode && (
+																<td className="px-4 py-2.5 whitespace-nowrap">
+																	{tx.bank_verified ? (
+																		<span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700">
+																			<CheckCircle2 className="w-3.5 h-3.5" />
+																			Verified
+																		</span>
+																	) : (
+																		<span className="text-xs text-slate-400">—</span>
+																	)}
+																</td>
+															)}
 															<td className={`px-4 py-2.5 text-right font-medium ${flowAmountClass(tx.category, tx.transaction_type)}`}>
 																{flowSign(tx.category, tx.transaction_type)}{formatMoney(tx.amount)}
 															</td>

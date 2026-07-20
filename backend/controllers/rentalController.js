@@ -462,10 +462,38 @@ exports.listDeposits = async (req, res) => {
   }
 };
 
+// Shared by refundDeposit and forfeitDeposit for the "part of the deposit
+// goes back to the client via a real payout" half of a (possibly partial)
+// settlement. Runs on the caller's transaction — caller owns BEGIN/COMMIT.
+// Returns the created transaction_id.
+async function createDepositRefundTransaction(pgClient, deposit, { refundAmount, paymentMethod, companyBankAccountId, notes, actorUserId }) {
+  let refundClientId = deposit.client_id || null;
+  if (deposit.rental_agreement_id) {
+    const agreementResult = await pgClient.query(
+      'SELECT client_id FROM rental_agreements WHERE rental_agreement_id = $1',
+      [deposit.rental_agreement_id]
+    );
+    refundClientId = agreementResult.rows[0]?.client_id || null;
+  }
+
+  const txResult = await pgClient.query(
+    `INSERT INTO transactions (client_id, category, transaction_type, amount, payment_method, bank_account_id, notes, status, verified_by)
+     VALUES ($1, 'DEPOSIT_REFUND', 'DEBIT', $2, $3, $4, $5, 'COMPLETED', $6)
+     RETURNING transaction_id`,
+    [refundClientId, refundAmount, paymentMethod, companyBankAccountId || null, notes || null, actorUserId || null]
+  );
+  return txResult.rows[0].transaction_id;
+}
+
+// POST /api/rentals/deposits/:deposit_id/refund
+// refund_amount is optional — omit (or pass the full deposit amount) for a
+// full refund. A smaller refund_amount refunds only that much to the client
+// and forfeits (keeps) the remainder as a charge (e.g. repair/transport fee),
+// recorded as status PARTIALLY_REFUNDED.
 exports.refundDeposit = async (req, res) => {
   const pgClient = await db.pool.connect();
   const { deposit_id } = req.params;
-  const { payment_method, notes, company_bank_account_id } = req.body;
+  const { payment_method, notes, company_bank_account_id, refund_amount } = req.body;
 
   if (!VALID_PAYMENT_METHODS.includes(payment_method)) {
     return res.status(400).json({ message: `payment_method must be one of: ${VALID_PAYMENT_METHODS.join(', ')}` });
@@ -485,6 +513,16 @@ exports.refundDeposit = async (req, res) => {
       return res.status(409).json({ message: `Deposit is already ${deposit.status}` });
     }
 
+    const totalAmount = parseFloat(deposit.amount);
+    const refundAmt = refund_amount === undefined || refund_amount === null || refund_amount === ''
+      ? totalAmount
+      : parseFloat(refund_amount);
+    if (Number.isNaN(refundAmt) || refundAmt <= 0 || refundAmt > totalAmount) {
+      await pgClient.query('ROLLBACK');
+      return res.status(400).json({ message: `refund_amount must be greater than 0 and at most ${totalAmount}` });
+    }
+    const forfeitAmt = Math.round((totalAmount - refundAmt) * 100) / 100;
+
     if (company_bank_account_id) {
       const accountCheck = await pgClient.query('SELECT account_id FROM bank_accounts WHERE account_id = $1', [company_bank_account_id]);
       if (accountCheck.rows.length === 0) {
@@ -493,26 +531,20 @@ exports.refundDeposit = async (req, res) => {
       }
     }
 
-    let refundClientId = deposit.client_id || null;
-    if (deposit.rental_agreement_id) {
-      const agreementResult = await pgClient.query(
-        'SELECT client_id FROM rental_agreements WHERE rental_agreement_id = $1',
-        [deposit.rental_agreement_id]
-      );
-      refundClientId = agreementResult.rows[0]?.client_id || null;
-    }
+    const refundTransactionId = await createDepositRefundTransaction(pgClient, deposit, {
+      refundAmount: refundAmt,
+      paymentMethod: payment_method,
+      companyBankAccountId: company_bank_account_id,
+      notes,
+      actorUserId: req.user?.user_id,
+    });
 
-    const txResult = await pgClient.query(
-      `INSERT INTO transactions (client_id, category, transaction_type, amount, payment_method, bank_account_id, notes, status, verified_by)
-       VALUES ($1, 'DEPOSIT_REFUND', 'DEBIT', $2, $3, $4, $5, 'COMPLETED', $6)
-       RETURNING transaction_id`,
-      [refundClientId, deposit.amount, payment_method, company_bank_account_id || null, notes || null, req.user?.user_id || null]
-    );
-
+    const status = forfeitAmt > 0 ? 'PARTIALLY_REFUNDED' : 'REFUNDED';
     const updated = await pgClient.query(
-      `UPDATE deposits SET status = 'REFUNDED', refund_transaction_id = $1, refunded_at = NOW()
-       WHERE deposit_id = $2 RETURNING *`,
-      [txResult.rows[0].transaction_id, deposit_id]
+      `UPDATE deposits SET status = $1, refund_transaction_id = $2, refunded_at = NOW(),
+              refunded_amount = $3, forfeited_amount = $4, notes = COALESCE($5, notes)
+       WHERE deposit_id = $6 RETURNING *`,
+      [status, refundTransactionId, refundAmt, forfeitAmt, notes || null, deposit_id]
     );
 
     await pgClient.query('COMMIT');
@@ -523,7 +555,7 @@ exports.refundDeposit = async (req, res) => {
       actionType: 'DEPOSIT_REFUNDED',
       entityType: 'DEPOSIT',
       entityId: deposit_id,
-      details: { amount: deposit.amount, payment_method },
+      details: { amount: totalAmount, refunded_amount: refundAmt, forfeited_amount: forfeitAmt, payment_method },
     });
 
     res.status(200).json({ status: 'success', data: updated.rows[0] });
@@ -536,19 +568,72 @@ exports.refundDeposit = async (req, res) => {
   }
 };
 
+// POST /api/rentals/deposits/:deposit_id/forfeit
+// forfeit_amount is optional — omit (or pass the full deposit amount) for a
+// full forfeit (no payout, no transaction — matches the original behaviour).
+// A smaller forfeit_amount keeps only that much and refunds the remainder to
+// the client (requires payment_method), recorded as status PARTIALLY_REFUNDED.
 exports.forfeitDeposit = async (req, res) => {
+  const pgClient = await db.pool.connect();
   const { deposit_id } = req.params;
-  const { notes } = req.body;
+  const { notes, forfeit_amount, payment_method, company_bank_account_id } = req.body;
 
   try {
-    const result = await db.query(
-      `UPDATE deposits SET status = 'FORFEITED', notes = COALESCE($1, notes)
-       WHERE deposit_id = $2 AND status = 'HELD' RETURNING *`,
-      [notes || null, deposit_id]
-    );
-    if (result.rows.length === 0) {
-      return res.status(409).json({ message: 'Deposit not found or not currently held' });
+    await pgClient.query('BEGIN');
+
+    const depositResult = await pgClient.query('SELECT * FROM deposits WHERE deposit_id = $1 FOR UPDATE', [deposit_id]);
+    if (depositResult.rows.length === 0) {
+      await pgClient.query('ROLLBACK');
+      return res.status(404).json({ message: 'Deposit not found' });
     }
+    const deposit = depositResult.rows[0];
+    if (deposit.status !== 'HELD') {
+      await pgClient.query('ROLLBACK');
+      return res.status(409).json({ message: `Deposit is already ${deposit.status}` });
+    }
+
+    const totalAmount = parseFloat(deposit.amount);
+    const forfeitAmt = forfeit_amount === undefined || forfeit_amount === null || forfeit_amount === ''
+      ? totalAmount
+      : parseFloat(forfeit_amount);
+    if (Number.isNaN(forfeitAmt) || forfeitAmt <= 0 || forfeitAmt > totalAmount) {
+      await pgClient.query('ROLLBACK');
+      return res.status(400).json({ message: `forfeit_amount must be greater than 0 and at most ${totalAmount}` });
+    }
+    const refundAmt = Math.round((totalAmount - forfeitAmt) * 100) / 100;
+
+    let refundTransactionId = null;
+    if (refundAmt > 0) {
+      if (!VALID_PAYMENT_METHODS.includes(payment_method)) {
+        await pgClient.query('ROLLBACK');
+        return res.status(400).json({ message: `payment_method must be one of: ${VALID_PAYMENT_METHODS.join(', ')} to refund the remaining ${refundAmt}` });
+      }
+      if (company_bank_account_id) {
+        const accountCheck = await pgClient.query('SELECT account_id FROM bank_accounts WHERE account_id = $1', [company_bank_account_id]);
+        if (accountCheck.rows.length === 0) {
+          await pgClient.query('ROLLBACK');
+          return res.status(404).json({ message: 'Company bank account not found' });
+        }
+      }
+      refundTransactionId = await createDepositRefundTransaction(pgClient, deposit, {
+        refundAmount: refundAmt,
+        paymentMethod: payment_method,
+        companyBankAccountId: company_bank_account_id,
+        notes,
+        actorUserId: req.user?.user_id,
+      });
+    }
+
+    const status = refundAmt > 0 ? 'PARTIALLY_REFUNDED' : 'FORFEITED';
+    const result = await pgClient.query(
+      `UPDATE deposits SET status = $1, notes = COALESCE($2, notes), forfeited_amount = $3,
+              refunded_amount = $4, refund_transaction_id = COALESCE($5, refund_transaction_id),
+              refunded_at = CASE WHEN $4 > 0 THEN NOW() ELSE refunded_at END
+       WHERE deposit_id = $6 RETURNING *`,
+      [status, notes || null, forfeitAmt, refundAmt, refundTransactionId, deposit_id]
+    );
+
+    await pgClient.query('COMMIT');
 
     await safeLog({
       actorUserId: req.user?.user_id,
@@ -556,12 +641,15 @@ exports.forfeitDeposit = async (req, res) => {
       actionType: 'DEPOSIT_FORFEITED',
       entityType: 'DEPOSIT',
       entityId: deposit_id,
-      details: { amount: result.rows[0].amount, notes },
+      details: { amount: totalAmount, forfeited_amount: forfeitAmt, refunded_amount: refundAmt, notes },
     });
 
     res.status(200).json({ status: 'success', data: result.rows[0] });
   } catch (error) {
+    await pgClient.query('ROLLBACK');
     console.error('Forfeit Deposit Error:', error);
     res.status(500).json({ message: 'Failed to forfeit deposit' });
+  } finally {
+    pgClient.release();
   }
 };

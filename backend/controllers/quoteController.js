@@ -1358,9 +1358,12 @@ exports.listCombinedInvoices = async (req, res) => {
         const result = await db.query(`
             SELECT q.quote_id, q.estimate_number, q.total_amount, q.invoice_code,
                    q.invoice_pdf_url, q.invoice_generated_at,
-                   s.payer_name, s.payer_mobile
+                   s.payer_name, s.payer_mobile,
+                   CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
+                        THEN cp.company_name ELSE cp.full_name END AS billed_to_name
             FROM quotations q
             JOIN service_requests s ON q.request_id = s.request_id
+            LEFT JOIN client_profiles cp ON s.client_id = cp.client_profile_id
             ${where}
             ORDER BY q.invoice_generated_at DESC
         `, params);
