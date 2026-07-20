@@ -1,393 +1,509 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Users, Calendar, DollarSign, Activity,
-  ShieldCheck, CheckCircle, Clock, AlertTriangle,
-  Stethoscope, Baby, Heart, Filter
-} from 'lucide-react';
+  AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
+} from 'recharts';
+import { Landmark, ChevronDown, Plus } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
-import useAutoRefresh from '../../../hooks/useAutoRefresh';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const fmt = (val) =>
   `LKR ${Math.round(parseFloat(val || 0)).toLocaleString('en-LK')}`;
 
-const formatChange = (pct) => {
-  if (pct === null || pct === undefined || !isFinite(pct)) return null;
-  return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
-};
+// Tight, no-space, always-2-decimal format used by the Receivables/Payables
+// aging cards to match the reference widget exactly (e.g. "LKR20,278,510.00").
+const fmtTight = (val) =>
+  `LKR${parseFloat(val || 0).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-const timeAgo = (dateStr) => {
-  const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-  if (seconds < 60) return 'Just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} min${minutes > 1 ? 's' : ''} ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days} day${days > 1 ? 's' : ''} ago`;
-  return new Date(dateStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-};
-
-// Raw service_type values are inconsistent in the data (public booking forms have
-// written '{NANNY}', 'NANNY', etc. over time) — normalize to one canonical key.
-const normalizeServiceType = (raw) => {
-  if (raw === 'HOME_NURSING') return { key: 'HOME_NURSING', label: 'Home Nursing' };
-  if (['ELDERLY_CARE', 'CARETAKER'].includes(raw)) return { key: 'ELDERLY_CARE', label: 'Elderly Care' };
-  if (['{NANNY}', 'NANNY', 'CHILD_CARE', 'BABY_CARE'].includes(raw)) {
-    return { key: 'CHILD_CARE', label: 'Child Care' };
-  }
-  return { key: 'OTHER', label: raw || 'Other' };
-};
-
-const SERVICE_TYPE_BADGE = {
-  HOME_NURSING: 'bg-blue-100 text-blue-800',
-  ELDERLY_CARE: 'bg-rose-100 text-rose-800',
-  CHILD_CARE: 'bg-amber-100 text-amber-800',
-  OTHER: 'bg-slate-100 text-slate-800',
-};
-
-const CATEGORY_DOT_COLOR = {
-  HOME_NURSING: 'bg-blue-500',
-  ELDERLY_CARE: 'bg-rose-500',
-  CHILD_CARE: 'bg-amber-500',
-  OTHER: 'bg-slate-400',
-};
-
-const REQUEST_STATUS_LABELS = {
-  NEW_LEAD: 'New',
-  PENDING: 'Pending',
-  CONFIRMED: 'Confirmed',
-  ASSIGNED: 'Assigned',
-  BOOKING_CREATED: 'Booked',
-  COMPLETED: 'Done',
-  CANCELLED: 'Cancelled',
-};
-
-const REQUEST_STATUS_STYLES = {
-  NEW_LEAD: 'bg-red-50 text-red-600 border border-red-100',
-  PENDING: 'bg-amber-50 text-amber-600 border border-amber-100',
-  CONFIRMED: 'bg-emerald-50 text-emerald-600 border border-emerald-100',
-  ASSIGNED: 'bg-blue-50 text-blue-600 border border-blue-100',
-  BOOKING_CREATED: 'bg-emerald-50 text-emerald-600 border border-emerald-100',
-  COMPLETED: 'bg-slate-100 text-slate-600 border border-slate-200',
-  CANCELLED: 'bg-red-50 text-red-600 border border-red-100',
-};
-
-const ACTION_META = {
-  WORKER_VERIFICATION: { icon: ShieldCheck, classes: 'bg-red-50 text-red-700' },
-  STAFF_ADVANCE: { icon: DollarSign, classes: 'bg-blue-50 text-blue-700' },
-  PENDING_TERMINATION: { icon: AlertTriangle, classes: 'bg-amber-50 text-amber-700' },
-};
-
-const EMPTY_DATA = {
-  stats: { total_bookings: 0, active_requests: 0, available_staff: 0, monthly_revenue: 0 },
-  category_breakdown: [],
-  recent_requests: [],
-  pending_actions: [],
-};
-
-// Tab navigation within the dashboard
-const TABS = [
-  { id: 'Overview', label: 'Overview', icon: Activity, serviceType: null },
-  { id: 'Home Nursing', label: 'Home Nursing', icon: Stethoscope, serviceType: 'HOME_NURSING' },
-  { id: 'Elderly Care', label: 'Elderly Care', icon: Heart, serviceType: 'ELDERLY_CARE' },
-  { id: 'Child Care', label: 'Child Care', icon: Baby, serviceType: 'CHILD_CARE' },
+const CASH_FLOW_PERIODS = [
+  { key: 'this_fiscal_year', label: 'This Fiscal Year' },
+  { key: 'previous_fiscal_year', label: 'Previous Fiscal Year' },
+  { key: 'last_12_months', label: 'Last 12 Months' },
 ];
+
+const INCOME_EXPENSE_PERIODS = [
+  { key: 'this_fiscal_year', label: 'This Fiscal Year' },
+  { key: 'previous_fiscal_year', label: 'Previous Fiscal Year' },
+  { key: 'last_12_months', label: 'Last 12 Months' },
+  { key: 'last_6_months', label: 'Last 6 Months' },
+];
+
+const TOP_EXPENSES_PERIODS = [
+  { key: 'this_fiscal_year', label: 'This Fiscal Year' },
+  { key: 'this_quarter', label: 'This Quarter' },
+  { key: 'this_month', label: 'This Month' },
+  { key: 'previous_fiscal_year', label: 'Previous Fiscal Year' },
+  { key: 'previous_quarter', label: 'Previous Quarter' },
+  { key: 'previous_month', label: 'Previous Month' },
+  { key: 'last_6_months', label: 'Last 6 Months' },
+  { key: 'last_12_months', label: 'Last 12 Months' },
+];
+
+const DONUT_COLORS = ['#2563eb', '#f97316', '#10b981', '#8b5cf6', '#ef4444'];
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('Overview');
-  const [data, setData] = useState(EMPTY_DATA);
-  const [loading, setLoading] = useState(true);
-
-  const fetchOverview = async ({ silent = false } = {}) => {
-    if (!silent) setLoading(true);
-    try {
-      const serviceType = TABS.find((t) => t.id === activeTab)?.serviceType;
-      const res = await apiClient.getDashboardOverview(serviceType);
-      setData(res.data);
-    } catch (err) {
-      console.error('Failed to load dashboard overview:', err);
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  };
-
-  useEffect(() => { fetchOverview(); }, [activeTab]);
-
-  // Keeps the Overview stats and recent-requests feed current without
-  // interrupting whatever tab/filter the admin currently has selected.
-  useAutoRefresh(() => fetchOverview({ silent: true }), { intervalMs: 5000 });
-
-  const { stats, category_breakdown, recent_requests, pending_actions } = data;
 
   return (
     <AdminLayout
-      title={`${activeTab} Performance`}
-      subtitle="Real-time updates on bookings and assignments."
-      actions={
-        <>
-          <button className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors">
-            <Filter className="w-4 h-4" /> Filter
-          </button>
-          <button className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-lg shadow-blue-600/20 hover:bg-blue-500 transition-colors">
-            Download Report
-          </button>
-        </>
-      }
+      title="Dashboard"
+      subtitle="Financial overview across receivables, cash flow, and expenses."
     >
-      {/* Dashboard Tabs */}
-      <div className="flex space-x-1 bg-slate-200 p-1 rounded-xl mb-6 w-full sm:w-fit overflow-x-auto">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap flex-shrink-0 ${activeTab === tab.id
-                ? 'bg-white text-slate-900 shadow-sm'
-                : 'text-slate-500 hover:text-slate-700 hover:bg-slate-300/50'
-              }`}
-          >
-            <tab.icon className="w-4 h-4" />
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Stats Grid - Dynamic based on Tab */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard
-          label="New Bookings"
-          value={stats.total_bookings}
-          sub="This month"
-          change={formatChange(stats.total_bookings_change)}
-          icon={Calendar}
-          color="blue"
-          loading={loading}
-        />
-        <StatCard
-          label="Active Requests"
-          value={stats.active_requests}
-          sub="Leads still in the pipeline"
-          icon={Activity}
-          color="amber"
-          loading={loading}
-        />
-        <StatCard
-          label="Available Staff"
-          value={stats.available_staff}
-          sub="Across all roles"
-          icon={Users}
-          color="emerald"
-          loading={loading}
-        />
-        <StatCard
-          label="Revenue (Monthly)"
-          value={fmt(stats.monthly_revenue)}
-          sub="Client payments this month"
-          change={formatChange(stats.monthly_revenue_change)}
-          icon={DollarSign}
-          color="rose"
-          loading={loading}
-        />
-      </div>
-
-      {/* Main Content Area */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
-
-        {/* Bookings Feed (Priority View) */}
-        <div className="xl:col-span-2 space-y-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-              <Clock className="w-5 h-5 text-blue-600" />
-              Recent Service Requests
-            </h2>
+      <div className="space-y-6">
+        <AgingRow />
+        <CashFlowCard />
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          <div className="xl:col-span-2">
+            <IncomeExpenseCard />
           </div>
-
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 text-xs uppercase font-semibold">
-                  <tr>
-                    <th className="py-4 pl-6 pr-4">Service Type</th>
-                    <th className="py-4 px-4">Client</th>
-                    <th className="py-4 px-4">Status</th>
-                    <th className="py-4 px-4">Received At</th>
-                    <th className="py-4 px-4">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {loading ? (
-                    <tr>
-                      <td colSpan={5} className="py-8 text-center text-slate-400 text-sm">Loading requests...</td>
-                    </tr>
-                  ) : recent_requests.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="py-8 text-center text-slate-400 text-sm">No recent service requests.</td>
-                    </tr>
-                  ) : (
-                    recent_requests.map((req) => (
-                      <BookingRow
-                        key={req.request_id}
-                        serviceType={req.service_type}
-                        client={req.patient_name || req.payer_name || 'Unknown'}
-                        status={req.status}
-                        time={timeAgo(req.created_at)}
-                        onDetails={() => navigate(`/admin/service-requests/${req.request_id}/summary`)}
-                      />
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-            <div className="p-4 border-t border-slate-100 text-center">
-              <button
-                onClick={() => navigate('/admin/service-requests')}
-                className="text-blue-600 text-sm font-medium hover:underline"
-              >
-                View All Requests
-              </button>
-            </div>
-          </div>
+          <TopExpensesCard />
         </div>
-
-        {/* Quick Actions & Status */}
-        <div className="space-y-6">
-          {/* System Status */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
-            <h2 className="text-lg font-bold text-slate-900 mb-4">Category Status</h2>
-            <div className="space-y-4">
-              {loading ? (
-                [1, 2, 3].map((i) => <div key={i} className="h-4 bg-slate-100 rounded animate-pulse" />)
-              ) : (
-                category_breakdown.map((cat) => (
-                  <StatusItem
-                    key={cat.key}
-                    label={cat.label}
-                    count={`${cat.active_count} active`}
-                    color={CATEGORY_DOT_COLOR[cat.key] || CATEGORY_DOT_COLOR.OTHER}
-                  />
-                ))
-              )}
-            </div>
-          </div>
-
-          {/* Pending Actions */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
-            <h2 className="text-lg font-bold text-slate-900 mb-4">Pending Actions</h2>
-            <div className="space-y-3">
-              {loading ? (
-                [1, 2].map((i) => <div key={i} className="h-12 bg-slate-100 rounded-lg animate-pulse" />)
-              ) : pending_actions.length === 0 ? (
-                <div className="p-3 bg-emerald-50 text-emerald-700 rounded-lg text-sm flex items-start gap-3">
-                  <CheckCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-                  <p className="font-medium">All caught up — no pending actions.</p>
-                </div>
-              ) : (
-                pending_actions.map((action) => {
-                  const meta = ACTION_META[action.type] || ACTION_META.STAFF_ADVANCE;
-                  const Icon = meta.icon;
-                  return (
-                    <button
-                      key={action.type}
-                      onClick={() => navigate(action.link)}
-                      className={`w-full p-3 rounded-lg text-sm flex items-start gap-3 text-left hover:opacity-80 transition-opacity ${meta.classes}`}
-                    >
-                      <Icon className="w-5 h-5 flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="font-bold">{action.label}</p>
-                        <p className="text-xs opacity-80">{action.count} {action.description}</p>
-                      </div>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </div>
-
+        <BankAccountsCard onManage={() => navigate('/admin/bank-accounts')} />
       </div>
     </AdminLayout>
   );
 };
 
-// Sub-components
+// ─── Widget 1: Receivables / Payables aging ─────────────────────────────────
 
-const StatCard = ({ label, value, sub, change, icon: Icon, color, loading }) => {
-  const colors = {
-    blue: "bg-blue-50 text-blue-600",
-    emerald: "bg-emerald-50 text-emerald-600",
-    amber: "bg-amber-50 text-amber-600",
-    rose: "bg-rose-50 text-rose-600",
-  };
+const AgingRow = () => {
+  const navigate = useNavigate();
+  const [receivables, setReceivables] = useState(null);
+  const [payables, setPayables] = useState(null);
+  const [overview, setOverview] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  const trend = change ? (change.startsWith('-') ? 'down' : 'up') : null;
+  useEffect(() => {
+    (async () => {
+      try {
+        const [recvRes, payRes, overviewRes] = await Promise.all([
+          apiClient.getReceivablesAging(),
+          apiClient.getPayablesAging(),
+          apiClient.getFinancesOverview(),
+        ]);
+        setReceivables(recvRes.data);
+        setPayables(payRes.data);
+        setOverview(overviewRes.data);
+      } catch (err) {
+        console.error('Failed to load aging summaries:', err);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  // Invoices/daily charges that are unpaid but not yet overdue — kept apart
+  // from total_outstanding, which also folds in registration fees.
+  const currentReceivables = Math.max(
+    parseFloat(overview?.outstanding_daily_invoices || 0) +
+    (parseFloat(overview?.outstanding_product_rental_invoices || 0) - parseFloat(overview?.overdue_product_rental_invoices || 0)),
+    0
+  );
 
   return (
-    <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm transition-transform hover:-translate-y-1">
-      <div className="flex justify-between items-start mb-4">
-        <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${colors[color]}`}>
-          <Icon className="w-6 h-6" />
-        </div>
-        {change && (
-          <span className={`text-xs font-bold px-2 py-1 rounded-full ${trend === 'up' ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
-            {change}
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <AgingCard
+        title="Total Receivables"
+        subLabel="Total Unpaid Invoices"
+        total={receivables?.total_receivables}
+        current={currentReceivables}
+        buckets={receivables?.buckets}
+        loading={loading}
+        onViewReport={() => navigate('/admin/reports/receivables-aging')}
+      />
+      <AgingCard
+        title="Total Payables"
+        subLabel="Total Unpaid Bills"
+        total={payables?.total_payables}
+        // Salary balances are owed the moment they're earned — there's no
+        // "not yet due" state the way an invoice has a due date — so payables
+        // has no current/not-yet-due split; the whole bar reads as overdue.
+        current={0}
+        buckets={payables?.buckets}
+        loading={loading}
+        onViewReport={() => navigate('/admin/reports/payables-aging')}
+      />
+    </div>
+  );
+};
+
+const AgingCard = ({ title, subLabel, total, current, buckets, loading, onViewReport }) => {
+  const [showBreakdown, setShowBreakdown] = useState(false);
+
+  const totalAmt = parseFloat(total || 0);
+  const currentAmt = parseFloat(current || 0);
+  const totalUnpaid = currentAmt + totalAmt;
+  const pctOverdue = totalUnpaid > 0 ? (totalAmt / totalUnpaid) * 100 : 0;
+  const pctCurrent = 100 - pctOverdue;
+
+  return (
+    <div className="relative bg-white rounded-2xl border border-slate-200 shadow-sm">
+      <div className="flex items-center justify-between px-6 py-4 bg-slate-50 border-b border-slate-100 rounded-t-2xl">
+        <h2 className="text-base font-bold text-slate-900">{title}</h2>
+        <button
+          type="button"
+          onClick={onViewReport}
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors"
+        >
+          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-blue-600">
+            <Plus className="h-2.5 w-2.5 text-white" strokeWidth={3} />
           </span>
-        )}
+          New
+        </button>
       </div>
-      <div>
-        <p className="text-slate-500 text-sm font-medium">{label}</p>
+
+      <div className="p-6">
         {loading ? (
-          <div className="h-8 w-20 bg-slate-100 rounded animate-pulse mt-1" />
+          <div className="h-8 w-40 bg-slate-100 rounded animate-pulse" />
         ) : (
-          <h3 className="text-2xl font-bold text-slate-900 mt-1">{value}</h3>
+          <>
+            <p className="text-xs font-medium text-amber-600">{subLabel}</p>
+            <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900">{fmtTight(totalAmt)}</p>
+
+            <div className="mt-4 h-2 w-full rounded-full bg-slate-100 overflow-hidden flex">
+              <div className="h-full bg-blue-500" style={{ width: `${pctCurrent}%` }} />
+              <div className="h-full bg-orange-500" style={{ width: `${pctOverdue}%` }} />
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
+              <span className="inline-flex items-center gap-1.5 text-slate-500">
+                <span className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
+                Current : <span className="font-semibold text-slate-700">{fmtTight(currentAmt)}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowBreakdown((v) => !v)}
+                disabled={!buckets?.length}
+                className="inline-flex items-center gap-1.5 text-slate-500 disabled:cursor-default"
+              >
+                <span className="w-2 h-2 rounded-full bg-orange-500 flex-shrink-0" />
+                Overdue : <span className="font-semibold text-slate-700">{fmtTight(totalAmt)}</span>
+                {buckets?.length ? (
+                  <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${showBreakdown ? 'rotate-180' : ''}`} />
+                ) : null}
+              </button>
+            </div>
+          </>
         )}
-        {sub && <p className="text-xs text-slate-400 mt-1">{sub}</p>}
       </div>
+
+      {showBreakdown && buckets?.length ? (
+        <div className="absolute z-10 top-full right-6 mt-2 w-64 bg-white rounded-xl border border-slate-200 shadow-lg p-3">
+          <div className="space-y-1.5">
+            {buckets.map((b) => (
+              <div key={b.key} className="flex items-center justify-between px-1">
+                <span className="text-sm text-slate-600">{b.label}</span>
+                <span className="text-sm font-semibold tabular-nums text-slate-700">{fmtTight(b.amount)}</span>
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={onViewReport}
+            className="mt-2 w-full text-center text-xs font-semibold text-blue-600 hover:text-blue-700 border-t border-slate-100 pt-2"
+          >
+            View full report
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 };
 
-const BookingRow = ({ serviceType, client, status, time, onDetails }) => {
-  const { key, label } = normalizeServiceType(serviceType);
+// ─── Widget 2: Cash Flow ─────────────────────────────────────────────────────
+
+const CashFlowCard = () => {
+  const [period, setPeriod] = useState('this_fiscal_year');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await apiClient.getCashFlowSummary({ period });
+      setData(res.data);
+    } catch (err) {
+      console.error('Failed to load cash flow summary:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [period]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
 
   return (
-    <tr className="hover:bg-slate-50 transition-colors group">
-      <td className="py-4 pl-6 pr-4">
-        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${SERVICE_TYPE_BADGE[key]}`}>
-          {label}
-        </span>
-      </td>
-      <td className="py-4 px-4">
-        <div className="font-medium text-slate-900">{client}</div>
-      </td>
-      <td className="py-4 px-4">
-        <span className={`inline-flex items-center px-2 py-1 rounded-lg text-xs font-bold ${REQUEST_STATUS_STYLES[status] || 'bg-slate-100 text-slate-600 border border-slate-200'}`}>
-          {REQUEST_STATUS_LABELS[status] || status}
-        </span>
-      </td>
-      <td className="py-4 px-4">
-        <div className="flex items-center gap-1.5 text-slate-500 font-medium text-sm group-hover:text-blue-600 transition-colors">
-          <Clock className="w-4 h-4" />
-          {time}
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-base font-bold text-slate-900">Cash Flow</h2>
+        <PeriodSelect value={period} onChange={setPeriod} options={CASH_FLOW_PERIODS} />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2">
+          {loading ? (
+            <div className="h-[220px] bg-slate-100 rounded animate-pulse" />
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <AreaChart data={data?.series || []}>
+                <defs>
+                  <linearGradient id="cashFlowFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#2563eb" stopOpacity={0.15} />
+                    <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="label" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                <Tooltip
+                  formatter={(val) => fmt(val)}
+                  contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '12px' }}
+                />
+                <Area type="monotone" dataKey="cash" stroke="#2563eb" strokeWidth={2} fill="url(#cashFlowFill)" name="Cash" />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
         </div>
-      </td>
-      <td className="py-4 px-4">
-        <button onClick={onDetails} className="text-slate-400 hover:text-blue-600 font-medium text-sm">Details</button>
-      </td>
-    </tr>
+
+        <div className="space-y-4">
+          <CashFlowStat label={`Cash as on ${data?.from || '—'}`} value={data?.opening_cash} loading={loading} dotColor="bg-slate-400" />
+          <CashFlowStat label="Incoming" value={data?.total_incoming} loading={loading} dotColor="bg-emerald-500" sign="+" />
+          <CashFlowStat label="Outgoing" value={data?.total_outgoing} loading={loading} dotColor="bg-red-500" sign="-" />
+          <CashFlowStat label={`Cash as on ${data?.to || '—'}`} value={data?.closing_cash} loading={loading} dotColor="bg-blue-600" sign="=" />
+        </div>
+      </div>
+    </div>
   );
 };
 
-const StatusItem = ({ label, count, color }) => (
-  <div className="flex items-center justify-between">
-    <div className="flex items-center gap-3">
-      <span className={`w-2.5 h-2.5 rounded-full ${color}`}></span>
-      <span className="text-sm font-medium text-slate-700">{label}</span>
+const CashFlowStat = ({ label, value, loading, dotColor, sign }) => (
+  <div>
+    <p className="flex items-center gap-2 text-xs text-slate-400">
+      <span className={`w-2.5 h-2.5 rounded-sm flex-shrink-0 ${dotColor}`} />
+      {label}
+    </p>
+    {loading ? (
+      <div className="h-5 w-28 bg-slate-100 rounded animate-pulse mt-1" />
+    ) : (
+      <p className="text-lg font-bold text-slate-900 mt-0.5">
+        {fmt(value)}{sign ? <span className="text-slate-400 font-medium text-sm ml-1">( {sign} )</span> : null}
+      </p>
+    )}
+  </div>
+);
+
+// ─── Widget 3a: Income & Expense ────────────────────────────────────────────
+
+const IncomeExpenseCard = () => {
+  const [period, setPeriod] = useState('this_fiscal_year');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await apiClient.getIncomeExpenseChart({ period });
+      setData(res.data);
+    } catch (err) {
+      console.error('Failed to load income & expense chart:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [period]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 h-full">
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-base font-bold text-slate-900">Income and Expense</h2>
+        <PeriodSelect value={period} onChange={setPeriod} options={INCOME_EXPENSE_PERIODS} />
+      </div>
+
+      <div className="flex items-center gap-6 mb-4 text-sm">
+        <span className="flex items-center gap-1.5 text-slate-500">
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Total Income
+          <span className="font-bold text-slate-900 ml-1">{loading ? '—' : fmt(data?.total_income)}</span>
+        </span>
+        <span className="flex items-center gap-1.5 text-slate-500">
+          <span className="w-2.5 h-2.5 rounded-full bg-red-400" /> Total Expenses
+          <span className="font-bold text-slate-900 ml-1">{loading ? '—' : fmt(data?.total_expense)}</span>
+        </span>
+      </div>
+
+      {loading ? (
+        <div className="h-[240px] bg-slate-100 rounded animate-pulse" />
+      ) : (
+        <ResponsiveContainer width="100%" height={240}>
+          <BarChart data={data?.periods || []}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+            <XAxis dataKey="label" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+            <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+            <Tooltip
+              formatter={(val) => fmt(val)}
+              contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '12px' }}
+            />
+            <Bar dataKey="income" fill="#10b981" name="Income" radius={[3, 3, 0, 0]} />
+            <Bar dataKey="expense" fill="#f87171" name="Expenses" radius={[3, 3, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      )}
+      <p className="text-xs text-slate-400 mt-3">* Income and expense values displayed are exclusive of taxes.</p>
     </div>
-    <span className="text-xs font-bold text-slate-400">{count}</span>
+  );
+};
+
+// ─── Widget 3b: Top Expenses ─────────────────────────────────────────────────
+
+const TopExpensesCard = () => {
+  const [period, setPeriod] = useState('this_fiscal_year');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await apiClient.getTopExpenses({ period });
+      setData(res.data);
+    } catch (err) {
+      console.error('Failed to load top expenses:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [period]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  const items = data?.items || [];
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 h-full">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-base font-bold text-slate-900">Top Expenses</h2>
+        <PeriodSelect value={period} onChange={setPeriod} options={TOP_EXPENSES_PERIODS} />
+      </div>
+
+      {loading ? (
+        <div className="h-[220px] bg-slate-100 rounded animate-pulse" />
+      ) : items.length === 0 ? (
+        <div className="h-[220px] flex items-center justify-center text-sm text-slate-400">No expenses in this period.</div>
+      ) : (
+        <>
+          <div className="relative">
+            <ResponsiveContainer width="100%" height={200}>
+              <PieChart>
+                <Pie
+                  data={items}
+                  dataKey="amount"
+                  nameKey="label"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={55}
+                  outerRadius={80}
+                  paddingAngle={3}
+                >
+                  {items.map((entry, index) => (
+                    <Cell key={entry.label} fill={DONUT_COLORS[index % DONUT_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(val) => fmt(val)} contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '12px' }} />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+              <p className="text-xs text-slate-400">All Expenses</p>
+              <p className="text-sm font-bold text-slate-900">{fmt(data?.total)}</p>
+            </div>
+          </div>
+          <div className="mt-3 space-y-2">
+            {items.map((item, index) => (
+              <div key={item.label} className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-2 text-slate-600">
+                  <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: DONUT_COLORS[index % DONUT_COLORS.length] }} />
+                  {item.label}
+                </span>
+                <span className="font-semibold text-slate-700 tabular-nums">{fmt(item.amount)}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+// ─── Widget 4: Bank Accounts ─────────────────────────────────────────────────
+
+const BankAccountsCard = ({ onManage }) => {
+  const [accounts, setAccounts] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await apiClient.getBankAccounts();
+        setAccounts((res.data || []).filter((a) => a.is_active));
+      } catch (err) {
+        console.error('Failed to load bank accounts:', err);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between px-6 py-4 bg-slate-50 border-b border-slate-100">
+        <h2 className="text-base font-bold text-slate-900">Bank Accounts</h2>
+        <button onClick={onManage} className="text-xs font-medium text-blue-600 hover:underline">
+          Manage
+        </button>
+      </div>
+      <div className="p-2">
+        {loading ? (
+          <div className="p-4 space-y-3">
+            {[1, 2].map((i) => <div key={i} className="h-10 bg-slate-100 rounded animate-pulse" />)}
+          </div>
+        ) : accounts.length === 0 ? (
+          <div className="p-6 text-center text-sm text-slate-400">No active bank accounts.</div>
+        ) : (
+          accounts.map((acc) => (
+            <div key={acc.account_id} className="flex items-center justify-between px-4 py-3 hover:bg-slate-50 rounded-xl transition-colors">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
+                  <Landmark className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">{acc.account_nickname}</p>
+                  <p className="text-xs text-slate-400">{acc.bank_name}</p>
+                </div>
+              </div>
+              <p className="text-sm font-bold text-slate-900 tabular-nums">
+                {fmt(acc.current_balance ?? acc.opening_balance)}
+              </p>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ─── Shared ──────────────────────────────────────────────────────────────────
+
+const PeriodSelect = ({ value, onChange, options }) => (
+  <div className="relative">
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="appearance-none bg-slate-50 border border-slate-200 text-xs font-medium text-slate-600 rounded-lg pl-3 pr-7 py-1.5 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/20 cursor-pointer"
+    >
+      {options.map((opt) => (
+        <option key={opt.key} value={opt.key}>{opt.label}</option>
+      ))}
+    </select>
+    <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
   </div>
 );
 

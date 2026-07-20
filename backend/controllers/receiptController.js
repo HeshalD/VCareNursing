@@ -215,7 +215,7 @@ const sendReceiptWhatsApp = async (req, res) => {
         }
 
         const result = await db.query(
-            `SELECT r.*, cp.full_name AS client_name, u.mobile_number
+            `SELECT r.*, u.mobile_number
              FROM payment_receipts r
              JOIN client_profiles cp ON cp.client_profile_id = r.client_id
              JOIN users u ON u.user_id = cp.user_id
@@ -247,7 +247,7 @@ const sendReceiptWhatsApp = async (req, res) => {
         try {
             const waRes = await sendPaymentReceipt(
                 receipt.mobile_number,
-                receipt.client_name || receipt.received_from || 'Valued Client',
+                receipt.received_from || 'Valued Client',
                 receipt.receipt_code,
                 fmtAmt(receipt.total_amount),
                 fmtDate(receipt.payment_date),
@@ -294,7 +294,7 @@ const sendReceiptWhatsApp = async (req, res) => {
                     if (invoice?.invoice_pdf_url && invoice.payer_mobile) {
                         await sendClientInvoice(
                             invoice.payer_mobile,
-                            invoice.payer_name || receipt.client_name || 'Valued Client',
+                            invoice.payer_name || receipt.received_from || 'Valued Client',
                             invoice.invoice_code,
                             fmtAmt(invoice.total_amount),
                             invoice.invoice_pdf_url

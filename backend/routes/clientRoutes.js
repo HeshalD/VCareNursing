@@ -37,6 +37,11 @@ router.get('/:client_id/invoices', protect, restrictTo('SUPER_ADMIN', 'COORDINAT
 // Registration fee invoices — must stay above the generic '/:client_id' catch-all route below.
 router.get('/all-reg-fee-invoices', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.getAllRegFeeInvoices);
 router.get('/:client_id/reg-fee-invoices', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.getClientRegFeeInvoices);
+router.post('/reg-fee-invoices/:invoice_id/resend', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.resendRegFeeInvoice);
+
+// On-demand daily invoice PDF download / resend (must be before /:client_id catch-all)
+router.get('/invoice-pdf/:daily_invoice_id', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.downloadDailyInvoicePdf);
+router.post('/invoice/:daily_invoice_id/resend', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.resendDailyInvoice);
 
 // Payment and financial endpoints
 router.get('/payment-history/:client_id', clientController.getClientPaymentHistory);
@@ -51,9 +56,6 @@ router.post('/proxy-create', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), 
 
 // Global admin invoices list (must be before /:client_id catch-all)
 router.get('/all-invoices', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.getAdminInvoices);
-
-// On-demand daily invoice PDF download (must be before /:client_id catch-all)
-router.get('/invoice-pdf/:daily_invoice_id', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), clientController.downloadDailyInvoicePdf);
 
 // Generic client profile route - MUST come after specific routes
 router.get('/:client_id', clientController.getClientProfile);

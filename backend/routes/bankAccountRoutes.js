@@ -82,6 +82,19 @@ router.get(
 );
 
 /**
+ * @route   PATCH /api/bank-accounts/:account_id/transactions/:transaction_id/verify
+ * @desc    Mark a transaction as bank-verified/unverified (audit against bank statement)
+ * @access  Private (SUPER_ADMIN only)
+ * @body    verified: boolean
+ */
+router.patch(
+  '/:account_id/transactions/:transaction_id/verify',
+  protect,
+  restrictTo('SUPER_ADMIN'),
+  bankAccountController.verifyAccountTransaction
+);
+
+/**
  * @route   GET /api/bank-accounts/:account_id/reconciliation
  * @desc    Get reconciliation report for a bank account
  * @access  Private (SUPER_ADMIN, ACCOUNTS)

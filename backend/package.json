@@ -8,7 +8,8 @@
     "dev": "nodemon server.js",
     "deploy": "node server.js",
     "migrate": "node migrate.js",
-    "seed:admin": "node seedAdmin.js"
+    "seed:admin": "node seedAdmin.js",
+    "seed:test-staff": "node scripts/seedTestStaff.js"
   },
   "repository": {
     "type": "git",

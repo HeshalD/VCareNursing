@@ -115,6 +115,12 @@ router.get('/:booking_id', protect,
 
 // Client-specific routes
 router.get('/client/:client_id', protect, bookingController.getClientBookings);
+router.get(
+    '/client/:client_id/overdue-bookings',
+    protect,
+    restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'),
+    paymentTrackingController.getClientOverdueBookings
+);
 
 // Staff-specific routes
 router.get('/staff/:staff_id', protect, bookingController.getStaffBookings);

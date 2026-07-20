@@ -1,12 +1,13 @@
 const crypto = require('crypto');
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
-const { sendRegFeeNotice, sendRegFeeInvoice, sendClientWelcomeNew } = require('../utils/metaWhatsapp');
+const { sendRegFeeNotice, sendRegFeeInvoice, sendClientWelcomeNew, sendClientInvoice } = require('../utils/metaWhatsapp');
 const { sendSms } = require('../utils/sms');
 const { generateAndUploadRegFeeInvoice } = require('../utils/regFeeInvoicePdf');
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const html_to_pdf = require('html-pdf-node');
 const dailyInvoiceTemplate = require('../templates/dailyInvoiceTemplate');
+const { uploadBufferToS3 } = require('../config/s3Config');
 
 async function getActorName(userId) {
   const result = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [userId]);
@@ -379,6 +380,8 @@ exports.getAdminClientDetail = async (req, res) => {
          sr.service_request_code,
          b.booking_code,
          pq.quote_id as product_quote_id,
+         CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
+              THEN cp.company_name ELSE cp.full_name END AS billed_to_name,
          COALESCE((
            SELECT SUM(pt.amount_received)
            FROM payment_tracking pt
@@ -388,6 +391,7 @@ exports.getAdminClientDetail = async (req, res) => {
        JOIN service_requests sr ON q.request_id = sr.request_id
        LEFT JOIN bookings b ON q.booking_id = b.booking_id
        LEFT JOIN quotations pq ON pq.linked_quote_id = q.quote_id AND pq.quote_type = 'PRODUCT'
+       LEFT JOIN client_profiles cp ON sr.client_id = cp.client_profile_id
        WHERE sr.client_id = $1
        ORDER BY q.created_at DESC`,
       [client_id]
@@ -1961,7 +1965,7 @@ exports.getClientInvoices = async (req, res) => {
         `SELECT
             bdi.daily_invoice_id, bdi.service_date::text, bdi.status, bdi.amount,
             bdi.entry_mode, bdi.decided_by_name, bdi.decided_at, bdi.notes,
-            bdi.shift_slot_id,
+            bdi.shift_slot_id, bdi.whatsapp_sent_at,
             ss.label AS shift_label, ss.shift_number,
             b.booking_id, b.booking_code, b.service_type,
             CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
@@ -2062,52 +2066,82 @@ exports.getAdminInvoices = async (req, res) => {
  * @desc    Generate and download a single daily invoice as a PDF (on demand)
  * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
  */
+function formatInvoiceDate(v) {
+  if (!v) return null;
+  const d = new Date(v);
+  return isNaN(d) ? null : d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+// Loads a single daily invoice row plus the booking/client context needed to
+// render it, so both the on-demand PDF download and the WhatsApp resend can
+// build the exact same document from one query.
+async function getDailyInvoiceRow(dailyInvoiceId) {
+  const result = await db.query(
+    `SELECT
+        bdi.daily_invoice_id, bdi.service_date::text, bdi.status, bdi.amount, bdi.pdf_url,
+        bdi.decided_by_name, bdi.decided_at, bdi.notes,
+        ss.label AS shift_label, ss.shift_number,
+        b.booking_id, b.booking_code, b.service_type, b.client_id,
+        CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
+             THEN cp.company_name ELSE cp.full_name END AS client_name,
+        u.mobile_number AS client_mobile
+     FROM booking_daily_invoices bdi
+     JOIN bookings b ON bdi.booking_id = b.booking_id
+     LEFT JOIN booking_shift_slots ss ON bdi.shift_slot_id = ss.shift_slot_id
+     LEFT JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+     LEFT JOIN users u ON cp.user_id = u.user_id
+     WHERE bdi.daily_invoice_id = $1`,
+    [dailyInvoiceId]
+  );
+  return result.rows[0] || null;
+}
+
+function buildDailyInvoiceHtml(inv, invoiceCode) {
+  return dailyInvoiceTemplate({
+    invoice_code: invoiceCode,
+    invoice_date: formatInvoiceDate(new Date()),
+    service_date: formatInvoiceDate(inv.service_date),
+    client_name: inv.client_name,
+    booking_code: inv.booking_code || String(inv.booking_id).slice(0, 8),
+    service_type: inv.service_type,
+    shift_label: inv.shift_label || (inv.shift_number ? `Shift ${inv.shift_number}` : null),
+    status: inv.status,
+    amount: inv.amount,
+    decided_by_name: inv.decided_by_name,
+    decided_at: formatInvoiceDate(inv.decided_at),
+    notes: inv.notes,
+  });
+}
+
+// Generates (once) and persists a daily invoice's PDF to S3 — idempotent,
+// mirrors invoiceController.ensureInvoicePdf's pattern — so a WhatsApp resend
+// always links to the same stable document instead of a fresh one each time.
+async function ensureDailyInvoicePdf(dailyInvoiceId) {
+  const inv = await getDailyInvoiceRow(dailyInvoiceId);
+  if (!inv) return null;
+  if (inv.pdf_url) return inv;
+
+  const invoiceCode = `DINV-${String(inv.daily_invoice_id).slice(0, 8).toUpperCase()}`;
+  const html = buildDailyInvoiceHtml(inv, invoiceCode);
+  const pdfBuffer = await html_to_pdf.generatePdf({ content: html }, { format: 'A4' });
+  const pdfKey = `invoices/${invoiceCode}_${Date.now()}.pdf`;
+  const pdfUrl = await uploadBufferToS3(pdfBuffer, pdfKey, 'application/pdf');
+
+  await db.query(`UPDATE booking_daily_invoices SET pdf_url = $1 WHERE daily_invoice_id = $2`, [pdfUrl, dailyInvoiceId]);
+  inv.pdf_url = pdfUrl;
+  return inv;
+}
+
 exports.downloadDailyInvoicePdf = async (req, res) => {
   const { daily_invoice_id } = req.params;
   try {
-    const result = await db.query(
-      `SELECT
-          bdi.daily_invoice_id, bdi.service_date::text, bdi.status, bdi.amount,
-          bdi.decided_by_name, bdi.decided_at, bdi.notes,
-          ss.label AS shift_label, ss.shift_number,
-          b.booking_id, b.booking_code, b.service_type,
-          CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
-               THEN cp.company_name ELSE cp.full_name END AS client_name
-       FROM booking_daily_invoices bdi
-       JOIN bookings b ON bdi.booking_id = b.booking_id
-       LEFT JOIN booking_shift_slots ss ON bdi.shift_slot_id = ss.shift_slot_id
-       LEFT JOIN client_profiles cp ON b.client_id = cp.client_profile_id
-       WHERE bdi.daily_invoice_id = $1`,
-      [daily_invoice_id]
-    );
-
-    if (result.rows.length === 0) {
+    const inv = await getDailyInvoiceRow(daily_invoice_id);
+    if (!inv) {
       return res.status(404).json({ status: 'error', message: 'Invoice not found.' });
     }
 
-    const inv = result.rows[0];
-    const formatDate = (v) => {
-      if (!v) return null;
-      const d = new Date(v);
-      return isNaN(d) ? null : d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-    };
-
     const invoiceCode = `DINV-${String(inv.daily_invoice_id).slice(0, 8).toUpperCase()}`;
-    const html = dailyInvoiceTemplate({
-      invoice_code: invoiceCode,
-      invoice_date: formatDate(new Date()),
-      service_date: formatDate(inv.service_date),
-      client_name: inv.client_name,
-      booking_code: inv.booking_code || String(inv.booking_id).slice(0, 8),
-      service_type: inv.service_type,
-      shift_label: inv.shift_label || (inv.shift_number ? `Shift ${inv.shift_number}` : null),
-      status: inv.status,
-      amount: inv.amount,
-      decided_by_name: inv.decided_by_name,
-      decided_at: formatDate(inv.decided_at),
-      notes: inv.notes,
-    });
-
+    const html = buildDailyInvoiceHtml(inv, invoiceCode);
     const pdfBuffer = await html_to_pdf.generatePdf({ content: html }, { format: 'A4' });
 
     res.set({
@@ -2123,6 +2157,56 @@ exports.downloadDailyInvoicePdf = async (req, res) => {
 };
 
 /**
+ * @route   POST /api/client/invoice/:daily_invoice_id/resend
+ * @desc    Send (or resend) a single daily invoice's PDF to the client over
+ *          WhatsApp. Generates + persists the PDF first if it doesn't exist yet.
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ */
+exports.resendDailyInvoice = async (req, res) => {
+  const { daily_invoice_id } = req.params;
+  try {
+    const inv = await ensureDailyInvoicePdf(daily_invoice_id);
+    if (!inv) {
+      return res.status(404).json({ status: 'error', message: 'Invoice not found.' });
+    }
+    if (!inv.client_mobile) {
+      return res.status(400).json({ status: 'error', message: 'Client has no mobile number on file.' });
+    }
+
+    const invoiceCode = `DINV-${String(inv.daily_invoice_id).slice(0, 8).toUpperCase()}`;
+
+    try {
+      await sendClientInvoice(inv.client_mobile, inv.client_name || 'Valued Client', invoiceCode, inv.amount, inv.pdf_url);
+    } catch (sendErr) {
+      console.error('Resend Daily Invoice WhatsApp Error:', sendErr.message);
+      return res.status(502).json({ status: 'error', message: 'WhatsApp send failed — the "vcare_client_invoice" template may not be approved yet.' });
+    }
+
+    await db.query(`UPDATE booking_daily_invoices SET whatsapp_sent_at = NOW() WHERE daily_invoice_id = $1`, [daily_invoice_id]);
+
+    try {
+      const actorName = await getActorName(req.user.user_id);
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName,
+        actorRole: extractActorRole(req.user.role),
+        actionType: 'DAILY_INVOICE_RESENT',
+        entityType: 'CLIENT',
+        entityId: String(inv.client_id),
+        details: { daily_invoice_id, invoice_code: invoiceCode, amount: inv.amount },
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (daily invoice resend):', logErr.message);
+    }
+
+    res.status(200).json({ status: 'success', message: 'Invoice sent via WhatsApp.', data: { pdf_url: inv.pdf_url } });
+  } catch (err) {
+    console.error('Resend daily invoice error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to resend invoice.' });
+  }
+};
+
+/**
  * @route   GET /api/client/:client_id/reg-fee-invoices
  * @desc    All registration fee invoices ever sent to a single client
  * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
@@ -2132,9 +2216,13 @@ exports.getClientRegFeeInvoices = async (req, res) => {
   try {
     const result = await db.query(
       `SELECT crfi.invoice_id, crfi.invoice_code, crfi.amount, crfi.pdf_url, crfi.status, crfi.created_at,
-              ba.account_nickname AS bank_account_nickname, ba.bank_name
+              crfi.whatsapp_resent_at,
+              ba.account_nickname AS bank_account_nickname, ba.bank_name,
+              CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
+                   THEN cp.company_name ELSE cp.full_name END AS billed_to_name
        FROM client_reg_fee_invoices crfi
        LEFT JOIN bank_accounts ba ON crfi.bank_account_id = ba.account_id
+       LEFT JOIN client_profiles cp ON crfi.client_id = cp.client_profile_id
        WHERE crfi.client_id = $1
        ORDER BY crfi.created_at DESC`,
       [client_id]
@@ -2143,6 +2231,84 @@ exports.getClientRegFeeInvoices = async (req, res) => {
   } catch (err) {
     console.error('Get client reg fee invoices error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to fetch registration fee invoices.' });
+  }
+};
+
+/**
+ * @route   POST /api/client/reg-fee-invoices/:invoice_id/resend
+ * @desc    Resend an already-sent registration fee invoice PDF over WhatsApp,
+ *          reusing its existing PDF, bank details and receipt-upload token
+ *          rather than generating a new invoice.
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ */
+exports.resendRegFeeInvoice = async (req, res) => {
+  const { invoice_id } = req.params;
+  try {
+    const result = await db.query(
+      `SELECT crfi.invoice_id, crfi.invoice_code, crfi.amount, crfi.pdf_url, crfi.client_id,
+              cp.full_name, cp.company_name, cp.display_name_source, cp.reg_fee_receipt_token,
+              u.mobile_number,
+              ba.bank_name, ba.account_holder_name, ba.account_number, ba.branch_name
+       FROM client_reg_fee_invoices crfi
+       JOIN client_profiles cp ON cp.client_profile_id = crfi.client_id
+       JOIN users u ON u.user_id = cp.user_id
+       LEFT JOIN bank_accounts ba ON ba.account_id = crfi.bank_account_id
+       WHERE crfi.invoice_id = $1`,
+      [invoice_id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ status: 'error', message: 'Invoice not found.' });
+    }
+
+    const inv = result.rows[0];
+    if (!inv.mobile_number) {
+      return res.status(400).json({ status: 'error', message: 'Client has no mobile number on file.' });
+    }
+    if (!inv.reg_fee_receipt_token) {
+      return res.status(400).json({ status: 'error', message: 'This client has no active receipt-upload link — send a fresh invoice from the registration fee tab instead.' });
+    }
+
+    const displayName = (inv.display_name_source === 'COMPANY_NAME' && inv.company_name) || inv.full_name;
+
+    try {
+      await sendRegFeeInvoice(
+        inv.mobile_number,
+        displayName,
+        parseFloat(inv.amount).toFixed(2),
+        inv.bank_name || '—',
+        inv.account_holder_name || '—',
+        inv.account_number || '—',
+        inv.branch_name || '—',
+        inv.pdf_url,
+        inv.reg_fee_receipt_token
+      );
+    } catch (sendErr) {
+      console.error('Resend Reg Fee Invoice WhatsApp Error:', sendErr.message);
+      return res.status(502).json({ status: 'error', message: 'Failed to resend invoice via WhatsApp.' });
+    }
+
+    await db.query(`UPDATE client_reg_fee_invoices SET whatsapp_resent_at = NOW() WHERE invoice_id = $1`, [invoice_id]);
+
+    try {
+      const actorName = await getActorName(req.user.user_id);
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName,
+        actorRole: extractActorRole(req.user.role),
+        actionType: 'REG_FEE_INVOICE_RESENT',
+        entityType: 'CLIENT',
+        entityId: String(inv.client_id),
+        details: { invoice_code: inv.invoice_code, amount: inv.amount },
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (reg fee invoice resend):', logErr.message);
+    }
+
+    res.status(200).json({ status: 'success', message: 'Invoice resent via WhatsApp.' });
+  } catch (err) {
+    console.error('Resend reg fee invoice error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to resend invoice.' });
   }
 };
 

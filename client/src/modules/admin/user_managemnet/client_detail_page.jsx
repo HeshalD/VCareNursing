@@ -49,7 +49,7 @@ const NOTE_TYPE_META = {
 };
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
-import { RefundDepositModal } from '../products/ProductsPage';
+import { RefundDepositModal, ForfeitDepositModal } from '../products/ProductsPage';
 import AdminDirectBookingDrawer from '../bookings/AdminDirectBookingDrawer';
 import RegFeeDrawer from './RegFeeDrawer';
 import CreateQuotationDrawer from './CreateQuotationDrawer';
@@ -217,6 +217,9 @@ const ClientDetailPage = () => {
   const [invoiceDateFrom, setInvoiceDateFrom] = useState('');
   const [invoiceDateTo, setInvoiceDateTo] = useState('');
   const [invoiceTypeView, setInvoiceTypeView] = useState('REG_FEE');
+  const [quoteTypeView, setQuoteTypeView] = useState('SERVICE');
+  const [invoiceActionBusyId, setInvoiceActionBusyId] = useState('');
+  const [invoiceActionError, setInvoiceActionError] = useState('');
 
   const [regFeeInvoices, setRegFeeInvoices] = useState([]);
   const [regFeeInvoicesLoading, setRegFeeInvoicesLoading] = useState(false);
@@ -234,9 +237,7 @@ const ClientDetailPage = () => {
   const [deposits, setDeposits] = useState([]);
   const [depositsLoading, setDepositsLoading] = useState(false);
   const [depositError, setDepositError] = useState('');
-  const [busyDepositId, setBusyDepositId] = useState('');
   const [forfeitDepositTarget, setForfeitDepositTarget] = useState(null);
-  const [forfeitDepositNotes, setForfeitDepositNotes] = useState('');
   const [refundDepositTarget, setRefundDepositTarget] = useState(null);
 
   const [editingBilling, setEditingBilling] = useState(false);
@@ -451,6 +452,91 @@ const ClientDetailPage = () => {
     }
   };
 
+  const handleResendRegFeeInvoice = async (invoiceId) => {
+    setInvoiceActionBusyId(invoiceId);
+    setInvoiceActionError('');
+    try {
+      await apiClient.resendRegFeeInvoice(invoiceId);
+      await fetchRegFeeInvoices();
+    } catch (err) {
+      setInvoiceActionError(err.message || 'Failed to resend invoice.');
+    } finally {
+      setInvoiceActionBusyId('');
+    }
+  };
+
+  const handleDownloadDailyInvoice = async (inv) => {
+    setInvoiceActionBusyId(inv.daily_invoice_id);
+    setInvoiceActionError('');
+    try {
+      const blob = await apiClient.downloadDailyInvoicePdf(inv.daily_invoice_id);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Invoice_${inv.booking_code || inv.booking_id?.slice(0, 8)}_${inv.service_date}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setInvoiceActionError(err.message || 'Failed to download invoice PDF.');
+    } finally {
+      setInvoiceActionBusyId('');
+    }
+  };
+
+  const handleResendDailyInvoice = async (inv) => {
+    setInvoiceActionBusyId(inv.daily_invoice_id);
+    setInvoiceActionError('');
+    try {
+      await apiClient.resendDailyInvoice(inv.daily_invoice_id);
+      await fetchClientInvoices();
+    } catch (err) {
+      setInvoiceActionError(err.message || 'Failed to resend invoice.');
+    } finally {
+      setInvoiceActionBusyId('');
+    }
+  };
+
+  const handleDownloadProductInvoice = async (inv) => {
+    setInvoiceActionBusyId(inv.invoice_id);
+    setInvoiceActionError('');
+    try {
+      const res = await apiClient.getProductInvoicePdf(inv.invoice_id);
+      if (res?.pdf_url) window.open(res.pdf_url, '_blank', 'noopener');
+    } catch (err) {
+      setInvoiceActionError(err.message || 'Failed to generate invoice PDF.');
+    } finally {
+      setInvoiceActionBusyId('');
+    }
+  };
+
+  const handleResendProductInvoice = async (inv) => {
+    setInvoiceActionBusyId(inv.invoice_id);
+    setInvoiceActionError('');
+    try {
+      await apiClient.resendProductInvoice(inv.invoice_id);
+      await fetchProductInvoices();
+    } catch (err) {
+      setInvoiceActionError(err.message || 'Failed to resend invoice.');
+    } finally {
+      setInvoiceActionBusyId('');
+    }
+  };
+
+  const handleResendCombinedInvoice = async (inv) => {
+    setInvoiceActionBusyId(inv.quote_id);
+    setInvoiceActionError('');
+    try {
+      await apiClient.sendCombinedInvoice(inv.quote_id);
+      await fetchCombinedInvoices();
+    } catch (err) {
+      setInvoiceActionError(err.message || 'Failed to resend invoice.');
+    } finally {
+      setInvoiceActionBusyId('');
+    }
+  };
+
   const fetchProductQuotes = async () => {
     if (!clientId) return;
     try {
@@ -505,21 +591,6 @@ const ClientDetailPage = () => {
       // non-fatal
     } finally {
       setDepositsLoading(false);
-    }
-  };
-
-  const handleForfeitDepositRow = async () => {
-    setBusyDepositId(forfeitDepositTarget.deposit_id);
-    setDepositError('');
-    try {
-      await apiClient.forfeitDeposit(forfeitDepositTarget.deposit_id, forfeitDepositNotes || undefined);
-      setForfeitDepositTarget(null);
-      setForfeitDepositNotes('');
-      fetchDeposits();
-    } catch (err) {
-      setDepositError(err.message || 'Failed to forfeit deposit');
-    } finally {
-      setBusyDepositId('');
     }
   };
 
@@ -593,8 +664,8 @@ const ClientDetailPage = () => {
   useEffect(() => {
     if (activeSection === 'bookings') fetchBookingsPag();
     if (activeSection === 'invoices') { fetchClientInvoices(); fetchRegFeeInvoices(); fetchProductInvoices(); fetchCombinedInvoices(); }
-    if (activeSection === 'products') { fetchProductQuotes(); fetchProductInvoices(); fetchRentedItems(); fetchDeposits(); }
-    if (activeSection === 'quotes') fetchQuoteLineItems();
+    if (activeSection === 'products') { fetchProductInvoices(); fetchRentedItems(); fetchDeposits(); }
+    if (activeSection === 'quotes') { fetchQuoteLineItems(); fetchProductQuotes(); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSection]);
 
@@ -824,6 +895,13 @@ const ClientDetailPage = () => {
   const overdueSummary = detail?.overdue_summary || {};
   const recentActivity = detail?.recent_activity || {};
 
+  // The client's chosen "bill to" name — company name if they've opted into
+  // company billing, else their own full name. Mirrors the backend CASE
+  // expression used to resolve display_name_source across quotes/invoices.
+  const billedToName = clientProfile.display_name_source === 'COMPANY_NAME' && clientProfile.company_name
+    ? clientProfile.company_name
+    : (clientProfile.full_name || '-');
+
   const activeBookings = useMemo(() => recentActivity.bookings || [], [recentActivity.bookings]);
   const recentQuotes = useMemo(() => recentActivity.quotations || [], [recentActivity.quotations]);
   const recentAssignments = useMemo(() => recentActivity.staff_assignments || [], [recentActivity.staff_assignments]);
@@ -1047,6 +1125,7 @@ const ClientDetailPage = () => {
                 >
                   <div className="space-y-4">
                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                      <InfoRow label="Billed To" value={rcpt.received_from || billedToName} />
                       <InfoRow label="Receipt No." value={rcpt.receipt_code} />
                       <InfoRow label="Date" value={formatDateTime(rcpt.payment_date || rcpt.created_at)} />
                       <InfoRow label="Amount" value={formatMoney(rcpt.total_amount)} />
@@ -1393,6 +1472,12 @@ const ClientDetailPage = () => {
               </button>
             </div>
 
+            {invoiceActionError && (
+              <div className="flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {invoiceActionError}
+              </div>
+            )}
+
             {/* Registration Fee Invoices */}
             {invoiceTypeView === 'REG_FEE' && (
             <div>
@@ -1410,17 +1495,21 @@ const ClientDetailPage = () => {
                       <tr>
                         <th className="px-4 py-3 text-left">Date Sent</th>
                         <th className="px-4 py-3 text-left">Invoice Code</th>
+                        <th className="px-4 py-3 text-left">Billed To</th>
                         <th className="px-4 py-3 text-left">Bank Account</th>
                         <th className="px-4 py-3 text-left">Status</th>
                         <th className="px-4 py-3 text-right">Amount</th>
-                        <th className="px-4 py-3 text-left">Download</th>
+                        <th className="px-4 py-3 text-left">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 bg-white">
-                      {regFeeInvoices.map((inv) => (
+                      {regFeeInvoices.map((inv) => {
+                        const busy = invoiceActionBusyId === inv.invoice_id;
+                        return (
                         <tr key={inv.invoice_id} className="hover:bg-gray-50 transition-colors">
                           <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{formatDateTime(inv.created_at)}</td>
                           <td className="px-4 py-3 font-mono text-xs text-gray-600">{inv.invoice_code}</td>
+                          <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{inv.billed_to_name || '-'}</td>
                           <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
                             {[inv.bank_account_nickname, inv.bank_name].filter(Boolean).join(' â€” ') || 'â€”'}
                           </td>
@@ -1431,17 +1520,30 @@ const ClientDetailPage = () => {
                           </td>
                           <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(inv.amount)}</td>
                           <td className="px-4 py-3">
-                            <a
-                              href={inv.pdf_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
-                            >
-                              <Download className="h-3.5 w-3.5" /> Download
-                            </a>
+                            <div className="flex items-center gap-1.5">
+                              <a
+                                href={inv.pdf_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                              >
+                                <Download className="h-3.5 w-3.5" /> Download
+                              </a>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => handleResendRegFeeInvoice(inv.invoice_id)}
+                                title="Resend invoice via WhatsApp"
+                                className="inline-flex items-center gap-1.5 rounded bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5" />}
+                                Resend
+                              </button>
+                            </div>
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1521,18 +1623,23 @@ const ClientDetailPage = () => {
                   <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
                     <tr>
                       <th className="px-4 py-3 text-left">Date</th>
+                      <th className="px-4 py-3 text-left">Billed To</th>
                       <th className="px-4 py-3 text-left">Booking</th>
                       <th className="px-4 py-3 text-left">Shift</th>
                       <th className="px-4 py-3 text-left">Status</th>
                       <th className="px-4 py-3 text-right">Amount</th>
                       <th className="px-4 py-3 text-left">Decided By</th>
                       <th className="px-4 py-3 text-left">Notes</th>
+                      <th className="px-4 py-3 text-left">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 bg-white">
-                    {clientInvoices.map((inv) => (
+                    {clientInvoices.map((inv) => {
+                      const busy = invoiceActionBusyId === inv.daily_invoice_id;
+                      return (
                       <tr key={inv.daily_invoice_id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{formatDate(inv.service_date)}</td>
+                        <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{inv.client_name || '-'}</td>
                         <td className="px-4 py-3">
                           <button
                             type="button"
@@ -1559,8 +1666,31 @@ const ClientDetailPage = () => {
                           {inv.decided_at && <span className="block text-[11px] text-gray-400">{formatDate(inv.decided_at)}</span>}
                         </td>
                         <td className="px-4 py-3 text-gray-500 max-w-[180px] truncate">{inv.notes || 'â€”'}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => handleDownloadDailyInvoice(inv)}
+                              title="Download invoice PDF"
+                              className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => handleResendDailyInvoice(inv)}
+                              title="Resend invoice via WhatsApp"
+                              className="inline-flex items-center gap-1.5 rounded bg-green-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5" />}
+                            </button>
+                          </div>
+                        </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1584,17 +1714,22 @@ const ClientDetailPage = () => {
                     <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
                       <tr>
                         <th className="px-4 py-3 text-left">Invoice Code</th>
+                        <th className="px-4 py-3 text-left">Billed To</th>
                         <th className="px-4 py-3 text-left">Category</th>
                         <th className="px-4 py-3 text-left">Status</th>
                         <th className="px-4 py-3 text-right">Amount</th>
                         <th className="px-4 py-3 text-left">Created</th>
                         <th className="px-4 py-3 text-left">Paid</th>
+                        <th className="px-4 py-3 text-left">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 bg-white">
-                      {productInvoices.map((inv) => (
+                      {productInvoices.map((inv) => {
+                        const busy = invoiceActionBusyId === inv.invoice_id;
+                        return (
                         <tr key={inv.invoice_id} className="hover:bg-gray-50 transition-colors">
                           <td className="px-4 py-3 font-mono text-xs text-gray-600 whitespace-nowrap">{inv.invoice_code}</td>
+                          <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{inv.client_name || inv.walk_in_name || '-'}</td>
                           <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{inv.category}</td>
                           <td className="px-4 py-3">
                             <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${PRODUCT_INVOICE_STATUS_COLORS[inv.status] || 'bg-gray-100 text-gray-600'}`}>
@@ -1604,8 +1739,31 @@ const ClientDetailPage = () => {
                           <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(inv.amount)}</td>
                           <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{formatDate(inv.created_at)}</td>
                           <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{inv.paid_at ? formatDate(inv.paid_at) : '—'}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => handleDownloadProductInvoice(inv)}
+                                title="Download invoice PDF"
+                                className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => handleResendProductInvoice(inv)}
+                                title="Resend invoice via WhatsApp"
+                                className="inline-flex items-center gap-1.5 rounded bg-green-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5" />}
+                              </button>
+                            </div>
+                          </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1634,30 +1792,47 @@ const ClientDetailPage = () => {
                       <tr>
                         <th className="px-4 py-3 text-left">Generated</th>
                         <th className="px-4 py-3 text-left">Invoice Code</th>
+                        <th className="px-4 py-3 text-left">Billed To</th>
                         <th className="px-4 py-3 text-left">Estimate No.</th>
                         <th className="px-4 py-3 text-right">Amount</th>
-                        <th className="px-4 py-3 text-left">Download</th>
+                        <th className="px-4 py-3 text-left">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 bg-white">
-                      {combinedInvoices.map((inv) => (
+                      {combinedInvoices.map((inv) => {
+                        const busy = invoiceActionBusyId === inv.quote_id;
+                        return (
                         <tr key={inv.quote_id} className="hover:bg-gray-50 transition-colors">
                           <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{formatDateTime(inv.invoice_generated_at)}</td>
                           <td className="px-4 py-3 font-mono text-xs text-gray-600">{inv.invoice_code}</td>
+                          <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{inv.billed_to_name || inv.payer_name || '-'}</td>
                           <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{inv.estimate_number || '—'}</td>
                           <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(inv.total_amount)}</td>
                           <td className="px-4 py-3">
-                            <a
-                              href={inv.invoice_pdf_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
-                            >
-                              <Download className="h-3.5 w-3.5" /> Download
-                            </a>
+                            <div className="flex items-center gap-1.5">
+                              <a
+                                href={inv.invoice_pdf_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                              >
+                                <Download className="h-3.5 w-3.5" /> Download
+                              </a>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => handleResendCombinedInvoice(inv)}
+                                title="Resend invoice via WhatsApp"
+                                className="inline-flex items-center gap-1.5 rounded bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5" />}
+                                Resend
+                              </button>
+                            </div>
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1668,8 +1843,101 @@ const ClientDetailPage = () => {
         );
       }
 
-      case 'quotes':
-        return recentQuotes.length === 0 ? (
+      case 'quotes': {
+        const PRODUCT_QUOTE_STATUS_COLORS = {
+          SENT:     'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200',
+          ACCEPTED: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
+          REJECTED: 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200',
+        };
+        const QUOTE_TYPE_TABS = [
+          { id: 'SERVICE', label: 'Service Quotes', count: recentQuotes.length },
+          { id: 'PRODUCT', label: 'Product Quotes',  count: productQuotes.length },
+        ];
+        return (
+          <div className="space-y-6">
+            {/* Quote type toggle */}
+            <div className="inline-flex rounded-md border border-gray-200 bg-gray-50 p-1">
+              {QUOTE_TYPE_TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setQuoteTypeView(tab.id)}
+                  className={`inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    quoteTypeView === tab.id
+                      ? 'bg-white text-gray-900 shadow-sm ring-1 ring-inset ring-gray-200'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  {tab.label}
+                  <span className={`rounded-full px-1.5 text-[10px] ${quoteTypeView === tab.id ? 'bg-gray-100 text-gray-600' : 'bg-gray-200 text-gray-500'}`}>
+                    {tab.count}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {quoteTypeView === 'PRODUCT' && (
+              <div>
+                <h3 className="text-sm font-semibold text-gray-700 mb-3">Product Quotations</h3>
+                {productQuotesLoading ? (
+                  <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading product quotations…
+                  </div>
+                ) : productQuotes.length === 0 ? (
+                  <EmptyState title="No product quotations found" />
+                ) : (
+                  <div className="overflow-x-auto rounded-md border border-gray-200">
+                    <table className="min-w-full divide-y divide-gray-100 text-sm">
+                      <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                        <tr>
+                          <th className="px-4 py-3 text-left">Estimate No.</th>
+                          <th className="px-4 py-3 text-left">Billed To</th>
+                          <th className="px-4 py-3 text-left">Status</th>
+                          <th className="px-4 py-3 text-right">Total</th>
+                          <th className="px-4 py-3 text-right">Deposit</th>
+                          <th className="px-4 py-3 text-left">Created</th>
+                          <th className="px-4 py-3 text-left">Download</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 bg-white">
+                        {productQuotes.map((q) => (
+                          <tr key={q.quote_id} className="hover:bg-gray-50 transition-colors">
+                            <td className="px-4 py-3 font-semibold text-gray-900 whitespace-nowrap">{q.estimate_number}</td>
+                            <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{q.client_name || q.walk_in_name || '-'}</td>
+                            <td className="px-4 py-3">
+                              <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${PRODUCT_QUOTE_STATUS_COLORS[q.status] || 'bg-gray-100 text-gray-600'}`}>
+                                {q.status}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(q.total_amount)}</td>
+                            <td className="px-4 py-3 text-right text-gray-600 whitespace-nowrap">
+                              {Number(q.total_deposit_amount || 0) > 0 ? formatMoney(q.total_deposit_amount) : '—'}
+                            </td>
+                            <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{formatDate(q.created_at)}</td>
+                            <td className="px-4 py-3">
+                              <button
+                                type="button"
+                                onClick={() => handleDownloadProductQuotePdf(q.quote_id)}
+                                disabled={productQuotePdfBusy === q.quote_id}
+                                className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+                              >
+                                {productQuotePdfBusy === q.quote_id
+                                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                                  : <Download className="h-3 w-3" />}
+                                Download
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {quoteTypeView === 'SERVICE' && (
+            recentQuotes.length === 0 ? (
           <EmptyState title="No quotations found" />
         ) : (
           <SectionList>
@@ -1708,6 +1976,7 @@ const ClientDetailPage = () => {
                 >
                   <div className="space-y-4">
                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                      <InfoRow label="Billed To" value={quote.billed_to_name || quote.payer_name || '-'} />
                       <InfoRow label="Estimate No." value={quote.estimate_number || '-'} />
                       <InfoRow label="Service Request" value={quote.service_request_code || quote.request_id || '-'} />
                       <InfoRow label="Booking" value={quote.booking_code || 'â€”'} />
@@ -1830,81 +2099,30 @@ const ClientDetailPage = () => {
               );
             })}
           </SectionList>
+            )
+            )}
+          </div>
         );
+      }
 
       case 'products': {
-        const PRODUCT_QUOTE_STATUS_COLORS = {
-          SENT:     'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200',
-          ACCEPTED: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
-          REJECTED: 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200',
-        };
         const PRODUCT_INVOICE_STATUS_COLORS = {
           PENDING: 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200',
           PAID:    'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
         };
         const DEPOSIT_STATUS_COLORS = {
-          HELD:      'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200',
-          REFUNDED:  'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
-          FORFEITED: 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200',
+          HELD:               'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200',
+          REFUNDED:           'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
+          PARTIALLY_REFUNDED: 'bg-violet-50 text-violet-700 ring-1 ring-inset ring-violet-200',
+          FORFEITED:          'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200',
         };
         return (
           <div className="space-y-6">
-            {/* Product Quotations */}
-            <div>
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">Product Quotations</h3>
-              {productQuotesLoading ? (
-                <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading product quotations…
-                </div>
-              ) : productQuotes.length === 0 ? (
-                <EmptyState title="No product quotations found" />
-              ) : (
-                <div className="overflow-x-auto rounded-md border border-gray-200">
-                  <table className="min-w-full divide-y divide-gray-100 text-sm">
-                    <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
-                      <tr>
-                        <th className="px-4 py-3 text-left">Estimate No.</th>
-                        <th className="px-4 py-3 text-left">Status</th>
-                        <th className="px-4 py-3 text-right">Total</th>
-                        <th className="px-4 py-3 text-right">Deposit</th>
-                        <th className="px-4 py-3 text-left">Created</th>
-                        <th className="px-4 py-3 text-left">Download</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 bg-white">
-                      {productQuotes.map((q) => (
-                        <tr key={q.quote_id} className="hover:bg-gray-50 transition-colors">
-                          <td className="px-4 py-3 font-semibold text-gray-900 whitespace-nowrap">{q.estimate_number}</td>
-                          <td className="px-4 py-3">
-                            <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${PRODUCT_QUOTE_STATUS_COLORS[q.status] || 'bg-gray-100 text-gray-600'}`}>
-                              {q.status}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(q.total_amount)}</td>
-                          <td className="px-4 py-3 text-right text-gray-600 whitespace-nowrap">
-                            {Number(q.total_deposit_amount || 0) > 0 ? formatMoney(q.total_deposit_amount) : '—'}
-                          </td>
-                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{formatDate(q.created_at)}</td>
-                          <td className="px-4 py-3">
-                            <button
-                              type="button"
-                              onClick={() => handleDownloadProductQuotePdf(q.quote_id)}
-                              disabled={productQuotePdfBusy === q.quote_id}
-                              className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-60"
-                            >
-                              {productQuotePdfBusy === q.quote_id
-                                ? <Loader2 className="h-3 w-3 animate-spin" />
-                                : <Download className="h-3 w-3" />}
-                              Download
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
+            {invoiceActionError && (
+              <div className="flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {invoiceActionError}
+              </div>
+            )}
 
             {/* Product Invoices */}
             <div>
@@ -1921,17 +2139,22 @@ const ClientDetailPage = () => {
                     <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
                       <tr>
                         <th className="px-4 py-3 text-left">Invoice Code</th>
+                        <th className="px-4 py-3 text-left">Billed To</th>
                         <th className="px-4 py-3 text-left">Category</th>
                         <th className="px-4 py-3 text-left">Status</th>
                         <th className="px-4 py-3 text-right">Amount</th>
                         <th className="px-4 py-3 text-left">Created</th>
                         <th className="px-4 py-3 text-left">Paid</th>
+                        <th className="px-4 py-3 text-left">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 bg-white">
-                      {productInvoices.map((inv) => (
+                      {productInvoices.map((inv) => {
+                        const busy = invoiceActionBusyId === inv.invoice_id;
+                        return (
                         <tr key={inv.invoice_id} className="hover:bg-gray-50 transition-colors">
                           <td className="px-4 py-3 font-mono text-xs text-gray-600 whitespace-nowrap">{inv.invoice_code}</td>
+                          <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{inv.client_name || inv.walk_in_name || '-'}</td>
                           <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{inv.category}</td>
                           <td className="px-4 py-3">
                             <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${PRODUCT_INVOICE_STATUS_COLORS[inv.status] || 'bg-gray-100 text-gray-600'}`}>
@@ -1941,8 +2164,31 @@ const ClientDetailPage = () => {
                           <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(inv.amount)}</td>
                           <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{formatDate(inv.created_at)}</td>
                           <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{inv.paid_at ? formatDate(inv.paid_at) : '—'}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => handleDownloadProductInvoice(inv)}
+                                title="Download invoice PDF"
+                                className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => handleResendProductInvoice(inv)}
+                                title="Resend invoice via WhatsApp"
+                                className="inline-flex items-center gap-1.5 rounded bg-green-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5" />}
+                              </button>
+                            </div>
+                          </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -2029,9 +2275,7 @@ const ClientDetailPage = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 bg-white">
-                      {deposits.map((d) => {
-                        const busy = busyDepositId === d.deposit_id;
-                        return (
+                      {deposits.map((d) => (
                           <tr key={d.deposit_id} className="hover:bg-gray-50 transition-colors">
                             <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{formatDate(d.held_at)}</td>
                             <td className="px-4 py-3">
@@ -2058,30 +2302,31 @@ const ClientDetailPage = () => {
                                 <div className="flex flex-wrap items-center gap-1.5">
                                   <button
                                     type="button"
-                                    disabled={busy}
                                     onClick={() => setRefundDepositTarget(d)}
-                                    className="inline-flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                                    className="inline-flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700"
                                   >
                                     <RotateCcw className="h-3 w-3" /> Refund
                                   </button>
                                   <button
                                     type="button"
-                                    disabled={busy}
                                     onClick={() => setForfeitDepositTarget(d)}
-                                    className="inline-flex items-center gap-1 rounded border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-100 disabled:opacity-50"
+                                    className="inline-flex items-center gap-1 rounded border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-100"
                                   >
                                     Forfeit
                                   </button>
                                 </div>
                               ) : d.status === 'REFUNDED' ? (
                                 <span className="text-emerald-600 text-xs font-medium">Refunded {formatDate(d.refunded_at)}</span>
+                              ) : d.status === 'PARTIALLY_REFUNDED' ? (
+                                <span className="text-violet-600 text-xs font-medium">
+                                  Refunded {formatMoney(d.refunded_amount)}, kept {formatMoney(d.forfeited_amount)}
+                                </span>
                               ) : (
                                 <span className="text-gray-400 text-xs">Forfeited{d.notes ? ` — ${d.notes}` : ''}</span>
                               )}
                             </td>
                           </tr>
-                        );
-                      })}
+                        ))}
                     </tbody>
                   </table>
                 </div>
@@ -2089,46 +2334,11 @@ const ClientDetailPage = () => {
             </div>
 
             {forfeitDepositTarget && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-                <div className="w-full max-w-sm rounded-lg bg-white shadow-xl">
-                  <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
-                    <h3 className="text-sm font-semibold text-gray-800">Forfeit Deposit — {formatMoney(forfeitDepositTarget.amount)}</h3>
-                    <button type="button" onClick={() => setForfeitDepositTarget(null)} className="text-gray-400 hover:text-gray-600">
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <div className="px-5 py-4 space-y-3">
-                    <p className="text-xs text-gray-500">
-                      The deposit stays with the company — no refund transaction is created. This cannot be undone from here.
-                    </p>
-                    <textarea
-                      rows={2}
-                      placeholder="Reason (optional)"
-                      value={forfeitDepositNotes}
-                      onChange={(e) => setForfeitDepositNotes(e.target.value)}
-                      className="w-full rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                    />
-                    <div className="flex justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setForfeitDepositTarget(null)}
-                        className="rounded border border-gray-200 bg-white px-4 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busyDepositId === forfeitDepositTarget.deposit_id}
-                        onClick={handleForfeitDepositRow}
-                        className="inline-flex items-center gap-1.5 rounded bg-red-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
-                      >
-                        {busyDepositId === forfeitDepositTarget.deposit_id && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                        Confirm Forfeit
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <ForfeitDepositModal
+                deposit={forfeitDepositTarget}
+                onClose={() => setForfeitDepositTarget(null)}
+                onForfeited={() => { setForfeitDepositTarget(null); fetchDeposits(); }}
+              />
             )}
 
             {refundDepositTarget && (
@@ -2463,6 +2673,10 @@ const ClientDetailPage = () => {
       case 'statement':
         return (
           <div className="space-y-5">
+            <div className="flex items-center gap-2 text-sm text-gray-600">
+              <span className="text-[11px] font-medium uppercase tracking-wider text-gray-400">Billed To</span>
+              <span className="font-semibold text-gray-900">{billedToName}</span>
+            </div>
             <div className="rounded-md border border-gray-200 bg-gray-50 p-4">
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <div>

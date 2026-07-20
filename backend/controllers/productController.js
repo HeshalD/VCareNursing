@@ -14,6 +14,11 @@ function extractActorRole(role) {
   return typeof raw === 'string' ? raw.replace(/\{|\}/g, '').split(',')[0].trim() : String(raw);
 }
 
+const PRODUCT_TYPES = ['ITEM', 'RENTAL', 'ONE_TIME_SERVICE'];
+function normalizeProductType(product_type) {
+  return PRODUCT_TYPES.includes(product_type) ? product_type : 'ITEM';
+}
+
 // 1. Get All Products (catalog browse — public + admin, optionally filtered)
 exports.getAllProducts = async (req, res) => {
   const { product_type, category_id, include_unavailable } = req.query;
@@ -129,7 +134,7 @@ exports.getMyOrders = async (req, res) => {
        JOIN quotations q ON li.quote_id = q.quote_id
        JOIN products p ON li.product_id = p.product_id
        LEFT JOIN invoices i ON i.quote_id = q.quote_id
-       WHERE q.quote_type = 'PRODUCT' AND q.client_id = $1 AND p.product_type = 'ITEM'
+       WHERE q.quote_type = 'PRODUCT' AND q.client_id = $1 AND p.product_type != 'RENTAL'
        ORDER BY q.created_at DESC`,
       [client_id]
     );
@@ -180,7 +185,7 @@ exports.createProduct = async (req, res) => {
       cost_price || 0,
       stock_quantity || 0,
       image_url,
-      product_type === 'RENTAL' ? 'RENTAL' : 'ITEM',
+      normalizeProductType(product_type),
     ]);
 
     await safeLog({
@@ -226,7 +231,7 @@ exports.updateProduct = async (req, res) => {
         cost_price || 0,
         stock_quantity || 0,
         image_url,
-        product_type === 'RENTAL' ? 'RENTAL' : 'ITEM',
+        normalizeProductType(product_type),
         is_available === undefined ? true : is_available === 'true' || is_available === true,
         id,
       ]

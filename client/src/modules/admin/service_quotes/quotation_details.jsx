@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, FileText, RefreshCw, Receipt, CheckCircle2, Clock3, ClipboardList, Plus, Download, Send, Loader2, BadgeDollarSign } from 'lucide-react';
+import { ArrowLeft, FileText, RefreshCw, Receipt, CheckCircle2, Clock3, ClipboardList, Plus, Download, Send, Loader2, BadgeDollarSign, Pencil, Trash2, Save } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import PaymentAllocationModal from './PaymentAllocationModal';
@@ -177,6 +177,15 @@ const QuotationDetailsPage = () => {
   const [showInvoicePopup, setShowInvoicePopup] = useState(false);
   const [invoiceReady, setInvoiceReady] = useState(false);
 
+  // Editing the SERVICE quote's own line items — only allowed before any
+  // payment (service or product) has been recorded, same rule as
+  // quotations.jsx (see paymentTrackingController.recordPayment).
+  const [editingLineItems, setEditingLineItems] = useState(false);
+  const [editRows, setEditRows] = useState([]);
+  const [editTerms, setEditTerms] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState('');
+
   // Returns the freshly computed remaining balance (rather than relying on
   // this render's now-stale state) so callers like handlePaymentRecorded can
   // reliably tell whether this payment just fully settled the quotation.
@@ -268,6 +277,66 @@ const QuotationDetailsPage = () => {
       setError(err.message || 'Failed to send invoice');
     } finally {
       setSendingInvoice(false);
+    }
+  };
+
+  const startEditingLineItems = () => {
+    setEditRows(
+      (quote?.line_items || []).map((li) => ({
+        line_item_id: li.line_item_id,
+        item_type: li.item_type,
+        description: li.description,
+        quantity: li.quantity,
+        unit_price: li.unit_price,
+        is_registration_fee: !!li.is_registration_fee,
+        item_subtype: li.item_subtype || null,
+      }))
+    );
+    setEditTerms(quote?.terms_conditions || '');
+    setEditError('');
+    setEditingLineItems(true);
+  };
+
+  const cancelEditingLineItems = () => {
+    setEditingLineItems(false);
+    setEditRows([]);
+  };
+
+  const updateEditRow = (index, patch) => {
+    setEditRows((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  };
+
+  const addEditRow = () => {
+    setEditRows((prev) => [...prev, { item_type: 'CHARGE', description: '', quantity: 1, unit_price: 0 }]);
+  };
+
+  const removeEditRow = (index) => {
+    setEditRows((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const saveEditedLineItems = async () => {
+    const cleanedRows = editRows
+      .map((row) => ({ ...row, description: (row.description || '').trim() }))
+      .filter((row) => row.description);
+
+    if (cleanedRows.length === 0) {
+      setEditError('Add at least one line item before saving.');
+      return;
+    }
+
+    setEditSaving(true);
+    try {
+      setEditError('');
+      await apiClient.updateQuoteLineItems(quoteId, {
+        line_items: cleanedRows,
+        terms_conditions: editTerms,
+      });
+      setEditingLineItems(false);
+      await loadData();
+    } catch (err) {
+      setEditError(err.message || 'Failed to update quotation line items');
+    } finally {
+      setEditSaving(false);
     }
   };
 
@@ -410,15 +479,100 @@ const QuotationDetailsPage = () => {
 
             {/* ── Line items ────────────────────────────────────────────── */}
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-              <div className="px-5 py-3.5 border-b border-slate-100">
+              <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-slate-900">Line Items</h3>
+                {!editingLineItems && combinedPaid === 0 && (
+                  <button onClick={startEditingLineItems} title="Edit quotation" className={iconBtnCls}>
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                )}
               </div>
-              {/* The service quote's own charges/discounts, plus a companion
+
+              {editError && <div className="mx-5 mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{editError}</div>}
+
+              {editingLineItems ? (
+                <div className="p-5 space-y-3">
+                  <div className="space-y-2">
+                    {editRows.map((row, idx) => (
+                      <div key={idx} className="rounded-lg border border-slate-200 p-3 flex flex-wrap items-center gap-2">
+                        <input
+                          value={row.description}
+                          onChange={(e) => updateEditRow(idx, { description: e.target.value })}
+                          placeholder="Description"
+                          className="flex-1 min-w-[160px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        />
+                        <select
+                          value={row.item_type}
+                          onChange={(e) => updateEditRow(idx, { item_type: e.target.value })}
+                          className="rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 w-28"
+                        >
+                          <option value="CHARGE">Charge</option>
+                          <option value="DISCOUNT">Discount</option>
+                        </select>
+                        <input
+                          type="number"
+                          value={row.quantity}
+                          onChange={(e) => updateEditRow(idx, { quantity: e.target.value })}
+                          placeholder="Qty"
+                          className="w-20 rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        />
+                        <input
+                          type="number"
+                          value={row.unit_price}
+                          onChange={(e) => updateEditRow(idx, { unit_price: e.target.value })}
+                          placeholder="Unit Price"
+                          className="w-32 rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        />
+                        <button
+                          onClick={() => removeEditRow(idx)}
+                          title="Remove line"
+                          className="inline-flex items-center justify-center w-8 h-8 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button onClick={addEditRow} className={ghostBtnCls}>
+                    <Plus className="h-4 w-4" /> Add Line
+                  </button>
+
+                  <div>
+                    <SectionHeader title="Terms & Conditions" />
+                    <textarea
+                      value={editTerms}
+                      onChange={(e) => setEditTerms(e.target.value)}
+                      rows={3}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-slate-700">
+                      Total: {money(editRows.reduce((s, r) => {
+                        const amt = (parseFloat(r.quantity) || 0) * (parseFloat(r.unit_price) || 0);
+                        return s + (r.item_type === 'DISCOUNT' ? -Math.abs(amt) : amt);
+                      }, 0))}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button onClick={saveEditedLineItems} disabled={editSaving} className={primaryBtnCls}>
+                        {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                        Save Changes
+                      </button>
+                      <button onClick={cancelEditingLineItems} disabled={editSaving} className={ghostBtnCls}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+              /* The service quote's own charges/discounts, plus a companion
                   PRODUCT quote's items (products/rentals/deposits added via
                   ModularQuoteBuilder), if one exists — two separate quotation
                   records merged into one PDF/message when sent (see
-                  quoteController.mergeProductQuoteIntoData). */}
-              {(Array.isArray(quote.line_items) && quote.line_items.length > 0) || productLineItems.length > 0 ? (
+                  quoteController.mergeProductQuoteIntoData). */
+              (Array.isArray(quote.line_items) && quote.line_items.length > 0) || productLineItems.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
@@ -445,7 +599,7 @@ const QuotationDetailsPage = () => {
                 </div>
               ) : (
                 <p className="px-5 py-6 text-sm text-slate-400">No quotation line items available.</p>
-              )}
+              ))}
             </div>
           </div>
 

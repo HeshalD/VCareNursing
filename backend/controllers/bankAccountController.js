@@ -467,7 +467,7 @@ const deactivateBankAccount = async (req, res) => {
 const getAccountTransactions = async (req, res) => {
   try {
     const { account_id } = req.params;
-    const { start_date, end_date, status } = req.query;
+    const { start_date, end_date, status, verified } = req.query;
 
     // Validate UUID format
     if (!account_id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(account_id)) {
@@ -479,8 +479,8 @@ const getAccountTransactions = async (req, res) => {
 
     // Check if account exists
     const accountCheck = await db.query(`
-      SELECT account_id, account_nickname, account_number, bank_name 
-      FROM bank_accounts 
+      SELECT account_id, account_nickname, account_number, bank_name
+      FROM bank_accounts
       WHERE account_id = $1
     `, [account_id]);
 
@@ -506,11 +506,16 @@ const getAccountTransactions = async (req, res) => {
         t.staff_profile_id,
         t.category,
         t.external_party,
+        t.bank_verified,
+        t.bank_verified_at,
+        t.bank_verified_by,
+        verifier.full_name as bank_verified_by_name,
         cp.full_name as client_name,
         sp.full_name as staff_name
       FROM transactions t
       LEFT JOIN client_profiles cp ON t.client_id = cp.client_profile_id
       LEFT JOIN staff_profiles sp ON t.staff_profile_id = sp.staff_profile_id
+      LEFT JOIN staff_profiles verifier ON verifier.user_id = t.bank_verified_by
       WHERE t.bank_account_id = $1
     `;
 
@@ -537,16 +542,25 @@ const getAccountTransactions = async (req, res) => {
       paramCount++;
     }
 
+    // Add bank verification filter if provided
+    if (verified === 'true' || verified === 'false') {
+      query += ` AND t.bank_verified = $${paramCount}`;
+      params.push(verified === 'true');
+      paramCount++;
+    }
+
     query += ` ORDER BY t.created_at DESC`;
 
     const result = await db.query(query, params);
 
     // Calculate totals
     const totals = await db.query(`
-      SELECT 
+      SELECT
         COUNT(*) as transaction_count,
         SUM(CASE WHEN t.status = 'COMPLETED' THEN t.amount ELSE 0 END) as total_completed,
-        SUM(CASE WHEN t.status = 'PENDING' THEN t.amount ELSE 0 END) as total_pending
+        SUM(CASE WHEN t.status = 'PENDING' THEN t.amount ELSE 0 END) as total_pending,
+        COUNT(*) FILTER (WHERE t.bank_verified = true) as verified_count,
+        COUNT(*) FILTER (WHERE t.bank_verified = false) as unverified_count
       FROM transactions t
       WHERE t.bank_account_id = $1
     `, [account_id]);
@@ -559,12 +573,15 @@ const getAccountTransactions = async (req, res) => {
       summary: {
         transaction_count: parseInt(totals.rows[0].transaction_count),
         total_completed: totals.rows[0].total_completed || 0,
-        total_pending: totals.rows[0].total_pending || 0
+        total_pending: totals.rows[0].total_pending || 0,
+        verified_count: parseInt(totals.rows[0].verified_count),
+        unverified_count: parseInt(totals.rows[0].unverified_count)
       },
       filters: {
         start_date: start_date || null,
         end_date: end_date || null,
-        status: status || null
+        status: status || null,
+        verified: verified === 'true' ? true : verified === 'false' ? false : null
       }
     });
   } catch (error) {
@@ -572,6 +589,87 @@ const getAccountTransactions = async (req, res) => {
     res.status(500).json({
       status: 'error',
       message: 'Failed to fetch account transactions',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Mark a transaction as bank-verified (or unverified) — used by SUPER_ADMIN
+ * to cross-reference each transaction against the actual bank statement.
+ * PATCH /api/bank-accounts/:account_id/transactions/:transaction_id/verify
+ */
+const verifyAccountTransaction = async (req, res) => {
+  try {
+    const { account_id, transaction_id } = req.params;
+    const { verified } = req.body;
+
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!account_id || !uuidRe.test(account_id) || !transaction_id || !uuidRe.test(transaction_id)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Invalid account or transaction ID format'
+      });
+    }
+
+    if (typeof verified !== 'boolean') {
+      return res.status(400).json({
+        status: 'error',
+        message: '"verified" must be a boolean'
+      });
+    }
+
+    const txCheck = await db.query(`
+      SELECT transaction_id FROM transactions
+      WHERE transaction_id = $1 AND bank_account_id = $2
+    `, [transaction_id, account_id]);
+
+    if (txCheck.rows.length === 0) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Transaction not found for this bank account'
+      });
+    }
+
+    const actorUserId = req.user?.user_id || null;
+
+    const result = await db.query(`
+      UPDATE transactions
+      SET bank_verified = $1,
+          bank_verified_by = $2,
+          bank_verified_at = $3
+      WHERE transaction_id = $4
+      RETURNING transaction_id, bank_verified, bank_verified_by, bank_verified_at
+    `, [verified, verified ? actorUserId : null, verified ? new Date() : null, transaction_id]);
+
+    (async () => {
+      try {
+        const actorRole = extractActorRole(req.user?.role);
+        const nameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [actorUserId]);
+        await logActivity({
+          actorUserId,
+          actorName: nameRes.rows[0]?.full_name || 'Admin',
+          actorRole,
+          actionType: verified ? 'BANK_TRANSACTION_VERIFIED' : 'BANK_TRANSACTION_UNVERIFIED',
+          entityType: 'transaction',
+          entityId: null,
+          details: { account_id, transaction_id },
+        });
+      } catch (e) {
+        console.error('[BankAccount] Activity log error:', e.message);
+      }
+    })();
+
+    res.status(200).json({
+      status: 'success',
+      message: verified ? 'Transaction marked as verified' : 'Transaction marked as unverified',
+      data: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Error verifying account transaction:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to update transaction verification status',
       error: error.message
     });
   }
@@ -676,5 +774,6 @@ module.exports = {
   updateBankAccount,
   deactivateBankAccount,
   getAccountTransactions,
+  verifyAccountTransaction,
   getAccountReconciliation
 };

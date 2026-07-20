@@ -14,6 +14,9 @@ import {
   Check,
   Send,
   BadgeDollarSign,
+  Pencil,
+  Trash2,
+  Save,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
@@ -206,6 +209,16 @@ const QuotationsPage = () => {
   const [selectedQuoteItems, setSelectedQuoteItems] = useState(null);
   const [itemsLoading, setItemsLoading] = useState(false);
 
+  // Editing the SERVICE quote's own line items — only allowed before any
+  // payment (service or product) has been recorded against this quotation,
+  // since payments are applied against the totals computed from these items
+  // (see paymentTrackingController.recordPayment's registration-fee-first
+  // waterfall). The companion PRODUCT quote's items are edited separately.
+  const [editingLineItems, setEditingLineItems] = useState(false);
+  const [editRows, setEditRows] = useState([]);
+  const [editTerms, setEditTerms] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
+
   // Lists every quotation for every service request (not just the one
   // service_requests.active_quote_id currently points to — that only gets
   // set when a quote is actually sent via "Generate & Send", so a freshly
@@ -328,9 +341,10 @@ const QuotationsPage = () => {
         product_line_items,
         combined_total: Number(quote.total_amount || 0),
         product_quote_id: productQuoteId || null,
+        terms_conditions: detail?.data?.terms_conditions || '',
       });
     } catch {
-      setSelectedQuoteItems({ line_items: [], product_line_items: [], combined_total: Number(quote.total_amount || 0), product_quote_id: null });
+      setSelectedQuoteItems({ line_items: [], product_line_items: [], combined_total: Number(quote.total_amount || 0), product_quote_id: null, terms_conditions: '' });
     } finally {
       setItemsLoading(false);
     }
@@ -341,7 +355,72 @@ const QuotationsPage = () => {
     setShowPaymentModal(false);
     setSelectedQuoteItems(null);
     setInvoiceSent(false);
+    setEditingLineItems(false);
     await Promise.all([fetchPayments(quote.quote_id), fetchSelectedQuoteItems(quote)]);
+  };
+
+  const canEditQuote = (quote) => Number(quote?.total_paid || 0) === 0;
+
+  const startEditingLineItems = () => {
+    setEditRows(
+      (selectedQuoteItems?.line_items || []).map((li) => ({
+        line_item_id: li.line_item_id,
+        item_type: li.item_type,
+        description: li.description,
+        quantity: li.quantity,
+        unit_price: li.unit_price,
+        is_registration_fee: !!li.is_registration_fee,
+        item_subtype: li.item_subtype || null,
+      }))
+    );
+    setEditTerms(selectedQuoteItems?.terms_conditions || '');
+    setEditingLineItems(true);
+  };
+
+  const cancelEditingLineItems = () => {
+    setEditingLineItems(false);
+    setEditRows([]);
+  };
+
+  const updateEditRow = (index, patch) => {
+    setEditRows((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  };
+
+  const addEditRow = () => {
+    setEditRows((prev) => [...prev, { item_type: 'CHARGE', description: '', quantity: 1, unit_price: 0 }]);
+  };
+
+  const removeEditRow = (index) => {
+    setEditRows((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const saveEditedLineItems = async () => {
+    const cleanedRows = editRows
+      .map((row) => ({ ...row, description: (row.description || '').trim() }))
+      .filter((row) => row.description);
+
+    if (cleanedRows.length === 0) {
+      setError('Add at least one line item before saving.');
+      return;
+    }
+
+    setEditSaving(true);
+    try {
+      setError('');
+      await apiClient.updateQuoteLineItems(selectedQuote.quote_id, {
+        line_items: cleanedRows,
+        terms_conditions: editTerms,
+      });
+      setSuccessMessage('Quotation updated successfully.');
+      setEditingLineItems(false);
+      const quoteRows = await fetchQuotations();
+      const updated = (quoteRows || []).find((q) => q.quote_id === selectedQuote.quote_id);
+      if (updated) await selectQuote(updated);
+    } catch (err) {
+      setError(err.message || 'Failed to update quotation line items');
+    } finally {
+      setEditSaving(false);
+    }
   };
 
   useEffect(() => {
@@ -698,9 +777,96 @@ const QuotationsPage = () => {
                             <div className="flex items-center gap-2 text-xs text-slate-400">
                               <Loader2 className="h-3 w-3 animate-spin" /> Loading line items…
                             </div>
+                          ) : editingLineItems ? (
+                            <div>
+                              <div className="flex items-center justify-between mb-2">
+                                <SectionHeader title="Edit Line Items" />
+                                <span className="text-xs font-semibold text-slate-700 tabular-nums">
+                                  {money(editRows.reduce((s, r) => {
+                                    const amt = (parseFloat(r.quantity) || 0) * (parseFloat(r.unit_price) || 0);
+                                    return s + (r.item_type === 'DISCOUNT' ? -Math.abs(amt) : amt);
+                                  }, 0))}
+                                </span>
+                              </div>
+                              <div className="space-y-2">
+                                {editRows.map((row, idx) => (
+                                  <div key={idx} className="rounded-lg border border-slate-200 p-2 space-y-1.5">
+                                    <div className="flex items-center gap-1.5">
+                                      <input
+                                        value={row.description}
+                                        onChange={(e) => updateEditRow(idx, { description: e.target.value })}
+                                        placeholder="Description"
+                                        className={`${inputCls} flex-1 py-1.5 text-xs`}
+                                      />
+                                      <button
+                                        onClick={() => removeEditRow(idx)}
+                                        title="Remove line"
+                                        className="inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors shrink-0"
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </button>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <select
+                                        value={row.item_type}
+                                        onChange={(e) => updateEditRow(idx, { item_type: e.target.value })}
+                                        className={`${inputCls} py-1.5 text-xs w-28`}
+                                      >
+                                        <option value="CHARGE">Charge</option>
+                                        <option value="DISCOUNT">Discount</option>
+                                      </select>
+                                      <input
+                                        type="number"
+                                        value={row.quantity}
+                                        onChange={(e) => updateEditRow(idx, { quantity: e.target.value })}
+                                        placeholder="Qty"
+                                        className={`${inputCls} py-1.5 text-xs w-16`}
+                                      />
+                                      <input
+                                        type="number"
+                                        value={row.unit_price}
+                                        onChange={(e) => updateEditRow(idx, { unit_price: e.target.value })}
+                                        placeholder="Unit Price"
+                                        className={`${inputCls} py-1.5 text-xs flex-1`}
+                                      />
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                              <button onClick={addEditRow} className={`${ghostBtnCls} mt-2`}>
+                                <Plus className="h-3.5 w-3.5" /> Add Line
+                              </button>
+
+                              <div className="mt-3">
+                                <SectionHeader title="Terms & Conditions" />
+                                <textarea
+                                  value={editTerms}
+                                  onChange={(e) => setEditTerms(e.target.value)}
+                                  rows={2}
+                                  className={`${inputCls} text-xs`}
+                                />
+                              </div>
+
+                              <div className="flex items-center gap-2 mt-3">
+                                <button onClick={saveEditedLineItems} disabled={editSaving} className={primaryBtnCls}>
+                                  {editSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                                  Save Changes
+                                </button>
+                                <button onClick={cancelEditingLineItems} disabled={editSaving} className={ghostBtnCls}>
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
                           ) : selectedQuoteItems && (selectedQuoteItems.line_items.length > 0 || selectedQuoteItems.product_line_items.length > 0) && (
                             <div>
-                              <SectionHeader title="Line Items" />
+                              <div className="flex items-center justify-between mb-2">
+                                <SectionHeader title="Line Items" />
+                                {canEditQuote(selectedQuote) && (
+                                  <button onClick={startEditingLineItems} title="Edit quotation" className={iconBtnCls}>
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                              </div>
                               <div className="space-y-1.5">
                                 {[...selectedQuoteItems.line_items, ...selectedQuoteItems.product_line_items].map((li) => {
                                   const isDiscount = li.item_type === 'DISCOUNT';

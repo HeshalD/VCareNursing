@@ -1035,6 +1035,16 @@ async function runMigration() {
     ADD COLUMN IF NOT EXISTS reference_number VARCHAR(100)
   `);
 
+  // Bank audit verification — lets SUPER_ADMIN cross-reference each transaction
+  // against the actual bank statement, independent of `verified_by` (which tracks
+  // who recorded/processed the payment, not who reconciled it against the bank).
+  await db.query(`
+    ALTER TABLE transactions
+    ADD COLUMN IF NOT EXISTS bank_verified BOOLEAN NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS bank_verified_by UUID REFERENCES users(user_id),
+    ADD COLUMN IF NOT EXISTS bank_verified_at TIMESTAMP WITH TIME ZONE
+  `);
+
   await db.query(`
     ALTER TABLE payment_tracking
     ADD COLUMN IF NOT EXISTS bank_account_id UUID REFERENCES bank_accounts(account_id),
@@ -1151,6 +1161,15 @@ async function runMigration() {
   await db.query(`
     ALTER TABLE products
     ADD COLUMN IF NOT EXISTS product_type product_type_enum NOT NULL DEFAULT 'ITEM'
+  `);
+
+  // A company-provided one-off service (ambulance, doctor visit, etc.) — not
+  // stocked like ITEM and not tied to a rental_units/rental_agreements
+  // record like RENTAL, just billed once via the normal PRODUCT quote/invoice
+  // path. Named ONE_TIME_SERVICE (not ONE_TIME) to avoid clashing with
+  // rental_billing_type_enum's unrelated 'ONE_TIME' value below.
+  await db.query(`
+    ALTER TYPE product_type_enum ADD VALUE IF NOT EXISTS 'ONE_TIME_SERVICE';
   `);
 
   // Cost basis for the Profit & Loss report's COGS line (products only had a
@@ -1270,6 +1289,40 @@ async function runMigration() {
   await db.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS invoice_code VARCHAR(20)`);
   await db.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS invoice_pdf_url TEXT`);
   await db.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS invoice_generated_at TIMESTAMP WITH TIME ZONE`);
+  // Tracks the last time an admin (re)sent the combined Invoice PDF to the
+  // client over WhatsApp, so the client detail page can show "Sent"/"Resend".
+  await db.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS invoice_whatsapp_sent_at TIMESTAMP WITH TIME ZONE`);
+
+  // Same "resend" tracking for standalone PRODUCT/RENTAL invoices.
+  await db.query(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS whatsapp_sent_at TIMESTAMP WITH TIME ZONE`);
+
+  // Individual payments applied toward an `invoices` row — lets a product/
+  // rental invoice be paid in more than one instalment (see
+  // invoiceController.applyInvoicePayment). invoices.status only flips to
+  // 'PAID' once SUM(invoice_payments.amount) for that invoice reaches
+  // invoices.amount; invoices.transaction_id/paid_at then point at whichever
+  // payment closed it out. One row here per admin-recorded payment, mirroring
+  // payment_tracking's shape for the SERVICE quote side.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS invoice_payments (
+      invoice_payment_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      invoice_id UUID NOT NULL REFERENCES invoices(invoice_id) ON DELETE CASCADE,
+      transaction_id UUID REFERENCES transactions(transaction_id),
+      amount NUMERIC(12,2) NOT NULL,
+      payment_method VARCHAR(50),
+      bank_account_id UUID REFERENCES bank_accounts(account_id),
+      cheque_number VARCHAR(50),
+      cheque_date DATE,
+      reference_number VARCHAR(100),
+      slip_url TEXT,
+      notes TEXT,
+      verified_by UUID REFERENCES users(user_id),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_invoice_payments_invoice_id ON invoice_payments(invoice_id);
+  `);
 
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_invoices_category ON invoices(category);
@@ -1338,6 +1391,17 @@ async function runMigration() {
   await db.query(`
     DO $$ BEGIN
       CREATE TYPE deposit_status_enum AS ENUM ('HELD', 'REFUNDED', 'FORFEITED');
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  // Partial settlement: some of the deposit refunded to the client, the rest
+  // forfeited (kept) as a charge (e.g. repair/transport fee). See
+  // rentalController.refundDeposit / forfeitDeposit.
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE deposit_status_enum ADD VALUE IF NOT EXISTS 'PARTIALLY_REFUNDED';
     EXCEPTION
       WHEN duplicate_object THEN null;
     END $$;
@@ -1454,6 +1518,14 @@ async function runMigration() {
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_deposits_rental_agreement_id ON deposits(rental_agreement_id);
   `);
+
+  // Partial refund/forfeit: how much of `amount` actually went back to the
+  // client vs. was kept by the company. Backfilled for pre-existing fully
+  // REFUNDED/FORFEITED rows below.
+  await db.query(`ALTER TABLE deposits ADD COLUMN IF NOT EXISTS refunded_amount NUMERIC(12,2) NOT NULL DEFAULT 0`);
+  await db.query(`ALTER TABLE deposits ADD COLUMN IF NOT EXISTS forfeited_amount NUMERIC(12,2) NOT NULL DEFAULT 0`);
+  await db.query(`UPDATE deposits SET refunded_amount = amount WHERE status = 'REFUNDED' AND refunded_amount = 0`);
+  await db.query(`UPDATE deposits SET forfeited_amount = amount WHERE status = 'FORFEITED' AND forfeited_amount = 0`);
 
   // Standalone deposits: a refundable deposit the company holds independent
   // of any rental item (e.g. a general security deposit on a quote). These
@@ -1996,6 +2068,12 @@ async function runMigration() {
     );
   `);
 
+  // Persisted PDF + WhatsApp-resend tracking for individual daily invoices,
+  // so a downloaded/sent document stays stable across repeat downloads
+  // instead of being regenerated fresh (and re-uploaded) every time.
+  await db.query(`ALTER TABLE booking_daily_invoices ADD COLUMN IF NOT EXISTS pdf_url TEXT`);
+  await db.query(`ALTER TABLE booking_daily_invoices ADD COLUMN IF NOT EXISTS whatsapp_sent_at TIMESTAMP WITH TIME ZONE`);
+
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_staff_daily_attendance_booking_id
     ON staff_daily_attendance(booking_id);
@@ -2408,6 +2486,9 @@ async function runMigration() {
     CREATE INDEX IF NOT EXISTS idx_client_reg_fee_invoices_client_id
     ON client_reg_fee_invoices(client_id);
   `);
+  // Tracks the last time this invoice was resent (as opposed to the initial
+  // send, whose timestamp is created_at).
+  await db.query(`ALTER TABLE client_reg_fee_invoices ADD COLUMN IF NOT EXISTS whatsapp_resent_at TIMESTAMP WITH TIME ZONE`);
 
   // Temporary staging table for registrations awaiting OTP verification.
   // Rows are promoted to users + client_profiles on successful OTP verify, then deleted.

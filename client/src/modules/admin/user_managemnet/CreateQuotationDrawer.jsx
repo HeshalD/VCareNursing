@@ -89,11 +89,6 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
       const res = await apiClient.getClientServiceRequests(clientId);
       const requests = Array.isArray(res.data) ? res.data : [];
       setServiceRequests(requests);
-      if (requests.length === 1) {
-        setSelectedRequestId(requests[0].request_id);
-        setQuoteKind('SERVICE');
-        setStep('build');
-      }
     } catch {
       setError('Failed to load service requests');
     } finally {

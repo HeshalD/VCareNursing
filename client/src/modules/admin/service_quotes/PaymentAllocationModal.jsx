@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { X, Upload, Loader2, BadgeDollarSign, Lock, Receipt, CheckCircle2, Clock3 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { X, Upload, Loader2, BadgeDollarSign, CheckCircle2, Lock, ArrowLeft, ArrowRight, Receipt, Wallet, AlertTriangle } from 'lucide-react';
 import apiClient from '../../../api/api';
 import DateInput from '../../../components/common/DateInput';
 
@@ -8,15 +8,11 @@ const paymentMethodOptions = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE']
 const money = (value) =>
   `LKR ${parseFloat(value || 0).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-const SectionHeader = ({ title }) => (
-  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">{title}</p>
-);
-
 const inputCls = 'w-full rounded-lg border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-colors';
 
-// Sums a product quote's line items for the combined Summary total below —
-// a rental item's own amount plus its refundable deposit (deposit_amount is
-// a separate field, not folded into amount) both count toward the total.
+// Sums a product quote's line items — a rental item's own amount plus its
+// refundable deposit (deposit_amount is a separate field, not folded into
+// amount) both count toward the Products & Rentals bucket's total.
 const productLineItemsTotal = (items) => {
   let total = 0;
   for (const li of items || []) {
@@ -39,45 +35,52 @@ const getRegFeeInfo = (servicePaid, lineItems) => {
   const paid = parseFloat(servicePaid) || 0;
   return {
     amount,
-    allocated: Math.min(paid, amount),
     remaining: Math.max(amount - paid, 0),
     settled: paid >= amount,
   };
 };
 
-// Lets an admin record one payment and allocate it across a SERVICE quote's
-// own remaining balance and/or its linked PRODUCT invoice (rentals/purchases/
-// deposits added via ModularQuoteBuilder), in a single action — instead of
-// having to visit two separate screens (Quotations page for the service
-// portion, Products page for the product portion). payment_tracking (service)
-// and the generic `invoices` table (product) are still two independent
-// records under the hood (see quoteController.linked_quote_id /
-// ensureCombinedInvoice) — this just fires both existing endpoints together.
-//
-// If a registration fee line item exists and isn't fully settled yet, it's
-// treated as a hard gate: the admin can only allocate this payment toward the
-// registration fee until it's settled — service charges and products stay
-// locked, mirroring the order the backend already applies payments in.
+const BUCKET_META = {
+  reg_fee: { label: 'Registration Fee', hint: 'Must be settled first', accent: 'text-violet-700' },
+  service: { label: 'Service Charges', hint: 'Remaining care/service charges', accent: 'text-blue-700' },
+  products: { label: 'Products & Rentals', hint: 'Purchases, rentals & deposits', accent: 'text-amber-700' },
+};
+
+// Lets an admin record ONE payment and allocate it across up to three
+// buckets — Registration Fee, Service Charges, Products & Rentals — in a
+// single action (see backend paymentTrackingController.recordAllocatedPayment).
+// Registration fee is a hard-gated priority bucket: its allocation must
+// fully cover whatever's still due on it before the other two buckets can
+// receive anything from this same payment, mirroring the waterfall order
+// the backend already enforced implicitly. This still fires against two
+// separate ledgers under the hood — payment_tracking for the service quote,
+// invoices/invoice_payments for the linked PRODUCT quote — as one request.
 const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [step, setStep] = useState(1);
 
   const [estimateNumber, setEstimateNumber] = useState('');
   const [payerName, setPayerName] = useState('');
   const [payerMobile, setPayerMobile] = useState('');
-  const [serviceTotal, setServiceTotal] = useState(0);
-  const [servicePaid, setServicePaid] = useState(0);
-  const [serviceRemaining, setServiceRemaining] = useState(0);
+  const [clientId, setClientId] = useState(null);
   const [regFeeInfo, setRegFeeInfo] = useState(null);
-  const [productInvoices, setProductInvoices] = useState([]); // unpaid [{ invoice_id, invoice_code, amount, status }, ...]
-  const [productTotal, setProductTotal] = useState(0);
-  const [productPaid, setProductPaid] = useState(0);
+  const [serviceOnlyRemaining, setServiceOnlyRemaining] = useState(0);
+  const [productsRemaining, setProductsRemaining] = useState(0);
+  const [combinedRemaining, setCombinedRemaining] = useState(0);
 
   const [bankAccounts, setBankAccounts] = useState([]);
-  const [payService, setPayService] = useState(true);
-  const [serviceAmount, setServiceAmount] = useState('');
-  const [payProduct, setPayProduct] = useState(false);
+  const [amountReceived, setAmountReceived] = useState('');
+  const [allocations, setAllocations] = useState({ reg_fee: '', service: '', products: '' });
+
+  // Overflow — where to route whatever's left once the three buckets above
+  // are maxed out (a client overpaying the quotation is allowed; it just
+  // needs a destination).
+  const [overflowChoice, setOverflowChoice] = useState(''); // 'WALLET' | 'BOOKING_PAYOFF'
+  const [overflowBookingId, setOverflowBookingId] = useState('');
+  const [overdueBookings, setOverdueBookings] = useState(null); // null = not fetched yet
+  const [overdueBookingsLoading, setOverdueBookingsLoading] = useState(false);
 
   const [paymentMethod, setPaymentMethod] = useState('BANK_TRANSFER');
   const [bankAccountId, setBankAccountId] = useState('');
@@ -89,12 +92,6 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
 
   const requiresBankAccount = ['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(paymentMethod);
   const isCheque = paymentMethod === 'CHEQUE';
-
-  // Registration fee gate — until it's settled, this payment can only go
-  // toward it; service charges and products stay locked.
-  const regFeeLocked = !!regFeeInfo && !regFeeInfo.settled;
-  const serviceOtherRemaining = Math.max(serviceRemaining - (regFeeInfo?.remaining || 0), 0);
-  const serviceCap = regFeeLocked ? regFeeInfo.remaining : serviceRemaining;
 
   useEffect(() => {
     const load = async () => {
@@ -110,74 +107,81 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
         setEstimateNumber(quote?.estimate_number || '');
         setPayerName(quote?.payer_name || '');
         setPayerMobile(quote?.payer_mobile || '');
-        setServiceTotal(parseFloat(progressRes?.total_amount ?? quote?.total_amount ?? 0));
-        setServicePaid(parseFloat(progressRes?.total_paid || 0));
-
-        const remaining = Math.max(parseFloat(progressRes?.remaining_amount ?? quote?.total_amount ?? 0), 0);
-        setServiceRemaining(remaining);
-
-        const regInfo = getRegFeeInfo(progressRes?.total_paid, quote?.line_items);
-        setRegFeeInfo(regInfo);
-        const locked = !!regInfo && !regInfo.settled;
-        const cap = locked ? regInfo.remaining : remaining;
-        setServiceAmount(cap > 0 ? String(cap) : '');
-        setPayService(cap > 0);
+        setClientId(quote?.request_client_id || null);
         setBankAccounts(banksRes?.data || []);
 
+        const serviceRemaining = Math.max(parseFloat(progressRes?.remaining_amount ?? quote?.total_amount ?? 0), 0);
+        const regInfo = getRegFeeInfo(progressRes?.total_paid, quote?.line_items);
+        setRegFeeInfo(regInfo);
+        const svcOnly = Math.max(serviceRemaining - (regInfo?.remaining || 0), 0);
+        setServiceOnlyRemaining(svcOnly);
+
+        let productsDue = 0;
+        let productsWarning = '';
+        // The linked PRODUCT quote (rentals/purchases/deposits added via the
+        // Products & Rentals section) is a SEPARATE quotations row, joined in
+        // by getQuoteWithLineItems via quotations.linked_quote_id — if this
+        // quote was never given a companion PRODUCT quote (or the join
+        // didn't find one), there is nothing to fetch and the bucket is
+        // correctly absent, not a bug.
         const productQuoteId = quote?.product_quote_id;
         if (productQuoteId) {
-          // Product total is pulled independently of the registration-fee
-          // lock so the Summary panel's combined Total reflects products &
-          // deposits even while the lock prevents actually paying them yet.
           try {
+            // Ground truth for what was quoted — read straight from the
+            // product quote's own line items (same source
+            // quotation_details.jsx / quotations.jsx use for their Total
+            // figure), independent of whether `invoices` rows exist yet.
+            // Relying on `invoices` alone previously understated the
+            // Products & Rentals bucket whenever the accept-on-open fallback
+            // below didn't run (e.g. the quote was already accepted but its
+            // invoice rows were fetched before this modal existed).
             const productDetail = await apiClient.getProductQuote(productQuoteId);
-            setProductTotal(productLineItemsTotal(productDetail?.data?.line_items));
-          } catch {
-            setProductTotal(0);
-          }
+            const productLineItems = productDetail?.data?.line_items || [];
+            const productsTotal = productLineItemsTotal(productLineItems);
 
-          try {
             let invRes = await apiClient.getProductInvoices({ quote_id: productQuoteId });
             let invoices = Array.isArray(invRes?.data) ? invRes.data : [];
-            setProductPaid(invoices.filter((i) => i.status === 'PAID').reduce((s, i) => s + (parseFloat(i.amount) || 0), 0));
 
-            if (!locked) {
-              let unpaidList = invoices.filter((i) => i.status !== 'PAID');
-
-              // A linked PRODUCT quote only gets its own `invoices` row(s) once
-              // someone explicitly accepts it (normally done from the Products
-              // page). Accepting the SERVICE quote here doesn't do that, so
-              // without this the product portion would silently never show up
-              // in this modal. Accept it here instead — via acceptProductQuote,
-              // NOT createInvoiceFromQuote: a quote can contain RENTAL line
-              // items, and only acceptProductQuote knows how to create the
-              // rental_agreements row(s) and mark the unit(s) RENTED. Using
-              // the flat invoice-only endpoint here previously let a rental
-              // get fully paid for while never being recorded as rented (see
-              // the EST-1368/BED-003 incident).
-              if (invoices.length === 0) {
-                try {
-                  await apiClient.acceptProductQuote(productQuoteId);
-                } catch {
-                  // Already accepted under a race, or quote isn't acceptable yet
-                  // — either way, re-fetch below to pick up whatever exists now.
-                }
-                try {
-                  invRes = await apiClient.getProductInvoices({ quote_id: productQuoteId });
-                  invoices = Array.isArray(invRes?.data) ? invRes.data : [];
-                  unpaidList = invoices.filter((i) => i.status !== 'PAID');
-                } catch {
-                  unpaidList = [];
-                }
+            // A linked PRODUCT quote only gets its own `invoices` row(s) once
+            // someone explicitly accepts it — accept it here (via
+            // acceptProductQuote, NOT createInvoiceFromQuote: only that path
+            // knows how to create rental_agreements and mark units RENTED —
+            // see the EST-1368/BED-003 incident) so the Products & Rentals
+            // bucket doesn't silently disappear from this modal.
+            if (invoices.length === 0 && productLineItems.length > 0) {
+              try {
+                await apiClient.acceptProductQuote(productQuoteId);
+                invRes = await apiClient.getProductInvoices({ quote_id: productQuoteId });
+                invoices = Array.isArray(invRes?.data) ? invRes.data : [];
+              } catch (acceptErr) {
+                // A 409 here just means it's already accepted under a race —
+                // anything else means invoices genuinely don't exist yet and
+                // productsTotal (from line items) is still the right due amount.
+                console.warn('acceptProductQuote fallback failed:', acceptErr.message);
               }
-
-              setProductInvoices(unpaidList);
-              setPayProduct(unpaidList.length > 0);
             }
-          } catch {
-            setProductPaid(0);
+
+            // A fully-PAID invoice counts as fully paid even if it predates
+            // the invoice_payments ledger (no rows there yet for it) —
+            // amount_paid alone would understate it in that case.
+            const productsPaid = invoices.reduce(
+              (s, i) => s + (i.status === 'PAID' ? (parseFloat(i.amount) || 0) : (parseFloat(i.amount_paid) || 0)),
+              0
+            );
+            productsDue = Math.max(productsTotal - productsPaid, 0);
+          } catch (productErr) {
+            // Surfaced instead of silently showing 0 — a failed fetch here
+            // (permissions, network, etc.) previously looked identical to
+            // "this quote genuinely has no products", which made the bucket
+            // vanish from the allocation table with no explanation.
+            console.error('Failed to load Products & Rentals bucket:', productErr);
+            productsDue = 0;
+            productsWarning = `Products & Rentals couldn't be loaded (${productErr.message || 'unknown error'}) — its amount is not included below.`;
           }
         }
+        setProductsRemaining(productsDue);
+        setCombinedRemaining((regInfo?.remaining || 0) + svcOnly + productsDue);
+        if (productsWarning) setError(productsWarning);
       } catch (err) {
         setError(err.message || 'Failed to load payment details');
       } finally {
@@ -187,35 +191,123 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
     load();
   }, [quoteId]);
 
+  const regFeeRemaining = regFeeInfo?.remaining || 0;
+  const buckets = useMemo(() => {
+    const list = [];
+    if (regFeeInfo && regFeeRemaining > 0) list.push({ key: 'reg_fee', due: regFeeRemaining });
+    if (serviceOnlyRemaining > 0) list.push({ key: 'service', due: serviceOnlyRemaining });
+    if (productsRemaining > 0) list.push({ key: 'products', due: productsRemaining });
+    return list;
+  }, [regFeeInfo, regFeeRemaining, serviceOnlyRemaining, productsRemaining]);
+
+  // Reg fee must be fully covered by this payment's own allocation before
+  // the other buckets can take anything — mirrors the backend's own check.
+  const regFeeAllocated = parseFloat(allocations.reg_fee) || 0;
+  const regFeeGateOpen = regFeeRemaining <= 0.01 || regFeeAllocated >= regFeeRemaining - 0.01;
+
+  const allocatedTotal = ['reg_fee', 'service', 'products'].reduce(
+    (s, k) => s + (parseFloat(allocations[k]) || 0), 0
+  );
+  const parsedAmount = parseFloat(amountReceived) || 0;
+  const unallocated = Math.round((parsedAmount - allocatedTotal) * 100) / 100;
+
+  // Once every bucket that has anything due has been allocated up to its
+  // cap, any amount still unallocated is a genuine overpayment — not a
+  // mistake to block — and needs an admin-chosen destination instead.
+  const bucketsMaxed = buckets.every((b) => (parseFloat(allocations[b.key]) || 0) >= b.due - 0.01);
+  const showOverflow = unallocated > 0.01 && bucketsMaxed;
+  const chosenOverdueBooking = (overdueBookings || []).find((b) => b.booking_id === overflowBookingId);
+
+  useEffect(() => {
+    if (!showOverflow || !clientId || overdueBookings !== null) return;
+    setOverdueBookingsLoading(true);
+    apiClient.getClientOverdueBookings(clientId)
+      .then((res) => setOverdueBookings(Array.isArray(res?.data) ? res.data : []))
+      .catch(() => setOverdueBookings([]))
+      .finally(() => setOverdueBookingsLoading(false));
+  }, [showOverflow, clientId, overdueBookings]);
+
+  // Waterfall pre-fill when entering Step 2 — reg fee first, then service,
+  // then products, up to the entered amount. Admin can still hand-edit any
+  // row afterward as long as the totals reconcile. Anything beyond what the
+  // three buckets can take is left unallocated for the overflow step below.
+  const prefillAllocations = (amount) => {
+    let remaining = amount;
+    const next = { reg_fee: '', service: '', products: '' };
+    for (const bucket of buckets) {
+      if (remaining <= 0.005) break;
+      const take = Math.min(remaining, bucket.due);
+      next[bucket.key] = take > 0 ? String(take) : '';
+      remaining -= take;
+    }
+    setAllocations(next);
+  };
+
+  const validateStep1 = () => {
+    if (!parsedAmount || parsedAmount <= 0) return 'Enter the amount received';
+    if (requiresBankAccount && !bankAccountId) return 'Please select a bank account';
+    if (isCheque && (!chequeNumber || !chequeDate)) return 'Cheque number and date are required';
+    return '';
+  };
+
+  const goToStep2 = () => {
+    const err = validateStep1();
+    if (err) { setError(err); return; }
+    setError('');
+    setOverflowChoice('');
+    setOverflowBookingId('');
+    setOverdueBookings(null);
+    prefillAllocations(parsedAmount);
+    setStep(2);
+  };
+
+  const handleAllocationChange = (key, value) => {
+    setAllocations((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const validateStep2 = () => {
+    for (const bucket of buckets) {
+      const val = parseFloat(allocations[bucket.key]) || 0;
+      if (val > bucket.due + 0.01) return `${BUCKET_META[bucket.key].label} allocation exceeds its due amount`;
+      if (val < 0) return 'Allocations cannot be negative';
+    }
+    if (!regFeeGateOpen && ((parseFloat(allocations.service) || 0) > 0 || (parseFloat(allocations.products) || 0) > 0)) {
+      return 'Registration fee must be fully allocated before allocating to other charges';
+    }
+    if (unallocated < -0.01) return 'Allocated amount exceeds the payment amount';
+    if (unallocated > 0.01) {
+      if (!bucketsMaxed) return `${money(unallocated)} is still unallocated`;
+      if (!overflowChoice) return `This payment exceeds what's due by ${money(unallocated)} — choose what to do with the extra`;
+      if (overflowChoice === 'BOOKING_PAYOFF') {
+        if (!overflowBookingId) return 'Select a booking to pay off with the extra amount';
+        if (chosenOverdueBooking && unallocated > chosenOverdueBooking.overdue_amount + 0.01) {
+          return `The extra (${money(unallocated)}) exceeds that booking's overdue amount (${money(chosenOverdueBooking.overdue_amount)})`;
+        }
+      }
+    }
+    return '';
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const err = validateStep2();
+    if (err) { setError(err); return; }
     setError('');
-
-    const svcAmt = payService ? parseFloat(serviceAmount) || 0 : 0;
-    if (payService && (svcAmt <= 0 || svcAmt > serviceCap + 0.01)) {
-      setError(
-        regFeeLocked
-          ? `Registration fee amount must be between 0 and ${money(serviceCap)}`
-          : `Service amount must be between 0 and ${money(serviceCap)}`
-      );
-      return;
-    }
-    if (!payService && !(payProduct && !regFeeLocked)) {
-      setError('Select at least one portion to pay');
-      return;
-    }
-    if (requiresBankAccount && !bankAccountId) {
-      setError('Please select a bank account');
-      return;
-    }
-    if (isCheque && (!chequeNumber || !chequeDate)) {
-      setError('Cheque number and date are required');
-      return;
-    }
 
     setSubmitting(true);
     try {
-      const sharedFields = {
+      const payload = {
+        amount_received: parsedAmount,
+        allocations: {
+          reg_fee: parseFloat(allocations.reg_fee) || 0,
+          service: parseFloat(allocations.service) || 0,
+          products: parseFloat(allocations.products) || 0,
+        },
+        overflow: unallocated > 0.01
+          ? (overflowChoice === 'BOOKING_PAYOFF'
+            ? { type: 'BOOKING_PAYOFF', booking_id: overflowBookingId }
+            : { type: 'WALLET' })
+          : undefined,
         payment_method: paymentMethod,
         bank_account_id: bankAccountId || null,
         cheque_number: chequeNumber || null,
@@ -223,16 +315,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
         reference_number: referenceNumber || null,
         notes: notes || null,
       };
-
-      if (payService && svcAmt > 0) {
-        await apiClient.recordQuotePayment(quoteId, { ...sharedFields, amount_received: svcAmt }, slipFile);
-      }
-      if (payProduct && !regFeeLocked && productInvoices.length > 0) {
-        for (const inv of productInvoices) {
-          await apiClient.recordProductInvoicePayment(inv.invoice_id, sharedFields, slipFile);
-        }
-      }
-
+      await apiClient.recordAllocatedQuotePayment(quoteId, payload, slipFile);
       onRecorded();
     } catch (err) {
       setError(err.message || 'Failed to record payment');
@@ -243,7 +326,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-xl bg-white border border-slate-200 shadow-2xl max-h-[90vh] overflow-y-auto">
+      <div className="w-full max-w-lg rounded-xl bg-white border border-slate-200 shadow-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-start justify-between border-b border-slate-100 px-5 py-4">
           <div className="min-w-0">
             <h3 className="text-sm font-semibold text-slate-900">Record Payment</h3>
@@ -258,150 +341,56 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
           </button>
         </div>
 
+        {/* Stepper */}
+        {!loading && (
+          <div className="flex items-center gap-2 px-5 pt-4">
+            <StepPip index={1} label="Amount & Method" active={step === 1} done={step > 1} />
+            <div className={`h-px flex-1 ${step > 1 ? 'bg-blue-400' : 'bg-slate-200'}`} />
+            <StepPip index={2} label="Allocate" active={step === 2} done={false} />
+          </div>
+        )}
+
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-12 text-sm text-slate-500">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading…
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="px-5 py-4 space-y-5">
+          <form onSubmit={step === 2 ? handleSubmit : (e) => e.preventDefault()} className="px-5 py-4 space-y-5">
             {error && (
               <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700">{error}</div>
             )}
 
-            {/* Summary — combined total = service charges (incl. registration
-                fee) + products/rentals + refundable deposits, matching the
-                figure shown on the Quotations and Quotation Details pages. */}
-            <div>
-              <SectionHeader title="Summary" />
-              <div className="grid grid-cols-3 gap-2">
-                <div className="bg-slate-50 border border-slate-100 rounded-lg p-2.5">
-                  <div className="flex items-center gap-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
-                    <Receipt className="h-3 w-3" /> Total
-                  </div>
-                  <p className="text-sm font-semibold text-slate-900 mt-0.5">{money(serviceTotal + productTotal)}</p>
-                </div>
-                <div className="bg-slate-50 border border-slate-100 rounded-lg p-2.5">
-                  <div className="flex items-center gap-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
-                    <CheckCircle2 className="h-3 w-3" /> Paid
-                  </div>
-                  <p className="text-sm font-semibold text-emerald-700 mt-0.5">{money(servicePaid + productPaid)}</p>
-                </div>
-                <div className="bg-slate-50 border border-slate-100 rounded-lg p-2.5">
-                  <div className="flex items-center gap-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
-                    <Clock3 className="h-3 w-3" /> Remaining
-                  </div>
-                  <p className="text-sm font-semibold text-amber-700 mt-0.5">{money(Math.max((serviceTotal + productTotal) - (servicePaid + productPaid), 0))}</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Allocation */}
-            <div>
-              <SectionHeader title="Apply Payment To" />
-              <div className="space-y-2">
-
-                {regFeeInfo && (
-                  <div className={`rounded-lg border p-3 ${regFeeLocked ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50'}`}>
-                    <label className={`flex items-center gap-2 text-sm font-medium ${regFeeLocked ? 'text-amber-900' : 'text-emerald-800'}`}>
-                      <input
-                        type="checkbox"
-                        checked={regFeeLocked ? payService : true}
-                        disabled={!regFeeLocked}
-                        onChange={(e) => regFeeLocked && setPayService(e.target.checked)}
-                      />
-                      <BadgeDollarSign className="h-3.5 w-3.5 shrink-0" />
-                      Registration Fee
-                      {regFeeLocked && <span className="font-normal text-amber-700">— remaining {money(regFeeInfo.remaining)}</span>}
-                    </label>
-
-                    {regFeeLocked ? (
-                      payService && (
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          max={regFeeInfo.remaining}
-                          value={serviceAmount}
-                          onChange={(e) => setServiceAmount(e.target.value)}
-                          className="mt-2 ml-6 w-[calc(100%-1.5rem)] rounded-md border border-slate-300 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                          placeholder="Amount toward registration fee"
-                        />
-                      )
-                    ) : (
-                      <p className="mt-1 ml-6 flex items-center gap-1 text-xs font-medium text-emerald-700">
-                        <CheckCircle2 className="h-3.5 w-3.5" /> Settled — {money(regFeeInfo.allocated)} of {money(regFeeInfo.amount)}
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {regFeeLocked ? (
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
-                    <div className="flex items-center gap-1.5 font-medium text-slate-600">
-                      <Lock className="h-3.5 w-3.5" /> Service charges &amp; products locked
-                    </div>
-                    <p className="mt-1">
-                      The registration fee must be settled before other service charges
-                      {productInvoices.length > 0 ? ' or products & rentals' : ''} can be paid.
-                      {serviceOtherRemaining > 0 && <> {money(serviceOtherRemaining)} in other service charges is waiting.</>}
-                    </p>
-                  </div>
-                ) : (
-                  <>
-                    {serviceRemaining > 0 && (
-                      <div className="rounded-lg border border-slate-200 p-3">
-                        <label className="flex items-center gap-2 text-sm font-medium text-slate-800">
-                          <input type="checkbox" checked={payService} onChange={(e) => setPayService(e.target.checked)} />
-                          {regFeeInfo ? 'Remaining service charges' : 'Service charges'} — remaining {money(serviceRemaining)}
-                        </label>
-                        {payService && (
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            max={serviceRemaining}
-                            value={serviceAmount}
-                            onChange={(e) => setServiceAmount(e.target.value)}
-                            className="mt-2 ml-6 w-[calc(100%-1.5rem)] rounded-md border border-slate-300 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                            placeholder="Amount for service charges"
-                          />
-                        )}
-                      </div>
-                    )}
-
-                    {productInvoices.length > 0 && (
-                      <div className="rounded-lg border border-purple-200 bg-purple-50/40 p-3">
-                        <label className="flex items-center gap-2 text-sm font-medium text-purple-800">
-                          <input type="checkbox" checked={payProduct} onChange={(e) => setPayProduct(e.target.checked)} />
-                          Products &amp; Rentals ({productInvoices.map((i) => i.invoice_code).join(', ')}) — full amount{' '}
-                          {money(productInvoices.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0))}
-                        </label>
-                        <p className="mt-1 pl-6 text-[11px] text-purple-600">
-                          Must be paid in full — partial payment isn&apos;t supported for this portion.
-                        </p>
-                      </div>
-                    )}
-
-                    {serviceRemaining <= 0 && productInvoices.length === 0 && (
-                      <p className="text-xs text-slate-500">This quotation is already fully paid.</p>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-
-            {(payService || (payProduct && !regFeeLocked)) && (
+            {step === 1 ? (
               <>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+                    Amount Received
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg font-semibold text-slate-400">LKR</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      autoFocus
+                      value={amountReceived}
+                      onChange={(e) => setAmountReceived(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full bg-transparent text-2xl font-semibold text-slate-900 outline-none placeholder-slate-300"
+                    />
+                  </div>
+                  <p className="mt-1.5 text-xs text-slate-400">
+                    Balance due: {money(combinedRemaining)}
+                    {parsedAmount > combinedRemaining + 0.01 && ' — you\'ll be asked how to apply the extra next'}
+                  </p>
+                </div>
+
                 <div>
-                  <SectionHeader title="Payment Details" />
+                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Payment Details</p>
                   <div className="space-y-3">
                     <div>
                       <label className="mb-1 block text-[11px] font-medium text-slate-500">Payment Method</label>
-                      <select
-                        value={paymentMethod}
-                        onChange={(e) => setPaymentMethod(e.target.value)}
-                        className={inputCls}
-                      >
+                      <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className={inputCls}>
                         {paymentMethodOptions.map((m) => (
                           <option key={m} value={m}>{m.replace('_', ' ')}</option>
                         ))}
@@ -411,11 +400,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                     {requiresBankAccount && (
                       <div>
                         <label className="mb-1 block text-[11px] font-medium text-slate-500">Bank Account</label>
-                        <select
-                          value={bankAccountId}
-                          onChange={(e) => setBankAccountId(e.target.value)}
-                          className={inputCls}
-                        >
+                        <select value={bankAccountId} onChange={(e) => setBankAccountId(e.target.value)} className={inputCls}>
                           <option value="">Select bank account</option>
                           {bankAccounts.map((a) => (
                             <option key={a.account_id} value={a.account_id}>
@@ -428,17 +413,8 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
 
                     {isCheque && (
                       <div className="grid grid-cols-2 gap-2">
-                        <input
-                          value={chequeNumber}
-                          onChange={(e) => setChequeNumber(e.target.value)}
-                          placeholder="Cheque number"
-                          className={inputCls}
-                        />
-                        <DateInput
-                          value={chequeDate}
-                          onChange={(e) => setChequeDate(e.target.value)}
-                          className={inputCls}
-                        />
+                        <input value={chequeNumber} onChange={(e) => setChequeNumber(e.target.value)} placeholder="Cheque number" className={inputCls} />
+                        <DateInput value={chequeDate} onChange={(e) => setChequeDate(e.target.value)} className={inputCls} />
                       </div>
                     )}
 
@@ -452,16 +428,11 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                 </div>
 
                 <div>
-                  <SectionHeader title="Attachment" />
+                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Attachment</p>
                   <div className="rounded-lg border border-slate-200 p-3">
                     <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100">
                       <Upload className="h-3.5 w-3.5" /> Choose File
-                      <input
-                        type="file"
-                        accept="image/*,.pdf,.doc,.docx"
-                        className="hidden"
-                        onChange={(e) => setSlipFile(e.target.files?.[0] || null)}
-                      />
+                      <input type="file" accept="image/*,.pdf,.doc,.docx" className="hidden" onChange={(e) => setSlipFile(e.target.files?.[0] || null)} />
                     </label>
                     {slipFile && <p className="mt-1.5 text-xs text-slate-600">{slipFile.name}</p>}
                     {!slipFile && <p className="mt-1.5 text-xs text-slate-400">Payment slip (optional)</p>}
@@ -469,23 +440,174 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                 </div>
 
                 <div>
-                  <SectionHeader title="Notes" />
-                  <textarea
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Notes (optional)"
-                    rows={2}
-                    className={inputCls}
-                  />
+                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Notes</p>
+                  <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes (optional)" rows={2} className={inputCls} />
                 </div>
 
                 <button
-                  type="submit"
-                  disabled={submitting}
-                  className="w-full rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                  type="button"
+                  onClick={goToStep2}
+                  className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 transition-colors"
                 >
-                  {submitting ? 'Recording…' : 'Submit Payment'}
+                  Next: Allocate Payment <ArrowRight className="h-4 w-4" />
                 </button>
+              </>
+            ) : (
+              <>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 flex items-center justify-between">
+                  <span className="text-xs text-slate-500">Amount to allocate</span>
+                  <span className="text-sm font-semibold text-slate-900">{money(parsedAmount)}</span>
+                </div>
+
+                <div>
+                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Apply Payment To</p>
+                  <div className="overflow-hidden rounded-lg border border-slate-200">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200">
+                          <th className="text-left px-3 py-2 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Bucket</th>
+                          <th className="text-right px-3 py-2 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Due</th>
+                          <th className="text-right px-3 py-2 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Allocate</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {regFeeInfo && (
+                          <BucketRow
+                            meta={BUCKET_META.reg_fee}
+                            icon={BadgeDollarSign}
+                            due={regFeeRemaining}
+                            settled={regFeeRemaining <= 0.01}
+                            value={allocations.reg_fee}
+                            disabled={regFeeRemaining <= 0.01}
+                            onChange={(v) => handleAllocationChange('reg_fee', v)}
+                          />
+                        )}
+                        {serviceOnlyRemaining > 0 && (
+                          <BucketRow
+                            meta={BUCKET_META.service}
+                            icon={Receipt}
+                            due={serviceOnlyRemaining}
+                            settled={false}
+                            value={allocations.service}
+                            disabled={!regFeeGateOpen}
+                            onChange={(v) => handleAllocationChange('service', v)}
+                          />
+                        )}
+                        {productsRemaining > 0 && (
+                          <BucketRow
+                            meta={BUCKET_META.products}
+                            icon={Receipt}
+                            due={productsRemaining}
+                            settled={false}
+                            value={allocations.products}
+                            disabled={!regFeeGateOpen}
+                            onChange={(v) => handleAllocationChange('products', v)}
+                          />
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                  {!regFeeGateOpen && (
+                    <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-700">
+                      <Lock className="h-3 w-3" /> Registration fee must be fully allocated before other charges unlock.
+                    </p>
+                  )}
+                </div>
+
+                <div className={`rounded-lg border px-3 py-2.5 flex items-center justify-between ${Math.abs(unallocated) <= 0.01 ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
+                  <span className={`text-xs font-medium ${Math.abs(unallocated) <= 0.01 ? 'text-emerald-800' : 'text-amber-800'}`}>
+                    {Math.abs(unallocated) <= 0.01 ? (
+                      <span className="flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5" /> Fully allocated</span>
+                    ) : !bucketsMaxed ? (
+                      `Unallocated: ${money(unallocated)}`
+                    ) : (
+                      `Overpayment: ${money(unallocated)} more than what's due`
+                    )}
+                  </span>
+                </div>
+
+                {showOverflow && (
+                  <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-3">
+                    <p className="flex items-center gap-1.5 text-xs font-semibold text-blue-900">
+                      <AlertTriangle className="h-3.5 w-3.5" /> This payment exceeds what&apos;s due on this quotation
+                    </p>
+                    <p className="mt-1 text-[11px] text-blue-700">
+                      Choose what to do with the extra {money(unallocated)}.
+                    </p>
+
+                    <div className="mt-2.5 space-y-2">
+                      <label className="flex items-start gap-2 rounded-md border border-slate-200 bg-white p-2.5 cursor-pointer has-[:checked]:border-blue-400 has-[:checked]:bg-blue-50">
+                        <input
+                          type="radio"
+                          name="overflow-choice"
+                          className="mt-0.5"
+                          checked={overflowChoice === 'WALLET'}
+                          onChange={() => setOverflowChoice('WALLET')}
+                        />
+                        <span className="flex items-start gap-2 text-xs">
+                          <Wallet className="h-3.5 w-3.5 mt-0.5 text-blue-600 shrink-0" />
+                          <span>
+                            <span className="font-medium text-slate-800">Add to client&apos;s wallet</span>
+                            <span className="block text-[11px] text-slate-500">Credited as wallet balance, usable against future charges.</span>
+                          </span>
+                        </span>
+                      </label>
+
+                      <label className={`flex items-start gap-2 rounded-md border border-slate-200 bg-white p-2.5 ${overdueBookingsLoading || (overdueBookings && overdueBookings.length === 0) ? 'opacity-50' : 'cursor-pointer'} has-[:checked]:border-blue-400 has-[:checked]:bg-blue-50`}>
+                        <input
+                          type="radio"
+                          name="overflow-choice"
+                          className="mt-0.5"
+                          disabled={overdueBookingsLoading || (overdueBookings && overdueBookings.length === 0)}
+                          checked={overflowChoice === 'BOOKING_PAYOFF'}
+                          onChange={() => setOverflowChoice('BOOKING_PAYOFF')}
+                        />
+                        <span className="flex-1 text-xs">
+                          <span className="font-medium text-slate-800">Pay off an overdue booking</span>
+                          {overdueBookingsLoading ? (
+                            <span className="block text-[11px] text-slate-400">Checking for overdue bookings…</span>
+                          ) : overdueBookings && overdueBookings.length === 0 ? (
+                            <span className="block text-[11px] text-slate-400">This client has no overdue bookings.</span>
+                          ) : (
+                            <span className="block text-[11px] text-slate-500">Applies the extra toward a booking&apos;s outstanding balance.</span>
+                          )}
+
+                          {overflowChoice === 'BOOKING_PAYOFF' && overdueBookings && overdueBookings.length > 0 && (
+                            <select
+                              value={overflowBookingId}
+                              onChange={(e) => setOverflowBookingId(e.target.value)}
+                              className="mt-1.5 w-full rounded-md border border-slate-300 px-2 py-1 text-xs outline-none focus:border-blue-500"
+                            >
+                              <option value="">Select a booking</option>
+                              {overdueBookings.map((b) => (
+                                <option key={b.booking_id} value={b.booking_id}>
+                                  {b.booking_code} — overdue {money(b.overdue_amount)}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setStep(1)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+                  >
+                    <ArrowLeft className="h-4 w-4" /> Back
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="flex-1 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                  >
+                    {submitting ? 'Recording…' : 'Submit Payment'}
+                  </button>
+                </div>
               </>
             )}
           </form>
@@ -494,5 +616,51 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
     </div>
   );
 };
+
+const StepPip = ({ index, label, active, done }) => (
+  <div className="flex items-center gap-1.5">
+    <span
+      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${
+        done ? 'bg-blue-600 text-white' : active ? 'bg-blue-100 text-blue-700 ring-2 ring-blue-500' : 'bg-slate-100 text-slate-400'
+      }`}
+    >
+      {done ? <CheckCircle2 className="h-3 w-3" /> : index}
+    </span>
+    <span className={`text-xs font-medium ${active ? 'text-slate-800' : 'text-slate-400'}`}>{label}</span>
+  </div>
+);
+
+const BucketRow = ({ meta, icon: Icon, due, settled, value, disabled, onChange }) => (
+  <tr className={disabled ? 'bg-slate-50/60' : ''}>
+    <td className="px-3 py-2.5">
+      <div className={`flex items-center gap-1.5 text-xs font-medium ${meta.accent}`}>
+        <Icon className="h-3.5 w-3.5 shrink-0" />
+        {meta.label}
+        {disabled && <Lock className="h-3 w-3 text-slate-400" />}
+      </div>
+      <p className="text-[10px] text-slate-400 mt-0.5">{meta.hint}</p>
+    </td>
+    <td className="px-3 py-2.5 text-right text-xs text-slate-600 align-top">{money(due)}</td>
+    <td className="px-3 py-2.5 align-top">
+      {settled ? (
+        <span className="flex items-center justify-end gap-1 text-[11px] font-medium text-emerald-700">
+          <CheckCircle2 className="h-3.5 w-3.5" /> Settled
+        </span>
+      ) : (
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          max={due}
+          value={value}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="0.00"
+          className="w-28 rounded-md border border-slate-300 px-2 py-1 text-right text-sm outline-none focus:border-blue-500 disabled:bg-slate-100 disabled:text-slate-400"
+        />
+      )}
+    </td>
+  </tr>
+);
 
 export default PaymentAllocationModal;
