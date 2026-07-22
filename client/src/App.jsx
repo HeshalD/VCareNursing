@@ -102,6 +102,7 @@ import ActiveSessionsPage from './modules/admin/active_sessions/ActiveSessionsPa
 import SalespersonsPage from './modules/admin/salespersons/SalespersonsPage';
 import AdminInvoicesPage from './modules/admin/invoices/AdminInvoicesPage';
 import SalespersonDetailPage from './modules/admin/salespersons/SalespersonDetailPage';
+import BulkImportPage from './modules/admin/bulk_import/BulkImportPage';
 import ProductsPage from './modules/admin/products/ProductsPage';
 import ClientProducts from './modules/client/ClientProducts';
 
@@ -432,6 +433,11 @@ function App() {
             <Route path="/admin/salespersons/:id" element={
               <AdminAuthProvider>
                 <SalespersonDetailPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/bulk-import" element={
+              <AdminAuthProvider>
+                <BulkImportPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/settings" element={

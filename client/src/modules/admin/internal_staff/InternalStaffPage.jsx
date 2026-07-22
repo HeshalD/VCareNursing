@@ -12,6 +12,7 @@ const ROLE_OPTIONS = [
   { value: 'ACCOUNTS', label: 'Accounts' },
   { value: 'SALES', label: 'Sales' },
   { value: 'STORE_MANAGER', label: 'Store Manager' },
+  { value: 'RECRUITER', label: 'Recruiter' },
 ];
 const LOGIN_ROLES = new Set(['COORDINATOR', 'ACCOUNTS', 'SALES']);
 const STATUS_OPTIONS = ['Active', 'Inactive', 'On Leave'];

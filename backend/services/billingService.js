@@ -182,6 +182,31 @@ const createServiceInvoice = async (client, { booking_id, client_id, amount, not
   return result.rows[0].transaction_id;
 };
 
+// ─── Overdue Check ──────────────────────────────────────────────────────────────
+// Flags a single ACTIVE booking as OVERDUE the moment its total DEBITs exceed
+// total CREDITs, instead of waiting for the nightly cron's sweep. Called right
+// after any new invoice (DEBIT) is created for a booking. Must be called
+// within an open client transaction.
+
+const checkAndFlagBookingOverdue = async (client, booking_id) => {
+  const result = await client.query(
+    `SELECT
+        COALESCE(SUM(CASE WHEN transaction_type = 'DEBIT' THEN amount ELSE 0 END), 0) as total_debits,
+        COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' THEN amount ELSE 0 END), 0) as total_credits
+     FROM transactions
+     WHERE booking_id = $1`,
+    [booking_id]
+  );
+
+  const { total_debits, total_credits } = result.rows[0];
+  if (parseFloat(total_debits) > parseFloat(total_credits)) {
+    await client.query(
+      `UPDATE bookings SET status = 'OVERDUE' WHERE booking_id = $1 AND status = 'ACTIVE'`,
+      [booking_id]
+    );
+  }
+};
+
 module.exports = {
   calculateLiveInCharge,
   calculateShiftCharge,
@@ -190,5 +215,6 @@ module.exports = {
   getBillingCharge,
   generateInvoiceNumber,
   creditStaffSalary,
-  createServiceInvoice
+  createServiceInvoice,
+  checkAndFlagBookingOverdue
 };

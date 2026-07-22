@@ -4,7 +4,7 @@ import {
   Settings, LogOut, Bell, Search,
   ShieldCheck, FileText, SendHorizontal, Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet, Landmark,
   ChevronLeft, ChevronRight, ChevronDown, ClipboardList, History, HeartPulse, ArrowLeftRight, Banknote, Star, Lock, UserCog, CalendarClock, Briefcase, Receipt, CalendarOff, MonitorSmartphone,
-  Menu, X, ReceiptText, Package
+  Menu, X, ReceiptText, Package, Upload
 } from 'lucide-react';
 import logo from '../../../assets/Logo/VCareLogo.png';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -34,6 +34,7 @@ const NAV_SECTIONS = [
       { icon: UserCog, label: 'Staff Management', path: '/admin/staff-management', match: (p) => p === '/admin/staff-management' || p === '/admin/proxy-user-management' },
       { icon: Settings, label: 'Internal Staff', path: '/admin/internal-staff' },
       { icon: Briefcase, label: 'Salespersons', path: '/admin/salespersons' },
+      { icon: Upload, label: 'Bulk Import', path: '/admin/bulk-import' },
     ],
   },
   {

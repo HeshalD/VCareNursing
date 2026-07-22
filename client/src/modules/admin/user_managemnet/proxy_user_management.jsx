@@ -163,9 +163,13 @@ const ProxyUserManagement = () => {
     gender: '', role: [], experience_level: '',
     willing_to_live_in: false, date_of_birth: '',
     nic_number: '', nic_front: null, nic_back: null,
-    staff_code: '', admin_remarks: '',
-    grama_niladhari: null, police_report: null
+    staff_code: '', admin_remarks: '', recruiter_id: ''
   });
+  const [recruiters, setRecruiters] = useState([]);
+
+  useEffect(() => {
+    apiClient.getRecruiters().then(res => setRecruiters(res.data || [])).catch(() => {});
+  }, []);
 
   const [profilePicturePreview, setProfilePicturePreview] = useState('');
   const [nicFrontPreview, setNicFrontPreview] = useState('');
@@ -201,8 +205,7 @@ const ProxyUserManagement = () => {
     gender: '', role: [], experience_level: '',
     willing_to_live_in: false, date_of_birth: '',
     nic_number: '', nic_front: null, nic_back: null,
-    staff_code: '', admin_remarks: '',
-    grama_niladhari: null, police_report: null
+    staff_code: '', admin_remarks: '', recruiter_id: ''
   });
 
   const openAdd = () => {
@@ -364,6 +367,7 @@ const ProxyUserManagement = () => {
     fd.append('nic_number', formData.nic_number);
     if (formData.staff_code) fd.append('staff_code', formData.staff_code);
     if (formData.admin_remarks) fd.append('admin_remarks', formData.admin_remarks);
+    if (!isEditMode && formData.recruiter_id) fd.append('recruiter_id', formData.recruiter_id);
     if (formData.profile_picture) fd.append('profile_picture', formData.profile_picture);
     if (formData.nic_front) fd.append('nic_front', formData.nic_front);
     if (formData.nic_back) fd.append('nic_back', formData.nic_back);
@@ -793,12 +797,23 @@ const ProxyUserManagement = () => {
 
               {/* Notes */}
               <SectionHeader title="Admin Notes" />
-              <div className="px-5 pt-4 pb-6">
+              <div className="px-5 pt-4 pb-6 space-y-3">
                 <Field label="Admin Remarks" required={!isEditMode}>
                   <textarea name="admin_remarks" value={formData.admin_remarks} onChange={handleInputChange}
                     required={!isEditMode} rows={3} placeholder="Internal notes about this staff member…"
                     className={`${inputCls(false)} resize-none`} />
                 </Field>
+                {!isEditMode && (
+                  <Field label="Recruiter">
+                    <select name="recruiter_id" value={formData.recruiter_id} onChange={handleInputChange}
+                      className={inputCls(false)}>
+                      <option value="">— None —</option>
+                      {recruiters.map(r => (
+                        <option key={r.id} value={r.id}>{r.full_name}</option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
               </div>
             </form>
 

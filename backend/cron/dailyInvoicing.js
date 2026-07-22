@@ -4,7 +4,8 @@ const db = require('../config/db');
 const {
   getBillingCharge,
   creditStaffSalary,
-  createServiceInvoice
+  createServiceInvoice,
+  checkAndFlagBookingOverdue
 } = require('../services/billingService');
 const { runPreBillingScheduledActions, runPostBillingScheduledActions } = require('./scheduledActions');
 
@@ -37,14 +38,13 @@ const getActiveBookingBalances = async (client) => {
 // ─── Overdue Detection ─────────────────────────────────────────────────────────
 
 const flagOverdueBookings = async (client) => {
-  // Find ACTIVE bookings where total DEBITs exceed total CREDITs (new rule).
-  // SHIFT_BASED is excluded — its day-level debit/credit comparison is only an
-  // approximation (the Shift Bank ledger is authoritative), so overdue for
-  // SHIFT_BASED is now purely a manual admin action (markShiftBookingOverdue).
+  // Find ACTIVE bookings where total DEBITs exceed total CREDITs — i.e. the
+  // client has been invoiced for more than they've paid. Applies uniformly
+  // across LIVE_IN, SHIFT_BASED, and VISITING; a manual admin flag
+  // (markShiftBookingOverdue) also exists for SHIFT_BASED as a fallback.
   const overdueRes = await getActiveBookingBalances(client);
   const overdueRows = overdueRes.rows.filter(
-    booking => booking.service_model !== 'SHIFT_BASED'
-      && parseFloat(booking.total_debits) > parseFloat(booking.total_credits)
+    booking => parseFloat(booking.total_debits) > parseFloat(booking.total_credits)
   );
 
   if (overdueRows.length === 0) return 0;
@@ -224,6 +224,8 @@ const startDailyInvoicing = () => {
             amount,
             notes: `${notes} (${staffCount} staff member(s))`
           });
+
+          await checkAndFlagBookingOverdue(client, bookingId);
 
           await client.query(
             `INSERT INTO booking_daily_invoices (

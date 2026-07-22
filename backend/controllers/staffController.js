@@ -4,6 +4,7 @@ const { sendStaffDeductionNotice, sendStaffSalarySheet } = require('../utils/met
 const { sendSms } = require('../utils/sms');
 const { logActivity } = require('../utils/activityLogger');
 const { generateAndUploadSalarySheet } = require('../utils/salaryPdf');
+const { creditRecruiterForStaff } = require('../services/recruiterService');
 
 const _MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const _METHOD_LABELS = { BANK_TRANSFER: 'Bank Transfer', CASH: 'Cash', CHEQUE: 'Cheque' };
@@ -1391,6 +1392,7 @@ exports.getAllStaff = async (req, res) => {
                 sp.nic_front_url,
                 sp.nic_back_url,
                 sp.staff_code,
+                sp.onboarding_status,
                 CAST(sp.average_rating AS FLOAT) as average_rating,
                 u.user_id,
                 u.email,
@@ -2457,8 +2459,7 @@ exports.updateStaffProfile = async (req, res) => {
         role,
         nic_number,
         staff_code,
-        experience_level,
-        admin_remarks
+        remove_document_urls
     } = req.body;
 
     // Extract file URLs from multer/S3
@@ -2472,8 +2473,9 @@ exports.updateStaffProfile = async (req, res) => {
     try {
         // Validate staff exists
         const existingQuery = `
-            SELECT staff_profile_id, user_id, profile_picture_url, document_urls
-            FROM staff_profiles 
+            SELECT staff_profile_id, user_id, profile_picture_url, document_urls,
+                   nic_front_url, nic_back_url, grama_niladhari_url, police_report_url
+            FROM staff_profiles
             WHERE staff_profile_id = $1
         `;
 
@@ -2570,20 +2572,33 @@ exports.updateStaffProfile = async (req, res) => {
             );
         }
 
-        // Prepare document URLs - keep existing if no new ones uploaded
-        const finalDocumentUrls = uploadedDocuments.length > 0 ? uploadedDocuments : existingStaff.document_urls;
+        // Prepare document URLs - start from existing, drop any explicitly removed, then append newly uploaded ones
+        let baseDocumentUrls = Array.isArray(existingStaff.document_urls) ? existingStaff.document_urls : [];
+        if (remove_document_urls) {
+            try {
+                const toRemove = JSON.parse(remove_document_urls);
+                if (Array.isArray(toRemove) && toRemove.length > 0) {
+                    baseDocumentUrls = baseDocumentUrls.filter(url => !toRemove.includes(url));
+                }
+            } catch { /* ignore malformed payload, keep existing docs */ }
+        }
+        const finalDocumentUrls = [...baseDocumentUrls, ...uploadedDocuments];
 
         // Prepare profile picture - use new one if uploaded, otherwise keep existing
         const finalProfilePicture = uploadedProfilePicture || existingStaff.profile_picture_url;
+        const finalNicFront = uploadedNicFront || existingStaff.nic_front_url;
+        const finalNicBack = uploadedNicBack || existingStaff.nic_back_url;
+        const finalGramaNiladhari = uploadedGramaNiladhari || existingStaff.grama_niladhari_url;
+        const finalPoliceReport = uploadedPoliceReport || existingStaff.police_report_url;
 
         // Update staff profile
         const updateQuery = `
-            UPDATE staff_profiles 
-            SET 
+            UPDATE staff_profiles
+            SET
                 full_name = COALESCE($2, full_name),
                 designation = COALESCE($3, designation),
                 qualifications = COALESCE($4, qualifications),
-                document_urls = COALESCE($5, document_urls),
+                document_urls = $5,
                 home_address = COALESCE($6, home_address),
                 location = COALESCE($7, location),
                 profile_picture_url = COALESCE($8, profile_picture_url),
@@ -2594,10 +2609,8 @@ exports.updateStaffProfile = async (req, res) => {
                 nic_number = COALESCE($13, nic_number),
                 nic_front_url = COALESCE($14, nic_front_url),
                 nic_back_url = COALESCE($15, nic_back_url),
-                experience_level = COALESCE($16, experience_level),
-                admin_remarks = COALESCE($17, admin_remarks),
-                grama_niladhari_url = COALESCE($18, grama_niladhari_url),
-                police_report_url = COALESCE($19, police_report_url)
+                grama_niladhari_url = COALESCE($16, grama_niladhari_url),
+                police_report_url = COALESCE($17, police_report_url)
             WHERE staff_profile_id = $1
             RETURNING
                 staff_profile_id,
@@ -2616,8 +2629,6 @@ exports.updateStaffProfile = async (req, res) => {
                 gender,
                 willing_to_live_in,
                 date_of_birth,
-                experience_level,
-                admin_remarks,
                 grama_niladhari_url,
                 police_report_url,
                 current_status,
@@ -2630,7 +2641,7 @@ exports.updateStaffProfile = async (req, res) => {
             full_name || null,
             designation || null,
             qualifications || null,
-            finalDocumentUrls || null,
+            finalDocumentUrls,
             home_address || null,
             location || null,
             finalProfilePicture || null,
@@ -2639,12 +2650,10 @@ exports.updateStaffProfile = async (req, res) => {
             date_of_birth || null,
             staff_code ? String(staff_code).trim() : null,
             nic_number || null,
-            uploadedNicFront || null,
-            uploadedNicBack || null,
-            experience_level || null,
-            admin_remarks || null,
-            uploadedGramaNiladhari || null,
-            uploadedPoliceReport || null
+            finalNicFront || null,
+            finalNicBack || null,
+            finalGramaNiladhari || null,
+            finalPoliceReport || null
         ];
 
         const result = await db.query(updateQuery, updateValues);
@@ -2725,7 +2734,8 @@ exports.createStaffProfile = async (req, res) => {
         nic_number,
         staff_code,
         experience_level,
-        admin_remarks
+        admin_remarks,
+        recruiter_id
     } = req.body;
 
     // Extract file URLs from multer/S3
@@ -2943,6 +2953,19 @@ exports.createStaffProfile = async (req, res) => {
             });
         } catch (logErr) {
             console.error('Activity log failed (createStaffProfile):', logErr.message);
+        }
+
+        // Credit the recruiter who brought this hire in, if one was selected (non-fatal).
+        if (recruiter_id) {
+            try {
+                await creditRecruiterForStaff(db, {
+                    staff_profile_id: result.rows[0].staff_profile_id,
+                    recruiter_id,
+                    assigned_by: req.user.user_id
+                });
+            } catch (recruiterErr) {
+                console.error('Recruiter crediting failed (createStaffProfile):', recruiterErr.message);
+            }
         }
 
         // Send WhatsApp notification with the login credentials (mobile number is the username)
