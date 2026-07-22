@@ -590,6 +590,65 @@ class ApiClient {
     });
   }
 
+  // ── Recruiter crediting (staff hires — mirrors salesperson crediting above) ──
+  async getRecruiters() {
+    return this.request('/recruiters');
+  }
+
+  async getStaffRecruiter(staffProfileId) {
+    return this.request(`/recruiters/staff/${staffProfileId}`);
+  }
+
+  async creditStaffRecruiter(staffProfileId, recruiterId) {
+    return this.request(`/recruiters/staff/${staffProfileId}/credit`, {
+      method: 'POST',
+      body: JSON.stringify({ recruiter_id: recruiterId }),
+    });
+  }
+
+  async switchStaffRecruiter(staffProfileId, recruiterId, switchReason = null) {
+    return this.request(`/recruiters/staff/${staffProfileId}/switch`, {
+      method: 'PUT',
+      body: JSON.stringify({ recruiter_id: recruiterId, switch_reason: switchReason }),
+    });
+  }
+
+  // ── Bulk data migration (spreadsheet import) ──
+  async downloadImportTemplate() {
+    const url = `${this.baseURL}/bulk-import/template`;
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        ...(this.token && { Authorization: `Bearer ${this.token}` }),
+      },
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || 'Template download failed');
+    }
+    return await response.blob();
+  }
+
+  async previewBulkImport(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.request('/bulk-import/preview', { method: 'POST', body: formData });
+  }
+
+  async commitBulkImport(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.request('/bulk-import/commit', { method: 'POST', body: formData });
+  }
+
+  async getImportBatches() {
+    return this.request('/bulk-import/batches');
+  }
+
+  async getImportBatch(batchId) {
+    return this.request(`/bulk-import/batches/${batchId}`);
+  }
+
   async recordQuotePayment(quoteId, paymentData, paymentSlipFile = null) {
     if (paymentSlipFile) {
       const formData = new FormData();

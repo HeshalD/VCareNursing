@@ -1390,24 +1390,6 @@ const BookingDetailPageV2 = () => {
                   {Math.abs(shiftBank.remaining)} shift{Math.abs(shiftBank.remaining) !== 1 ? 's' : ''} delivered beyond what's been paid for — record a payment or waive outstanding shifts.
                 </div>
               )}
-              <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-                {bookingSummary.status === 'OVERDUE' ? (
-                  <button
-                    onClick={resolveOverdue}
-                    disabled={resolveOverdueBusy}
-                    style={{ border: '1px solid #BCE0CC', background: '#fff', color: '#1F8B4C', borderRadius: 8, padding: '7px 14px', fontSize: 12.5, fontWeight: 600, cursor: resolveOverdueBusy ? 'default' : 'pointer', fontFamily: 'inherit', opacity: resolveOverdueBusy ? 0.6 : 1 }}
-                  >
-                    {resolveOverdueBusy ? 'Resolving…' : 'Resolve overdue'}
-                  </button>
-                ) : (
-                  <button
-                    onClick={openOverdueModal}
-                    style={{ border: '1px solid #F5C9C5', background: '#fff', color: '#C2483C', borderRadius: 8, padding: '7px 14px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
-                  >
-                    Mark overdue
-                  </button>
-                )}
-              </div>
             </div>
           )}
 

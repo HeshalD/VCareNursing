@@ -2439,7 +2439,6 @@ async function runMigration() {
   // 'FULL_NAME' (the person) or 'COMPANY_NAME' (their company_name). Chosen at
   // registration for corporate proxies, switchable anytime by an admin.
   await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS display_name_source VARCHAR(20) NOT NULL DEFAULT 'FULL_NAME'`);
-  await db.query(`ALTER TABLE pending_registrations ADD COLUMN IF NOT EXISTS display_name_source VARCHAR(20) NOT NULL DEFAULT 'FULL_NAME'`);
 
   // Registration fee invoicing — standalone fee sent directly without a booking.
   // reg_fee_receipt_token is the public upload portal key (like doc_upload_token for staff).
@@ -2510,6 +2509,10 @@ async function runMigration() {
       created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
     )
   `);
+  // Added after the corporate-proxy display_name_source column existed on
+  // client_profiles — must run after the CREATE TABLE above (this table may
+  // not exist yet on a fresh database).
+  await db.query(`ALTER TABLE pending_registrations ADD COLUMN IF NOT EXISTS display_name_source VARCHAR(20) NOT NULL DEFAULT 'FULL_NAME'`);
 
   // Widen emergency contact columns to support pipe-separated multiple contacts
   await db.query(`ALTER TABLE patient_profiles ALTER COLUMN emergency_contact_name TYPE TEXT`);
@@ -2518,6 +2521,80 @@ async function runMigration() {
   // Reviews an admin logs on a client's behalf (e.g. after calling the client for feedback).
   await db.query(`ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS submitted_by_admin BOOLEAN NOT NULL DEFAULT FALSE`);
   await db.query(`ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS submitted_by_name VARCHAR(255)`);
+
+  // =========================================================
+  // BULK DATA MIGRATION (spreadsheet import of legacy staff/clients/bookings)
+  // onboarding_status flags a record created via bulk import that is still
+  // missing fields the admin hasn't collected yet ('PENDING_MIGRATION'),
+  // distinct from staff_profiles.verification_status (NIC verification).
+  // =========================================================
+
+  await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS onboarding_status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'`);
+  await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS onboarding_status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'`);
+
+  // Audit/display only — the raw legacy overdue figure carried over from the
+  // old system for a client, does not participate in any balance calculation
+  // (the actual balance is fed via the transactions ledger, see bulkImportController).
+  await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS legacy_opening_balance NUMERIC(12,2)`);
+
+  // Tags rows created by a given spreadsheet upload for later troubleshooting.
+  await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS import_batch_id UUID`);
+  await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS import_batch_id UUID`);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS import_batches (
+      import_batch_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      uploaded_by UUID REFERENCES users(user_id),
+      original_filename TEXT,
+      row_summary JSONB,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // =========================================================
+  // RECRUITER CREDITING
+  // Recruiters are internal_staff (role 'RECRUITER'). Mirrors the salesperson
+  // crediting pattern exactly, at the staff-hire level instead of the
+  // booking/registration level: crediting is permanent (staff_recruited_count),
+  // the "current" recruiter is a switchable pointer via is_current/is_origin.
+  // See services/recruiterService.js.
+  // =========================================================
+
+  await db.query(`
+    ALTER TABLE internal_staff
+    ADD COLUMN IF NOT EXISTS staff_recruited_count INTEGER NOT NULL DEFAULT 0
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS staff_recruiter_assignments (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      staff_profile_id UUID NOT NULL REFERENCES staff_profiles(staff_profile_id) ON DELETE CASCADE,
+      recruiter_id UUID NOT NULL REFERENCES internal_staff(id),
+      is_current BOOLEAN NOT NULL DEFAULT TRUE,
+      is_origin BOOLEAN NOT NULL DEFAULT FALSE,
+      action VARCHAR(20) NOT NULL DEFAULT 'CREDITED',
+      switch_reason TEXT,
+      assigned_by UUID REFERENCES users(user_id),
+      assigned_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_recruiter_one_current
+    ON staff_recruiter_assignments(staff_profile_id) WHERE is_current
+  `);
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_recruiter_one_origin
+    ON staff_recruiter_assignments(staff_profile_id) WHERE is_origin
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_staff_recruiter_recruiter
+    ON staff_recruiter_assignments(recruiter_id)
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_staff_recruiter_staff
+    ON staff_recruiter_assignments(staff_profile_id)
+  `);
 
   // =========================================================
   // SEED DEFAULT PRESET ITEMS

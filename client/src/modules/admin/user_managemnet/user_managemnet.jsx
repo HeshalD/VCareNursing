@@ -74,6 +74,7 @@ const ClientManagement = () => {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('All');
   const [search, setSearch] = useState('');
+  const [pendingMigrationOnly, setPendingMigrationOnly] = useState(false);
 
   const [showDrawer, setShowDrawer] = useState(false);
   const [formData, setFormData] = useState(BLANK_FORM);
@@ -160,13 +161,16 @@ const ClientManagement = () => {
     }
   };
 
+  const pendingMigrationCount = clients.filter(c => c.onboarding_status === 'PENDING_MIGRATION').length;
+
   const filtered = clients.filter(c => {
     const status = c.reg_fee_status || 'PENDING';
     const matchTab = activeTab === 'All' || status === TAB_TO_STATUS[activeTab];
+    const matchPendingMigration = !pendingMigrationOnly || c.onboarding_status === 'PENDING_MIGRATION';
     const q = search.toLowerCase();
     const matchSearch = !q || [c.full_name, c.email, c.mobile_number, c.client_code, c.primary_address]
       .some(v => v?.toLowerCase().includes(q));
-    return matchTab && matchSearch;
+    return matchTab && matchPendingMigration && matchSearch;
   });
 
   const counts = {
@@ -230,6 +234,19 @@ const ClientManagement = () => {
           ))}
         </div>
 
+        {pendingMigrationCount > 0 && (
+          <button
+            onClick={() => setPendingMigrationOnly(v => !v)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors whitespace-nowrap ${
+              pendingMigrationOnly
+                ? 'bg-amber-100 border-amber-300 text-amber-800'
+                : 'bg-white border-slate-200 text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            Pending Migration <span className="ml-1 tabular-nums">{pendingMigrationCount}</span>
+          </button>
+        )}
+
         <div className="relative sm:ml-auto">
           <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
@@ -282,6 +299,11 @@ const ClientManagement = () => {
                         <p className="font-semibold text-slate-900 leading-tight">{client.full_name ?? '—'}</p>
                         {client.client_code && (
                           <p className="text-xs text-slate-400 font-mono">{client.client_code}</p>
+                        )}
+                        {client.onboarding_status === 'PENDING_MIGRATION' && (
+                          <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] font-semibold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
+                            Pending Migration
+                          </span>
                         )}
                       </div>
                     </div>

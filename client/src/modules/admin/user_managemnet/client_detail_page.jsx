@@ -2885,8 +2885,12 @@ const ClientDetailPage = () => {
                     {daysUntilReset !== null && (
                       <div>
                         <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1">Membership Expires In</p>
-                        <p className={`text-sm font-bold ${daysUntilReset <= 30 ? 'text-amber-600' : 'text-gray-800'}`}>
-                          {daysUntilReset > 0 ? `${daysUntilReset} day${daysUntilReset === 1 ? '' : 's'}` : 'Today'}
+                        <p className={`text-sm font-bold ${daysUntilReset <= 30 ? 'text-amber-600' : 'text-gray-800'} ${daysUntilReset < 0 ? 'text-rose-600' : ''}`}>
+                          {daysUntilReset > 0
+                            ? `${daysUntilReset} day${daysUntilReset === 1 ? '' : 's'}`
+                            : daysUntilReset === 0
+                              ? 'Today'
+                              : `Expired ${Math.abs(daysUntilReset)} day${Math.abs(daysUntilReset) === 1 ? '' : 's'} ago`}
                         </p>
                         <p className="text-[11px] text-gray-400 mt-0.5">on {formatDateTime(clientProfile.reg_fee_expires_at)}</p>
                       </div>

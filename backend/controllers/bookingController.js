@@ -6,7 +6,7 @@ const { upload } = require('../config/cloudinaryConfig');
 const { logActivity } = require('../utils/activityLogger');
 const { sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendStaffNewAssignment, sendClientStaffSwapped, sendClientWelcomeNew } = require('../utils/metaWhatsapp');
 const { sendSms } = require('../utils/sms');
-const { createServiceInvoice, calculateShiftSlotCharge } = require('../services/billingService');
+const { createServiceInvoice, calculateShiftSlotCharge, checkAndFlagBookingOverdue } = require('../services/billingService');
 const {
     getBookingFinancialTotals,
     getBookingSettlementSnapshot,
@@ -1561,6 +1561,8 @@ exports.confirmDailyInvoice = async (req, res) => {
                 amount: finalAmount,
                 notes: `Manually confirmed ${shift_slot_id ? 'shift' : 'daily'} charge for ${service_date}`
             });
+
+            await checkAndFlagBookingOverdue(client, booking_id);
         }
 
         const result = reschedule_id

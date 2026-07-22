@@ -20,6 +20,7 @@ import {
   Send,
   StickyNote,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
@@ -416,6 +417,11 @@ const StaffDetailPageV2 = () => {
   const [adminNotesLoading, setAdminNotesLoading] = useState(true);
   const [adminNotesBusy, setAdminNotesBusy] = useState(false);
   const [linkedClientProfileId, setLinkedClientProfileId] = useState(null);
+  const [recruitersList, setRecruitersList] = useState([]);
+  const [staffRecruiter, setStaffRecruiter] = useState(null); // { current, origin, history }
+  const [switchRecruiterId, setSwitchRecruiterId] = useState('');
+  const [recruiterActionLoading, setRecruiterActionLoading] = useState(false);
+  const [recruiterError, setRecruiterError] = useState('');
 
   const profile = detail?.profile || {};
   const overviewEarnings = detail?.earnings || {};
@@ -481,6 +487,8 @@ const StaffDetailPageV2 = () => {
       runAdminRequest(() => apiClient.getStaffAttendanceCalendar(staffProfileId)),
       runAdminRequest(() => apiClient.getStaffAdminNotes(staffProfileId)),
       runAdminRequest(() => apiClient.getStaffLeaveSummary(staffProfileId)),
+      runAdminRequest(() => apiClient.getRecruiters()),
+      runAdminRequest(() => apiClient.getStaffRecruiter(staffProfileId)),
     ]);
 
     const nextErrors = {};
@@ -488,7 +496,7 @@ const StaffDetailPageV2 = () => {
       detailRes, earningsRes, earningsTxRes, currentBookingRes, historyRes,
       futureBookingsRes, payoutsSummaryRes, payoutsRes, bankAccountsRes, companyBankAccountsRes,
       changeRequestsRes, deductionsRes, attendanceCalendarRes, adminNotesRes,
-      leaveSummaryRes,
+      leaveSummaryRes, recruitersRes, staffRecruiterRes,
     ] = results;
 
     if (detailRes.status === 'fulfilled') {
@@ -567,11 +575,42 @@ const StaffDetailPageV2 = () => {
       });
     } else nextErrors.leaveSummary = leaveSummaryRes.reason?.message;
 
+    if (recruitersRes.status === 'fulfilled') setRecruitersList(safeArray(recruitersRes.value?.data));
+    if (staffRecruiterRes.status === 'fulfilled') setStaffRecruiter(staffRecruiterRes.value?.data || null);
+
     setSectionErrors(nextErrors);
     setLoading(false);
   };
 
   useEffect(() => { loadPage(); }, [adminToken, staffProfileId]);
+
+  const reloadStaffRecruiter = async () => {
+    try {
+      const res = await runAdminRequest(() => apiClient.getStaffRecruiter(staffProfileId));
+      setStaffRecruiter(res?.data || null);
+    } catch {
+      // non-fatal — leave the previous value in place
+    }
+  };
+
+  const handleRecruiterAction = async () => {
+    if (!switchRecruiterId) return;
+    setRecruiterActionLoading(true);
+    setRecruiterError('');
+    try {
+      if (staffRecruiter?.current) {
+        await runAdminRequest(() => apiClient.switchStaffRecruiter(staffProfileId, switchRecruiterId));
+      } else {
+        await runAdminRequest(() => apiClient.creditStaffRecruiter(staffProfileId, switchRecruiterId));
+      }
+      setSwitchRecruiterId('');
+      await reloadStaffRecruiter();
+    } catch (err) {
+      setRecruiterError(err.message || 'Failed to update recruiter.');
+    } finally {
+      setRecruiterActionLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!payoutForm.company_bank_account_id && companyBankAccounts.length > 0) {
@@ -764,10 +803,27 @@ const StaffDetailPageV2 = () => {
       date_of_birth: profile.date_of_birth ? String(profile.date_of_birth).slice(0, 10) : '',
       willing_to_live_in: profile.willing_to_live_in ? 'true' : 'false',
     },
+    files: {
+      profile_picture: null,
+      nic_front: null,
+      nic_back: null,
+      grama_niladhari: null,
+      police_report: null,
+      documents: [],
+    },
+    removeDocumentUrls: [],
   });
 
+  const editSetFile = (key, file) => setEditModal(p => ({ ...p, files: { ...p.files, [key]: file } }));
+  const editToggleRemoveDoc = (url) => setEditModal(p => ({
+    ...p,
+    removeDocumentUrls: p.removeDocumentUrls.includes(url)
+      ? p.removeDocumentUrls.filter(u => u !== url)
+      : [...p.removeDocumentUrls, url],
+  }));
+
   const handleEditProfileSave = async () => {
-    const { form } = editModal;
+    const { form, files, removeDocumentUrls } = editModal;
     if (!form.full_name.trim() || !form.staff_code.trim()) {
       setEditModal(p => ({ ...p, error: 'Staff code and full name are required.' }));
       return;
@@ -779,6 +835,14 @@ const StaffDetailPageV2 = () => {
         // Skip blanks so the backend keeps the existing value instead of wiping it
         if (String(value).trim() !== '') fd.append(key, String(value).trim());
       });
+      if (files.profile_picture) fd.append('profile_picture', files.profile_picture);
+      if (files.nic_front) fd.append('nic_front', files.nic_front);
+      if (files.nic_back) fd.append('nic_back', files.nic_back);
+      if (files.grama_niladhari) fd.append('grama_niladhari', files.grama_niladhari);
+      if (files.police_report) fd.append('police_report', files.police_report);
+      files.documents.forEach((file) => fd.append('documents', file));
+      if (removeDocumentUrls.length > 0) fd.append('remove_document_urls', JSON.stringify(removeDocumentUrls));
+
       await runAdminRequest(() => apiClient.updateStaffProfile(staffProfileId, fd));
       setEditModal(p => ({ ...p, isOpen: false }));
       await loadPage();
@@ -945,6 +1009,46 @@ const StaffDetailPageV2 = () => {
               {statusUpdating && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               {isActive ? 'Deactivate account' : 'Reactivate account'}
             </button>
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHead title="Recruiter" sub="Who brought this hire in — credited once, reassignable anytime." />
+          <CardBody>
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400 mb-1">Current recruiter</p>
+              <p className="text-sm font-medium text-slate-700">
+                {staffRecruiter?.current?.recruiter_name || 'Unassigned'}
+              </p>
+            </div>
+            {recruitersList.length > 0 && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <select
+                  value={switchRecruiterId}
+                  onChange={(e) => setSwitchRecruiterId(e.target.value)}
+                  className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
+                >
+                  <option value="">
+                    {staffRecruiter?.current ? '— Reassign to —' : '— Credit a recruiter —'}
+                  </option>
+                  {recruitersList
+                    .filter((r) => r.id !== staffRecruiter?.current?.recruiter_id)
+                    .map((r) => (
+                      <option key={r.id} value={r.id}>{r.full_name}</option>
+                    ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={handleRecruiterAction}
+                  disabled={!switchRecruiterId || recruiterActionLoading}
+                  className="inline-flex items-center gap-1.5 rounded border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {recruiterActionLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                  {staffRecruiter?.current ? 'Reassign' : 'Credit'}
+                </button>
+              </div>
+            )}
+            {recruiterError && <p className="mt-2 text-xs text-red-600">{recruiterError}</p>}
           </CardBody>
         </Card>
       </div>
@@ -1579,6 +1683,15 @@ const StaffDetailPageV2 = () => {
 
     return (
       <div className="flex flex-col gap-4">
+        <div className="flex items-center justify-end -mb-1">
+          <button
+            type="button"
+            onClick={openEditProfileModal}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors"
+          >
+            <Pencil className="w-3 h-3" /> Edit photo & documents
+          </button>
+        </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <div className="bg-white border border-slate-200 rounded-lg p-4">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Compliance status</p>
@@ -1879,6 +1992,39 @@ const StaffDetailPageV2 = () => {
   const editField = (key, value) => setEditModal(p => ({ ...p, form: { ...p.form, [key]: value } }));
   const editInputCls = 'w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-100';
 
+  const EditFileField = ({ label, fileKey, currentUrl, accept = 'image/*,.pdf' }) => {
+    const selected = editModal.files[fileKey];
+    return (
+      <div>
+        <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
+        <div className="flex items-center gap-2">
+          <label className="flex-1 flex items-center gap-2 rounded-xl border border-dashed border-slate-300 px-3 py-2.5 text-xs text-slate-500 cursor-pointer hover:border-blue-400 hover:bg-blue-50/40 transition-colors">
+            <Upload className="w-3.5 h-3.5 flex-shrink-0 text-slate-400" />
+            <span className="truncate">
+              {selected ? selected.name : currentUrl ? 'Replace file...' : 'Upload file...'}
+            </span>
+            <input
+              type="file"
+              accept={accept}
+              className="hidden"
+              onChange={(e) => editSetFile(fileKey, e.target.files?.[0] || null)}
+            />
+          </label>
+          {currentUrl && (
+            <button
+              type="button"
+              onClick={() => window.open(currentUrl, '_blank')}
+              title="View current file"
+              className="inline-flex items-center justify-center w-9 h-9 flex-shrink-0 rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors"
+            >
+              <Eye className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const renderEditProfileModal = () => !editModal.isOpen ? null : (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
@@ -1965,6 +2111,67 @@ const StaffDetailPageV2 = () => {
             <label className="block text-xs font-medium text-slate-600 mb-1">Home Address</label>
             <input value={editModal.form.home_address} onChange={e => editField('home_address', e.target.value)}
               placeholder="e.g. 45/A, Galle Road, Dehiwala" className={editInputCls} />
+          </div>
+
+          <div className="pt-2 border-t border-slate-100">
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2.5">Profile photo</p>
+            <EditFileField label="Profile picture" fileKey="profile_picture" currentUrl={profile.profile_picture_url} />
+          </div>
+
+          <div className="pt-2 border-t border-slate-100">
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2.5">Identity documents</p>
+            <div className="grid grid-cols-2 gap-3">
+              <EditFileField label="NIC Front" fileKey="nic_front" currentUrl={profile.nic_front_url} />
+              <EditFileField label="NIC Back" fileKey="nic_back" currentUrl={profile.nic_back_url} />
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-slate-100">
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2.5">Compliance documents</p>
+            <div className="grid grid-cols-2 gap-3">
+              <EditFileField label="Grama Niladhari Report" fileKey="grama_niladhari" currentUrl={profile.grama_niladhari_url} />
+              <EditFileField label="Police Report" fileKey="police_report" currentUrl={profile.police_report_url} />
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-slate-100">
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2.5">Supporting documents</p>
+            {safeArray(profile.document_urls).length > 0 && (
+              <div className="flex flex-col gap-1.5 mb-2.5">
+                {safeArray(profile.document_urls).map((url, i) => {
+                  const marked = editModal.removeDocumentUrls.includes(url);
+                  return (
+                    <div key={url + i} className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs ${marked ? 'border-red-200 bg-red-50' : 'border-slate-200 bg-slate-50'}`}>
+                      <button type="button" onClick={() => window.open(url, '_blank')} className={`truncate font-medium ${marked ? 'text-red-500 line-through' : 'text-slate-700 hover:text-blue-600'}`}>
+                        Document {i + 1}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => editToggleRemoveDoc(url)}
+                        className={`flex-shrink-0 text-xs font-semibold px-2 py-0.5 rounded ${marked ? 'text-emerald-700 bg-emerald-100 hover:bg-emerald-200' : 'text-red-600 bg-red-100 hover:bg-red-200'}`}
+                      >
+                        {marked ? 'Undo' : 'Remove'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <label className="flex items-center gap-2 rounded-xl border border-dashed border-slate-300 px-3 py-2.5 text-xs text-slate-500 cursor-pointer hover:border-blue-400 hover:bg-blue-50/40 transition-colors">
+              <Upload className="w-3.5 h-3.5 flex-shrink-0 text-slate-400" />
+              <span className="truncate">
+                {editModal.files.documents.length > 0
+                  ? `${editModal.files.documents.length} new file(s) selected`
+                  : 'Add supporting document(s)...'}
+              </span>
+              <input
+                type="file"
+                multiple
+                accept="image/*,.pdf"
+                className="hidden"
+                onChange={(e) => setEditModal(p => ({ ...p, files: { ...p.files, documents: Array.from(e.target.files || []) } }))}
+              />
+            </label>
           </div>
         </div>
         <div className="flex gap-3">

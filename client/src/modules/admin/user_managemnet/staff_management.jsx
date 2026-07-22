@@ -69,6 +69,7 @@ const StaffManagement = () => {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('All');
   const [search, setSearch] = useState('');
+  const [pendingMigrationOnly, setPendingMigrationOnly] = useState(false);
 
   useEffect(() => { fetchWorkers(); }, []);
 
@@ -88,13 +89,16 @@ const StaffManagement = () => {
 
   useAutoRefresh(() => fetchWorkers({ silent: true }), { intervalMs: 5000 });
 
+  const pendingMigrationCount = workers.filter(w => w.onboarding_status === 'PENDING_MIGRATION').length;
+
   const filtered = workers.filter(w => {
     const status = (w.current_status || '').toLowerCase();
     const matchTab = activeTab === 'All' || status === activeTab;
+    const matchPendingMigration = !pendingMigrationOnly || w.onboarding_status === 'PENDING_MIGRATION';
     const q = search.toLowerCase();
     const matchSearch = !q || [w.full_name, w.email, w.mobile_number, w.staff_code, w.location]
       .some(v => v?.toLowerCase().includes(q));
-    return matchTab && matchSearch;
+    return matchTab && matchPendingMigration && matchSearch;
   });
 
   const counts = STATUS_TABS.reduce((acc, t) => {
@@ -155,6 +159,19 @@ const StaffManagement = () => {
           ))}
         </div>
 
+        {pendingMigrationCount > 0 && (
+          <button
+            onClick={() => setPendingMigrationOnly(v => !v)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors whitespace-nowrap ${
+              pendingMigrationOnly
+                ? 'bg-amber-100 border-amber-300 text-amber-800'
+                : 'bg-white border-slate-200 text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            Pending Migration <span className="ml-1 tabular-nums">{pendingMigrationCount}</span>
+          </button>
+        )}
+
         <div className="relative sm:ml-auto">
           <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
@@ -210,6 +227,11 @@ const StaffManagement = () => {
                         <p className="font-semibold text-slate-900 leading-tight">{worker.full_name ?? '—'}</p>
                         {worker.staff_code && (
                           <p className="text-xs text-slate-400 font-mono">{worker.staff_code}</p>
+                        )}
+                        {worker.onboarding_status === 'PENDING_MIGRATION' && (
+                          <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] font-semibold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
+                            Pending Migration
+                          </span>
                         )}
                       </div>
                     </div>
