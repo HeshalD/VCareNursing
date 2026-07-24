@@ -11,10 +11,9 @@ import apiClient from '../../../api/api';
 import DateInput from '../../../components/common/DateInput';
 import ImageCropModal from '../../../components/common/ImageCropModal';
 
-// Matches the public CatalogPage product card image box exactly: a fixed
-// h-48 (192px) tall slot inside a 3-column lg grid within a max-w-7xl
-// container — the resulting card width/height ratio works out to 2:1.
-const CATALOG_CARD_IMAGE_ASPECT = 2;
+// Matches the public CatalogPage product card image box, which is a
+// square (aspect-square) slot.
+const CATALOG_CARD_IMAGE_ASPECT = 1;
 
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
 const formatMoney = (v) => money.format(Number(v || 0));
@@ -62,6 +61,99 @@ const UNIT_STATUS_DOT = {
   MAINTENANCE: { dot: 'bg-amber-400', text: 'text-amber-700' },
 };
 
+const HONORIFICS = ['Mr.', 'Mrs.', 'Ms.', 'Dr.', 'Prof.', 'Rev.'];
+const CLIENT_TYPES = ['INDIVIDUAL', 'CORPORATE_PROXY'];
+
+const emptyWalkInClient = () => ({
+  honorific: '', full_name: '', gender: '', client_type: 'INDIVIDUAL',
+  company_name: '', display_name_source: 'FULL_NAME', email: '', mobile_number: '', primary_address: '',
+});
+
+// Collects the same required fields as the normal "Add Client" flow
+// (user_managemnet.jsx) so a walk-in customer is registered as a full client
+// rather than a bare name + phone number.
+const WalkInClientFields = ({ value, onChange }) => {
+  const set = (patch) => onChange((v) => ({ ...v, ...patch }));
+  return (
+    <div className="space-y-2.5 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+      <div className="grid grid-cols-3 gap-2">
+        <select
+          value={value.honorific}
+          onChange={(e) => set({ honorific: e.target.value })}
+          className="rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-xs outline-none focus:border-blue-500"
+        >
+          <option value="">Honorific</option>
+          {HONORIFICS.map((h) => <option key={h} value={h}>{h}</option>)}
+        </select>
+        <input
+          type="text"
+          placeholder="Full name *"
+          value={value.full_name}
+          onChange={(e) => set({ full_name: e.target.value })}
+          className="col-span-2 rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <select
+          value={value.gender}
+          onChange={(e) => set({ gender: e.target.value })}
+          className="rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+        >
+          <option value="">Gender *</option>
+          <option value="MALE">Male</option>
+          <option value="FEMALE">Female</option>
+          <option value="OTHER">Other</option>
+        </select>
+        <select
+          value={value.client_type}
+          onChange={(e) => set({
+            client_type: e.target.value,
+            ...(e.target.value !== 'CORPORATE_PROXY' ? { company_name: '', display_name_source: 'FULL_NAME' } : {}),
+          })}
+          className="rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+        >
+          {CLIENT_TYPES.map((t) => <option key={t} value={t}>{t.charAt(0) + t.slice(1).toLowerCase()}</option>)}
+        </select>
+      </div>
+      {value.client_type === 'CORPORATE_PROXY' && (
+        <input
+          type="text"
+          placeholder="Company name"
+          value={value.company_name}
+          onChange={(e) => set({ company_name: e.target.value, ...(!e.target.value ? { display_name_source: 'FULL_NAME' } : {}) })}
+          className="w-full rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+        />
+      )}
+      <div className="grid grid-cols-2 gap-2">
+        <input
+          type="email"
+          placeholder="Email (optional)"
+          value={value.email}
+          onChange={(e) => set({ email: e.target.value })}
+          className="rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+        />
+        <input
+          type="text"
+          placeholder="Mobile number *"
+          value={value.mobile_number}
+          onChange={(e) => set({ mobile_number: e.target.value })}
+          className="rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+        />
+      </div>
+      <input
+        type="text"
+        placeholder="Primary address (optional)"
+        value={value.primary_address}
+        onChange={(e) => set({ primary_address: e.target.value })}
+        className="w-full rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+      />
+      <p className="text-[11px] text-slate-400">
+        Registers them as a client (login credentials sent via SMS) with their registration fee left pending — they can rent or purchase now and settle it later.
+      </p>
+    </div>
+  );
+};
+
 export default function ProductsPage() {
   const [tab, setTab] = useState('catalog'); // 'catalog' | 'quotes' | 'rentals'
 
@@ -98,6 +190,7 @@ export default function ProductsPage() {
 function CatalogTab() {
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [vendors, setVendors] = useState([]);
   const [units, setUnits] = useState([]);
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -131,7 +224,16 @@ function CatalogTab() {
     }
   }, []);
 
-  useEffect(() => { fetchAll(); fetchCategories(); }, [fetchAll, fetchCategories]);
+  const fetchVendors = useCallback(async () => {
+    try {
+      const res = await apiClient.getVendors();
+      setVendors(Array.isArray(res?.data) ? res.data : []);
+    } catch {
+      setVendors([]);
+    }
+  }, []);
+
+  useEffect(() => { fetchAll(); fetchCategories(); fetchVendors(); }, [fetchAll, fetchCategories, fetchVendors]);
 
   const openCreate = () => { setEditingProduct(null); setModalOpen(true); };
   const openEdit = (product) => { setEditingProduct(product); setModalOpen(true); };
@@ -363,6 +465,7 @@ function CatalogTab() {
         <ProductModal
           product={editingProduct}
           categories={categories}
+          vendors={vendors}
           onClose={() => setModalOpen(false)}
           onSaved={() => { setModalOpen(false); fetchAll(); fetchCategories(); }}
         />
@@ -822,7 +925,7 @@ function CategoryPicker({ categories, value, onChange, onCreated }) {
   );
 }
 
-function ProductModal({ product, categories, onClose, onSaved }) {
+function ProductModal({ product, categories, vendors, onClose, onSaved }) {
   const isEdit = !!product;
   const [form, setForm] = useState({
     name: product?.name || '',
@@ -832,6 +935,7 @@ function ProductModal({ product, categories, onClose, onSaved }) {
     price: product?.price || '',
     cost_price: product?.cost_price ?? '',
     stock_quantity: product?.stock_quantity ?? 0,
+    vendor_id: product?.vendor_id || '',
   });
   const [localCategories, setLocalCategories] = useState(categories);
   const [imageFile, setImageFile] = useState(null);
@@ -941,6 +1045,21 @@ function ProductModal({ product, categories, onClose, onSaved }) {
                 className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               />
               <p className="mt-1 text-[10px] text-slate-400">What this item costs the business — used for the Profit &amp; Loss report's COGS.</p>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-medium text-slate-500 mb-1">Vendor</label>
+              <select
+                value={form.vendor_id}
+                onChange={(e) => setForm((f) => ({ ...f, vendor_id: e.target.value }))}
+                className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              >
+                <option value="">— In-house stock (no vendor) —</option>
+                {vendors.map((v) => (
+                  <option key={v.vendor_id} value={v.vendor_id}>{v.name}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-[10px] text-slate-400">If this item is sourced from an outside vendor, selecting it here lets you record what's owed to them when it's sold or rented.</p>
             </div>
 
             <CategoryPicker
@@ -1075,6 +1194,8 @@ function QuotesTab() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [expandedQuoteId, setExpandedQuoteId] = useState(null);
+  const [vendorPromptQuote, setVendorPromptQuote] = useState(null); // full quote (with line_items) awaiting vendor-payment decisions
+  const [vendorPromptLoading, setVendorPromptLoading] = useState(false);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -1145,10 +1266,45 @@ function QuotesTab() {
   useEffect(() => { setPage(1); }, [statusTab, search]);
 
   const handleAccept = async (quote) => {
-    setBusyQuoteId(quote.quote_id);
     setError('');
+    // Vendor-linked line items need a pay-now-or-leave-unpaid decision before
+    // acceptance — check for those first instead of always accepting blind.
+    setVendorPromptLoading(true);
+    let hasVendorItems = false;
+    let full = null;
+    try {
+      full = await apiClient.getProductQuote(quote.quote_id);
+      const lineItems = full?.data?.line_items || full?.line_items || [];
+      hasVendorItems = lineItems.some((li) => li.vendor_id);
+    } catch (err) {
+      setError(err.message || 'Failed to load quotation details');
+      setVendorPromptLoading(false);
+      return;
+    }
+    setVendorPromptLoading(false);
+
+    if (hasVendorItems) {
+      setVendorPromptQuote(full?.data || full);
+      return;
+    }
+
+    setBusyQuoteId(quote.quote_id);
     try {
       await apiClient.acceptProductQuote(quote.quote_id);
+      await fetchAll();
+    } catch (err) {
+      setError(err.message || 'Failed to accept quotation');
+    } finally {
+      setBusyQuoteId('');
+    }
+  };
+
+  const handleAcceptWithVendorPayments = async (quoteId, vendorPayments) => {
+    setBusyQuoteId(quoteId);
+    setError('');
+    try {
+      await apiClient.acceptProductQuote(quoteId, { vendor_payments: vendorPayments });
+      setVendorPromptQuote(null);
       await fetchAll();
     } catch (err) {
       setError(err.message || 'Failed to accept quotation');
@@ -1342,11 +1498,11 @@ function QuotesTab() {
                       {bucket === 'pending' && (
                         <button
                           type="button"
-                          disabled={busyQuoteId === q.quote_id}
+                          disabled={busyQuoteId === q.quote_id || vendorPromptLoading}
                           onClick={() => handleAccept(q)}
                           className="inline-flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
                         >
-                          {busyQuoteId === q.quote_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                          {busyQuoteId === q.quote_id || vendorPromptLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
                           {isRentalQuote ? 'Accept & Create Rental(s)' : 'Accept & Invoice'}
                         </button>
                       )}
@@ -1421,17 +1577,15 @@ function QuotesTab() {
                           {downloadingQuoteId === q.quote_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
                           Download Quote PDF
                         </button>
-                        {quoteInvoices.length === 0 && (
-                          <button
-                            type="button"
-                            disabled={sendingQuoteId === q.quote_id}
-                            onClick={() => handleSend(q)}
-                            className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-                          >
-                            {sendingQuoteId === q.quote_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
-                            Send via WhatsApp
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          disabled={sendingQuoteId === q.quote_id}
+                          onClick={() => handleSend(q)}
+                          className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                        >
+                          {sendingQuoteId === q.quote_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
+                          {quoteInvoices.length === 0 ? 'Send via WhatsApp' : 'Resend via WhatsApp'}
+                        </button>
                         {q.linked_quote_id && (
                           <button
                             type="button"
@@ -1502,7 +1656,194 @@ function QuotesTab() {
           onClose={() => setPreviewQuote(null)}
         />
       )}
+
+      {vendorPromptQuote && (
+        <VendorPaymentPromptModal
+          quote={vendorPromptQuote}
+          submitting={busyQuoteId === vendorPromptQuote.quote_id}
+          onClose={() => setVendorPromptQuote(null)}
+          onConfirm={(vendorPayments) => handleAcceptWithVendorPayments(vendorPromptQuote.quote_id, vendorPayments)}
+        />
+      )}
     </>
+  );
+}
+
+// Shown when accepting a PRODUCT quote that has one or more line items backed
+// by a vendor-sourced product. For each such item the admin decides whether
+// to pay the vendor now (from a company bank account) or leave it as an
+// unpaid balance owed to the vendor, settled later from the Vendors page.
+// The chosen amount defaults to the line's cost-price snapshot (COGS), editable.
+function VendorPaymentPromptModal({ quote, submitting, onClose, onConfirm }) {
+  const [bankAccounts, setBankAccounts] = useState([]);
+  const vendorItems = (quote.line_items || []).filter((li) => li.vendor_id);
+
+  const [decisions, setDecisions] = useState(() => {
+    const initial = {};
+    for (const li of vendorItems) {
+      const defaultAmount = parseFloat(li.cost_price_snapshot ?? li.product_cost_price ?? 0) * parseFloat(li.quantity || 1);
+      initial[li.line_item_id] = {
+        pay_now: false,
+        amount: defaultAmount || 0,
+        payment_method: 'CASH',
+        bank_account_id: '',
+        cheque_number: '',
+        cheque_date: '',
+      };
+    }
+    return initial;
+  });
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    apiClient.getBankAccounts().then((res) => setBankAccounts(Array.isArray(res?.data) ? res.data : [])).catch(() => setBankAccounts([]));
+  }, []);
+
+  const updateDecision = (lineItemId, patch) => {
+    setDecisions((prev) => ({ ...prev, [lineItemId]: { ...prev[lineItemId], ...patch } }));
+  };
+
+  const handleConfirm = () => {
+    setError('');
+    for (const li of vendorItems) {
+      const d = decisions[li.line_item_id];
+      if (!d.pay_now) continue;
+      if (['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(d.payment_method) && !d.bank_account_id) {
+        setError(`Select a bank account for "${li.description}"`);
+        return;
+      }
+      if (d.payment_method === 'CHEQUE' && (!d.cheque_number || !d.cheque_date)) {
+        setError(`Cheque number and date are required for "${li.description}"`);
+        return;
+      }
+    }
+    onConfirm(decisions);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-lg rounded-lg bg-white shadow-xl max-h-[85vh] overflow-y-auto">
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-800">Vendor Payment</h3>
+            <p className="text-xs text-slate-400 mt-0.5">This quote includes items sourced from a vendor. Decide how to settle each one.</p>
+          </div>
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          {error && (
+            <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {error}
+            </div>
+          )}
+
+          {vendorItems.map((li) => {
+            const d = decisions[li.line_item_id];
+            return (
+              <div key={li.line_item_id} className="rounded-lg border border-slate-200 p-3 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium text-slate-800">{li.description}</p>
+                  <span className="text-xs text-slate-400">Vendor: {li.vendor_name}</span>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <label className="block text-[11px] font-medium text-slate-500">Amount owed</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={d.amount}
+                    onChange={(e) => updateDecision(li.line_item_id, { amount: e.target.value })}
+                    className="w-32 rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1 text-sm outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => updateDecision(li.line_item_id, { pay_now: false })}
+                    className={`flex-1 rounded-md border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                      !d.pay_now ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                    }`}
+                  >
+                    Leave Unpaid
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateDecision(li.line_item_id, { pay_now: true })}
+                    className={`flex-1 rounded-md border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                      d.pay_now ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                    }`}
+                  >
+                    Pay Now
+                  </button>
+                </div>
+
+                {d.pay_now && (
+                  <div className="space-y-2 border-t border-slate-100 pt-2.5">
+                    <select
+                      value={d.payment_method}
+                      onChange={(e) => updateDecision(li.line_item_id, { payment_method: e.target.value })}
+                      className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+                    >
+                      {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
+                    </select>
+
+                    {['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(d.payment_method) && (
+                      <select
+                        value={d.bank_account_id}
+                        onChange={(e) => updateDecision(li.line_item_id, { bank_account_id: e.target.value })}
+                        className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+                      >
+                        <option value="">Select bank account…</option>
+                        {bankAccounts.map((b) => (
+                          <option key={b.account_id} value={b.account_id}>{b.account_nickname} — {b.bank_name}</option>
+                        ))}
+                      </select>
+                    )}
+
+                    {d.payment_method === 'CHEQUE' && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          placeholder="Cheque number"
+                          value={d.cheque_number}
+                          onChange={(e) => updateDecision(li.line_item_id, { cheque_number: e.target.value })}
+                          className="rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+                        />
+                        <DateInput
+                          value={d.cheque_date}
+                          onChange={(e) => updateDecision(li.line_item_id, { cheque_date: e.target.value })}
+                          className="rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4">
+          <button type="button" onClick={onClose} className="rounded border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={handleConfirm}
+            className="inline-flex items-center gap-1.5 rounded bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {submitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            Accept Quote
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1645,13 +1986,15 @@ const emptyDepositLine = () => ({
   description: 'Refundable Deposit', quantity: 1, unit_price: '', isStandaloneDeposit: true,
 });
 
+const CLIENTS_PER_PAGE = 5;
+
 function NewProductQuoteModal({ onClose, onCreated }) {
   const [recipientType, setRecipientType] = useState('client'); // 'client' | 'walk_in'
   const [clients, setClients] = useState([]);
   const [clientSearch, setClientSearch] = useState('');
+  const [clientPage, setClientPage] = useState(1);
   const [selectedClientId, setSelectedClientId] = useState('');
-  const [walkInName, setWalkInName] = useState('');
-  const [walkInMobile, setWalkInMobile] = useState('');
+  const [walkInClient, setWalkInClient] = useState(emptyWalkInClient());
   const [products, setProducts] = useState([]);
   const [rentalUnits, setRentalUnits] = useState([]);
   const [lineItems, setLineItems] = useState([emptyLineItem()]);
@@ -1670,6 +2013,11 @@ function NewProductQuoteModal({ onClose, onCreated }) {
     const name = c.full_name || c.client_name || '';
     return name.toLowerCase().includes(clientSearch.toLowerCase());
   });
+
+  useEffect(() => { setClientPage(1); }, [clientSearch]);
+
+  const clientTotalPages = Math.max(1, Math.ceil(filteredClients.length / CLIENTS_PER_PAGE));
+  const pagedClients = filteredClients.slice((clientPage - 1) * CLIENTS_PER_PAGE, clientPage * CLIENTS_PER_PAGE);
 
   const updateLineItem = (idx, patch) => {
     setLineItems((items) => items.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
@@ -1698,8 +2046,16 @@ function NewProductQuoteModal({ onClose, onCreated }) {
       setError('Please select a client');
       return;
     }
-    if (recipientType === 'walk_in' && !walkInName.trim()) {
-      setError('Please enter the walk-in customer name');
+    if (recipientType === 'walk_in' && !walkInClient.full_name.trim()) {
+      setError('Please enter the walk-in customer\'s full name');
+      return;
+    }
+    if (recipientType === 'walk_in' && !walkInClient.gender) {
+      setError('Please select the walk-in customer\'s gender');
+      return;
+    }
+    if (recipientType === 'walk_in' && !walkInClient.mobile_number.trim()) {
+      setError('Please enter the walk-in customer\'s mobile number — it registers them as a client');
       return;
     }
     const validItems = lineItems.filter((it) => it.description && it.unit_price !== '');
@@ -1716,15 +2072,26 @@ function NewProductQuoteModal({ onClose, onCreated }) {
 
     setSaving(true);
     try {
-      let walkInCustomerId = null;
+      let walkInClientId = null;
       if (recipientType === 'walk_in') {
-        const wicRes = await apiClient.createWalkInCustomer({ full_name: walkInName.trim(), mobile_number: walkInMobile.trim() });
-        walkInCustomerId = wicRes.data.walk_in_customer_id;
+        const wicRes = await apiClient.createWalkInCustomer({
+          full_name: walkInClient.full_name.trim(),
+          email: walkInClient.email || undefined,
+          mobile_number: walkInClient.mobile_number.trim(),
+          gender: walkInClient.gender,
+          primary_address: walkInClient.primary_address || undefined,
+          client_type: walkInClient.client_type || 'INDIVIDUAL',
+          honorific: walkInClient.honorific || undefined,
+          company_name: walkInClient.company_name || undefined,
+          display_name_source: walkInClient.client_type === 'CORPORATE_PROXY' && walkInClient.company_name
+            ? walkInClient.display_name_source
+            : 'FULL_NAME',
+        });
+        walkInClientId = wicRes.data.client_profile_id;
       }
 
       await apiClient.createProductQuotation({
-        client_id: recipientType === 'client' ? selectedClientId : undefined,
-        walk_in_customer_id: walkInCustomerId || undefined,
+        client_id: recipientType === 'client' ? selectedClientId : walkInClientId || undefined,
         line_items: validItems.map((it) => {
           if (it.isStandaloneDeposit) {
             return {
@@ -1761,15 +2128,20 @@ function NewProductQuoteModal({ onClose, onCreated }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl rounded-lg bg-white shadow-xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+    <>
+      <div className="fixed inset-0 z-40 bg-black/40" onClick={onClose} />
+
+      <form
+        onSubmit={handleSubmit}
+        className="fixed inset-y-0 right-0 z-50 flex w-full max-w-2xl flex-col bg-white shadow-2xl"
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 shrink-0">
           <h3 className="text-sm font-semibold text-slate-800">New Product Quotation</h3>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">
             <X className="h-4 w-4" />
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4 px-5 py-4">
+        <div className="flex-1 overflow-y-auto space-y-4 px-5 py-4">
           {error && (
             <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
               <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {error}
@@ -1807,36 +2179,52 @@ function NewProductQuoteModal({ onClose, onCreated }) {
                     className="w-full rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 pl-8 pr-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   />
                 </div>
-                <select
-                  size={5}
-                  value={selectedClientId}
-                  onChange={(e) => setSelectedClientId(e.target.value)}
-                  className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                >
-                  {filteredClients.map((c) => (
-                    <option key={c.client_profile_id || c.client_id} value={c.client_profile_id || c.client_id}>
-                      {c.full_name || c.client_name} {c.mobile_number ? `· ${c.mobile_number}` : ''}
-                    </option>
-                  ))}
-                </select>
+                <div className="rounded-md border border-slate-300 divide-y divide-slate-100 overflow-hidden">
+                  {pagedClients.length === 0 ? (
+                    <p className="px-2.5 py-3 text-xs text-slate-400 text-center">No clients match your search.</p>
+                  ) : (
+                    pagedClients.map((c) => {
+                      const id = c.client_profile_id || c.client_id;
+                      const selected = selectedClientId === id;
+                      return (
+                        <button
+                          type="button"
+                          key={id}
+                          onClick={() => setSelectedClientId(id)}
+                          className={`w-full text-left px-2.5 py-1.5 text-sm transition-colors ${
+                            selected ? 'bg-blue-50 text-blue-700 font-medium' : 'bg-white text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          {c.full_name || c.client_name} {c.mobile_number ? <span className="text-xs text-slate-400">· {c.mobile_number}</span> : ''}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+                {filteredClients.length > CLIENTS_PER_PAGE && (
+                  <div className="mt-1.5 flex items-center justify-between text-xs text-slate-500">
+                    <button
+                      type="button"
+                      onClick={() => setClientPage((p) => Math.max(1, p - 1))}
+                      disabled={clientPage === 1}
+                      className="rounded px-2 py-1 font-medium text-slate-500 hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-transparent"
+                    >
+                      Prev
+                    </button>
+                    <span>Page {clientPage} of {clientTotalPages}</span>
+                    <button
+                      type="button"
+                      onClick={() => setClientPage((p) => Math.min(clientTotalPages, p + 1))}
+                      disabled={clientPage === clientTotalPages}
+                      className="rounded px-2 py-1 font-medium text-slate-500 hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-transparent"
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-3">
-                <input
-                  type="text"
-                  placeholder="Full name *"
-                  value={walkInName}
-                  onChange={(e) => setWalkInName(e.target.value)}
-                  className="rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                />
-                <input
-                  type="text"
-                  placeholder="Mobile number"
-                  value={walkInMobile}
-                  onChange={(e) => setWalkInMobile(e.target.value)}
-                  className="rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                />
-              </div>
+              <WalkInClientFields value={walkInClient} onChange={setWalkInClient} />
             )}
           </div>
 
@@ -2010,23 +2398,23 @@ function NewProductQuoteModal({ onClose, onCreated }) {
               )}
             </div>
           </div>
+        </div>
 
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={onClose} className="rounded border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-            >
-              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              Create Quotation
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4 shrink-0">
+          <button type="button" onClick={onClose} className="rounded border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            Create Quotation
+          </button>
+        </div>
+      </form>
+    </>
   );
 }
 
@@ -2852,8 +3240,7 @@ function NewRentalAgreementModal({ rentalProducts, onClose, onCreated }) {
   const [clients, setClients] = useState([]);
   const [clientSearch, setClientSearch] = useState('');
   const [selectedClientId, setSelectedClientId] = useState('');
-  const [walkInName, setWalkInName] = useState('');
-  const [walkInMobile, setWalkInMobile] = useState('');
+  const [walkInClient, setWalkInClient] = useState(emptyWalkInClient());
   const [billingType, setBillingType] = useState('ONE_TIME');
   const [rate, setRate] = useState(rentalProducts[0]?.price || '');
   const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -2862,9 +3249,24 @@ function NewRentalAgreementModal({ rentalProducts, onClose, onCreated }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  const selectedProduct = rentalProducts.find((p) => p.product_id === productId);
+  const [bankAccounts, setBankAccounts] = useState([]);
+  const [vendorPayNow, setVendorPayNow] = useState(false);
+  const [vendorAmount, setVendorAmount] = useState('');
+  const [vendorPaymentMethod, setVendorPaymentMethod] = useState('CASH');
+  const [vendorBankAccountId, setVendorBankAccountId] = useState('');
+  const [vendorChequeNumber, setVendorChequeNumber] = useState('');
+  const [vendorChequeDate, setVendorChequeDate] = useState('');
+
   useEffect(() => {
     apiClient.getAllClients().then((res) => setClients(Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : []))).catch(() => setClients([]));
+    apiClient.getBankAccounts().then((res) => setBankAccounts(Array.isArray(res?.data) ? res.data : [])).catch(() => setBankAccounts([]));
   }, []);
+
+  useEffect(() => {
+    setVendorAmount(selectedProduct?.cost_price || '');
+    setVendorPayNow(false);
+  }, [productId]);
 
   const filteredClients = clients.filter((c) => (c.full_name || c.client_name || '').toLowerCase().includes(clientSearch.toLowerCase()));
 
@@ -2880,27 +3282,56 @@ function NewRentalAgreementModal({ rentalProducts, onClose, onCreated }) {
 
     if (!productId) { setError('Please select a rental product'); return; }
     if (recipientType === 'client' && !selectedClientId) { setError('Please select a client'); return; }
-    if (recipientType === 'walk_in' && !walkInName.trim()) { setError('Please enter the walk-in customer name'); return; }
+    if (recipientType === 'walk_in' && !walkInClient.full_name.trim()) { setError('Please enter the walk-in customer\'s full name'); return; }
+    if (recipientType === 'walk_in' && !walkInClient.gender) { setError('Please select the walk-in customer\'s gender'); return; }
+    if (recipientType === 'walk_in' && !walkInClient.mobile_number.trim()) { setError('Please enter the walk-in customer\'s mobile number — it registers them as a client'); return; }
     if (!rate || parseFloat(rate) <= 0) { setError('Rate must be greater than zero'); return; }
     if (billingType === 'ONE_TIME' && !endDate) { setError('End date is required for a one-time rental'); return; }
+    if (selectedProduct?.vendor_id && vendorPayNow) {
+      if (['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(vendorPaymentMethod) && !vendorBankAccountId) {
+        setError('Please select a bank account for the vendor payment'); return;
+      }
+      if (vendorPaymentMethod === 'CHEQUE' && (!vendorChequeNumber || !vendorChequeDate)) {
+        setError('Cheque number and date are required for the vendor payment'); return;
+      }
+    }
 
     setSaving(true);
     try {
-      let walkInCustomerId = null;
+      let walkInClientId = null;
       if (recipientType === 'walk_in') {
-        const wicRes = await apiClient.createWalkInCustomer({ full_name: walkInName.trim(), mobile_number: walkInMobile.trim() });
-        walkInCustomerId = wicRes.data.walk_in_customer_id;
+        const wicRes = await apiClient.createWalkInCustomer({
+          full_name: walkInClient.full_name.trim(),
+          email: walkInClient.email || undefined,
+          mobile_number: walkInClient.mobile_number.trim(),
+          gender: walkInClient.gender,
+          primary_address: walkInClient.primary_address || undefined,
+          client_type: walkInClient.client_type || 'INDIVIDUAL',
+          honorific: walkInClient.honorific || undefined,
+          company_name: walkInClient.company_name || undefined,
+          display_name_source: walkInClient.client_type === 'CORPORATE_PROXY' && walkInClient.company_name
+            ? walkInClient.display_name_source
+            : 'FULL_NAME',
+        });
+        walkInClientId = wicRes.data.client_profile_id;
       }
 
       await apiClient.createRentalAgreement({
         product_id: productId,
-        client_id: recipientType === 'client' ? selectedClientId : undefined,
-        walk_in_customer_id: walkInCustomerId || undefined,
+        client_id: recipientType === 'client' ? selectedClientId : walkInClientId || undefined,
         billing_type: billingType,
         rate: parseFloat(rate),
         start_date: startDate,
         end_date: billingType === 'ONE_TIME' ? endDate : undefined,
         deposit_amount: depositAmount ? parseFloat(depositAmount) : 0,
+        vendor_payment: selectedProduct?.vendor_id ? {
+          pay_now: vendorPayNow,
+          amount: vendorAmount || undefined,
+          payment_method: vendorPaymentMethod,
+          bank_account_id: vendorBankAccountId || undefined,
+          cheque_number: vendorChequeNumber || undefined,
+          cheque_date: vendorChequeDate || undefined,
+        } : undefined,
       });
 
       onCreated();
@@ -2981,22 +3412,7 @@ function NewRentalAgreementModal({ rentalProducts, onClose, onCreated }) {
                 </select>
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-3">
-                <input
-                  type="text"
-                  placeholder="Full name *"
-                  value={walkInName}
-                  onChange={(e) => setWalkInName(e.target.value)}
-                  className="rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                />
-                <input
-                  type="text"
-                  placeholder="Mobile number"
-                  value={walkInMobile}
-                  onChange={(e) => setWalkInMobile(e.target.value)}
-                  className="rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
-                />
-              </div>
+              <WalkInClientFields value={walkInClient} onChange={setWalkInClient} />
             )}
           </div>
 
@@ -3047,6 +3463,89 @@ function NewRentalAgreementModal({ rentalProducts, onClose, onCreated }) {
               </div>
             )}
           </div>
+
+          {selectedProduct?.vendor_id && (
+            <div className="rounded-lg border border-slate-200 p-3 space-y-2.5">
+              <p className="text-xs font-medium text-slate-700">
+                This unit is sourced from vendor <span className="font-semibold">{selectedProduct.vendor_name}</span>. How will you pay them?
+              </p>
+
+              <div className="flex items-center gap-3">
+                <label className="block text-[11px] font-medium text-slate-500">Amount owed</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={vendorAmount}
+                  onChange={(e) => setVendorAmount(e.target.value)}
+                  className="w-32 rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1 text-sm outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setVendorPayNow(false)}
+                  className={`flex-1 rounded-md border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                    !vendorPayNow ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                  }`}
+                >
+                  Leave Unpaid
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVendorPayNow(true)}
+                  className={`flex-1 rounded-md border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                    vendorPayNow ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                  }`}
+                >
+                  Pay Now
+                </button>
+              </div>
+
+              {vendorPayNow && (
+                <div className="space-y-2 border-t border-slate-100 pt-2.5">
+                  <select
+                    value={vendorPaymentMethod}
+                    onChange={(e) => setVendorPaymentMethod(e.target.value)}
+                    className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+                  >
+                    {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
+                  </select>
+
+                  {['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(vendorPaymentMethod) && (
+                    <select
+                      value={vendorBankAccountId}
+                      onChange={(e) => setVendorBankAccountId(e.target.value)}
+                      className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+                    >
+                      <option value="">Select bank account…</option>
+                      {bankAccounts.map((b) => (
+                        <option key={b.account_id} value={b.account_id}>{b.account_nickname} — {b.bank_name}</option>
+                      ))}
+                    </select>
+                  )}
+
+                  {vendorPaymentMethod === 'CHEQUE' && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        placeholder="Cheque number"
+                        value={vendorChequeNumber}
+                        onChange={(e) => setVendorChequeNumber(e.target.value)}
+                        className="rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+                      />
+                      <DateInput
+                        value={vendorChequeDate}
+                        onChange={(e) => setVendorChequeDate(e.target.value)}
+                        className="rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           <div>
             <label className="block text-[11px] font-medium text-slate-500 mb-1">Refundable Deposit (optional)</label>

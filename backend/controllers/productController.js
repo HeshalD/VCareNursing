@@ -42,9 +42,10 @@ exports.getAllProducts = async (req, res) => {
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const result = await db.query(
-      `SELECT p.*, c.name as category_name
+      `SELECT p.*, c.name as category_name, v.name as vendor_name
        FROM products p
        LEFT JOIN categories c ON p.category_id = c.category_id
+       LEFT JOIN vendors v ON p.vendor_id = v.vendor_id
        ${where}
        ORDER BY p.created_at DESC`,
       params
@@ -62,9 +63,10 @@ exports.getProduct = async (req, res) => {
 
   try {
     const result = await db.query(
-      `SELECT p.*, c.name as category_name
+      `SELECT p.*, c.name as category_name, v.name as vendor_name
        FROM products p
        LEFT JOIN categories c ON p.category_id = c.category_id
+       LEFT JOIN vendors v ON p.vendor_id = v.vendor_id
        WHERE p.product_id = $1`,
       [id]
     );
@@ -166,15 +168,15 @@ exports.getMyOrders = async (req, res) => {
 
 // 2. Create Product (Admin Only)
 exports.createProduct = async (req, res) => {
-  const { name, category_id, description, price, cost_price, stock_quantity, product_type } = req.body;
+  const { name, category_id, description, price, cost_price, stock_quantity, product_type, vendor_id } = req.body;
 
   // The URL of the uploaded image on S3
   const image_url = req.file ? req.file.location : null;
 
   try {
     const query = `
-      INSERT INTO products (name, category_id, description, price, cost_price, stock_quantity, image_url, product_type)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      INSERT INTO products (name, category_id, description, price, cost_price, stock_quantity, image_url, product_type, vendor_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING *;
     `;
     const result = await db.query(query, [
@@ -186,6 +188,7 @@ exports.createProduct = async (req, res) => {
       stock_quantity || 0,
       image_url,
       normalizeProductType(product_type),
+      vendor_id || null,
     ]);
 
     await safeLog({
@@ -207,7 +210,7 @@ exports.createProduct = async (req, res) => {
 // Update Product (Admin Only) — image is optional, keeps existing image_url if not re-uploaded
 exports.updateProduct = async (req, res) => {
   const { id } = req.params;
-  const { name, category_id, description, price, cost_price, stock_quantity, product_type, is_available } = req.body;
+  const { name, category_id, description, price, cost_price, stock_quantity, product_type, is_available, vendor_id } = req.body;
 
   try {
     const existing = await db.query('SELECT image_url FROM products WHERE product_id = $1', [id]);
@@ -220,8 +223,8 @@ exports.updateProduct = async (req, res) => {
     const result = await db.query(
       `UPDATE products
        SET name = $1, category_id = $2, description = $3, price = $4, cost_price = $5, stock_quantity = $6,
-           image_url = $7, product_type = $8, is_available = $9, updated_at = CURRENT_TIMESTAMP
-       WHERE product_id = $10
+           image_url = $7, product_type = $8, is_available = $9, vendor_id = $10, updated_at = CURRENT_TIMESTAMP
+       WHERE product_id = $11
        RETURNING *`,
       [
         name,
@@ -233,6 +236,7 @@ exports.updateProduct = async (req, res) => {
         image_url,
         normalizeProductType(product_type),
         is_available === undefined ? true : is_available === 'true' || is_available === true,
+        vendor_id || null,
         id,
       ]
     );

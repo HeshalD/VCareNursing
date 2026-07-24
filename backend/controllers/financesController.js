@@ -714,7 +714,7 @@ const PNL_SERVICE_CATEGORIES = ['SERVICE_INVOICE'];
 const PNL_PRODUCT_CATEGORIES = ['PRODUCT_SALE', 'RENTAL_PAYMENT'];
 const PNL_OTHER_INCOME_CATEGORIES = ['REGISTRATION_FEE', 'OTHER_INCOME'];
 const PNL_SALARY_CATEGORIES = ['STAFF_SALARY_PAID'];
-const PNL_OTHER_EXPENSE_CATEGORIES = ['OTHER_EXPENSE', 'AGENCY_FEE'];
+const PNL_OTHER_EXPENSE_CATEGORIES = ['OTHER_EXPENSE', 'AGENCY_FEE', 'INTERNAL_STAFF_SALARY', 'VENDOR_PAYMENT'];
 
 function monthKey(d) {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
@@ -1487,6 +1487,7 @@ const getTopExpenses = async (req, res) => {
       { label: 'Salaries and Employee Benefits', amount: sumCategories(PNL_SALARY_CATEGORIES) },
       { label: 'Cost of Goods Sold', amount: parseFloat(cogsResult.rows[0].cogs) },
       { label: 'Agency Fees', amount: catValues['AGENCY_FEE'] || 0 },
+      { label: 'Internal Staff Salaries', amount: catValues['INTERNAL_STAFF_SALARY'] || 0 },
       { label: 'Other Expenses', amount: catValues['OTHER_EXPENSE'] || 0 },
     ]
       .filter(item => item.amount > 0)

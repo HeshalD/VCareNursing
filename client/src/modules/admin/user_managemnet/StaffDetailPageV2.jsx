@@ -411,7 +411,7 @@ const StaffDetailPageV2 = () => {
   const [deductionSuccess, setDeductionSuccess] = useState('');
   const [reviewToggles, setReviewToggles] = useState({});
   const [togglingReviewId, setTogglingReviewId] = useState(null);
-  const [attendanceCalendar, setAttendanceCalendar] = useState({ assignments: [], attendance: [], reschedules: [] });
+  const [attendanceCalendar, setAttendanceCalendar] = useState({ assignments: [], attendance: [], reschedules: [], pendingResumptions: [] });
   const [leaveSummary, setLeaveSummary] = useState({ total_leave_days: 0, month_leave_days: 0, approved_leaves: [] });
   const [adminNotes, setAdminNotes] = useState([]);
   const [adminNotesLoading, setAdminNotesLoading] = useState(true);
@@ -559,7 +559,12 @@ const StaffDetailPageV2 = () => {
 
     if (attendanceCalendarRes.status === 'fulfilled') {
       const cal = attendanceCalendarRes.value?.data || {};
-      setAttendanceCalendar({ assignments: safeArray(cal.assignments), attendance: safeArray(cal.attendance), reschedules: safeArray(cal.reschedules) });
+      setAttendanceCalendar({
+        assignments: safeArray(cal.assignments),
+        attendance: safeArray(cal.attendance),
+        reschedules: safeArray(cal.reschedules),
+        pendingResumptions: safeArray(cal.pending_resumptions),
+      });
     } else nextErrors.attendanceCalendar = attendanceCalendarRes.reason?.message;
 
     if (adminNotesRes.status === 'fulfilled') setAdminNotes(safeArray(adminNotesRes.value?.data));
@@ -2364,6 +2369,7 @@ const StaffDetailPageV2 = () => {
           attendanceRecords={attendanceCalendar.attendance}
           reschedules={attendanceCalendar.reschedules}
           leaveDays={leaveSummary.approved_leaves}
+          pendingResumptions={attendanceCalendar.pendingResumptions}
         />
       </div>
 

@@ -81,6 +81,27 @@ router.post(
     bookingController.adminTerminateBooking
 );
 
+router.post(
+    '/:booking_id/pause',
+    protect,
+    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR'),
+    bookingController.pauseBooking
+);
+
+router.post(
+    '/:booking_id/resume',
+    protect,
+    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR'),
+    bookingController.resumeBooking
+);
+
+router.get(
+    '/:booking_id/pauses',
+    protect,
+    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    bookingController.getBookingPauses
+);
+
 router.get(
     '/:booking_id/invoice-progress',
     protect,
@@ -163,6 +184,7 @@ router.get('/:booking_id/swap-history', protect, restrictTo('SUPER_ADMIN', 'COOR
 // Daily attendance (staff in/out time + manual salary confirmation)
 router.get('/:booking_id/attendance', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), dailyAttendanceController.getBookingAttendance);
 router.post('/:booking_id/attendance', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), dailyAttendanceController.upsertAttendance);
+router.post('/:booking_id/attendance/absent', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), dailyAttendanceController.markAbsent);
 router.post('/attendance/:attendance_id/confirm-salary', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), dailyAttendanceController.confirmSalary);
 
 // Shift patterns + per-shift staff assignment (SHIFT_BASED only)

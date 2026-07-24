@@ -1375,6 +1375,21 @@ class ApiClient {
     });
   }
 
+  async pauseBooking(bookingId, pauseData) {
+    return this.request(`/bookings/${bookingId}/pause`, {
+      method: 'POST',
+      body: JSON.stringify(pauseData || {}),
+    });
+  }
+
+  async resumeBooking(bookingId) {
+    return this.request(`/bookings/${bookingId}/resume`, { method: 'POST' });
+  }
+
+  async getBookingPauses(bookingId) {
+    return this.request(`/bookings/${bookingId}/pauses`);
+  }
+
   async swapBookingStaff(bookingId, swapData) {
     return this.request(`/bookings/${bookingId}/swap-staff`, {
       method: 'POST',
@@ -1425,6 +1440,13 @@ class ApiClient {
 
   async upsertBookingAttendance(bookingId, attendanceData) {
     return this.request(`/bookings/${bookingId}/attendance`, {
+      method: 'POST',
+      body: JSON.stringify(attendanceData),
+    });
+  }
+
+  async markAttendanceAbsent(bookingId, attendanceData) {
+    return this.request(`/bookings/${bookingId}/attendance/absent`, {
       method: 'POST',
       body: JSON.stringify(attendanceData),
     });
@@ -2022,10 +2044,71 @@ class ApiClient {
     return this.request(`/bank-accounts/${accountId}/reconciliation`);
   }
 
+  async recordPettyCashTransaction(data) {
+    return this.request('/bank-accounts/petty-cash/transactions', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async transferBankFunds(data) {
+    return this.request('/bank-accounts/transfer', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   async verifyBankAccountTransaction(accountId, transactionId, verified) {
     return this.request(`/bank-accounts/${accountId}/transactions/${transactionId}/verify`, {
       method: 'PATCH',
       body: JSON.stringify({ verified }),
+    });
+  }
+
+  async getVendors(filters = {}) {
+    const query = new URLSearchParams(filters).toString();
+    return this.request(query ? `/vendors?${query}` : '/vendors');
+  }
+
+  async getVendor(vendorId) {
+    return this.request(`/vendors/${vendorId}`);
+  }
+
+  async createVendor(data) {
+    return this.request('/vendors', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateVendor(vendorId, data) {
+    return this.request(`/vendors/${vendorId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deactivateVendor(vendorId) {
+    return this.request(`/vendors/${vendorId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getVendorBills(vendorId) {
+    return this.request(`/vendors/${vendorId}/bills`);
+  }
+
+  async createVendorBill(vendorId, data) {
+    return this.request(`/vendors/${vendorId}/bills`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async payVendorBill(billId, data) {
+    return this.request(`/vendors/bills/${billId}/payments`, {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
   }
 
@@ -2195,8 +2278,11 @@ class ApiClient {
   // The single "accept" action for any PRODUCT quote — creates a rental
   // agreement for each rental line item (using its own quoted terms) and a
   // combined invoice for any remaining non-rental items, in one call.
-  async acceptProductQuote(quoteId) {
-    return this.request(`/quotes/product/${quoteId}/accept`, { method: 'POST' });
+  async acceptProductQuote(quoteId, data) {
+    return this.request(`/quotes/product/${quoteId}/accept`, {
+      method: 'POST',
+      body: data ? JSON.stringify(data) : undefined,
+    });
   }
 
   // Client portal: express interest in a catalog product
@@ -2596,6 +2682,17 @@ class ApiClient {
     return this.request('/transactions/manual', {
       method: 'POST',
       body: JSON.stringify(transactionData),
+    });
+  }
+
+  async getManualCategories() {
+    return this.request('/transactions/manual-categories');
+  }
+
+  async createManualCategory(categoryData) {
+    return this.request('/transactions/manual-categories', {
+      method: 'POST',
+      body: JSON.stringify(categoryData),
     });
   }
 

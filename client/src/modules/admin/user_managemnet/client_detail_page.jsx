@@ -253,6 +253,10 @@ const ClientDetailPage = () => {
 
   const [quoteStatusBusy, setQuoteStatusBusy] = useState('');
   const [quotePdfBusy, setQuotePdfBusy] = useState('');
+  const [quoteSendBusy, setQuoteSendBusy] = useState('');
+  const [sentQuoteIds, setSentQuoteIds] = useState(new Set());
+  const [productQuoteSendBusy, setProductQuoteSendBusy] = useState('');
+  const [sentProductQuoteIds, setSentProductQuoteIds] = useState(new Set());
   const [showQuoteDrawer, setShowQuoteDrawer] = useState(false);
   const [editingQuoteId, setEditingQuoteId] = useState(null);
   const [showProductInvoiceDrawer, setShowProductInvoiceDrawer] = useState(false);
@@ -604,6 +608,19 @@ const ClientDetailPage = () => {
       setError(err.message || 'Failed to generate quotation PDF');
     } finally {
       setProductQuotePdfBusy('');
+    }
+  };
+
+  const handleSendProductQuotePdf = async (quoteId) => {
+    setProductQuoteSendBusy(quoteId);
+    try {
+      setError('');
+      await apiClient.sendProductQuotePDF(quoteId);
+      setSentProductQuoteIds((prev) => new Set([...prev, quoteId]));
+    } catch (err) {
+      setError(err.message || 'Failed to send quotation');
+    } finally {
+      setProductQuoteSendBusy('');
     }
   };
 
@@ -1045,6 +1062,19 @@ const ClientDetailPage = () => {
       setError(err.message || 'Failed to generate quotation PDF');
     } finally {
       setQuotePdfBusy('');
+    }
+  };
+
+  const handleSendQuotePdf = async (quoteId, productQuoteId) => {
+    setQuoteSendBusy(quoteId);
+    try {
+      setError('');
+      await apiClient.sendQuotePDF(quoteId, productQuoteId);
+      setSentQuoteIds((prev) => new Set([...prev, quoteId]));
+    } catch (err) {
+      setError(err.message || 'Failed to send quotation');
+    } finally {
+      setQuoteSendBusy('');
     }
   };
 
@@ -1850,8 +1880,8 @@ const ClientDetailPage = () => {
           REJECTED: 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200',
         };
         const QUOTE_TYPE_TABS = [
-          { id: 'SERVICE', label: 'Service Quotes', count: recentQuotes.length },
-          { id: 'PRODUCT', label: 'Product Quotes',  count: productQuotes.length },
+          { id: 'SERVICE', label: 'All', count: recentQuotes.length },
+          { id: 'PRODUCT', label: 'Product',  count: productQuotes.length },
         ];
         return (
           <div className="space-y-6">
@@ -1896,7 +1926,7 @@ const ClientDetailPage = () => {
                           <th className="px-4 py-3 text-right">Total</th>
                           <th className="px-4 py-3 text-right">Deposit</th>
                           <th className="px-4 py-3 text-left">Created</th>
-                          <th className="px-4 py-3 text-left">Download</th>
+                          <th className="px-4 py-3 text-left">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100 bg-white">
@@ -1915,17 +1945,31 @@ const ClientDetailPage = () => {
                             </td>
                             <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{formatDate(q.created_at)}</td>
                             <td className="px-4 py-3">
-                              <button
-                                type="button"
-                                onClick={() => handleDownloadProductQuotePdf(q.quote_id)}
-                                disabled={productQuotePdfBusy === q.quote_id}
-                                className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-60"
-                              >
-                                {productQuotePdfBusy === q.quote_id
-                                  ? <Loader2 className="h-3 w-3 animate-spin" />
-                                  : <Download className="h-3 w-3" />}
-                                Download
-                              </button>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDownloadProductQuotePdf(q.quote_id)}
+                                  disabled={productQuotePdfBusy === q.quote_id}
+                                  className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+                                >
+                                  {productQuotePdfBusy === q.quote_id
+                                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                                    : <Download className="h-3 w-3" />}
+                                  Download
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleSendProductQuotePdf(q.quote_id)}
+                                  disabled={productQuoteSendBusy === q.quote_id}
+                                  title="Resend quotation via WhatsApp"
+                                  className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+                                >
+                                  {productQuoteSendBusy === q.quote_id
+                                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                                    : <SendHorizontal className="h-3 w-3" />}
+                                  {sentProductQuoteIds.has(q.quote_id) ? 'Resend' : 'Send'}
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -2085,6 +2129,17 @@ const ClientDetailPage = () => {
                           ? <Loader2 className="h-3 w-3 animate-spin" />
                           : <Download className="h-3 w-3" />}
                         {quotePdfBusy === quote.quote_id ? 'Generatingâ€¦' : 'Download PDF'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSendQuotePdf(quote.quote_id, quote.product_quote_id)}
+                        disabled={quoteSendBusy === quote.quote_id}
+                        className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+                      >
+                        {quoteSendBusy === quote.quote_id
+                          ? <Loader2 className="h-3 w-3 animate-spin" />
+                          : <SendHorizontal className="h-3 w-3" />}
+                        {quoteSendBusy === quote.quote_id ? 'Sending…' : sentQuoteIds.has(quote.quote_id) ? 'Resend via WhatsApp' : 'Send via WhatsApp'}
                       </button>
                       <button
                         type="button"

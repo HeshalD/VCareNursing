@@ -255,6 +255,48 @@ const createShiftPattern = async (client, { booking_id, shift_count, slots, effe
     return { pattern, scheduled: false, warnings };
 };
 
+// Pausing a SHIFT_BASED booking: close out the currently ACTIVE pattern (same
+// "supersede" mechanics as changing patterns, just without activating a
+// replacement) and free the staff on its slots. Also cancels any SCHEDULED
+// pattern change queued for the future — it would otherwise silently activate
+// mid-pause. Resuming later goes through the normal createShiftPattern flow,
+// same as staffing a booking for the first time.
+const closeActivePatternForPause = async (client, booking_id, businessDate) => {
+    const current = await getActivePattern(client, booking_id, businessDate);
+    if (current) {
+        await client.query(
+            `UPDATE booking_shift_patterns SET status = 'SUPERSEDED', effective_to_date = $1 WHERE pattern_id = $2`,
+            [businessDate, current.pattern_id]
+        );
+
+        const slotIds = (current.slots || []).map((s) => s.shift_slot_id);
+        if (slotIds.length) {
+            const endedRes = await client.query(
+                `UPDATE booking_staff_assignments
+                 SET status = 'COMPLETED', service_end_date = $2
+                 WHERE shift_slot_id = ANY($1::uuid[]) AND status IN ('ACTIVE', 'SCHEDULED')
+                 RETURNING staff_profile_id`,
+                [slotIds, businessDate]
+            );
+            const staffIds = [...new Set(endedRes.rows.map((r) => r.staff_profile_id))];
+            if (staffIds.length) {
+                await client.query(
+                    `UPDATE staff_profiles SET current_status = 'AVAILABLE' WHERE staff_profile_id = ANY($1::uuid[])`,
+                    [staffIds]
+                );
+            }
+        }
+    }
+
+    await client.query(
+        `UPDATE scheduled_actions SET status = 'CANCELLED'
+         WHERE booking_id = $1 AND action_type = 'SHIFT_PATTERN_CHANGE' AND status = 'SCHEDULED'`,
+        [booking_id]
+    );
+
+    return { closedPatternId: current?.pattern_id || null };
+};
+
 // Cron-driven: flip a SCHEDULED pattern to ACTIVE and supersede whichever was active.
 const executeShiftPatternChange = async (client, payload) => {
     const { new_pattern_id, old_pattern_id } = payload;
@@ -288,4 +330,5 @@ module.exports = {
     getPatternHistory,
     createShiftPattern,
     executeShiftPatternChange,
+    closeActivePatternForPause,
 };

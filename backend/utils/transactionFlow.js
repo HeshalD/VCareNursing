@@ -9,7 +9,7 @@
 // to filter by direction. The frontend mirrors these lists for display.
 
 const IN_CATEGORIES = ['CLIENT_PAYMENT', 'BOOKING_PAYMENT', 'WALLET_TOPUP', 'OTHER_INCOME', 'PRODUCT_SALE', 'RENTAL_PAYMENT', 'REGISTRATION_FEE'];
-const OUT_CATEGORIES = ['STAFF_SALARY_PAID', 'STAFF_ADVANCE', 'AGENCY_FEE', 'OTHER_EXPENSE', 'DEPOSIT_REFUND'];
+const OUT_CATEGORIES = ['STAFF_SALARY_PAID', 'STAFF_ADVANCE', 'AGENCY_FEE', 'INTERNAL_STAFF_SALARY', 'OTHER_EXPENSE', 'DEPOSIT_REFUND', 'VENDOR_PAYMENT'];
 // Everything else (STAFF_SALARY, SERVICE_INVOICE, WALLET_DEBIT, WALLET_REFUND,
 // BOOKING_SETTLEMENT) is NEUTRAL.
 //
@@ -25,7 +25,10 @@ const OUT_CATEGORIES = ['STAFF_SALARY_PAID', 'STAFF_ADVANCE', 'AGENCY_FEE', 'OTH
 // — the deposit isn't a separate transaction until/unless it's refunded (DEPOSIT_REFUND).
 
 // Categories an admin may create by hand via the "Add Transaction" form.
-const MANUAL_CATEGORIES = ['OTHER_INCOME', 'OTHER_EXPENSE', 'AGENCY_FEE'];
+// INTERNAL_STAFF_SALARY is for office/back-office salaries paid outside the
+// care-worker wallet payout flow — distinct from STAFF_SALARY_PAID, which is
+// reserved for wallet payouts (see staffController.js / paymentTrackingController.js).
+const MANUAL_CATEGORIES = ['OTHER_INCOME', 'OTHER_EXPENSE', 'AGENCY_FEE', 'INTERNAL_STAFF_SALARY'];
 
 function flowOf(category) {
   if (IN_CATEGORIES.includes(category)) return 'IN';

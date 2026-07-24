@@ -2,6 +2,7 @@ const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
 const { IN_CATEGORIES, OUT_CATEGORIES, MANUAL_CATEGORIES, flowOf } = require('../utils/transactionFlow');
 const { generateTransactionsPdf } = require('../utils/transactionsPdf');
+const { resolveBankAccountId } = require('../utils/pettyCash');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VALID_PAYMENT_METHODS = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE', 'ONLINE_GATEWAY', 'OTHER'];
@@ -32,6 +33,7 @@ const TRANSACTION_SELECT_COLUMNS = `
   t.receipt_url,
   t.is_manual,
   t.external_party,
+  t.custom_category_label,
   COALESCE(t.transaction_date, t.created_at::date) AS transaction_date,
   t.created_at,
   t.client_id,
@@ -112,6 +114,7 @@ function buildTransactionFilters(query) {
       OR t.reference_number ILIKE $${p}
       OR t.notes ILIKE $${p}
       OR pp.full_name ILIKE $${p}
+      OR t.custom_category_label ILIKE $${p}
     )`);
   }
 
@@ -280,6 +283,62 @@ const getTransactionMeta = async (req, res) => {
 };
 
 // =========================================================
+// GET /api/transactions/manual-categories
+// Admin-created custom categories for manual OTHER_INCOME/OTHER_EXPENSE entries
+// =========================================================
+const getManualCategories = async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT id, name, direction FROM manual_transaction_categories ORDER BY name ASC`
+    );
+    return res.status(200).json({
+      status: 'success',
+      categories: {
+        CREDIT: result.rows.filter(r => r.direction === 'CREDIT'),
+        DEBIT: result.rows.filter(r => r.direction === 'DEBIT'),
+      },
+    });
+  } catch (err) {
+    console.error('getManualCategories error:', err);
+    return res.status(500).json({ status: 'error', message: 'Internal server error' });
+  }
+};
+
+// =========================================================
+// POST /api/transactions/manual-categories
+// Create a reusable custom category label for manual transactions
+// =========================================================
+const createManualCategory = async (req, res) => {
+  try {
+    const { name, direction } = req.body;
+    const trimmedName = String(name || '').trim();
+
+    if (!trimmedName) {
+      return res.status(400).json({ status: 'error', message: 'name is required' });
+    }
+    if (trimmedName.length > 100) {
+      return res.status(400).json({ status: 'error', message: 'name must be 100 characters or fewer' });
+    }
+    if (!['CREDIT', 'DEBIT'].includes(direction)) {
+      return res.status(400).json({ status: 'error', message: 'direction must be CREDIT or DEBIT' });
+    }
+
+    const result = await db.query(
+      `INSERT INTO manual_transaction_categories (name, direction)
+       VALUES ($1, $2)
+       ON CONFLICT (direction, lower(name)) DO UPDATE SET name = manual_transaction_categories.name
+       RETURNING id, name, direction`,
+      [trimmedName, direction]
+    );
+
+    return res.status(201).json({ status: 'success', category: result.rows[0] });
+  } catch (err) {
+    console.error('createManualCategory error:', err);
+    return res.status(500).json({ status: 'error', message: 'Internal server error' });
+  }
+};
+
+// =========================================================
 // POST /api/transactions/manual
 // Record an off-platform transaction manually
 // =========================================================
@@ -287,6 +346,7 @@ const createManualTransaction = async (req, res) => {
   try {
     const {
       category,
+      custom_category_label,
       amount,
       payment_method,
       bank_account_id,
@@ -306,9 +366,15 @@ const createManualTransaction = async (req, res) => {
       });
     }
 
+    const trimmedCustomLabel = String(custom_category_label || '').trim().slice(0, 100) || null;
+
     // Direction is derived from the category, never trusted from the client.
     const flow = flowOf(category);
     const transaction_type = flow === 'IN' ? 'CREDIT' : 'DEBIT';
+
+    // A custom label only makes sense alongside the generic OTHER_INCOME/
+    // OTHER_EXPENSE buckets — AGENCY_FEE is its own fixed category.
+    const customLabel = ['OTHER_INCOME', 'OTHER_EXPENSE'].includes(category) ? trimmedCustomLabel : null;
 
     const parsedAmount = parseFloat(amount);
     if (!parsedAmount || parsedAmount <= 0) {
@@ -359,6 +425,9 @@ const createManualTransaction = async (req, res) => {
       }
     }
 
+    // CASH transactions have no client-supplied bank account — route them to Petty Cash instead.
+    const resolvedBankAccountId = await resolveBankAccountId(payment_method, bank_account_id);
+
     // ---- Resolve actor ----
     const actorUserId = req.user.user_id;
     const actorRole = extractActorRole(req.user.role);
@@ -368,17 +437,28 @@ const createManualTransaction = async (req, res) => {
     );
     const actorName = actorNameResult.rows[0]?.full_name || 'Admin';
 
+    // Custom labels are reusable — persist them the first time they're used
+    // so they show up as a dropdown option on future manual transactions.
+    if (customLabel) {
+      await db.query(
+        `INSERT INTO manual_transaction_categories (name, direction)
+         VALUES ($1, $2)
+         ON CONFLICT (direction, lower(name)) DO NOTHING`,
+        [customLabel, transaction_type]
+      );
+    }
+
     // ---- Insert ----
     const insertResult = await db.query(
       `INSERT INTO transactions
-         (category, transaction_type, amount, payment_method, bank_account_id,
+         (category, custom_category_label, transaction_type, amount, payment_method, bank_account_id,
           cheque_number, cheque_date, reference_number, external_party,
           transaction_date, notes, status, is_manual, created_by, verified_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10, CURRENT_DATE),$11,'COMPLETED',TRUE,$12,$12)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11, CURRENT_DATE),$12,'COMPLETED',TRUE,$13,$13)
        RETURNING *`,
       [
-        category, transaction_type, parsedAmount, payment_method,
-        bank_account_id || null, cheque_number || null, cheque_date || null,
+        category, customLabel, transaction_type, parsedAmount, payment_method,
+        resolvedBankAccountId, cheque_number || null, cheque_date || null,
         reference_number || null, String(external_party).trim(),
         transaction_date || null, notes || null, actorUserId,
       ]
@@ -394,6 +474,7 @@ const createManualTransaction = async (req, res) => {
       entityId: transaction.transaction_id,
       details: {
         category,
+        custom_category_label: customLabel,
         transaction_type,
         amount: parsedAmount,
         payment_method,
@@ -415,4 +496,6 @@ module.exports = {
   exportTransactionsPdf,
   getTransactionMeta,
   createManualTransaction,
+  getManualCategories,
+  createManualCategory,
 };

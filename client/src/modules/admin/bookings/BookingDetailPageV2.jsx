@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, ArrowLeft, CheckCircle, Download, DollarSign,
   Loader2, MessageCircle, Phone, RefreshCw, Repeat2, Search, SendHorizontal, ShieldCheck,
-  Upload, User, UserPlus, Users, Wallet, X, XCircle, Briefcase, History,
+  Upload, User, UserPlus, Users, Wallet, X, XCircle, Briefcase, History, Pause, Play,
 } from 'lucide-react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
@@ -12,7 +12,7 @@ import CareTimeline from './CareTimeline';
 import StaffScheduleTimeline from '../components/StaffScheduleTimeline';
 import vcareLogo from '../../../assets/Logo/VCareLogo.png';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
-import DateTimeInput from '../../../components/common/DateTimeInput';
+import { computeVisitingStatus, VISITING_STATUS, VISITING_STATUS_META } from '../../../utils/visitingBookingStatus';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -28,6 +28,11 @@ const formatDT     = (v) => { if (!v) return '-'; const d = new Date(v); return 
 const formatTime   = (t) => { if (!t) return '-'; const m = String(t).match(/^(\d{1,2}):(\d{2})/); if (!m) return '-'; let h = parseInt(m[1], 10); const p = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return `${h}:${m[2]} ${p}`; };
 const toDTLocal    = (value = new Date()) => { const d = value instanceof Date ? value : new Date(value); if (isNaN(d)) return ''; return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
 const toDateInput  = (value = new Date()) => { const d = value instanceof Date ? value : new Date(value); return isNaN(d) ? '' : d.toISOString().slice(0, 10); };
+// Local calendar date (not UTC) as YYYY-MM-DD — service_start_date/service_end_date are
+// UTC timestamps from Postgres, so slicing the raw ISO string misreads the day for
+// timezones ahead of UTC (e.g. Sri Lanka). Used for any same-day comparison against dates
+// the admin picks in their own timezone (CareTimeline's toLocalISO, "today", etc).
+const toLocalDateStr = (value) => { if (!value) return null; const d = new Date(value); if (isNaN(d)) return null; return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const addDays      = (date, n) => { const d = new Date(date); d.setDate(d.getDate() + n); return d; };
 // 'HH:MM'(:SS) + hours (may be fractional, e.g. shift duration_hours) -> 'HH:MM', wrapping past midnight.
 const addHoursToTime = (timeStr, hours) => {
@@ -37,6 +42,42 @@ const addHoursToTime = (timeStr, hours) => {
   return `${String(Math.floor(totalMins / 60)).padStart(2, '0')}:${String(totalMins % 60).padStart(2, '0')}`;
 };
 const initials     = (name) => (name || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
+// 'HH:MM' in + 'HH:MM' out -> hours worked, wrapping past midnight if out <= in (overnight shift).
+const computeWorkedHours = (inTime, outTime) => {
+  if (!inTime || !outTime) return null;
+  const [ih, im] = inTime.split(':').map(Number);
+  const [oh, om] = outTime.split(':').map(Number);
+  let mins = (oh * 60 + om) - (ih * 60 + im);
+  if (mins <= 0) mins += 1440;
+  return mins / 60;
+};
+// Colour tier for served hours vs. what the staff member was assigned: green when the
+// full assigned duration was met, amber for a moderate shortfall, red for a large one.
+// Returns null when there's nothing to compare against (no assigned_hours on record).
+const hoursTier = (served, assigned) => {
+  if (served === null || served === undefined || !assigned) return null;
+  const pct = (served / assigned) * 100;
+  if (pct >= 100) return 'green';
+  if (pct >= 75) return 'amber';
+  return 'red';
+};
+const TIER_STYLE = {
+  green: { bg: '#f0fdf4', col: '#166534', dot: '#22c55e' },
+  amber: { bg: '#fffbeb', col: '#92400e', dot: '#f59e0b' },
+  red:   { bg: '#fef2f2', col: '#991b1b', dot: '#ef4444' },
+};
+const HoursBadge = ({ served, assigned }) => {
+  const tier = hoursTier(served, assigned);
+  const label = served !== null && served !== undefined ? `${Number(served).toFixed(2)}h` : '—';
+  if (!tier) return <span className="tabular-nums">{label}</span>;
+  const s = TIER_STYLE[tier];
+  return (
+    <span className="inline-flex items-center gap-1.5 tabular-nums">
+      <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: s.dot }} />
+      <span style={{ fontWeight: 600, color: s.col }}>{label}</span>
+    </span>
+  );
+};
 
 // Matches Tailwind's `sm` breakpoint (640px). Mobile = below it.
 const useIsMobile = (query = '(max-width: 639px)') => {
@@ -82,6 +123,7 @@ const STATUS_META = {
   terminated:          { bg: '#fef2f2', col: '#991b1b', dot: '#ef4444' },
   pending_termination: { bg: '#fffbeb', col: '#92400e', dot: '#f59e0b' },
   pending:             { bg: '#f8fafc', col: '#64748b', dot: '#94a3b8' },
+  paused:              { bg: '#fffbeb', col: '#92400e', dot: '#f59e0b' },
 };
 
 // ─── small atoms ────────────────────────────────────────────────────────────
@@ -173,6 +215,7 @@ const BookingDetailPageV2 = () => {
   const [rescheduleModalTime, setRescheduleModalTime]       = useState('');
   const [rescheduleModalChangeStaff, setRescheduleModalChangeStaff] = useState(false);
   const [rescheduleModalStaffId, setRescheduleModalStaffId] = useState('');
+  const [rescheduleModalStaffSearch, setRescheduleModalStaffSearch] = useState('');
   const [rescheduleModalReason, setRescheduleModalReason]   = useState('');
   const [rescheduleModalSubmitting, setRescheduleModalSubmitting] = useState(false);
   const [rescheduleModalError, setRescheduleModalError]     = useState('');
@@ -187,6 +230,34 @@ const BookingDetailPageV2 = () => {
 
   // scheduled actions for this booking (terminations, completions, swaps, etc.)
   const [bookingScheduledActions, setBookingScheduledActions] = useState([]);
+
+  // pause / resume (LIVE_IN, SHIFT_BASED only)
+  const [bookingPauses, setBookingPauses]           = useState([]);
+  const [showPauseModal, setShowPauseModal]         = useState(false);
+  const [pauseResumeDate, setPauseResumeDate]       = useState('');
+  const [pauseReason, setPauseReason]               = useState('');
+  const [pauseModalBusy, setPauseModalBusy]         = useState(false);
+  const [pauseModalError, setPauseModalError]       = useState('');
+  const [resumeBusy, setResumeBusy]                 = useState(false);
+  const [resumeError, setResumeError]               = useState('');
+  // Only relevant when the booking already has a scheduled TERMINATION/COMPLETION and
+  // the admin gives a fixed resume date — that old date is stale once paused.
+  const [pauseEndDateAction, setPauseEndDateAction] = useState('RESCHEDULE'); // 'RESCHEDULE' | 'CLEAR'
+  const [pauseNewEndDate, setPauseNewEndDate]       = useState('');
+
+  // Post-resume staff (re)assignment modal — replaces navigating to the standalone
+  // staff-assignment page: does the same LIVE_IN/SHIFT_BASED assignment, pre-filled
+  // with whoever was on the booking before it was paused.
+  const [showResumeAssignModal, setShowResumeAssignModal] = useState(false);
+  const [resumeAssignLoading, setResumeAssignLoading]     = useState(false);
+  const [resumeAssignSubmitting, setResumeAssignSubmitting] = useState(false);
+  const [resumeAssignError, setResumeAssignError]         = useState('');
+  const [resumeAssignStaff, setResumeAssignStaff]         = useState([]); // available_staff list
+  const [resumeAssignForm, setResumeAssignForm]           = useState({
+    staff_profile_id: '', service_start_date: '', service_start_time: '',
+    daily_rate: '', ot_rate: '', notes: '', salesperson_id: '',
+  });
+  const [resumeShiftSlots, setResumeShiftSlots] = useState([]);
 
   // shift patterns + per-shift assignment (SHIFT_BASED only)
   const [shiftPattern, setShiftPattern]               = useState(null); // { active, scheduled }
@@ -307,14 +378,41 @@ const BookingDetailPageV2 = () => {
   const totalInvoiced = Number(invoiceSummary.total_invoiced ?? 0);
   const dailyRate     = Number(bookingSummary.quote_daily_rate || bookingSummary.daily_rate || 0);
 
-  // Daily attendance / manual invoicing: LIVE_IN staff salary is always automatic.
-  // SHIFT_BASED/VISITING bookings are always manual for both salary and client invoicing.
-  // LIVE_IN bookings can opt into manual client invoicing via invoicing_mode.
+  // Daily attendance / manual invoicing: SHIFT_BASED/VISITING bookings are always
+  // manual for both salary and client invoicing. LIVE_IN staff salary auto-pays via
+  // the cron for every full middle day, but the cron now leaves the assignment's
+  // first and last day PENDING (see cron/dailyInvoicing.js) — so the Staff Attendance
+  // table is enabled for LIVE_IN too; middle days simply render as an already-decided
+  // "Salary Calculated" row (nothing to do there), and only the two boundary days
+  // ever actually need the admin's Save/Absent/Pay action. LIVE_IN bookings can opt
+  // into manual client invoicing via invoicing_mode.
   const isLiveIn          = bookingSummary.service_model === 'LIVE_IN';
   const invoicingMode     = bookingSummary.invoicing_mode || 'AUTO';
-  const manualSalaryDay   = !isLiveIn;
+  const manualSalaryDay   = true;
   const manualInvoiceDay  = !isLiveIn || invoicingMode === 'MANUAL';
   const dayClickEnabled   = manualSalaryDay || manualInvoiceDay;
+
+  // VISITING is a one-time visit — its lifecycle (scheduled / due today / awaiting
+  // finalization / completed) is entirely derived, not stored, so it stays in sync
+  // automatically as the admin logs attendance and decides the invoice. See
+  // utils/visitingBookingStatus and services/visitingBookings.js (backend auto-complete).
+  const isVisiting = bookingSummary.service_model === 'VISITING';
+  const visitDateISO = isVisiting ? toLocalDateStr(activeStaffRow?.service_start_date) : null;
+  const visitAttendanceDecided = isVisiting && visitDateISO
+    ? attendanceRecords.some(r => r.service_date?.slice(0, 10) === visitDateISO && r.salary_status !== 'PENDING')
+    : false;
+  const visitInvoiceDecided = isVisiting && visitDateISO
+    ? dailyInvoiceRecords.some(r => r.service_date?.slice(0, 10) === visitDateISO && !r.shift_slot_id && r.status !== 'PENDING')
+    : false;
+  const visitingStatus = isVisiting
+    ? computeVisitingStatus({
+        bookingStatus: bookingSummary.status,
+        visitDateISO,
+        todayISO: toLocalDateStr(new Date()),
+        attendanceDecided: visitAttendanceDecided,
+        invoiceDecided: visitInvoiceDecided,
+      })
+    : null;
   const overdueAmount = totalPaid > totalInvoiced ? 0 : totalInvoiced - totalPaid;
   const remainingBalance = totalPaid - totalInvoiced;
   const walletBalance    = Number(clientDetails.wallet_balance || 0);
@@ -351,18 +449,22 @@ const BookingDetailPageV2 = () => {
     return !dailyRate ? 0 : Math.floor(totalPaid / dailyRate);
   }, [isShiftBased, totalPaid, shiftRate, shiftsPerDay, dailyRate]);
   const servedDays = useMemo(() => {
+    // VISITING is a one-time visit — it only ever has a single service day, so
+    // servedDays is always 1, not the count of calendar days elapsed since start.
+    if (isVisiting) return 1;
     if (!bookingSummary.start_date) return 0;
     const today = new Date(); today.setHours(0,0,0,0);
     const s = new Date(bookingSummary.start_date); s.setHours(0,0,0,0);
     return Math.max(0, Math.floor((today - s) / 86400000) + 1);
-  }, [bookingSummary.start_date]);
+  }, [bookingSummary.start_date, isVisiting]);
 
   const simServedDays = useMemo(() => {
+    if (isVisiting) return simDate ? 1 : null;
     if (!simDate || !bookingSummary.start_date) return null;
     const s = new Date(bookingSummary.start_date); s.setHours(0,0,0,0);
     const e = new Date(simDate); e.setHours(0,0,0,0);
     return Math.max(0, Math.floor((e - s) / 86400000) + 1);
-  }, [simDate, bookingSummary.start_date]);
+  }, [simDate, bookingSummary.start_date, isVisiting]);
 
   // Shifts elapsed (servedDays × shifts/day) — what the "Shifts served" stat and
   // shift-based overdue projections use instead of dailyRate-based day math.
@@ -403,6 +505,13 @@ const BookingDetailPageV2 = () => {
   };
   const actionsTargetDate = actualEndTime ? actualEndTime.slice(0, 10) : toDateInput(new Date());
   const projectedRemainingBalance = projectedRemainingBalanceAt(actionsTargetDate);
+
+  // Actual end date/time split into two plain fields for the close-out UI — combined
+  // back into the datetime-local shape (YYYY-MM-DDTHH:mm) that actualEndTime expects.
+  const actualEndDatePart = actualEndTime ? actualEndTime.slice(0, 10) : '';
+  const actualEndTimePart = actualEndTime ? actualEndTime.slice(11, 16) : '';
+  const setActualEndDatePart = (d) => setActualEndTime(d ? `${d}T${actualEndTimePart || '00:00'}` : '');
+  const setActualEndTimePart = (t) => setActualEndTime(actualEndDatePart ? `${actualEndDatePart}T${t || '00:00'}` : (t ? `${toDateInput(new Date())}T${t}` : ''));
   const termProjectedRemainingBalance = projectedRemainingBalanceAt(termFinalEndDate);
 
   const staffColorMap = useMemo(() => {
@@ -442,17 +551,29 @@ const BookingDetailPageV2 = () => {
       .catch(() => {});
   };
   useEffect(() => { fetchScheduledActions(); }, [adminToken, bookingId]);
+  const fetchBookingPauses = () => {
+    if (!adminToken || !bookingId) return;
+    apiClient.setToken(adminToken);
+    return apiClient.getBookingPauses(bookingId)
+      .then(r => setBookingPauses(r?.data || []))
+      .catch(() => {});
+  };
+  useEffect(() => { fetchBookingPauses(); }, [adminToken, bookingId]);
   useEffect(() => { if (detail) setSettlementAction(remainingBalance > 0 ? 'WALLET_DEPOSIT' : 'NO_REFUND'); }, [detail, remainingBalance]);
   useEffect(() => {
     if (!adminToken) return;
     apiClient.setToken(adminToken);
     apiClient.getBankAccounts().then(r => setBankAccounts(r?.data || [])).catch(() => {});
   }, [adminToken]);
+  // Not gated on activeSection === 'staff' — the replacement-staff pickers in the
+  // Reschedule/Cover Shift modal (opened from the Day Detail modal on the Overview
+  // tab) and the shift pattern modal need this list too, so it must be available
+  // regardless of which tab is active when those modals are opened.
   useEffect(() => {
-    if (!adminToken || activeSection !== 'staff') return;
+    if (!adminToken) return;
     apiClient.setToken(adminToken);
     apiClient.getAllStaff({ status: 'AVAILABLE', limit: 1000, page: 1 }).then(r => setAvailableStaff(r?.data || [])).catch(() => {});
-  }, [adminToken, activeSection]);
+  }, [adminToken]);
 
   // Batched schedule lookup for the staff-picker UIs below (swap modal + shift
   // pattern modal) — lets the admin see each candidate's existing/upcoming
@@ -646,7 +767,10 @@ const BookingDetailPageV2 = () => {
       if (day < start || (end && day > end)) return false;
       // This shift's occurrence was rescheduled away from this date — it isn't
       // due here anymore, so don't let attendance/invoicing be logged against it.
-      if (a.shift_slot_id && movedOriginsForDay.has(`${a.shift_slot_id}__${dateISO}`)) return false;
+      // Only the standing assignment (no reschedule_id) is excluded — a makeup
+      // assignment created BY that reschedule (same-day "cover shift" included,
+      // where new_date === original_date) must still show up here.
+      if (a.shift_slot_id && !a.reschedule_id && movedOriginsForDay.has(`${a.shift_slot_id}__${dateISO}`)) return false;
       return true;
     });
   };
@@ -681,12 +805,36 @@ const BookingDetailPageV2 = () => {
   };
   const closeDayModal = () => { setDayModal(null); setDayModalError(''); setAttendanceInputs({}); setInvoiceAmountInput(''); setInvoiceAmountInputsBySlot({}); };
 
+  // LIVE_IN staff stay with the patient continuously until the booking ends (or they're
+  // swapped) — so only the booking's first day needs a start time and only its last day
+  // needs an end time. Middle days (and non-boundary edits) still need both.
+  const liveInBoundary = (assignment, dateISO) => {
+    if (!isLiveIn || assignment.shift_slot_id) return { onlyStart: false, onlyEnd: false };
+    const isFirstDay = toLocalDateStr(assignment.service_start_date) === dateISO;
+    // The assignment only gets service_end_date once the termination/completion actually
+    // executes (immediately for a same-day end, or overnight via the cron for a scheduled
+    // future one) — until then, fall back to the still-pending scheduled date so marking
+    // attendance works the same day the admin sets the end date, not just the day after.
+    const isLastDay = Boolean(
+      (assignment.service_end_date && toLocalDateStr(assignment.service_end_date) === dateISO) ||
+      (!assignment.service_end_date && scheduledFinalization?.effective_date === dateISO)
+    );
+    return { onlyStart: isFirstDay && !isLastDay, onlyEnd: isLastDay && !isFirstDay };
+  };
+
   const saveAttendanceTimes = async (assignment) => {
     const assignmentId = assignment.assignment_id;
     const inputs = attendanceInputs[assignmentId] || {};
     const dateISO = inputs.date || dayModal.dateISO;
-    if (!inputs.in_time || !inputs.out_time) { setDayModalError('Both in-time and out-time are required'); return; }
-    const outDateISO = inputs.out_time < inputs.in_time
+    const { onlyStart, onlyEnd } = liveInBoundary(assignment, dateISO);
+
+    if (onlyStart && !inputs.in_time) { setDayModalError('Start time is required'); return; }
+    if (onlyEnd && !inputs.out_time) { setDayModalError('End time is required'); return; }
+    if (!onlyStart && !onlyEnd && (!inputs.in_time || !inputs.out_time)) { setDayModalError('Both in-time and out-time are required'); return; }
+
+    const effectiveInTime  = onlyEnd ? '00:00' : inputs.in_time;
+    const effectiveOutTime = onlyStart ? '23:59' : inputs.out_time;
+    const outDateISO = effectiveOutTime < effectiveInTime
       ? (() => { const d = new Date(`${dateISO}T12:00:00`); d.setDate(d.getDate() + 1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })()
       : dateISO;
     try {
@@ -695,12 +843,33 @@ const BookingDetailPageV2 = () => {
       await apiClient.upsertBookingAttendance(bookingId, {
         assignment_id: assignmentId,
         service_date: dateISO,
-        in_time: new Date(`${dateISO}T${inputs.in_time}`).toISOString(),
-        out_time: new Date(`${outDateISO}T${inputs.out_time}`).toISOString(),
+        in_time: new Date(`${dateISO}T${effectiveInTime}`).toISOString(),
+        out_time: new Date(`${outDateISO}T${effectiveOutTime}`).toISOString(),
         shift_slot_id: assignment.shift_slot_id || undefined,
       });
       await fetchDailyRecords();
     } catch (err) { setDayModalError(err?.message || 'Failed to save attendance times'); }
+    finally { setDayModalBusy(''); }
+  };
+
+  // No-show in one step — no in/out time needed. Skips this staff member's salary
+  // only; the client invoice for the day/shift is untouched (decide it separately,
+  // or use Waive/Cover Shift if the whole shift needs the same treatment).
+  const markAbsent = async (assignment) => {
+    const assignmentId = assignment.assignment_id;
+    const inputs = attendanceInputs[assignmentId] || {};
+    const dateISO = inputs.date || dayModal.dateISO;
+    if (!window.confirm('Mark this staff member absent for this day? No salary will be recorded for them.')) return;
+    try {
+      setDayModalBusy(`absent-${assignmentId}`); setDayModalError('');
+      apiClient.setToken(adminToken);
+      await apiClient.markAttendanceAbsent(bookingId, {
+        assignment_id: assignmentId,
+        service_date: dateISO,
+        shift_slot_id: assignment.shift_slot_id || undefined,
+      });
+      await fetchDailyRecords();
+    } catch (err) { setDayModalError(err?.message || 'Failed to mark absent'); }
     finally { setDayModalBusy(''); }
   };
 
@@ -718,6 +887,11 @@ const BookingDetailPageV2 = () => {
 
   const decideInvoice = async (approve, shiftSlotId) => {
     const busyKey = shiftSlotId ? `invoice-${shiftSlotId}` : 'invoice';
+    // A shift covered same-day by a different staff member (via the reschedule
+    // mechanism, new_date === original_date) has its own reschedule-scoped invoice
+    // row — must be targeted explicitly or this would collide with the slot's
+    // standing (now-unused) invoice row for the same date.
+    const slotAssignment = shiftSlotId ? dayModal.assignments.find(a => a.shift_slot_id === shiftSlotId) : null;
     try {
       setDayModalBusy(busyKey); setDayModalError('');
       apiClient.setToken(adminToken);
@@ -726,6 +900,7 @@ const BookingDetailPageV2 = () => {
         approve,
         amount: approve ? parseFloat(shiftSlotId ? invoiceAmountInputsBySlot[shiftSlotId] : invoiceAmountInput) : undefined,
         shift_slot_id: shiftSlotId || undefined,
+        reschedule_id: slotAssignment?.reschedule_id || undefined,
       });
       await Promise.all([fetchDailyRecords(), fetchDetail()]);
     } catch (err) { setDayModalError(err?.message || 'Failed to confirm invoice decision'); }
@@ -746,6 +921,7 @@ const BookingDetailPageV2 = () => {
         service_date: dayModal.dateISO,
         shift_slot_id: slotId,
         assignment_id: slotAssignment.assignment_id,
+        reschedule_id: slotAssignment.reschedule_id || undefined,
       });
       await Promise.all([fetchDailyRecords(), fetchDetail()]);
     } catch (err) { setDayModalError(err?.message || 'Failed to waive shift'); }
@@ -755,17 +931,26 @@ const BookingDetailPageV2 = () => {
   // Opens the reschedule modal for one shift occurrence — defaults the new
   // date to just after the booking's scheduled end, matching the backend's
   // own default assumption for where a moved shift usually lands.
-  const openRescheduleModal = (slotId) => {
+  // coverMode=true (the "Cover Shift" shortcut) instead prefills the SAME date with
+  // staff-change already on — reuses the same reschedule mechanism (new_date ===
+  // original_date) to hand today's occurrence to a covering staff member, leaving
+  // the standing assignment (and the no-show's attendance/invoice for this day)
+  // untouched for every other day.
+  const openRescheduleModal = (slotId, coverMode = false) => {
+    // Auto-pick whoever's already holding a different shift on this booking — the
+    // realistic coverer — instead of leaving the picker empty for the admin to search.
+    const autoStaff = shiftSlots.find(s => s.shift_slot_id !== slotId && s.assignment);
     setRescheduleModalSlotId(slotId);
-    setRescheduleModalDate(bookingSummary.scheduled_end_time ? bookingSummary.scheduled_end_time.slice(0, 10) : toDateInput(new Date()));
+    setRescheduleModalDate(coverMode ? dayModal.dateISO : (bookingSummary.scheduled_end_time ? bookingSummary.scheduled_end_time.slice(0, 10) : toDateInput(new Date())));
     setRescheduleModalTime('');
-    setRescheduleModalChangeStaff(false);
-    setRescheduleModalStaffId('');
+    setRescheduleModalChangeStaff(coverMode);
+    setRescheduleModalStaffId(autoStaff ? autoStaff.assignment.staff_profile_id : '');
+    setRescheduleModalStaffSearch('');
     setRescheduleModalReason('');
     setRescheduleModalError('');
     setShowRescheduleModal(true);
   };
-  const closeRescheduleModal = () => { setShowRescheduleModal(false); setRescheduleModalSlotId(null); };
+  const closeRescheduleModal = () => { setShowRescheduleModal(false); setRescheduleModalSlotId(null); setRescheduleModalStaffSearch(''); };
 
   // Moves a missed/upcoming shift occurrence to a different date — any date
   // within the booking — optionally handing the makeup occurrence to a
@@ -997,9 +1182,11 @@ const BookingDetailPageV2 = () => {
   const togglePatternHistory = () => { if (!showPatternHistory) fetchPatternHistory(); setShowPatternHistory(v => !v); };
 
   // availableStaff only lists status=AVAILABLE staff, which excludes anyone already
-  // assigned to this booking's current shifts — merge those back in so the pattern
-  // modal's dropdowns can keep (or explicitly drop) the current holder of a shift.
-  const patternModalStaffOptions = useMemo(() => {
+  // assigned to this booking's current shifts — merge those back in so staff pickers
+  // (shift pattern modal, reschedule/cover-shift modal) can offer someone already
+  // working another shift on this same booking as a replacement/coverer, not just
+  // fully-free staff.
+  const staffPickerOptions = useMemo(() => {
     const map = new Map(availableStaff.map(s => [s.staff_profile_id, s]));
     shiftSlots.forEach(s => {
       if (s.assignment && !map.has(s.assignment.staff_profile_id)) {
@@ -1008,6 +1195,14 @@ const BookingDetailPageV2 = () => {
     });
     return [...map.values()].sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''));
   }, [availableStaff, shiftSlots]);
+  const patternModalStaffOptions = staffPickerOptions;
+  // Staff already holding a shift on this booking — the realistic "coverer" for a
+  // no-show, so they're auto-selected and pinned to the top of the search results
+  // in the Reschedule/Cover Shift modal instead of making the admin hunt for them.
+  const onBookingStaffIds = useMemo(
+    () => new Set(shiftSlots.filter(s => s.assignment).map(s => s.assignment.staff_profile_id)),
+    [shiftSlots]
+  );
 
   const handleWalletPayoff = async (e) => {
     e.preventDefault();
@@ -1049,6 +1244,229 @@ const BookingDetailPageV2 = () => {
       }
     } catch (err) { setActionsModalError(err?.message || `Failed to ${actionsModalMode} booking`); }
     finally { setActionsModalLoading(false); }
+  };
+
+  const openPauseModal  = () => { setPauseResumeDate(''); setPauseReason(''); setPauseModalError(''); setPauseEndDateAction('RESCHEDULE'); setPauseNewEndDate(''); setShowPauseModal(true); };
+  const closePauseModal = () => { setShowPauseModal(false); setPauseModalError(''); };
+
+  // Re-suggests the new scheduled-end date whenever the resume date changes: old end
+  // date pushed out by the same gap (today → resume date), so the common "just push
+  // the whole thing out by however long the pause is" case needs no manual math.
+  const handlePauseResumeDateChange = (val) => {
+    setPauseResumeDate(val);
+    const oldEnd = scheduledFinalization?.effective_date?.slice(0, 10);
+    if (!val || !oldEnd) { setPauseNewEndDate(''); return; }
+    const todayStr = toLocalDateStr(new Date());
+    const gapDays = Math.round((new Date(`${val}T00:00:00`) - new Date(`${todayStr}T00:00:00`)) / 86400000);
+    setPauseNewEndDate(Number.isFinite(gapDays) && gapDays > 0 ? toLocalDateStr(addDays(new Date(`${oldEnd}T00:00:00`), gapDays)) : oldEnd);
+  };
+
+  const handlePauseSubmit = async () => {
+    if (!bookingId) return;
+    try {
+      setPauseModalBusy(true); setPauseModalError('');
+      const needsEndDateDecision = Boolean(pauseResumeDate && scheduledFinalization);
+      if (needsEndDateDecision && pauseEndDateAction === 'RESCHEDULE' && !pauseNewEndDate) {
+        setPauseModalError('Enter a new end date, or choose to leave the booking active instead.');
+        setPauseModalBusy(false);
+        return;
+      }
+      apiClient.setToken(adminToken);
+      await apiClient.pauseBooking(bookingId, {
+        resume_date: pauseResumeDate || null,
+        reason: pauseReason.trim() || null,
+        ...(needsEndDateDecision ? {
+          end_date_action: pauseEndDateAction,
+          new_end_date: pauseEndDateAction === 'RESCHEDULE' ? pauseNewEndDate : null,
+        } : {}),
+      });
+      closePauseModal();
+      await Promise.all([fetchDetail(), fetchBookingPauses(), fetchScheduledActions()]);
+    } catch (err) { setPauseModalError(err?.message || 'Failed to pause booking'); }
+    finally { setPauseModalBusy(false); }
+  };
+
+  const cascadeShiftStartTimes = (slots, fromIdx = 0) => {
+    const result = [...slots];
+    for (let i = fromIdx; i < result.length - 1; i++) {
+      const [h, m] = (result[i].start_time || '00:00').split(':').map(Number);
+      const totalMins = (h * 60 + m + Math.round(parseFloat(result[i].duration_hours || 0) * 60)) % 1440;
+      result[i + 1] = { ...result[i + 1], start_time: `${String(Math.floor(totalMins / 60)).padStart(2, '0')}:${String(totalMins % 60).padStart(2, '0')}` };
+    }
+    return result;
+  };
+
+  const buildDefaultResumeShiftSlots = (count) => {
+    const dur = (24 / count).toFixed(1);
+    const base = Array.from({ length: count }, (_, i) => ({
+      shift_number: i + 1, start_time: '08:00', duration_hours: dur,
+      label: `Shift ${i + 1}`, staff_profile_id: '', daily_rate: '',
+    }));
+    return cascadeShiftStartTimes(base, 0);
+  };
+
+  const handleResumeShiftCountChange = (count) => {
+    setResumeShiftSlots((prev) => {
+      const next = buildDefaultResumeShiftSlots(count);
+      for (let i = 0; i < Math.min(prev.length, count); i++) next[i] = prev[i];
+      return next;
+    });
+  };
+
+  const updateResumeShiftSlot = (idx, field, value) =>
+    setResumeShiftSlots((prev) => {
+      const updated = prev.map((s, i) => (i === idx ? { ...s, [field]: value } : s));
+      return (field === 'start_time' || field === 'duration_hours') ? cascadeShiftStartTimes(updated, idx) : updated;
+    });
+
+  const openResumeAssignModal = async (prefillShiftSlots, prefillStaff) => {
+    setResumeAssignError(''); setResumeAssignLoading(true); setShowResumeAssignModal(true);
+    setResumeAssignForm({
+      staff_profile_id: prefillStaff?.staff_profile_id || '',
+      service_start_date: toDateInput(new Date()),
+      service_start_time: '', daily_rate: '', ot_rate: '', notes: '', salesperson_id: '',
+    });
+    setResumeShiftSlots(prefillShiftSlots?.length ? prefillShiftSlots : buildDefaultResumeShiftSlots(2));
+    try {
+      apiClient.setToken(adminToken);
+      const [formRes, salespersonRes] = await Promise.all([
+        apiClient.getBookingAssignmentFormData(bookingId),
+        apiClient.getClientSalesperson(clientDetails.client_profile_id).catch(() => null),
+      ]);
+      setResumeAssignStaff(formRes?.data?.available_staff || []);
+      setResumeAssignForm((f) => ({
+        ...f,
+        daily_rate: formRes?.data?.booking?.quote_daily_rate || '',
+        salesperson_id: salespersonRes?.data?.current?.salesperson_id || '',
+      }));
+    } catch (err) {
+      setResumeAssignError(err?.message || 'Failed to load assignment form');
+    } finally {
+      setResumeAssignLoading(false);
+    }
+  };
+  const closeResumeAssignModal = () => { setShowResumeAssignModal(false); setResumeAssignError(''); };
+
+  const handleResumeAssignSubmit = async () => {
+    if (!resumeAssignForm.service_start_date) { setResumeAssignError('Service start date is required'); return; }
+    if (isShiftBased && resumeShiftSlots.some((s) => !s.staff_profile_id || !s.start_time || !s.duration_hours)) {
+      setResumeAssignError('Every shift needs a start time, duration, and assigned staff member');
+      return;
+    }
+    if (!isShiftBased && !resumeAssignForm.staff_profile_id) { setResumeAssignError('Select a staff member'); return; }
+
+    setResumeAssignSubmitting(true); setResumeAssignError('');
+    try {
+      apiClient.setToken(adminToken);
+      if (isShiftBased) {
+        const patternRes = await apiClient.createShiftPattern(bookingId, {
+          shift_count: resumeShiftSlots.length,
+          slots: resumeShiftSlots.map((s) => ({
+            shift_number: s.shift_number, start_time: `${s.start_time}:00`,
+            duration_hours: parseFloat(s.duration_hours), label: s.label || null,
+          })),
+          effective_from_date: resumeAssignForm.service_start_date,
+        });
+        const createdSlots = patternRes?.data?.pattern?.slots || [];
+        for (const slot of resumeShiftSlots) {
+          const created = createdSlots.find((c) => c.shift_number === slot.shift_number);
+          if (!created) continue;
+          await apiClient.assignStaffToShiftSlot(bookingId, created.shift_slot_id, {
+            staff_profile_id: slot.staff_profile_id,
+            service_start_date: resumeAssignForm.service_start_date,
+            daily_rate: slot.daily_rate ? parseFloat(slot.daily_rate) : null,
+            notes: resumeAssignForm.notes || null,
+          });
+        }
+      } else {
+        await apiClient.assignStaffToBooking(bookingId, {
+          staff_profile_id: resumeAssignForm.staff_profile_id,
+          service_start_date: resumeAssignForm.service_start_date,
+          service_start_time: resumeAssignForm.service_start_time || null,
+          assigned_hours: 24,
+          daily_rate: resumeAssignForm.daily_rate ? parseFloat(resumeAssignForm.daily_rate) : null,
+          ot_rate: resumeAssignForm.ot_rate ? parseFloat(resumeAssignForm.ot_rate) : null,
+          notes: resumeAssignForm.notes || null,
+          salesperson_id: resumeAssignForm.salesperson_id || null,
+        });
+      }
+      if (isShiftBased && resumeAssignForm.salesperson_id) {
+        try { await apiClient.creditBookingSalesperson(bookingId, resumeAssignForm.salesperson_id); } catch { /* non-fatal */ }
+      }
+      closeResumeAssignModal();
+      await Promise.all([fetchDetail(), fetchScheduledActions(), ...(isShiftBased ? [fetchShiftData()] : [])]);
+    } catch (err) {
+      setResumeAssignError(err?.message || 'Failed to assign staff');
+    } finally {
+      setResumeAssignSubmitting(false);
+    }
+  };
+
+  const handleResume = async () => {
+    if (!bookingId) return;
+    if (!window.confirm('Resume this booking? You\'ll then confirm staffing for the resumed period.')) return;
+    try {
+      setResumeBusy(true); setResumeError('');
+      apiClient.setToken(adminToken);
+      await apiClient.resumeBooking(bookingId);
+      await Promise.all([fetchDetail(), fetchBookingPauses()]);
+
+      // Pausing closed out whoever was assigned — nothing gets auto-reassigned, so
+      // without this the admin has to remember a separate "Assign Staff" step (the
+      // exact step that's easy to forget, leaving the booking ACTIVE with no one on
+      // it). Carry the pre-pause staff (per shift, for SHIFT_BASED) into the modal
+      // as a pre-selected starting point — still fully editable, e.g. if that staff
+      // member picked up other work during the pause.
+      if (isShiftBased) {
+        const latestBySlot = new Map();
+        staffHistory.forEach((a) => {
+          if (!a.shift_slot_id) return;
+          const existing = latestBySlot.get(a.shift_slot_id);
+          if (!existing || new Date(a.service_start_date) > new Date(existing.service_start_date)) latestBySlot.set(a.shift_slot_id, a);
+        });
+
+        // Pausing closes the pattern out via closeActivePatternForPause (status ->
+        // SUPERSEDED, effective_to_date = pause date). patternHistory (used by the
+        // Pattern History panel) is fetched lazily and likely isn't loaded yet here,
+        // so fetch it fresh rather than relying on possibly-stale/empty state — this
+        // is what lets the actual shift times/labels be restored exactly, not just
+        // rebuilt as generic evenly-split slots.
+        let oldSlots = [];
+        try {
+          const patternHistoryRes = await apiClient.getShiftPatternHistory(bookingId);
+          const patterns = Array.isArray(patternHistoryRes?.data) ? patternHistoryRes.data : [];
+          const lastPattern = patterns.find((p) => p.status === 'SUPERSEDED') || null;
+          oldSlots = lastPattern?.slots || [];
+        } catch { /* fall back to queue-only below */ }
+
+        if (oldSlots.length > 0) {
+          const restoredSlots = [...oldSlots]
+            .sort((a, b) => (a.shift_number || 0) - (b.shift_number || 0))
+            .map((slot, i) => {
+              const staffRow = latestBySlot.get(slot.shift_slot_id);
+              return {
+                shift_number: slot.shift_number || i + 1,
+                start_time: (slot.start_time || '08:00').slice(0, 5),
+                duration_hours: String(slot.duration_hours ?? ''),
+                label: slot.label || `Shift ${slot.shift_number || i + 1}`,
+                staff_profile_id: staffRow?.staff_profile_id || '',
+                daily_rate: '',
+              };
+            });
+          await openResumeAssignModal(restoredSlots, null);
+        } else {
+          // No pattern history found (shouldn't normally happen) — fall back to just
+          // carrying the staff over into generic evenly-split default slots.
+          const latest = [...latestBySlot.values()].sort((a, b) => (a.shift_number || 0) - (b.shift_number || 0));
+          const queue = latest.length ? buildDefaultResumeShiftSlots(latest.length).map((s, i) => ({ ...s, staff_profile_id: latest[i]?.staff_profile_id || '' })) : null;
+          await openResumeAssignModal(queue, null);
+        }
+      } else {
+        const prev = [...staffHistory].sort((a, b) => new Date(b.service_start_date) - new Date(a.service_start_date))[0] || null;
+        await openResumeAssignModal(null, prev);
+      }
+    } catch (err) { setResumeError(err?.message || 'Failed to resume booking'); }
+    finally { setResumeBusy(false); }
   };
 
   const openApproveTermModal = (request) => {
@@ -1103,6 +1521,9 @@ const BookingDetailPageV2 = () => {
 
   const bookingStatus     = (bookingSummary.status || '').toLowerCase();
   const isTerminated      = bookingStatus === 'terminated';
+  const isPaused          = bookingStatus === 'paused';
+  const canPause          = !isTerminated && !isPaused && ['LIVE_IN', 'SHIFT_BASED'].includes(bookingSummary.service_model) && ['active', 'overdue'].includes(bookingStatus);
+  const openPause         = bookingPauses.find(p => !p.resumed_at) || null;
   const sm                = STATUS_META[bookingStatus] || STATUS_META.pending;
   const scheduledCompletion   = bookingScheduledActions.find(sa => sa.action_type === 'COMPLETION');
   const scheduledTermination  = bookingScheduledActions.find(sa => sa.action_type === 'TERMINATION');
@@ -1198,12 +1619,21 @@ const BookingDetailPageV2 = () => {
               <button onClick={fetchDetail} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 13px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#374151', cursor: 'pointer' }}>
                 <RefreshCw style={{ width: 14, height: 14 }} /> Refresh
               </button>
-              {!isTerminated && !normCurrentStaff && (
+              {!isTerminated && !isPaused && !normCurrentStaff && (
                 <button
                   onClick={() => navigate(`/admin/bookings/${bookingId}/staff-assignment`)}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#2563eb', border: 'none', borderRadius: 8, padding: '8px 14px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', cursor: 'pointer' }}
                 >
                   <UserPlus style={{ width: 14, height: 14 }} /> Assign Staff
+                </button>
+              )}
+              {isPaused ? (
+                <button onClick={handleResume} disabled={resumeBusy} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#137A6B', border: 'none', borderRadius: 8, padding: '8px 14px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', cursor: resumeBusy ? 'default' : 'pointer', opacity: resumeBusy ? 0.6 : 1 }}>
+                  {resumeBusy ? <Loader2 style={{ width: 14, height: 14 }} className="animate-spin" /> : <Play style={{ width: 14, height: 14 }} />} Resume Booking
+                </button>
+              ) : canPause && (
+                <button onClick={openPauseModal} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 14px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#92400e', cursor: 'pointer' }}>
+                  <Pause style={{ width: 14, height: 14 }} /> Pause
                 </button>
               )}
               {!isTerminated && !scheduledFinalization && (
@@ -1213,6 +1643,9 @@ const BookingDetailPageV2 = () => {
               )}
             </div>
           </div>
+          {resumeError && (
+            <div style={{ margin: '-10px 0 16px', fontSize: 12.5, color: '#BC4338' }}>{resumeError}</div>
+          )}
 
           {/* ══════════════════════════════════════════════════════
               HERO
@@ -1231,6 +1664,18 @@ const BookingDetailPageV2 = () => {
                   <span style={{ width: 6, height: 6, borderRadius: '50%', background: sm.dot }} />
                   {bookingSummary.status || 'Unknown'}
                 </span>
+                {isVisiting && visitingStatus && visitingStatus !== VISITING_STATUS.COMPLETED && (() => {
+                  const vm = VISITING_STATUS_META[visitingStatus];
+                  return (
+                    <span
+                      title={visitingStatus === VISITING_STATUS.AWAITING_FINALIZATION ? 'The visit date has passed — log attendance and decide the invoice to close this booking out.' : undefined}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: vm.bg, color: vm.col, borderRadius: 999, padding: '4px 10px', fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap' }}
+                    >
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: vm.dot }} />
+                      {vm.label}
+                    </span>
+                  );
+                })()}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>{bookingSummary.service_model || '—'}</span>
@@ -1454,6 +1899,7 @@ const BookingDetailPageV2 = () => {
                 reschedules={shiftReschedules}
                 manualSalaryDay={manualSalaryDay}
                 manualInvoiceDay={manualInvoiceDay}
+                pauses={bookingPauses}
               />
             </div>
           )}
@@ -2286,7 +2732,29 @@ const BookingDetailPageV2 = () => {
               </div>
 
               {/* Close-out / terminated info */}
-              {isTerminated ? (
+              {isPaused ? (
+                <Card>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 16px', textAlign: 'center' }}>
+                    <Pause style={{ width: 32, height: 32, color: '#E0CDA0', marginBottom: 12 }} />
+                    <p style={{ margin: '0 0 4px', fontSize: 15, fontWeight: 700, color: '#2A2722' }}>Booking paused</p>
+                    <p style={{ margin: 0, fontSize: 13, color: '#9A9488' }}>
+                      Paused on {formatDate(openPause?.paused_date)}
+                      {openPause?.resume_date ? ` — target resume ${formatDate(openPause.resume_date)}` : ' — no resume date set'}
+                    </p>
+                    {openPause?.reason && (
+                      <p style={{ margin: '8px 0 0', fontSize: 12.5, color: '#7A756A', maxWidth: 320 }}>&ldquo;{openPause.reason}&rdquo;</p>
+                    )}
+                    <p style={{ margin: '10px 0 0', fontSize: 11.5, color: '#B8893D' }}>No billing or staff pay happens while paused.</p>
+                    <button
+                      onClick={handleResume}
+                      disabled={resumeBusy}
+                      style={{ marginTop: 16, display: 'inline-flex', alignItems: 'center', gap: 7, background: '#137A6B', border: 'none', borderRadius: 8, padding: '9px 16px', fontFamily: 'inherit', fontSize: 13, fontWeight: 700, color: '#fff', cursor: resumeBusy ? 'default' : 'pointer', opacity: resumeBusy ? 0.6 : 1 }}
+                    >
+                      {resumeBusy ? <Loader2 style={{ width: 14, height: 14 }} className="animate-spin" /> : <Play style={{ width: 14, height: 14 }} />} Resume Booking
+                    </button>
+                  </div>
+                </Card>
+              ) : isTerminated ? (
                 <Card>
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 16px', textAlign: 'center' }}>
                     <XCircle style={{ width: 32, height: 32, color: '#F5C9C5', marginBottom: 12 }} />
@@ -2311,7 +2779,10 @@ const BookingDetailPageV2 = () => {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                     <div>
                       <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Actual end time</label>
-                      <DateTimeInput value={actualEndTime} onChange={e => setActualEndTime(e.target.value)} style={inp} />
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <DateInput value={actualEndDatePart} onChange={e => setActualEndDatePart(e.target.value)} style={{ ...inp, flex: 1 }} />
+                        <input type="time" value={actualEndTimePart} onChange={e => setActualEndTimePart(e.target.value)} style={{ ...inp, width: 130 }} />
+                      </div>
                       {actualEndTime && actualEndTime.slice(0, 10) > toDateInput(new Date()) && (
                         <p style={{ margin: '6px 0 0', fontSize: 11.5, color: '#B8893D' }}>
                           Future date — this will be scheduled. The booking stays active and billed until then, then completes/terminates automatically.
@@ -2416,6 +2887,214 @@ const BookingDetailPageV2 = () => {
       </div>
 
       {/* ══════════════════════════════════════════════════════
+          RESUME — STAFF (RE)ASSIGNMENT MODAL
+      ══════════════════════════════════════════════════════ */}
+      {showResumeAssignModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl flex flex-col max-h-[90vh]">
+            <div className="flex items-start justify-between p-6 border-b border-[#ECE7DF] shrink-0">
+              <div>
+                <h2 className="text-lg font-bold text-[#2A2722]">Assign Staff for Resumed Period</h2>
+                <p className="text-xs text-[#9A9488] mt-1">
+                  {isShiftBased ? 'Pre-filled with the shift pattern and staff from before the pause — still fully editable.' : 'Pre-filled with whoever was assigned before the pause — still fully editable.'}
+                </p>
+              </div>
+              <button onClick={closeResumeAssignModal} className="p-1.5 rounded-lg hover:bg-[#F6F3EC] transition ml-4 shrink-0"><XCircle className="h-5 w-5 text-[#A39D91]" /></button>
+            </div>
+
+            <div className="p-6 space-y-4 overflow-y-auto">
+              {resumeAssignLoading ? (
+                <div className="flex items-center justify-center py-10 text-[#9A9488]"><Loader2 className="h-5 w-5 animate-spin" /></div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Service Start Date</label>
+                      <DateInput value={resumeAssignForm.service_start_date} onChange={e => setResumeAssignForm(f => ({ ...f, service_start_date: e.target.value }))} className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8]" />
+                    </div>
+                    {!isShiftBased && (
+                      <div>
+                        <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Service Start Time <span className="text-[#C4BFB5] font-normal">(optional)</span></label>
+                        <input type="time" value={resumeAssignForm.service_start_time} onChange={e => setResumeAssignForm(f => ({ ...f, service_start_time: e.target.value }))} className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8]" />
+                      </div>
+                    )}
+                  </div>
+
+                  {!isShiftBased && (
+                    <>
+                      <div>
+                        <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Staff Member</label>
+                        <select
+                          value={resumeAssignForm.staff_profile_id}
+                          onChange={e => setResumeAssignForm(f => ({ ...f, staff_profile_id: e.target.value }))}
+                          className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8]"
+                        >
+                          <option value="">Select staff member</option>
+                          {resumeAssignStaff.map((s) => (
+                            <option key={s.staff_profile_id} value={s.staff_profile_id}>{s.staff_name} — {s.specialization}</option>
+                          ))}
+                        </select>
+                        {resumeAssignForm.staff_profile_id && !resumeAssignStaff.some(s => s.staff_profile_id === resumeAssignForm.staff_profile_id) && (
+                          <p className="mt-1.5 text-xs text-amber-600">The previously-assigned staff member isn't currently available — pick someone else.</p>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <div>
+                          <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Daily Rate (Staff)</label>
+                          <input type="number" min="0" step="0.01" value={resumeAssignForm.daily_rate} onChange={e => setResumeAssignForm(f => ({ ...f, daily_rate: e.target.value }))} onWheel={e => e.currentTarget.blur()} className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8]" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">OT Rate <span className="text-[#C4BFB5] font-normal">(optional)</span></label>
+                          <input type="number" min="0" step="0.01" value={resumeAssignForm.ot_rate} onChange={e => setResumeAssignForm(f => ({ ...f, ot_rate: e.target.value }))} onWheel={e => e.currentTarget.blur()} className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8]" />
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {isShiftBased && (
+                    <div className="rounded-xl border border-[#E2DCD0] overflow-hidden">
+                      <div className="flex items-center justify-between border-b border-[#E2DCD0] bg-[#FBF9F4] px-4 py-2.5">
+                        <p className="text-[11px] font-medium uppercase tracking-wider text-[#9A9488]">Shift Schedule</p>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-[#7A756A]">Shifts per day</span>
+                          <select value={resumeShiftSlots.length} onChange={e => handleResumeShiftCountChange(parseInt(e.target.value, 10))} className="rounded-lg border border-[#E2DCD0] bg-white px-2.5 py-1 text-sm text-[#5A554B] outline-none focus:border-[#137A6B]">
+                            {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-[#EFEAE0] bg-[#FBF9F4]">
+                              <th className="px-3 py-2 text-left text-[10.5px] font-medium uppercase tracking-wider text-[#9A9488] w-14">Shift</th>
+                              <th className="px-2 py-2 text-left text-[10.5px] font-medium uppercase tracking-wider text-[#9A9488]">Label</th>
+                              <th className="px-2 py-2 text-left text-[10.5px] font-medium uppercase tracking-wider text-[#9A9488] w-24">Start</th>
+                              <th className="px-2 py-2 text-left text-[10.5px] font-medium uppercase tracking-wider text-[#9A9488] w-20">Hours</th>
+                              <th className="px-2 py-2 text-left text-[10.5px] font-medium uppercase tracking-wider text-[#9A9488]">Staff</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[#EFEAE0]">
+                            {resumeShiftSlots.map((slot, idx) => (
+                              <tr key={slot.shift_number}>
+                                <td className="px-3 py-2">
+                                  <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[#F6F3EC] text-xs font-semibold text-[#5A554B]">{slot.shift_number}</span>
+                                </td>
+                                <td className="px-2 py-2">
+                                  <input value={slot.label} onChange={e => updateResumeShiftSlot(idx, 'label', e.target.value)} placeholder={`Shift ${slot.shift_number}`} className="w-full rounded-lg border border-[#E2DCD0] px-2 py-1.5 text-sm outline-none focus:border-[#137A6B]" />
+                                </td>
+                                <td className="px-2 py-2">
+                                  <input required type="time" value={slot.start_time} onChange={e => updateResumeShiftSlot(idx, 'start_time', e.target.value)} className="w-full rounded-lg border border-[#E2DCD0] px-2 py-1.5 text-sm outline-none focus:border-[#137A6B]" />
+                                </td>
+                                <td className="px-2 py-2">
+                                  <input required type="number" min="0.5" step="0.5" value={slot.duration_hours} onChange={e => updateResumeShiftSlot(idx, 'duration_hours', e.target.value)} onWheel={e => e.currentTarget.blur()} className="w-full rounded-lg border border-[#E2DCD0] px-2 py-1.5 text-sm outline-none focus:border-[#137A6B]" />
+                                </td>
+                                <td className="px-2 py-2">
+                                  <select required value={slot.staff_profile_id} onChange={e => updateResumeShiftSlot(idx, 'staff_profile_id', e.target.value)} className="w-full rounded-lg border border-[#E2DCD0] px-2 py-1.5 text-sm outline-none focus:border-[#137A6B]">
+                                    <option value="">Select staff…</option>
+                                    {resumeAssignStaff.map((s) => (
+                                      <option key={s.staff_profile_id} value={s.staff_profile_id}>{s.staff_name} — {s.specialization}</option>
+                                    ))}
+                                  </select>
+                                  {slot.staff_profile_id && !resumeAssignStaff.some(s => s.staff_profile_id === slot.staff_profile_id) && (
+                                    <p className="mt-1 text-[10.5px] text-amber-600">Not currently available — pick someone else.</p>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Notes <span className="text-[#C4BFB5] font-normal">(optional)</span></label>
+                    <input value={resumeAssignForm.notes} onChange={e => setResumeAssignForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional note for this assignment" className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8]" />
+                  </div>
+
+                  {resumeAssignError && (
+                    <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700">{resumeAssignError}</div>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 p-6 border-t border-[#ECE7DF] shrink-0">
+              <button onClick={closeResumeAssignModal} disabled={resumeAssignSubmitting} className="text-sm font-semibold text-[#7A756A] hover:text-[#2A2722] transition disabled:opacity-40">Cancel</button>
+              <button onClick={handleResumeAssignSubmit} disabled={resumeAssignSubmitting || resumeAssignLoading} className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-[#137A6B] hover:bg-[#0f5e53] rounded-xl transition disabled:opacity-60">
+                {resumeAssignSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
+                {resumeAssignSubmitting ? 'Assigning…' : (isShiftBased ? 'Create Shift Pattern & Assign Staff' : 'Assign Staff Member')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════
+          PAUSE BOOKING MODAL
+      ══════════════════════════════════════════════════════ */}
+      {showPauseModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md flex flex-col">
+            <div className="flex items-start justify-between p-6 border-b border-[#ECE7DF]">
+              <div>
+                <h2 className="text-lg font-bold text-[#2A2722]">Pause Booking</h2>
+                <p className="text-xs text-[#9A9488] mt-1">Frees up the assigned staff and stops billing until resumed.</p>
+              </div>
+              <button onClick={closePauseModal} className="p-1.5 rounded-lg hover:bg-[#F6F3EC] transition ml-4 shrink-0"><XCircle className="h-5 w-5 text-[#A39D91]" /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Target resume date <span className="text-[#C4BFB5] font-normal">(optional)</span></label>
+                <DateInput value={pauseResumeDate} onChange={e => handlePauseResumeDateChange(e.target.value)} min={todayISO()} className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8]" />
+                <p className="mt-1.5 text-xs text-[#9A9488]">A reminder only — the booking won't resume automatically. Leave blank to pause indefinitely.</p>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Reason <span className="text-[#C4BFB5] font-normal">(optional)</span></label>
+                <textarea rows={3} value={pauseReason} onChange={e => setPauseReason(e.target.value)} placeholder="e.g. Client traveling, will resume next month" className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8] resize-none" />
+              </div>
+              {pauseResumeDate && scheduledFinalization && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5">
+                  <p className="text-xs font-semibold text-amber-900">
+                    This booking has a {scheduledTermination ? 'termination' : 'completion'} scheduled for {formatDate(scheduledFinalization.effective_date)} — that date no longer makes sense once paused.
+                  </p>
+                  <div className="mt-2.5 space-y-2">
+                    <label className="flex items-start gap-2 text-xs text-amber-900 cursor-pointer">
+                      <input type="radio" checked={pauseEndDateAction === 'RESCHEDULE'} onChange={() => setPauseEndDateAction('RESCHEDULE')} className="mt-0.5" />
+                      <span>
+                        Reschedule it to
+                        <DateInput
+                          value={pauseNewEndDate}
+                          onChange={e => setPauseNewEndDate(e.target.value)}
+                          min={pauseResumeDate}
+                          disabled={pauseEndDateAction !== 'RESCHEDULE'}
+                          className="ml-1.5 inline-block w-32 border border-amber-300 rounded-lg px-2 py-1 text-xs outline-none focus:border-[#137A6B] bg-white disabled:opacity-50"
+                        />
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-2 text-xs text-amber-900 cursor-pointer">
+                      <input type="radio" checked={pauseEndDateAction === 'CLEAR'} onChange={() => setPauseEndDateAction('CLEAR')} className="mt-0.5" />
+                      <span>Leave active — no scheduled end until I set one later or end the booking myself.</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+              {pauseModalError && (
+                <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700">{pauseModalError}</div>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2 p-6 border-t border-[#ECE7DF]">
+              <button onClick={closePauseModal} disabled={pauseModalBusy} className="text-sm font-semibold text-[#7A756A] hover:text-[#2A2722] transition disabled:opacity-40">Cancel</button>
+              <button onClick={handlePauseSubmit} disabled={pauseModalBusy} className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-[#92400e] hover:bg-[#7a3609] rounded-xl transition disabled:opacity-60">
+                {pauseModalBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pause className="h-4 w-4" />}
+                {pauseModalBusy ? 'Pausing…' : 'Pause Booking'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════
           ACTIONS MODAL
       ══════════════════════════════════════════════════════ */}
       {showActionsModal && (
@@ -2460,8 +3139,11 @@ const BookingDetailPageV2 = () => {
                   {actionsModalMode && (
                     <>
                       <div>
-                        <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Actual end date & time</label>
-                        <DateTimeInput value={actualEndTime} onChange={e => setActualEndTime(e.target.value)} className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8] text-[#6F6A60]" />
+                        <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Actual end date &amp; time</label>
+                        <div className="flex gap-2">
+                          <DateInput value={actualEndDatePart} onChange={e => setActualEndDatePart(e.target.value)} className="flex-1 border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8] text-[#6F6A60]" />
+                          <input type="time" value={actualEndTimePart} onChange={e => setActualEndTimePart(e.target.value)} className="w-32 border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8] text-[#6F6A60]" />
+                        </div>
                       </div>
                       <div>
                         <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Reason <span className="text-[#C4BFB5] font-normal">(optional)</span></label>
@@ -2709,7 +3391,26 @@ const BookingDetailPageV2 = () => {
         const slot = shiftSlots.find(s => s.shift_slot_id === rescheduleModalSlotId);
         const slotLabel = slot?.label || (slot?.shift_number ? `Shift ${slot.shift_number}` : 'Shift');
         const currentStaffName = slot?.assignment?.staff_name || '—';
-        const selectedStaff = availableStaff.find(s => s.staff_profile_id === rescheduleModalStaffId);
+        const selectedStaff = staffPickerOptions.find(s => s.staff_profile_id === rescheduleModalStaffId);
+        // Excludes the shift's current holder — offering to "replace" them with
+        // themselves isn't a useful option here — but otherwise includes staff
+        // already working another shift on this same booking (the realistic coverer).
+        const rescheduleStaffOptions = staffPickerOptions.filter(s => s.staff_profile_id !== slot?.assignment?.staff_profile_id);
+        // Search box results — staff already on this booking (the realistic coverer)
+        // are pinned to the top, then alphabetical.
+        const staffSearchQ = rescheduleModalStaffSearch.trim().toLowerCase();
+        const filteredRescheduleStaff = rescheduleStaffOptions
+          .filter(s => !staffSearchQ || s.full_name?.toLowerCase().includes(staffSearchQ) || s.designation?.toLowerCase().includes(staffSearchQ))
+          .sort((a, b) => {
+            const aOn = onBookingStaffIds.has(a.staff_profile_id) ? 0 : 1;
+            const bOn = onBookingStaffIds.has(b.staff_profile_id) ? 0 : 1;
+            return aOn !== bOn ? aOn - bOn : (a.full_name || '').localeCompare(b.full_name || '');
+          });
+        // Same date as the occurrence being edited => this is a same-day "cover shift"
+        // rather than an actual date move — the underlying request is identical either
+        // way, only the framing differs, and it un-covers itself naturally if the admin
+        // picks a different date.
+        const isCoverMode = rescheduleModalDate === dayModal?.dateISO;
         return (
           // z-[60] — this opens from a button inside the Day Detail Modal (z-50, rendered
           // later in the DOM so it would otherwise paint on top), and stays open underneath
@@ -2718,9 +3419,11 @@ const BookingDetailPageV2 = () => {
             <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] flex flex-col">
               <div className="flex items-start justify-between p-6 border-b border-slate-200 shrink-0">
                 <div>
-                  <h2 className="text-lg font-semibold text-slate-900">Reschedule {slotLabel}</h2>
+                  <h2 className="text-lg font-semibold text-slate-900">{isCoverMode ? `Cover ${slotLabel}` : `Reschedule ${slotLabel}`}</h2>
                   <p className="text-sm text-slate-500 mt-0.5">
-                    Moving the {formatDate(dayModal?.dateISO)} occurrence to a new date.
+                    {isCoverMode
+                      ? `Handing today's (${formatDate(dayModal?.dateISO)}) occurrence to a different staff member — the client is still billed normally, only the salary calculation goes to whoever actually covered it.`
+                      : `Moving the ${formatDate(dayModal?.dateISO)} occurrence to a new date.`}
                   </p>
                 </div>
                 <button onClick={closeRescheduleModal} className="p-1.5 rounded-lg hover:bg-slate-100 transition shrink-0 ml-4"><XCircle className="h-5 w-5 text-slate-400" /></button>
@@ -2736,7 +3439,11 @@ const BookingDetailPageV2 = () => {
                     onChange={e => setRescheduleModalDate(e.target.value)}
                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   />
-                  <p className="text-xs text-slate-400 mt-1.5">Defaults to just after the booking's scheduled end — pick any other date if needed.</p>
+                  <p className="text-xs text-slate-400 mt-1.5">
+                    {isCoverMode
+                      ? "Left as today's date — this is a same-day cover, not a move. Pick a different date to reschedule the shift instead."
+                      : "Defaults to just after the booking's scheduled end — pick any other date if needed."}
+                  </p>
                 </div>
 
                 <div>
@@ -2764,18 +3471,49 @@ const BookingDetailPageV2 = () => {
 
                   {rescheduleModalChangeStaff && (
                     <div className="mt-3.5 ml-6 space-y-2">
-                      <select
-                        value={rescheduleModalStaffId}
-                        onChange={e => setRescheduleModalStaffId(e.target.value)}
-                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm outline-none focus:border-blue-500"
-                      >
-                        <option value="">Select replacement staff…</option>
-                        {availableStaff.map(s => (
-                          <option key={s.staff_profile_id} value={s.staff_profile_id}>
-                            {s.full_name}{s.designation ? ` — ${s.designation}` : ''}
-                          </option>
-                        ))}
-                      </select>
+                      {rescheduleStaffOptions.length === 0 ? (
+                        <p className="text-xs text-amber-600">No other staff available to assign.</p>
+                      ) : selectedStaff ? (
+                        <div className="flex items-center justify-between gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-slate-900 truncate">{selectedStaff.full_name}</p>
+                            <p className="text-xs text-slate-500">
+                              {selectedStaff.designation}
+                              {onBookingStaffIds.has(selectedStaff.staff_profile_id) && <span className={selectedStaff.designation ? 'ml-1.5 font-medium text-emerald-600' : 'font-medium text-emerald-600'}>{selectedStaff.designation ? '· ' : ''}Already on this booking</span>}
+                            </p>
+                          </div>
+                          <button type="button" onClick={() => { setRescheduleModalStaffId(''); setRescheduleModalStaffSearch(''); }} className="text-xs font-medium text-blue-600 hover:text-blue-800 shrink-0">Change</button>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="relative">
+                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                            <input
+                              type="text"
+                              autoFocus
+                              placeholder="Search staff by name or designation…"
+                              value={rescheduleModalStaffSearch}
+                              onChange={e => setRescheduleModalStaffSearch(e.target.value)}
+                              className="w-full pl-8 pr-2.5 py-2 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-blue-500"
+                            />
+                          </div>
+                          <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-200 divide-y divide-slate-100">
+                            {filteredRescheduleStaff.length === 0 ? (
+                              <p className="px-3 py-2 text-xs text-slate-400">No staff match "{rescheduleModalStaffSearch}".</p>
+                            ) : filteredRescheduleStaff.map(s => (
+                              <button
+                                type="button"
+                                key={s.staff_profile_id}
+                                onClick={() => { setRescheduleModalStaffId(s.staff_profile_id); setRescheduleModalStaffSearch(''); }}
+                                className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-blue-50 transition"
+                              >
+                                <span className="truncate text-slate-700">{s.full_name}{s.designation ? ` — ${s.designation}` : ''}</span>
+                                {onBookingStaffIds.has(s.staff_profile_id) && <span className="shrink-0 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">On booking</span>}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      )}
                       {selectedStaff && (
                         <StaffScheduleTimeline
                           schedule={staffSchedules[selectedStaff.staff_profile_id] || []}
@@ -2810,7 +3548,7 @@ const BookingDetailPageV2 = () => {
                   className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   {rescheduleModalSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                  {rescheduleModalSubmitting ? 'Saving…' : 'Confirm Reschedule'}
+                  {rescheduleModalSubmitting ? 'Saving…' : (isCoverMode ? 'Confirm Cover' : 'Confirm Reschedule')}
                 </button>
               </div>
             </div>
@@ -2936,6 +3674,19 @@ const BookingDetailPageV2 = () => {
         const dateInvoiceRecords = dailyInvoiceRecords.filter(r => r.service_date?.slice(0, 10) === dayModal.dateISO);
         const invoiceRecord = dateInvoiceRecords.find(r => !r.shift_slot_id) || dateInvoiceRecords[0];
         const slotIds = [...new Set(dayModal.assignments.map(a => a.shift_slot_id).filter(Boolean))];
+        // LIVE_IN AUTO bookings normally bill automatically overnight, but the client
+        // is only with us for part of the first/last day — the cron leaves those days
+        // PENDING (see cron/dailyInvoicing.js, bookingsStartingToday/bookingsEndingToday)
+        // so the admin decides them here alongside logging the staff member's start/end
+        // time, instead of every day. Matches the cron's own boundary checks: assignment
+        // starting today, regardless of whether it also happens to end today (single-day
+        // booking edge case); ending today covers both an already-executed end date and
+        // a still-pending scheduled one (see liveInBoundary / scheduledFinalization).
+        const isFirstDayInvoiceDecision = isLiveIn && invoicingMode !== 'MANUAL' &&
+          dayModal.assignments.some(a => !a.shift_slot_id && toLocalDateStr(a.service_start_date) === dayModal.dateISO);
+        const isLastDayInvoiceDecision = isLiveIn && invoicingMode !== 'MANUAL' &&
+          dayModal.assignments.some(a => liveInBoundary(a, dayModal.dateISO).onlyEnd);
+        const showInvoiceSection = manualInvoiceDay || isFirstDayInvoiceDecision || isLastDayInvoiceDecision;
         const fmtTime = (ts) => ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
         const thCls = 'px-3 py-2 text-left text-[10.5px] font-semibold uppercase tracking-wider text-gray-400';
         const tdCls = 'px-3 py-3 text-sm text-gray-700 align-middle';
@@ -2960,12 +3711,18 @@ const BookingDetailPageV2 = () => {
                   <div className="mx-6 mt-4 rounded-lg bg-red-50 border border-red-200 px-4 py-2.5 text-xs text-red-700">{dayModalError}</div>
                 )}
 
-                {/* Shifts moved away from this date — explains why fewer shifts show below */}
-                {shiftReschedules.filter(r => r.original_date?.slice(0, 10) === dayModal.dateISO).map(r => (
-                  <div key={r.reschedule_id} className="mx-6 mt-4 rounded-lg bg-blue-50 border border-blue-200 px-4 py-2.5 text-xs text-blue-700">
-                    {r.shift_label || (r.shift_number ? `Shift ${r.shift_number}` : 'A shift')} was rescheduled to {formatDate(r.new_date)} — it no longer runs on this date.
-                  </div>
-                ))}
+                {/* Shifts moved away from this date, or covered same-day by someone else — explains why fewer/different rows show below */}
+                {shiftReschedules.filter(r => r.original_date?.slice(0, 10) === dayModal.dateISO).map(r => {
+                  const isSameDayCover = r.new_date?.slice(0, 10) === r.original_date?.slice(0, 10);
+                  const label = r.shift_label || (r.shift_number ? `Shift ${r.shift_number}` : 'A shift');
+                  return (
+                    <div key={r.reschedule_id} className={`mx-6 mt-4 rounded-lg border px-4 py-2.5 text-xs ${isSameDayCover ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>
+                      {isSameDayCover
+                        ? `${label} was covered today by ${r.makeup_staff_name || 'a different staff member'} — the client is billed normally; log/confirm that staff member's row below instead of the originally assigned one.`
+                        : `${label} was rescheduled to ${formatDate(r.new_date)} — it no longer runs on this date.`}
+                    </div>
+                  );
+                })}
 
                 {/* ── Staff Attendance Table ── */}
                 {manualSalaryDay && (
@@ -2979,6 +3736,7 @@ const BookingDetailPageV2 = () => {
                           <thead style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
                             <tr>
                               <th className={thCls}>Staff</th>
+                              <th className={thCls}>Assigned</th>
                               <th className={thCls}>Date</th>
                               <th className={thCls}>In</th>
                               <th className={thCls}>Out</th>
@@ -2994,23 +3752,52 @@ const BookingDetailPageV2 = () => {
                               const inputs = attendanceInputs[a.assignment_id] || { date: dayModal.dateISO, in_time: '', out_time: '' };
                               const rowBorder = idx > 0 ? { borderTop: '1px solid #f3f4f6' } : {};
 
+                              // Assigned reference — shift start/duration for SHIFT_BASED, else the
+                              // assignment's own service_start_time/assigned_hours (VISITING/LIVE_IN).
+                              // Prefer the record's own values (joined server-side) once one exists,
+                              // since a.* reflects the assignment as it is *now*, not as it was when logged.
+                              const assignedStart = (record?.shift_start_time || a.shift_start_time || a.service_start_time || null);
+                              const assignedHoursRaw = record
+                                ? (record.shift_duration_hours ?? record.assigned_hours)
+                                : (a.shift_duration_hours ?? a.assigned_hours);
+                              const assignedHours = assignedHoursRaw !== null && assignedHoursRaw !== undefined ? parseFloat(assignedHoursRaw) : null;
+                              const assignedCell = (
+                                <td className={tdCls}>
+                                  <div className="text-xs text-gray-600">{assignedStart ? formatTime(assignedStart) : '—'}</div>
+                                  {assignedHours !== null && <div className="text-[10px] text-gray-400">{assignedHours}h expected</div>}
+                                </td>
+                              );
+
                               if (record && record.salary_status !== 'PENDING') {
                                 const paid = record.salary_status === 'PAID';
+                                // A true no-show (Absent — no times ever logged), still on a shift
+                                // slot, that nobody has covered yet — offer Cover Shift right here
+                                // instead of sending the admin to the Client Invoice section.
+                                const isAbsent = !paid && record.hours_served === null;
+                                const alreadyCovered = a.shift_slot_id && dayModal.assignments.some(other => other.shift_slot_id === a.shift_slot_id && other.reschedule_id);
+                                const canCover = isAbsent && a.shift_slot_id && !alreadyCovered;
                                 return (
                                   <tr key={a.assignment_id} style={rowBorder}>
                                     <td className={tdCls}>
                                       <span className="font-medium text-gray-900">{staffName}</span>
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
+                                    {assignedCell}
                                     <td className={tdCls + ' text-gray-500 text-xs'}>{record.service_date?.slice(0, 10)}</td>
                                     <td className={tdCls + ' tabular-nums'}>{fmtTime(record.in_time)}</td>
                                     <td className={tdCls + ' tabular-nums'}>{fmtTime(record.out_time)}</td>
-                                    <td className={tdCls + ' tabular-nums'}>{record.hours_served}h</td>
+                                    <td className={tdCls}><HoursBadge served={record.hours_served !== null ? Number(record.hours_served) : null} assigned={assignedHours} /></td>
                                     <td className={tdCls}>
-                                      <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${paid ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                                        <span className={`w-1.5 h-1.5 rounded-full ${paid ? 'bg-green-500' : 'bg-gray-400'}`} />
-                                        {paid ? `Paid Rs.${Number(record.salary_amount).toLocaleString()}` : 'Skipped'}
-                                      </span>
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${paid ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                                          <span className={`w-1.5 h-1.5 rounded-full ${paid ? 'bg-green-500' : 'bg-gray-400'}`} />
+                                          {paid ? `Salary Calculated · Rs.${Number(record.salary_amount).toLocaleString()}` : (isAbsent ? 'Absent' : 'Skipped')}
+                                        </span>
+                                        {canCover && (
+                                          <button onClick={() => openRescheduleModal(a.shift_slot_id, true)} title="Hand today's shift to a different staff member — client still billed normally, that staff member's salary is calculated instead" className="px-2.5 py-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded transition">Cover Shift</button>
+                                        )}
+                                        {alreadyCovered && <span className="text-[10.5px] text-gray-400">Covered by another staff member</span>}
+                                      </div>
                                     </td>
                                   </tr>
                                 );
@@ -3023,10 +3810,11 @@ const BookingDetailPageV2 = () => {
                                       <span className="font-medium text-gray-900">{staffName}</span>
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
+                                    {assignedCell}
                                     <td className={tdCls + ' text-gray-500 text-xs'}>{record.service_date?.slice(0, 10)}</td>
                                     <td className={tdCls + ' tabular-nums'}>{fmtTime(record.in_time)}</td>
                                     <td className={tdCls + ' tabular-nums'}>{fmtTime(record.out_time)}</td>
-                                    <td className={tdCls + ' tabular-nums'}>{record.hours_served}h</td>
+                                    <td className={tdCls}><HoursBadge served={Number(record.hours_served)} assigned={assignedHours} /></td>
                                     <td className={tdCls}>
                                       <div className="flex items-center gap-1.5">
                                         <input
@@ -3036,7 +3824,7 @@ const BookingDetailPageV2 = () => {
                                           className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-24"
                                           placeholder="0.00"
                                         />
-                                        <button onClick={() => decideSalary(record.attendance_id, true, a.daily_rate)} disabled={dayModalBusy === `salary-${record.attendance_id}`} className="px-2.5 py-1 text-[11px] font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded transition disabled:opacity-50">Pay</button>
+                                        <button onClick={() => decideSalary(record.attendance_id, true, a.daily_rate)} disabled={dayModalBusy === `salary-${record.attendance_id}`} title="Calculates their earnings for this shift — actual payout is handled separately on the Staff Salaries page" className="px-2.5 py-1 text-[11px] font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded transition disabled:opacity-50">Calculate Salary</button>
                                         <button onClick={() => decideSalary(record.attendance_id, false)} disabled={dayModalBusy === `salary-${record.attendance_id}`} className="px-2.5 py-1 text-[11px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded transition disabled:opacity-50">Skip</button>
                                       </div>
                                     </td>
@@ -3044,26 +3832,47 @@ const BookingDetailPageV2 = () => {
                                 );
                               }
 
+                              const { onlyStart, onlyEnd } = liveInBoundary(a, dayModal.dateISO);
+                              const livePreviewHours = onlyEnd
+                                ? computeWorkedHours('00:00', inputs.out_time)
+                                : computeWorkedHours(inputs.in_time, inputs.out_time);
+
                               return (
                                 <tr key={a.assignment_id} style={{ ...rowBorder, background: '#fafafa' }}>
                                   <td className={tdCls}>
                                     <span className="font-medium text-gray-900">{staffName}</span>
                                     {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                   </td>
+                                  {assignedCell}
                                   <td className={tdCls}>
                                     <DateInput value={inputs.date || dayModal.dateISO} onChange={e => setAttendanceInputs(p => ({ ...p, [a.assignment_id]: { ...inputs, date: e.target.value } }))} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-32" />
                                   </td>
                                   <td className={tdCls}>
-                                    <input type="time" value={inputs.in_time} onChange={e => setAttendanceInputs(p => ({ ...p, [a.assignment_id]: { ...inputs, in_time: e.target.value, autoFilled: false } }))} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-24" />
-                                    {inputs.autoFilled && inputs.in_time && <span className="block text-[10px] text-blue-400 mt-0.5">from schedule</span>}
+                                    {onlyEnd ? (
+                                      <span className="text-xs text-gray-400">Ongoing</span>
+                                    ) : (
+                                      <>
+                                        <input type="time" value={inputs.in_time} onChange={e => setAttendanceInputs(p => ({ ...p, [a.assignment_id]: { ...inputs, in_time: e.target.value, autoFilled: false } }))} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-24" />
+                                        {inputs.autoFilled && inputs.in_time && <span className="block text-[10px] text-blue-400 mt-0.5">from schedule</span>}
+                                      </>
+                                    )}
                                   </td>
                                   <td className={tdCls}>
-                                    <input type="time" value={inputs.out_time} onChange={e => setAttendanceInputs(p => ({ ...p, [a.assignment_id]: { ...inputs, out_time: e.target.value, autoFilled: false } }))} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-24" />
-                                    {inputs.autoFilled && inputs.out_time && <span className="block text-[10px] text-blue-400 mt-0.5">from schedule</span>}
+                                    {onlyStart ? (
+                                      <span className="text-xs text-gray-400" title="Booking hasn't ended yet — end time is only logged on the last day">Until booking ends</span>
+                                    ) : (
+                                      <>
+                                        <input type="time" value={inputs.out_time} onChange={e => setAttendanceInputs(p => ({ ...p, [a.assignment_id]: { ...inputs, out_time: e.target.value, autoFilled: false } }))} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-24" />
+                                        {inputs.autoFilled && inputs.out_time && <span className="block text-[10px] text-blue-400 mt-0.5">from schedule</span>}
+                                      </>
+                                    )}
                                   </td>
-                                  <td className={tdCls + ' text-gray-300'}>—</td>
+                                  <td className={tdCls}><HoursBadge served={onlyStart ? null : livePreviewHours} assigned={assignedHours} /></td>
                                   <td className={tdCls}>
-                                    <button onClick={() => saveAttendanceTimes(a)} disabled={dayModalBusy === `save-${a.assignment_id}`} className="px-3 py-1 text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded transition disabled:opacity-50">Save</button>
+                                    <div className="flex items-center gap-1.5">
+                                      <button onClick={() => saveAttendanceTimes(a)} disabled={dayModalBusy === `save-${a.assignment_id}`} className="px-3 py-1 text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded transition disabled:opacity-50">Save</button>
+                                      <button onClick={() => markAbsent(a)} disabled={dayModalBusy === `absent-${a.assignment_id}`} title="No-show — skips their salary only, no in/out time needed" className="px-3 py-1 text-[11px] font-semibold text-red-700 bg-red-50 hover:bg-red-100 rounded transition disabled:opacity-50">Absent</button>
+                                    </div>
                                   </td>
                                 </tr>
                               );
@@ -3076,9 +3885,17 @@ const BookingDetailPageV2 = () => {
                 )}
 
                 {/* ── Client Invoice Table ── */}
-                {manualInvoiceDay && (
+                {showInvoiceSection && (
                   <div className="px-6 pt-5 pb-6">
-                    <p className="text-[10.5px] font-semibold uppercase tracking-widest text-gray-400 mb-3">Client Invoice</p>
+                    <div className="mb-3">
+                      <p className="text-[10.5px] font-semibold uppercase tracking-widest text-gray-400">Client Invoice</p>
+                      {!manualInvoiceDay && isFirstDayInvoiceDecision && (
+                        <p className="text-xs text-gray-400 mt-1">First day — this booking normally bills automatically, but decide whether to charge the client for today since the staff member only just started.</p>
+                      )}
+                      {!manualInvoiceDay && isLastDayInvoiceDecision && (
+                        <p className="text-xs text-gray-400 mt-1">Last day — this booking normally bills automatically, but decide whether to charge the client for today since the staff member's service ends today.</p>
+                      )}
+                    </div>
                     <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
                       <table className="w-full text-sm border-collapse">
                         <thead style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
@@ -3119,7 +3936,7 @@ const BookingDetailPageV2 = () => {
                                 <td className={tdCls}>
                                   <div className="flex flex-wrap gap-1.5">
                                     <button onClick={() => decideInvoice(true, slotId)} disabled={dayModalBusy === busyKey || !invoiceAmountInputsBySlot[slotId]} className="px-2.5 py-1 text-[11px] font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded transition disabled:opacity-50">Confirm</button>
-                                    <button onClick={() => waiveShift(slotId)} disabled={dayModalBusy === `waive-${slotId}`} title="Skips both the client charge and the staff's pay for this shift" className="px-2.5 py-1 text-[11px] font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 rounded transition disabled:opacity-50">Waive</button>
+                                    <button onClick={() => waiveShift(slotId)} disabled={dayModalBusy === `waive-${slotId}`} title="No one covered this shift — skips both the client charge and the staff's pay" className="px-2.5 py-1 text-[11px] font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 rounded transition disabled:opacity-50">Waive</button>
                                     <button onClick={() => openRescheduleModal(slotId)} title="Move this shift to a different date" className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition disabled:opacity-50">Reschedule</button>
                                   </div>
                                 </td>

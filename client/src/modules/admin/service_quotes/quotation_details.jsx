@@ -171,6 +171,9 @@ const QuotationDetailsPage = () => {
   const [productPaid, setProductPaid] = useState(0);
   const [productInvoice, setProductInvoice] = useState(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [quotePdfBusy, setQuotePdfBusy] = useState(false);
+  const [quoteSendBusy, setQuoteSendBusy] = useState(false);
+  const [quoteSent, setQuoteSent] = useState(false);
   const [sendingInvoice, setSendingInvoice] = useState(false);
   const [invoiceSent, setInvoiceSent] = useState(false);
   const [showReceiptPopup, setShowReceiptPopup] = useState(false);
@@ -265,6 +268,43 @@ const QuotationDetailsPage = () => {
       loadData();
     }
   }, [quoteId]);
+
+  const handleDownloadQuotePdf = async () => {
+    setQuotePdfBusy(true);
+    try {
+      setError('');
+      const res = await apiClient.generateQuotePdf(quoteId, quote?.product_quote_id);
+      const url = res?.pdf_url || res?.data?.pdf_url;
+      if (url) {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${quote?.estimate_number || 'Quotation'}.pdf`;
+        link.target = '_blank';
+        link.rel = 'noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to generate quotation PDF');
+    } finally {
+      setQuotePdfBusy(false);
+    }
+  };
+
+  const handleSendQuotePdf = async () => {
+    setQuoteSendBusy(true);
+    setQuoteSent(false);
+    try {
+      setError('');
+      await apiClient.sendQuotePDF(quoteId, quote?.product_quote_id);
+      setQuoteSent(true);
+    } catch (err) {
+      setError(err.message || 'Failed to send quotation');
+    } finally {
+      setQuoteSendBusy(false);
+    }
+  };
 
   const handleSendInvoice = async () => {
     setSendingInvoice(true);
@@ -452,6 +492,20 @@ const QuotationDetailsPage = () => {
                   </div>
                 </div>
               )}
+
+              <div className="mt-5 pt-5 border-t border-slate-100">
+                <SectionHeader title="Quotation Document" />
+                <div className="flex flex-wrap items-center gap-2">
+                  <button onClick={handleDownloadQuotePdf} disabled={quotePdfBusy} className={ghostBtnCls}>
+                    {quotePdfBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                    {quotePdfBusy ? 'Generating…' : 'Download Quote PDF'}
+                  </button>
+                  <button onClick={handleSendQuotePdf} disabled={quoteSendBusy} className={ghostBtnCls}>
+                    {quoteSendBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                    {quoteSendBusy ? 'Sending…' : quoteSent ? 'Sent!' : 'Resend via WhatsApp'}
+                  </button>
+                </div>
+              </div>
 
               {/* Combined Invoice — generated the first time either the service
                   or a linked product portion is paid in full (see

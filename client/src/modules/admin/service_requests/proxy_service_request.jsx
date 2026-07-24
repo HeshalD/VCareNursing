@@ -45,7 +45,6 @@ const SERVICE_TYPE_OPTIONS = [
 
 const SERVICE_MODEL_OPTIONS = ['LIVE_IN', 'SHIFT_BASED', 'VISITING'];
 const GENDER_OPTIONS        = ['MALE', 'FEMALE', 'ANY'];
-const STATUS_OPTIONS        = ['NEW_LEAD', 'PENDING', 'CONTACTED', 'CONFIRMED', 'CANCELLED'];
 
 const BLANK_FORM = {
   payer_name: '', payer_mobile: '', patient_name: '', patient_age: '',
@@ -207,6 +206,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
         patient_age: parseInt(formData.patient_age),
         client_id: selectedClient.client_profile_id,
         patient_id: selectedCareProfile?.patient_id || null,
+        status: 'NEW_LEAD',
       });
       setSuccess('Service request created successfully!');
       setTimeout(() => { onClose(); onSuccess(); }, 1500);
@@ -500,12 +500,6 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                       <label className={labelCls}>Preferred Staff Gender</label>
                       <select name="preferred_gender" value={formData.preferred_gender} onChange={handleInputChange} className={inputCls}>
                         {GENDER_OPTIONS.map(o => <option key={o} value={o}>{o.charAt(0) + o.slice(1).toLowerCase()}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className={labelCls}>Initial Status</label>
-                      <select name="status" value={formData.status} onChange={handleInputChange} className={inputCls}>
-                        {STATUS_OPTIONS.map(o => <option key={o} value={o}>{STATUS_CONFIG[o]?.label ?? o}</option>)}
                       </select>
                     </div>
                   </div>

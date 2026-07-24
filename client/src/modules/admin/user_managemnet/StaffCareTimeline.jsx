@@ -34,7 +34,13 @@ const moneyFmt = (n) => `Rs ${Math.round(Number(n || 0)).toLocaleString('en-US')
 //   attendanceRecords — rows from the same endpoint (staff_daily_attendance, including shift_slot_id/reschedule_id)
 //   reschedules       — rows from the same endpoint (shift_reschedules touching this staff's assignments) — moved-away
 //                        origins render as "Moved"; makeup occurrences render on their new date
-const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], reschedules = [], leaveDays = [], interactive = true }) => {
+//   pendingResumptions — rows from the same endpoint: bookings currently PAUSED with a fixed target resume date,
+//                        where this staff member's assignment closed exactly on the pause date. Mirrors what
+//                        CareTimeline shows on the booking side of a pending resume — days between the pause and
+//                        the resume date read as available/off, and from the resume date onward this staff reads
+//                        as assigned back to that booking (open-ended unless scheduled_end_date caps it), even
+//                        though the real booking_staff_assignments row doesn't exist yet.
+const StaffCareTimeline = ({ assignments: rawAssignments = [], attendanceRecords = [], reschedules = [], leaveDays = [], pendingResumptions = [], interactive = true }) => {
   const [monthOffset, setMonthOffset] = useState(0);
   const [hoveredKey, setHoveredKey] = useState(null);
   const navigate = useNavigate();
@@ -45,6 +51,30 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], reschedul
     const d = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1);
     return d;
   }, [today, monthOffset]);
+
+  // Synthesize a placeholder "assignment" for each pending resumption so the rest of
+  // this component (colour pool, day lookup, tooltip) treats it exactly like a real
+  // future-scheduled one — no separate rendering path needed.
+  const assignments = useMemo(() => {
+    if (!pendingResumptions.length) return rawAssignments;
+    const synthetic = pendingResumptions.map((pr) => ({
+      assignment_id: `pending-resume-${pr.booking_id}`,
+      booking_id: pr.booking_id,
+      service_start_date: pr.resume_date,
+      service_end_date: pr.scheduled_end_date || null,
+      daily_rate: pr.daily_rate,
+      assignment_status: 'ACTIVE',
+      shift_slot_id: null,
+      reschedule_id: null,
+      shift_number: null,
+      shift_label: null,
+      shift_start_time: null,
+      client_name: pr.client_name,
+      patient_name: pr.patient_name,
+      isProjectedResume: true,
+    }));
+    return [...rawAssignments, ...synthetic];
+  }, [rawAssignments, pendingResumptions]);
 
   // ── Booking colour pool — assigned in service_start_date order ────────────
   const bookingColorMap = useMemo(() => {
@@ -452,7 +482,7 @@ const StaffCareTimeline = ({ assignments = [], attendanceRecords = [], reschedul
                                     )}
                                     <div className="mt-1.5 flex items-center justify-between">
                                       <span className="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: meta.pillBg, color: meta.pillColor }}>
-                                        {s.kind === 'MAKEUP' ? 'Makeup shift' : meta.label}
+                                        {s.assignment.isProjectedResume ? 'Pending resume' : s.kind === 'MAKEUP' ? 'Makeup shift' : meta.label}
                                       </span>
                                     </div>
                                     {s.record?.decided_by_name && (

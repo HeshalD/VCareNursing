@@ -4,7 +4,7 @@
 // Bank Account detail) renders categories, direction, and colors identically.
 
 export const IN_CATEGORIES = ['CLIENT_PAYMENT', 'BOOKING_PAYMENT', 'WALLET_TOPUP', 'OTHER_INCOME', 'PRODUCT_SALE', 'RENTAL_PAYMENT', 'REGISTRATION_FEE'];
-export const OUT_CATEGORIES = ['STAFF_SALARY_PAID', 'STAFF_ADVANCE', 'AGENCY_FEE', 'OTHER_EXPENSE', 'DEPOSIT_REFUND'];
+export const OUT_CATEGORIES = ['STAFF_SALARY_PAID', 'STAFF_ADVANCE', 'AGENCY_FEE', 'INTERNAL_STAFF_SALARY', 'OTHER_EXPENSE', 'DEPOSIT_REFUND', 'VENDOR_PAYMENT'];
 
 // REGISTRATION_FEE is the one category used on both sides of the ledger —
 // a DEBIT "charge" record (billed, not yet cash) and a CREDIT record (actual
@@ -26,6 +26,7 @@ export const CATEGORY_CONFIG = {
   STAFF_SALARY_PAID:  { label: 'Salary Paid',        dot: 'bg-violet-400',  text: 'text-violet-700' },
   STAFF_ADVANCE:      { label: 'Salary Advance',     dot: 'bg-fuchsia-400', text: 'text-fuchsia-700' },
   AGENCY_FEE:         { label: 'Agency Fee',         dot: 'bg-indigo-400',  text: 'text-indigo-700' },
+  INTERNAL_STAFF_SALARY: { label: 'Internal Staff Salary', dot: 'bg-pink-400', text: 'text-pink-700' },
   OTHER_EXPENSE:      { label: 'Other Expense',      dot: 'bg-rose-400',    text: 'text-rose-700' },
   STAFF_SALARY:       { label: 'Staff Salary',       dot: 'bg-purple-400',  text: 'text-purple-700' },
   SERVICE_INVOICE:    { label: 'Service Invoice',    dot: 'bg-cyan-400',    text: 'text-cyan-700' },
@@ -36,9 +37,11 @@ export const CATEGORY_CONFIG = {
   PRODUCT_SALE:       { label: 'Product Sale',       dot: 'bg-emerald-400', text: 'text-emerald-700' },
   RENTAL_PAYMENT:     { label: 'Rental Payment',     dot: 'bg-purple-400',  text: 'text-purple-700' },
   DEPOSIT_REFUND:     { label: 'Deposit Refund',     dot: 'bg-rose-400',    text: 'text-rose-700' },
+  ACCOUNT_TRANSFER:   { label: 'Account Transfer',   dot: 'bg-slate-400',   text: 'text-slate-600' },
+  VENDOR_PAYMENT:     { label: 'Vendor Payment',     dot: 'bg-red-400',     text: 'text-red-700' },
 };
 
-export const categoryBadge = (category) => {
+export const categoryBadge = (category, customLabel) => {
   const cfg = CATEGORY_CONFIG[category] || {
     label: (category || 'Unknown').replace(/_/g, ' '),
     dot: 'bg-slate-400',
@@ -47,7 +50,7 @@ export const categoryBadge = (category) => {
   return (
     <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
-      {cfg.label}
+      {customLabel || cfg.label}
     </span>
   );
 };

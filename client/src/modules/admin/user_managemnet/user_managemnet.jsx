@@ -18,7 +18,7 @@ const STATUS_CONFIG = {
 
 const TAB_TO_STATUS = {
   Pending:            'PENDING',
-  Invoiced:           'INVOICED',
+  Invoiced:           'QUOTATED',
   'Receipt Submitted':'RECEIPT_UPLOADED',
   Paid:               'PAID',
   Waived:             'WAIVED',

@@ -1,6 +1,7 @@
 // controllers/dailyAttendanceController.js
 const db = require('../config/db');
 const { creditStaffSalary } = require('../services/billingService');
+const { maybeAutoCompleteVisitingBooking } = require('../services/visitingBookings');
 
 async function getDeciderName(userId) {
     const result = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [userId]);
@@ -36,10 +37,13 @@ exports.getBookingAttendance = async (req, res) => {
                 a.shift_slot_id,
                 ss.shift_number,
                 ss.label as shift_label,
+                ss.duration_hours as shift_duration_hours,
+                bsa.assigned_hours,
                 sp.full_name as staff_name
              FROM staff_daily_attendance a
              JOIN staff_profiles sp ON a.staff_profile_id = sp.staff_profile_id
              LEFT JOIN booking_shift_slots ss ON a.shift_slot_id = ss.shift_slot_id
+             LEFT JOIN booking_staff_assignments bsa ON a.assignment_id = bsa.assignment_id
              WHERE a.booking_id = $1
              ORDER BY a.service_date DESC`,
             [booking_id]
@@ -187,6 +191,131 @@ exports.upsertAttendance = async (req, res) => {
 };
 
 /**
+ * @route   POST /api/bookings/:booking_id/attendance/absent
+ * @desc    Marks a staff member as a no-show for a given day/shift in one step —
+ *          no in/out time required. Skips their salary only; does NOT touch the
+ *          client invoice for that day/shift (use the Waive action for that, or
+ *          the Cover Shift/Reschedule flow if someone else covered the shift).
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ * @body    assignment_id, service_date, shift_slot_id (optional), notes (optional)
+ */
+exports.markAbsent = async (req, res) => {
+    const { booking_id } = req.params;
+    const { assignment_id, service_date, shift_slot_id, notes } = req.body;
+
+    if (!assignment_id || !service_date) {
+        return res.status(400).json({
+            status: 'error',
+            message: 'assignment_id and service_date are required'
+        });
+    }
+
+    try {
+        const assignmentCheck = await db.query(
+            `SELECT assignment_id, staff_profile_id, shift_slot_id FROM booking_staff_assignments
+             WHERE assignment_id = $1 AND booking_id = $2`,
+            [assignment_id, booking_id]
+        );
+
+        if (assignmentCheck.rows.length === 0) {
+            return res.status(404).json({ status: 'error', message: 'Assignment not found for this booking' });
+        }
+
+        const assignmentShiftSlotId = assignmentCheck.rows[0].shift_slot_id;
+
+        if (assignmentShiftSlotId) {
+            if (!shift_slot_id) {
+                return res.status(400).json({ status: 'error', message: 'shift_slot_id is required for shift-based attendance' });
+            }
+            if (shift_slot_id !== assignmentShiftSlotId) {
+                return res.status(400).json({ status: 'error', message: 'shift_slot_id does not match this assignment\'s shift' });
+            }
+        } else if (shift_slot_id) {
+            return res.status(400).json({ status: 'error', message: 'This assignment is not shift-based; shift_slot_id must not be provided' });
+        }
+
+        const existing = await db.query(
+            `SELECT attendance_id, salary_status FROM staff_daily_attendance
+             WHERE assignment_id = $1 AND service_date = $2 AND reschedule_id IS NULL`,
+            [assignment_id, service_date]
+        );
+
+        if (existing.rows.length > 0 && existing.rows[0].salary_status !== 'PENDING') {
+            return res.status(409).json({
+                status: 'error',
+                message: 'This day has already been decided and cannot be edited'
+            });
+        }
+
+        const staffProfileId = assignmentCheck.rows[0].staff_profile_id;
+        const decidedByName = await getDeciderName(req.user?.user_id);
+        const absentNotes = notes || 'Marked absent — no-show';
+
+        const result = assignmentShiftSlotId
+            ? await db.query(
+                `INSERT INTO staff_daily_attendance (
+                    booking_id, assignment_id, staff_profile_id, service_date,
+                    entry_mode, salary_status, decided_by_user_id, decided_by_name, decided_at, notes, shift_slot_id
+                ) VALUES ($1, $2, $3, $4, 'MANUAL', 'SKIPPED', $5, $6, NOW(), $7, $8)
+                ON CONFLICT (assignment_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL
+                DO UPDATE SET in_time = NULL,
+                              out_time = NULL,
+                              hours_served = NULL,
+                              salary_status = 'SKIPPED',
+                              salary_amount = NULL,
+                              salary_transaction_id = NULL,
+                              decided_by_user_id = EXCLUDED.decided_by_user_id,
+                              decided_by_name = EXCLUDED.decided_by_name,
+                              decided_at = NOW(),
+                              notes = EXCLUDED.notes,
+                              updated_at = NOW()
+                RETURNING *`,
+                [booking_id, assignment_id, staffProfileId, service_date, req.user?.user_id || null, decidedByName, absentNotes, assignmentShiftSlotId]
+            )
+            : await db.query(
+                `INSERT INTO staff_daily_attendance (
+                    booking_id, assignment_id, staff_profile_id, service_date,
+                    entry_mode, salary_status, decided_by_user_id, decided_by_name, decided_at, notes
+                ) VALUES ($1, $2, $3, $4, 'MANUAL', 'SKIPPED', $5, $6, NOW(), $7)
+                ON CONFLICT (assignment_id, service_date) WHERE shift_slot_id IS NULL
+                DO UPDATE SET in_time = NULL,
+                              out_time = NULL,
+                              hours_served = NULL,
+                              salary_status = 'SKIPPED',
+                              salary_amount = NULL,
+                              salary_transaction_id = NULL,
+                              decided_by_user_id = EXCLUDED.decided_by_user_id,
+                              decided_by_name = EXCLUDED.decided_by_name,
+                              decided_at = NOW(),
+                              notes = EXCLUDED.notes,
+                              updated_at = NOW()
+                RETURNING *`,
+                [booking_id, assignment_id, staffProfileId, service_date, req.user?.user_id || null, decidedByName, absentNotes]
+            );
+
+        // Marking absent still "decides" the day (salary_status -> SKIPPED) — a VISITING
+        // booking's one-time visit may now be fully decided (salary + invoice), in which
+        // case it should auto-complete rather than sit ACTIVE waiting for a manual close-out.
+        const autoCompleteClient = await db.pool.connect();
+        try {
+            await autoCompleteClient.query('BEGIN');
+            await maybeAutoCompleteVisitingBooking(autoCompleteClient, booking_id);
+            await autoCompleteClient.query('COMMIT');
+        } catch (autoCompleteErr) {
+            await autoCompleteClient.query('ROLLBACK');
+            console.error('Auto-complete check failed after markAbsent:', autoCompleteErr);
+        } finally {
+            autoCompleteClient.release();
+        }
+
+        res.status(200).json({ status: 'success', data: result.rows[0] });
+    } catch (error) {
+        console.error('Mark attendance absent error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to mark absent' });
+    }
+};
+
+/**
  * @route   POST /api/attendance/:attendance_id/confirm-salary
  * @desc    Admin decision on whether to pay a staff member's salary for a logged day.
  *          The 12h-served threshold is informational only — the decision is always
@@ -269,6 +398,10 @@ exports.confirmSalary = async (req, res) => {
              RETURNING *`,
             [approve ? 'PAID' : 'SKIPPED', salaryAmount, salaryTransactionId, req.user?.user_id || null, decidedByName, attendance_id]
         );
+
+        // A VISITING booking's one-time visit may now be fully decided (salary + invoice)
+        // — auto-complete it rather than leaving it ACTIVE for a manual close-out.
+        await maybeAutoCompleteVisitingBooking(client, attendance.booking_id);
 
         await client.query('COMMIT');
         res.status(200).json({ status: 'success', data: updated.rows[0] });

@@ -93,101 +93,162 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
   const requiresBankAccount = ['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(paymentMethod);
   const isCheque = paymentMethod === 'CHEQUE';
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        setLoading(true);
-        setError('');
-        const [quoteRes, progressRes, banksRes] = await Promise.all([
-          apiClient.getQuoteWithLineItems(quoteId),
-          apiClient.getQuotePaymentProgress(quoteId),
-          apiClient.getBankAccounts(),
-        ]);
-        const quote = quoteRes?.data;
-        setEstimateNumber(quote?.estimate_number || '');
-        setPayerName(quote?.payer_name || '');
-        setPayerMobile(quote?.payer_mobile || '');
-        setClientId(quote?.request_client_id || null);
-        setBankAccounts(banksRes?.data || []);
+  // Vendor-linked line items on the companion PRODUCT quote (if any) that
+  // haven't been accepted yet — surfaced as part of this same Step 2
+  // allocation screen instead of a separate gate, so recording the payment
+  // and deciding how to pay the vendor happen in one action. Without this,
+  // the accept-on-open fallback below would call acceptProductQuote with no
+  // vendor_payments, silently leaving every vendor bill unpaid with no admin
+  // decision — same prompt ProductsPage.jsx shows on its own "Accept &
+  // Invoice" button; this is the other place acceptProductQuote can fire from.
+  const [productQuoteId, setProductQuoteId] = useState(null);
+  const [vendorItems, setVendorItems] = useState([]);
+  const [vendorDecisions, setVendorDecisions] = useState({});
 
-        const serviceRemaining = Math.max(parseFloat(progressRes?.remaining_amount ?? quote?.total_amount ?? 0), 0);
-        const regInfo = getRegFeeInfo(progressRes?.total_paid, quote?.line_items);
-        setRegFeeInfo(regInfo);
-        const svcOnly = Math.max(serviceRemaining - (regInfo?.remaining || 0), 0);
-        setServiceOnlyRemaining(svcOnly);
+  const updateVendorDecision = (lineItemId, patch) => {
+    setVendorDecisions((prev) => ({ ...prev, [lineItemId]: { ...prev[lineItemId], ...patch } }));
+  };
 
-        let productsDue = 0;
-        let productsWarning = '';
-        // The linked PRODUCT quote (rentals/purchases/deposits added via the
-        // Products & Rentals section) is a SEPARATE quotations row, joined in
-        // by getQuoteWithLineItems via quotations.linked_quote_id — if this
-        // quote was never given a companion PRODUCT quote (or the join
-        // didn't find one), there is nothing to fetch and the bucket is
-        // correctly absent, not a bug.
-        const productQuoteId = quote?.product_quote_id;
-        if (productQuoteId) {
-          try {
-            // Ground truth for what was quoted — read straight from the
-            // product quote's own line items (same source
-            // quotation_details.jsx / quotations.jsx use for their Total
-            // figure), independent of whether `invoices` rows exist yet.
-            // Relying on `invoices` alone previously understated the
-            // Products & Rentals bucket whenever the accept-on-open fallback
-            // below didn't run (e.g. the quote was already accepted but its
-            // invoice rows were fetched before this modal existed).
-            const productDetail = await apiClient.getProductQuote(productQuoteId);
-            const productLineItems = productDetail?.data?.line_items || [];
-            const productsTotal = productLineItemsTotal(productLineItems);
+  // Fetches the linked product quote's line items + invoices and either:
+  //  - it's already accepted (invoices exist) → just compute the due amount
+  //  - it isn't accepted yet and has no vendor-linked items → silently accept
+  //    it now (original behavior, unaffected)
+  //  - it isn't accepted yet and HAS vendor-linked items → leave it
+  //    unaccepted for now and record which items need a decision; handleSubmit
+  //    accepts it (with vendor_payments) as the first step of submitting this
+  //    same payment, so the due amount shown here is the full product total
+  //    (nothing paid/accepted yet).
+  const resolveProductBucket = async (pQuoteId, regRemaining, svcOnlyRemaining) => {
+    let productsDue = 0;
+    let productsWarning = '';
+    try {
+      // Ground truth for what was quoted — read straight from the product
+      // quote's own line items (same source quotation_details.jsx /
+      // quotations.jsx use for their Total figure), independent of whether
+      // `invoices` rows exist yet. Relying on `invoices` alone previously
+      // understated the Products & Rentals bucket whenever the accept-on-open
+      // fallback below didn't run (e.g. the quote was already accepted but
+      // its invoice rows were fetched before this modal existed).
+      const productDetail = await apiClient.getProductQuote(pQuoteId);
+      const productLineItems = productDetail?.data?.line_items || [];
+      const productsTotal = productLineItemsTotal(productLineItems);
 
-            let invRes = await apiClient.getProductInvoices({ quote_id: productQuoteId });
-            let invoices = Array.isArray(invRes?.data) ? invRes.data : [];
+      let invRes = await apiClient.getProductInvoices({ quote_id: pQuoteId });
+      let invoices = Array.isArray(invRes?.data) ? invRes.data : [];
 
-            // A linked PRODUCT quote only gets its own `invoices` row(s) once
-            // someone explicitly accepts it — accept it here (via
-            // acceptProductQuote, NOT createInvoiceFromQuote: only that path
-            // knows how to create rental_agreements and mark units RENTED —
-            // see the EST-1368/BED-003 incident) so the Products & Rentals
-            // bucket doesn't silently disappear from this modal.
-            if (invoices.length === 0 && productLineItems.length > 0) {
-              try {
-                await apiClient.acceptProductQuote(productQuoteId);
-                invRes = await apiClient.getProductInvoices({ quote_id: productQuoteId });
-                invoices = Array.isArray(invRes?.data) ? invRes.data : [];
-              } catch (acceptErr) {
-                // A 409 here just means it's already accepted under a race —
-                // anything else means invoices genuinely don't exist yet and
-                // productsTotal (from line items) is still the right due amount.
-                console.warn('acceptProductQuote fallback failed:', acceptErr.message);
-              }
-            }
-
-            // A fully-PAID invoice counts as fully paid even if it predates
-            // the invoice_payments ledger (no rows there yet for it) —
-            // amount_paid alone would understate it in that case.
-            const productsPaid = invoices.reduce(
-              (s, i) => s + (i.status === 'PAID' ? (parseFloat(i.amount) || 0) : (parseFloat(i.amount_paid) || 0)),
-              0
-            );
-            productsDue = Math.max(productsTotal - productsPaid, 0);
-          } catch (productErr) {
-            // Surfaced instead of silently showing 0 — a failed fetch here
-            // (permissions, network, etc.) previously looked identical to
-            // "this quote genuinely has no products", which made the bucket
-            // vanish from the allocation table with no explanation.
-            console.error('Failed to load Products & Rentals bucket:', productErr);
-            productsDue = 0;
-            productsWarning = `Products & Rentals couldn't be loaded (${productErr.message || 'unknown error'}) — its amount is not included below.`;
+      // A linked PRODUCT quote only gets its own `invoices` row(s) once
+      // someone explicitly accepts it — accept it here (via
+      // acceptProductQuote, NOT createInvoiceFromQuote: only that path
+      // knows how to create rental_agreements and mark units RENTED —
+      // see the EST-1368/BED-003 incident) so the Products & Rentals
+      // bucket doesn't silently disappear from this modal.
+      if (invoices.length === 0 && productLineItems.length > 0) {
+        const vItems = productLineItems.filter((li) => li.vendor_id);
+        if (vItems.length > 0) {
+          const initialDecisions = {};
+          for (const li of vItems) {
+            const defaultAmount = parseFloat(li.cost_price_snapshot ?? li.product_cost_price ?? 0) * parseFloat(li.quantity || 1);
+            initialDecisions[li.line_item_id] = {
+              pay_now: false,
+              amount: defaultAmount || 0,
+              payment_method: 'CASH',
+              bank_account_id: '',
+              cheque_number: '',
+              cheque_date: '',
+            };
           }
+          setVendorItems(vItems);
+          setVendorDecisions(initialDecisions);
+          // Not accepted yet — nothing paid, so the full quoted total is due.
+          // acceptProductQuote runs at submit time instead (see handleSubmit).
+          setProductsRemaining(productsTotal);
+          setCombinedRemaining(regRemaining + svcOnlyRemaining + productsTotal);
+          setLoading(false);
+          return;
         }
-        setProductsRemaining(productsDue);
-        setCombinedRemaining((regInfo?.remaining || 0) + svcOnly + productsDue);
-        if (productsWarning) setError(productsWarning);
-      } catch (err) {
-        setError(err.message || 'Failed to load payment details');
-      } finally {
-        setLoading(false);
+
+        try {
+          await apiClient.acceptProductQuote(pQuoteId);
+          invRes = await apiClient.getProductInvoices({ quote_id: pQuoteId });
+          invoices = Array.isArray(invRes?.data) ? invRes.data : [];
+        } catch (acceptErr) {
+          // A 409 here just means it's already accepted under a race —
+          // anything else means invoices genuinely don't exist yet and
+          // productsTotal (from line items) is still the right due amount.
+          console.warn('acceptProductQuote fallback failed:', acceptErr.message);
+        }
       }
-    };
+
+      // A fully-PAID invoice counts as fully paid even if it predates
+      // the invoice_payments ledger (no rows there yet for it) —
+      // amount_paid alone would understate it in that case.
+      const productsPaid = invoices.reduce(
+        (s, i) => s + (i.status === 'PAID' ? (parseFloat(i.amount) || 0) : (parseFloat(i.amount_paid) || 0)),
+        0
+      );
+      productsDue = Math.max(productsTotal - productsPaid, 0);
+    } catch (productErr) {
+      // Surfaced instead of silently showing 0 — a failed fetch here
+      // (permissions, network, etc.) previously looked identical to
+      // "this quote genuinely has no products", which made the bucket
+      // vanish from the allocation table with no explanation.
+      console.error('Failed to load Products & Rentals bucket:', productErr);
+      productsDue = 0;
+      productsWarning = `Products & Rentals couldn't be loaded (${productErr.message || 'unknown error'}) — its amount is not included below.`;
+    }
+    setProductsRemaining(productsDue);
+    setCombinedRemaining(regRemaining + svcOnlyRemaining + productsDue);
+    if (productsWarning) setError(productsWarning);
+    setLoading(false);
+  };
+
+  const load = async () => {
+    try {
+      setLoading(true);
+      setError('');
+      setVendorItems([]);
+      setVendorDecisions({});
+      const [quoteRes, progressRes, banksRes] = await Promise.all([
+        apiClient.getQuoteWithLineItems(quoteId),
+        apiClient.getQuotePaymentProgress(quoteId),
+        apiClient.getBankAccounts(),
+      ]);
+      const quote = quoteRes?.data;
+      setEstimateNumber(quote?.estimate_number || '');
+      setPayerName(quote?.payer_name || '');
+      setPayerMobile(quote?.payer_mobile || '');
+      setClientId(quote?.request_client_id || null);
+      setBankAccounts(banksRes?.data || []);
+
+      const serviceRemaining = Math.max(parseFloat(progressRes?.remaining_amount ?? quote?.total_amount ?? 0), 0);
+      const regInfo = getRegFeeInfo(progressRes?.total_paid, quote?.line_items);
+      setRegFeeInfo(regInfo);
+      const svcOnly = Math.max(serviceRemaining - (regInfo?.remaining || 0), 0);
+      setServiceOnlyRemaining(svcOnly);
+
+      // The linked PRODUCT quote (rentals/purchases/deposits added via the
+      // Products & Rentals section) is a SEPARATE quotations row, joined in
+      // by getQuoteWithLineItems via quotations.linked_quote_id — if this
+      // quote was never given a companion PRODUCT quote (or the join
+      // didn't find one), there is nothing to fetch and the bucket is
+      // correctly absent, not a bug.
+      const pQuoteId = quote?.product_quote_id || null;
+      setProductQuoteId(pQuoteId);
+      if (!pQuoteId) {
+        setProductsRemaining(0);
+        setCombinedRemaining((regInfo?.remaining || 0) + svcOnly);
+        setLoading(false);
+        return;
+      }
+
+      await resolveProductBucket(pQuoteId, regInfo?.remaining || 0, svcOnly);
+    } catch (err) {
+      setError(err.message || 'Failed to load payment details');
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
     load();
   }, [quoteId]);
 
@@ -288,14 +349,41 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
     return '';
   };
 
+  // Validates the pay-now decisions for vendor-linked product items (if any
+  // are pending — see resolveProductBucket). Independent of validateStep2's
+  // allocation math: this is about how the company pays an outside vendor,
+  // not how much of the client's payment covers which bucket.
+  const validateVendorDecisions = () => {
+    for (const li of vendorItems) {
+      const d = vendorDecisions[li.line_item_id];
+      if (!d?.pay_now) continue;
+      if (['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(d.payment_method) && !d.bank_account_id) {
+        return `Select a bank account to pay vendor for "${li.description}"`;
+      }
+      if (d.payment_method === 'CHEQUE' && (!d.cheque_number || !d.cheque_date)) {
+        return `Cheque number and date are required to pay vendor for "${li.description}"`;
+      }
+    }
+    return '';
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const err = validateStep2();
+    const err = validateStep2() || validateVendorDecisions();
     if (err) { setError(err); return; }
     setError('');
 
     setSubmitting(true);
     try {
+      // The linked PRODUCT quote must exist as `invoices` rows before this
+      // payment can allocate anything to the Products & Rentals bucket (see
+      // paymentTrackingController's check) — if vendor items were pending a
+      // decision, accept it now, bundled into this same submit action, with
+      // whatever pay-now/leave-unpaid choices the admin made above.
+      if (vendorItems.length > 0 && productQuoteId) {
+        await apiClient.acceptProductQuote(productQuoteId, { vendor_payments: vendorDecisions });
+      }
+
       const payload = {
         amount_received: parsedAmount,
         allocations: {
@@ -513,6 +601,103 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                     </p>
                   )}
                 </div>
+
+                {vendorItems.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Vendor Payments</p>
+                    <p className="mb-2 text-[11px] text-slate-500">
+                      Some Products &amp; Rentals items are sourced from a vendor. Decide how to settle each one — this is separate from the client's payment above and will be submitted together with it.
+                    </p>
+                    <div className="space-y-2">
+                      {vendorItems.map((li) => {
+                        const d = vendorDecisions[li.line_item_id] || {};
+                        return (
+                          <div key={li.line_item_id} className="rounded-lg border border-slate-200 p-2.5 space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-xs font-medium text-slate-800">{li.description}</p>
+                              <span className="shrink-0 text-[11px] text-slate-400">Vendor: {li.vendor_name}</span>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <label className="text-[11px] font-medium text-slate-500">Amount owed</label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={d.amount}
+                                onChange={(e) => updateVendorDecision(li.line_item_id, { amount: e.target.value })}
+                                className="w-28 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-blue-500"
+                              />
+                            </div>
+
+                            <div className="flex gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => updateVendorDecision(li.line_item_id, { pay_now: false })}
+                                className={`flex-1 rounded-md border px-2 py-1 text-[11px] font-semibold transition-colors ${
+                                  !d.pay_now ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                                }`}
+                              >
+                                Leave Unpaid
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => updateVendorDecision(li.line_item_id, { pay_now: true })}
+                                className={`flex-1 rounded-md border px-2 py-1 text-[11px] font-semibold transition-colors ${
+                                  d.pay_now ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                                }`}
+                              >
+                                Pay Now
+                              </button>
+                            </div>
+
+                            {d.pay_now && (
+                              <div className="space-y-1.5 border-t border-slate-100 pt-2">
+                                <select
+                                  value={d.payment_method}
+                                  onChange={(e) => updateVendorDecision(li.line_item_id, { payment_method: e.target.value })}
+                                  className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-blue-500"
+                                >
+                                  {paymentMethodOptions.map((m) => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
+                                </select>
+
+                                {['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(d.payment_method) && (
+                                  <select
+                                    value={d.bank_account_id}
+                                    onChange={(e) => updateVendorDecision(li.line_item_id, { bank_account_id: e.target.value })}
+                                    className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-blue-500"
+                                  >
+                                    <option value="">Select bank account…</option>
+                                    {bankAccounts.map((b) => (
+                                      <option key={b.account_id} value={b.account_id}>{b.account_nickname} — {b.bank_name}</option>
+                                    ))}
+                                  </select>
+                                )}
+
+                                {d.payment_method === 'CHEQUE' && (
+                                  <div className="grid grid-cols-2 gap-1.5">
+                                    <input
+                                      type="text"
+                                      placeholder="Cheque number"
+                                      value={d.cheque_number}
+                                      onChange={(e) => updateVendorDecision(li.line_item_id, { cheque_number: e.target.value })}
+                                      className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-blue-500"
+                                    />
+                                    <DateInput
+                                      value={d.cheque_date}
+                                      onChange={(e) => updateVendorDecision(li.line_item_id, { cheque_date: e.target.value })}
+                                      className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-blue-500"
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 <div className={`rounded-lg border px-3 py-2.5 flex items-center justify-between ${Math.abs(unallocated) <= 0.01 ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
                   <span className={`text-xs font-medium ${Math.abs(unallocated) <= 0.01 ? 'text-emerald-800' : 'text-amber-800'}`}>

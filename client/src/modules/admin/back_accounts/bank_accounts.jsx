@@ -12,6 +12,9 @@ import {
 	ShieldCheck,
 	Download,
 	CheckCircle2,
+	Coins,
+	ArrowRightLeft,
+	Loader2,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -50,6 +53,34 @@ const monthToRange = (monthValue) => {
 const csvEscape = (value) => {
 	const str = String(value ?? '');
 	return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+};
+
+// Mirrors backend/utils/transactionFlow.js MANUAL_CATEGORIES — categories an
+// admin may record by hand (system-generated categories aren't offered here).
+const MANUAL_CATEGORIES = [
+	{ value: 'OTHER_INCOME', label: 'Other Income', direction: 'CREDIT' },
+	{ value: 'OTHER_EXPENSE', label: 'Other Expense', direction: 'DEBIT' },
+	{ value: 'AGENCY_FEE', label: 'Agency Fee', direction: 'DEBIT' },
+	{ value: 'INTERNAL_STAFF_SALARY', label: 'Internal Staff Salary', direction: 'DEBIT' },
+];
+
+const initialTransferForm = {
+	from_account_id: '',
+	to_account_id: '',
+	amount: '',
+	reference_number: '',
+	transfer_date: '',
+	notes: '',
+};
+
+const initialPettyCashForm = {
+	category: 'OTHER_EXPENSE',
+	direction: 'DEBIT',
+	amount: '',
+	external_party: '',
+	reference_number: '',
+	transaction_date: '',
+	notes: '',
 };
 
 const initialFormState = {
@@ -159,6 +190,30 @@ const BankAccounts = () => {
 	const [reconciliationLoading, setReconciliationLoading] = useState(false);
 	const [reconciliationReport, setReconciliationReport] = useState(null);
 
+	const [showPettyCashForm, setShowPettyCashForm] = useState(false);
+	const [pettyCashForm, setPettyCashForm] = useState(initialPettyCashForm);
+	const [pettyCashSubmitting, setPettyCashSubmitting] = useState(false);
+	const [pettyCashError, setPettyCashError] = useState('');
+
+	const pettyCashAccount = useMemo(() => accounts.find((a) => a.is_petty_cash), [accounts]);
+
+	const [showTransferForm, setShowTransferForm] = useState(false);
+	const [transferForm, setTransferForm] = useState(initialTransferForm);
+	const [transferSubmitting, setTransferSubmitting] = useState(false);
+	const [transferError, setTransferError] = useState('');
+
+	const transferFromAccount = useMemo(
+		() => accounts.find((a) => a.account_id === transferForm.from_account_id),
+		[accounts, transferForm.from_account_id]
+	);
+	const transferToAccount = useMemo(
+		() => accounts.find((a) => a.account_id === transferForm.to_account_id),
+		[accounts, transferForm.to_account_id]
+	);
+	const transferFromBalance = parseFloat(transferFromAccount?.current_balance ?? transferFromAccount?.opening_balance ?? 0);
+	const transferAmountValue = parseFloat(transferForm.amount) || 0;
+	const transferExceedsBalance = !!transferFromAccount && transferAmountValue > transferFromBalance + 0.01;
+
 	const accountCount = useMemo(() => accounts.length, [accounts]);
 	const detailLoading = transactionsLoading || reconciliationLoading;
 
@@ -256,6 +311,65 @@ const BankAccounts = () => {
 			await loadAccounts();
 		} catch (err) {
 			setError(err.message || 'Failed to deactivate bank account');
+		}
+	};
+
+	const handleOpenPettyCashForm = () => {
+		setPettyCashError('');
+		setPettyCashForm(initialPettyCashForm);
+		setShowPettyCashForm(true);
+	};
+
+	const handlePettyCashCategoryChange = (category) => {
+		const cfg = MANUAL_CATEGORIES.find((c) => c.value === category);
+		setPettyCashForm((prev) => ({ ...prev, category, direction: cfg?.direction || prev.direction }));
+	};
+
+	const handleSubmitPettyCash = async (e) => {
+		e.preventDefault();
+		try {
+			setPettyCashSubmitting(true);
+			setPettyCashError('');
+			await apiClient.recordPettyCashTransaction(pettyCashForm);
+			setShowPettyCashForm(false);
+			setSuccessMessage('Petty cash transaction recorded successfully.');
+			await loadAccounts();
+			if (selectedAccount?.account_id === pettyCashAccount?.account_id) {
+				await refreshDetail();
+			}
+		} catch (err) {
+			setPettyCashError(err.message || 'Failed to record petty cash transaction');
+		} finally {
+			setPettyCashSubmitting(false);
+		}
+	};
+
+	const handleOpenTransferForm = () => {
+		setTransferError('');
+		setTransferForm(initialTransferForm);
+		setShowTransferForm(true);
+	};
+
+	const handleSubmitTransfer = async (e) => {
+		e.preventDefault();
+		if (transferForm.from_account_id && transferForm.from_account_id === transferForm.to_account_id) {
+			setTransferError('Source and destination accounts must be different.');
+			return;
+		}
+		try {
+			setTransferSubmitting(true);
+			setTransferError('');
+			await apiClient.transferBankFunds(transferForm);
+			setShowTransferForm(false);
+			setSuccessMessage(`Transferred ${formatMoney(transferForm.amount)} from ${transferFromAccount?.account_nickname} to ${transferToAccount?.account_nickname}.`);
+			await loadAccounts();
+			if (selectedAccount && [transferForm.from_account_id, transferForm.to_account_id].includes(selectedAccount.account_id)) {
+				await refreshDetail();
+			}
+		} catch (err) {
+			setTransferError(err.message || 'Failed to transfer funds');
+		} finally {
+			setTransferSubmitting(false);
 		}
 	};
 
@@ -399,6 +513,18 @@ const BankAccounts = () => {
 					<button onClick={loadAccounts} title="Refresh" className={iconBtnCls}>
 						<RefreshCw className="h-4 w-4" />
 					</button>
+					{accounts.length >= 2 && (
+						<button onClick={handleOpenTransferForm} className={ghostBtnCls}>
+							<ArrowRightLeft className="h-4 w-4" />
+							Transfer Funds
+						</button>
+					)}
+					{pettyCashAccount && (
+						<button onClick={handleOpenPettyCashForm} className={ghostBtnCls}>
+							<Coins className="h-4 w-4" />
+							Record Petty Cash Transaction
+						</button>
+					)}
 					<button onClick={handleOpenCreate} className={primaryBtnCls}>
 						<Plus className="h-4 w-4" />
 						New Account
@@ -455,7 +581,15 @@ const BankAccounts = () => {
 												className={`cursor-pointer transition-colors ${isSelected ? 'bg-blue-50/60' : 'hover:bg-slate-50'}`}
 											>
 												<td className="px-5 py-3">
-													<p className="font-semibold text-slate-900 leading-tight">{account.account_nickname}</p>
+													<p className="font-semibold text-slate-900 leading-tight flex items-center gap-1.5">
+														{account.account_nickname}
+														{account.is_petty_cash && (
+															<span className="inline-flex items-center gap-1 rounded-full bg-amber-50 text-amber-700 text-[10px] font-semibold px-1.5 py-0.5">
+																<Coins className="h-2.5 w-2.5" />
+																Petty Cash
+															</span>
+														)}
+													</p>
 													<p className="text-xs text-slate-400 font-mono">{account.account_number}</p>
 												</td>
 												<td className="px-5 py-3 text-slate-600">
@@ -471,13 +605,15 @@ const BankAccounts = () => {
 														<button onClick={() => handleOpenEdit(account)} title="Edit account" className={iconBtnCls}>
 															<Pencil className="h-3.5 w-3.5" />
 														</button>
-														<button
-															onClick={() => handleDeactivate(account)}
-															title="Deactivate account"
-															className="inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-														>
-															<Trash2 className="h-3.5 w-3.5" />
-														</button>
+														{!account.is_petty_cash && (
+															<button
+																onClick={() => handleDeactivate(account)}
+																title="Deactivate account"
+																className="inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+															>
+																<Trash2 className="h-3.5 w-3.5" />
+															</button>
+														)}
 														<ChevronRight className={`w-4 h-4 ml-1 transition-transform ${isSelected ? 'rotate-90 text-blue-500' : 'text-slate-300'}`} />
 													</div>
 												</td>
@@ -641,7 +777,7 @@ const BankAccounts = () => {
 																<p className="font-medium text-slate-700">{related.primary}</p>
 																{related.secondary && <p className="text-xs text-slate-400">{related.secondary}</p>}
 															</td>
-															<td className="px-4 py-2.5 whitespace-nowrap">{categoryBadge(tx.category)}</td>
+															<td className="px-4 py-2.5 whitespace-nowrap">{categoryBadge(tx.category, tx.custom_category_label)}</td>
 															<td className="px-4 py-2.5 text-slate-600">{tx.payment_method || '—'}</td>
 															<td className="px-4 py-2.5 text-slate-500 font-mono text-xs">{tx.reference_number || '—'}</td>
 															<td className="px-4 py-2.5 whitespace-nowrap"><StatusDot status={tx.status} /></td>
@@ -787,6 +923,261 @@ const BankAccounts = () => {
 								{submitting ? 'Saving…' : editingAccount ? 'Save Changes' : 'Create Account'}
 							</button>
 						</div>
+					</div>
+				</div>
+			)}
+
+			{/* ── Petty Cash transaction drawer ──────────────────────────────── */}
+			{showPettyCashForm && (
+				<div className="fixed inset-0 z-50 flex">
+					<div className="flex-1 bg-black/30" onClick={() => setShowPettyCashForm(false)} />
+
+					<div className="w-full max-w-md bg-white flex flex-col shadow-2xl overflow-hidden">
+						<div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 flex-shrink-0">
+							<h2 className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
+								<Coins className="h-4 w-4 text-amber-500" />
+								Record Petty Cash Transaction
+							</h2>
+							<button onClick={() => setShowPettyCashForm(false)} className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors">
+								<X className="w-4 h-4" />
+							</button>
+						</div>
+
+						{pettyCashError && (
+							<div className="mx-5 mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{pettyCashError}</div>
+						)}
+
+						<form onSubmit={handleSubmitPettyCash} id="petty-cash-form" className="flex-1 overflow-y-auto">
+							<div className="px-5 pt-4 pb-6 space-y-3">
+								<Field label="Category" required>
+									<select
+										required
+										value={pettyCashForm.category}
+										onChange={(e) => handlePettyCashCategoryChange(e.target.value)}
+										className={inputCls}
+									>
+										{MANUAL_CATEGORIES.map((c) => (
+											<option key={c.value} value={c.value}>{c.label}</option>
+										))}
+									</select>
+								</Field>
+								<Field label="Direction" required>
+									<select
+										required
+										value={pettyCashForm.direction}
+										onChange={(e) => setPettyCashForm({ ...pettyCashForm, direction: e.target.value })}
+										className={inputCls}
+									>
+										<option value="CREDIT">Cash In (deposit)</option>
+										<option value="DEBIT">Cash Out (expense)</option>
+									</select>
+								</Field>
+								<Field label="Amount" required>
+									<input
+										required
+										type="number"
+										step="0.01"
+										min="0.01"
+										value={pettyCashForm.amount}
+										onChange={(e) => setPettyCashForm({ ...pettyCashForm, amount: e.target.value })}
+										className={inputCls}
+									/>
+								</Field>
+								<Field label="Paid To / Received From" required>
+									<input
+										required
+										value={pettyCashForm.external_party}
+										onChange={(e) => setPettyCashForm({ ...pettyCashForm, external_party: e.target.value })}
+										className={inputCls}
+									/>
+								</Field>
+								<Field label="Reference Number">
+									<input
+										value={pettyCashForm.reference_number}
+										onChange={(e) => setPettyCashForm({ ...pettyCashForm, reference_number: e.target.value })}
+										className={inputCls}
+									/>
+								</Field>
+								<Field label="Transaction Date">
+									<DateInput
+										value={pettyCashForm.transaction_date}
+										onChange={(e) => setPettyCashForm({ ...pettyCashForm, transaction_date: e.target.value })}
+										className={inputCls}
+									/>
+								</Field>
+								<Field label="Notes">
+									<textarea
+										rows={3}
+										value={pettyCashForm.notes}
+										onChange={(e) => setPettyCashForm({ ...pettyCashForm, notes: e.target.value })}
+										className={inputCls}
+									/>
+								</Field>
+							</div>
+						</form>
+
+						<div className="flex items-center gap-2 px-5 py-4 border-t border-slate-200 bg-slate-50 flex-shrink-0">
+							<button type="button" onClick={() => setShowPettyCashForm(false)}
+								className="flex-1 px-4 py-2 border border-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-100 transition-colors">
+								Cancel
+							</button>
+							<button
+								type="submit"
+								form="petty-cash-form"
+								disabled={pettyCashSubmitting}
+								className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+							>
+								{pettyCashSubmitting ? 'Saving…' : 'Record Transaction'}
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+
+			{/* ── Transfer Funds modal ─────────────────────────────────────────── */}
+			{showTransferForm && (
+				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+					<div className="w-full max-w-lg rounded-xl bg-white border border-slate-200 shadow-2xl max-h-[90vh] overflow-y-auto">
+						<div className="flex items-start justify-between border-b border-slate-100 px-5 py-4">
+							<div className="min-w-0">
+								<h3 className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
+									<ArrowRightLeft className="h-4 w-4 text-blue-600" />
+									Transfer Funds
+								</h3>
+								<p className="text-xs text-slate-400 mt-0.5">Move money between two company accounts, including Petty Cash.</p>
+							</div>
+							<button type="button" onClick={() => setShowTransferForm(false)} className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+								<X className="h-4 w-4" />
+							</button>
+						</div>
+
+						<form onSubmit={handleSubmitTransfer} className="px-5 py-4 space-y-5">
+							{transferError && (
+								<div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700">{transferError}</div>
+							)}
+
+							{/* From / To account pickers with a swap shortcut in between */}
+							<div>
+								<p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Accounts</p>
+								<div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
+									<div>
+										<label className="mb-1 block text-[11px] font-medium text-slate-500">From</label>
+										<select
+											required
+											value={transferForm.from_account_id}
+											onChange={(e) => setTransferForm({ ...transferForm, from_account_id: e.target.value })}
+											className={inputCls}
+										>
+											<option value="">Select account</option>
+											{accounts.map((a) => (
+												<option key={a.account_id} value={a.account_id} disabled={a.account_id === transferForm.to_account_id}>
+													{a.account_nickname}{a.is_petty_cash ? ' (Petty Cash)' : ''}
+												</option>
+											))}
+										</select>
+									</div>
+
+									<button
+										type="button"
+										title="Swap accounts"
+										disabled={!transferForm.from_account_id && !transferForm.to_account_id}
+										onClick={() => setTransferForm((prev) => ({ ...prev, from_account_id: prev.to_account_id, to_account_id: prev.from_account_id }))}
+										className="inline-flex items-center justify-center w-8 h-8 mb-0.5 rounded-full border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-blue-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+									>
+										<ArrowRightLeft className="h-3.5 w-3.5" />
+									</button>
+
+									<div>
+										<label className="mb-1 block text-[11px] font-medium text-slate-500">To</label>
+										<select
+											required
+											value={transferForm.to_account_id}
+											onChange={(e) => setTransferForm({ ...transferForm, to_account_id: e.target.value })}
+											className={inputCls}
+										>
+											<option value="">Select account</option>
+											{accounts.map((a) => (
+												<option key={a.account_id} value={a.account_id} disabled={a.account_id === transferForm.from_account_id}>
+													{a.account_nickname}{a.is_petty_cash ? ' (Petty Cash)' : ''}
+												</option>
+											))}
+										</select>
+									</div>
+								</div>
+							</div>
+
+							{/* Amount — big, prominent input matching PaymentAllocationModal's style */}
+							<div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+								<label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+									Amount to Transfer
+								</label>
+								<div className="flex items-center gap-2">
+									<span className="text-lg font-semibold text-slate-400">LKR</span>
+									<input
+										required
+										type="number"
+										min="0.01"
+										step="0.01"
+										value={transferForm.amount}
+										onChange={(e) => setTransferForm({ ...transferForm, amount: e.target.value })}
+										placeholder="0.00"
+										className="w-full bg-transparent text-2xl font-semibold text-slate-900 outline-none placeholder-slate-300"
+									/>
+								</div>
+								{transferFromAccount && (
+									<p className={`mt-1.5 text-xs ${transferExceedsBalance ? 'text-red-600' : 'text-slate-400'}`}>
+										Available in {transferFromAccount.account_nickname}: {formatMoney(transferFromBalance)}
+										{transferExceedsBalance && ' — exceeds available balance'}
+									</p>
+								)}
+							</div>
+
+							<div>
+								<p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Details</p>
+								<div className="space-y-3">
+									<Field label="Reference Number">
+										<input
+											value={transferForm.reference_number}
+											onChange={(e) => setTransferForm({ ...transferForm, reference_number: e.target.value })}
+											className={inputCls}
+										/>
+									</Field>
+									<Field label="Transfer Date">
+										<DateInput
+											value={transferForm.transfer_date}
+											onChange={(e) => setTransferForm({ ...transferForm, transfer_date: e.target.value })}
+											className={inputCls}
+										/>
+									</Field>
+									<Field label="Notes">
+										<textarea
+											rows={2}
+											value={transferForm.notes}
+											onChange={(e) => setTransferForm({ ...transferForm, notes: e.target.value })}
+											placeholder="Notes (optional)"
+											className={inputCls}
+										/>
+									</Field>
+								</div>
+							</div>
+
+							<div className="flex items-center gap-2">
+								<button
+									type="button"
+									onClick={() => setShowTransferForm(false)}
+									className="flex-1 px-4 py-2 border border-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-100 transition-colors"
+								>
+									Cancel
+								</button>
+								<button
+									type="submit"
+									disabled={transferSubmitting || transferExceedsBalance}
+									className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+								>
+									{transferSubmitting ? (<><Loader2 className="h-4 w-4 animate-spin" /> Transferring…</>) : 'Transfer Funds'}
+								</button>
+							</div>
+						</form>
 					</div>
 				</div>
 			)}

@@ -16,8 +16,8 @@ const KIND_META = {
 // didn't happen to type "daily"/"shift" in the description). Mirrors
 // RegistrationFeeRow's pattern. Shared by ModularQuoteBuilder and
 // CreateQuotationDrawer.
-const RateLineItemRow = ({ item, index, onUpdate, onDelete }) => {
-  const meta = KIND_META[item.item_subtype] || KIND_META.RATE_DAILY;
+const RateLineItemRow = ({ item, index, onUpdate, onDelete, labelOverride }) => {
+  const meta = { ...(KIND_META[item.item_subtype] || KIND_META.RATE_DAILY), ...labelOverride };
   const { Icon } = meta;
 
   const set = (field, value) => {

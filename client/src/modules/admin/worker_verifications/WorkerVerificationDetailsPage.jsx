@@ -103,7 +103,8 @@ const WorkerVerificationDetailsPage = () => {
   const [profilePicturePreview, setProfilePicturePreview] = useState(null);
   const [profilePictureToCrop, setProfilePictureToCrop] = useState(null);
 
-  const [approveModal, setApproveModal] = useState({ isOpen: false, staffId: '', adminRemarks: '', staffIdLoading: false, staffIdConflict: '', checkingStaffId: false });
+  const [approveModal, setApproveModal] = useState({ isOpen: false, staffId: '', adminRemarks: '', recruiterId: '', staffIdLoading: false, staffIdConflict: '', checkingStaffId: false });
+  const [recruiters, setRecruiters] = useState([]);
   const [rejectModal, setRejectModal] = useState({ isOpen: false, reason: '' });
   const [processingAction, setProcessingAction] = useState(false);
   const [actionError, setActionError] = useState('');
@@ -354,13 +355,20 @@ const WorkerVerificationDetailsPage = () => {
 
   const openApproveModal = async () => {
     setActionError('');
-    setApproveModal({ isOpen: true, staffId: '', adminRemarks: '', staffIdLoading: true, staffIdConflict: '', checkingStaffId: false });
+    setApproveModal({ isOpen: true, staffId: '', adminRemarks: '', recruiterId: '', staffIdLoading: true, staffIdConflict: '', checkingStaffId: false });
     try {
       apiClient.setToken(adminToken);
       const res = await apiClient.getNextStaffCode();
       setApproveModal(p => (p.isOpen && !p.staffId ? { ...p, staffId: res.staff_id, staffIdLoading: false } : { ...p, staffIdLoading: false }));
     } catch {
       setApproveModal(p => ({ ...p, staffIdLoading: false }));
+    }
+    try {
+      apiClient.setToken(adminToken);
+      const recruitersRes = await apiClient.getRecruiters();
+      setRecruiters(recruitersRes.data || []);
+    } catch {
+      setRecruiters([]);
     }
   };
 
@@ -393,9 +401,10 @@ const WorkerVerificationDetailsPage = () => {
       await apiClient.acceptApplication(applicationId, {
         custom_staff_id: approveModal.staffId.trim(),
         admin_remarks: approveModal.adminRemarks.trim() || null,
+        recruiter_id: approveModal.recruiterId || null,
       });
       apiClient.setToken(original);
-      setApproveModal({ isOpen: false, staffId: '', adminRemarks: '' });
+      setApproveModal({ isOpen: false, staffId: '', adminRemarks: '', recruiterId: '' });
       await fetchApplication();
     } catch (err) {
       setActionError(err.message || 'Error approving application');
@@ -951,11 +960,27 @@ const WorkerVerificationDetailsPage = () => {
                   className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:border-green-300 focus:ring-2 focus:ring-green-100 outline-none resize-none"
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                  Recruiter
+                  <span className="text-xs font-normal text-slate-400 ml-2">(optional)</span>
+                </label>
+                <select
+                  value={approveModal.recruiterId}
+                  onChange={e => setApproveModal(p => ({ ...p, recruiterId: e.target.value }))}
+                  className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:border-green-300 focus:ring-2 focus:ring-green-100 outline-none bg-white"
+                >
+                  <option value="">— None —</option>
+                  {recruiters.map(r => (
+                    <option key={r.id} value={r.id}>{r.full_name}</option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             <div className="flex gap-3">
               <button
-                onClick={() => { setApproveModal({ isOpen: false, staffId: '', adminRemarks: '' }); setActionError(''); }}
+                onClick={() => { setApproveModal({ isOpen: false, staffId: '', adminRemarks: '', recruiterId: '' }); setActionError(''); }}
                 className="flex-1 px-4 py-2.5 bg-slate-100 text-slate-700 font-medium rounded-xl hover:bg-slate-200 transition-all"
               >
                 Cancel

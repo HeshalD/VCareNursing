@@ -6,6 +6,7 @@ const { sendWhatsAppOtp, sendWhatsAppMessage } = require('../utils/whatsapp');
 const { sendSmsOtp, sendSms } = require('../utils/sms');
 const { sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected, sendStaffAgreement } = require('../utils/metaWhatsapp');
 const { logActivity } = require('../utils/activityLogger');
+const { creditRecruiterForStaff } = require('../services/recruiterService');
 
 const getUploadedFileUrl = (files, fieldName) => (files && files[fieldName] && files[fieldName][0]) ? files[fieldName][0].location : null;
 
@@ -295,7 +296,7 @@ exports.getNextStaffCode = async (req, res) => {
 };
 
 exports.acceptApplication = async (req, res) => {
-  const { application_id, custom_staff_id, admin_remarks } = req.body;
+  const { application_id, custom_staff_id, admin_remarks, recruiter_id } = req.body;
 
   if (!custom_staff_id || !custom_staff_id.trim()) {
     return res.status(400).json({ message: 'A Staff ID must be assigned before approving.' });
@@ -436,12 +437,14 @@ exports.acceptApplication = async (req, res) => {
     }
 
     // 3. Create/Ensure Staff Profile Exists
-    // We check if a staff profile already exists to prevent unique constraint errors 
+    // We check if a staff profile already exists to prevent unique constraint errors
     // (e.g. if they applied twice)
     const staffProfileCheck = await client.query(
-        'SELECT * FROM staff_profiles WHERE user_id = $1', 
+        'SELECT * FROM staff_profiles WHERE user_id = $1',
         [userId]
     );
+
+    let staffProfileId = null;
 
     if (staffProfileCheck.rows.length === 0) {
         // Process applied_roles to create designation string
@@ -488,36 +491,35 @@ exports.acceptApplication = async (req, res) => {
         ]);
 
         // Auto-create staff wallet on approval
-        const staff_profile_id = profileResult.rows[0].staff_profile_id;
+        staffProfileId = profileResult.rows[0].staff_profile_id;
         await client.query(
           `INSERT INTO staff_wallet (staff_profile_id, balance, updated_at)
            VALUES ($1, 0, NOW())
            ON CONFLICT (staff_profile_id) DO NOTHING`,
-          [staff_profile_id]
+          [staffProfileId]
         );
     } else {
         // Optional: Update existing profile if needed, or just log it
         console.log(`Staff profile already exists for User ${userId}. Skipping creation.`);
+        staffProfileId = staffProfileCheck.rows[0].staff_profile_id;
 
         if (app.nic_number || app.nic_front_url || app.nic_back_url) {
-          const existingProfile = staffProfileCheck.rows[0];
           await client.query(
             `UPDATE staff_profiles
              SET nic_number = COALESCE(nic_number, $1),
                  nic_front_url = COALESCE(nic_front_url, $2),
                  nic_back_url = COALESCE(nic_back_url, $3)
              WHERE staff_profile_id = $4`,
-            [app.nic_number, app.nic_front_url, app.nic_back_url, existingProfile.staff_profile_id]
+            [app.nic_number, app.nic_front_url, app.nic_back_url, staffProfileId]
           );
         }
-        
+
         // Ensure wallet exists for existing staff profile
-        const existingProfile = staffProfileCheck.rows[0];
         await client.query(
           `INSERT INTO staff_wallet (staff_profile_id, balance, updated_at)
            VALUES ($1, 0, NOW())
            ON CONFLICT (staff_profile_id) DO NOTHING`,
-          [existingProfile.staff_profile_id]
+          [staffProfileId]
         );
     }
 
@@ -528,6 +530,21 @@ exports.acceptApplication = async (req, res) => {
     );
 
     await client.query('COMMIT');
+
+    // 4.5 Credit the recruiter who brought this hire in, if one was selected
+    // (non-fatal, run after commit so a recruiter-crediting hiccup can't roll
+    // back the whole application acceptance).
+    if (recruiter_id && staffProfileId) {
+      try {
+        await creditRecruiterForStaff(db, {
+          staff_profile_id: staffProfileId,
+          recruiter_id,
+          assigned_by: req.user.user_id,
+        });
+      } catch (recruiterErr) {
+        console.error('Recruiter crediting failed (acceptApplication):', recruiterErr.message);
+      }
+    }
 
     // 5. Activity log (non-fatal)
     try {

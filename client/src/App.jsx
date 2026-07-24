@@ -104,6 +104,7 @@ import AdminInvoicesPage from './modules/admin/invoices/AdminInvoicesPage';
 import SalespersonDetailPage from './modules/admin/salespersons/SalespersonDetailPage';
 import BulkImportPage from './modules/admin/bulk_import/BulkImportPage';
 import ProductsPage from './modules/admin/products/ProductsPage';
+import VendorsPage from './modules/admin/vendors/VendorsPage';
 import ClientProducts from './modules/client/ClientProducts';
 
 function App() {
@@ -265,6 +266,11 @@ function App() {
             <Route path="/admin/bank-accounts" element={
               <AdminAuthProvider>
                 <BankAccounts />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/vendors" element={
+              <AdminAuthProvider>
+                <VendorsPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/quotations" element={

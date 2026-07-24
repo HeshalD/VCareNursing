@@ -12,6 +12,7 @@ const { logActivity } = require('../utils/activityLogger');
 const { createPaymentReceipt } = require('../services/receiptService');
 const { ensureCombinedInvoice } = require('./quoteController');
 const { sendClientInvoice } = require('../utils/metaWhatsapp');
+const { resolveBankAccountId } = require('../utils/pettyCash');
 
 const VALID_PAYMENT_METHODS = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
 
@@ -389,6 +390,9 @@ async function applyInvoicePayment(pgClient, {
     : `${invoice.invoice_code} — Product invoice payment`;
   const finalNotes = notes || fallbackNotes;
 
+  // CASH payments have no client-supplied bank account — route them to Petty Cash instead.
+  const resolvedBankAccountId = await resolveBankAccountId(payment_method, bank_account_id);
+
   const txResult = await pgClient.query(
     `INSERT INTO transactions
        (client_id, quote_id, category, transaction_type, amount, payment_method,
@@ -398,7 +402,7 @@ async function applyInvoicePayment(pgClient, {
      RETURNING transaction_id`,
     [
       invoice.client_id, invoice.quote_id, transactionCategory, amount, payment_method,
-      bank_account_id || null, cheque_number || null, cheque_date || null,
+      resolvedBankAccountId, cheque_number || null, cheque_date || null,
       reference_number || null, slip_url || null, finalNotes, actorUserId,
     ]
   );
@@ -410,7 +414,7 @@ async function applyInvoicePayment(pgClient, {
         cheque_number, cheque_date, reference_number, slip_url, notes, verified_by)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
     [
-      invoice.invoice_id, transaction_id, amount, payment_method, bank_account_id || null,
+      invoice.invoice_id, transaction_id, amount, payment_method, resolvedBankAccountId,
       cheque_number || null, cheque_date || null, reference_number || null,
       slip_url || null, finalNotes, actorUserId,
     ]
@@ -568,6 +572,9 @@ exports.recordInvoicePayment = async (req, res) => {
 
     await pgClient.query('COMMIT');
 
+    // CASH payments have no client-supplied bank account — route them to Petty Cash instead.
+    const resolvedBankAccountId = await resolveBankAccountId(payment_method, bank_account_id);
+
     await safeLog({
       actorUserId,
       actorRole,
@@ -588,7 +595,7 @@ exports.recordInvoicePayment = async (req, res) => {
         payment_method,
         reference_number: reference_number || null,
         cheque_number: cheque_number || null,
-        bank_account_id: bank_account_id || null,
+        bank_account_id: resolvedBankAccountId,
         payment_date: new Date(),
         line_items: [{ label: 'Product Invoice', description: invoice.invoice_code, amount: parsedAmount }],
         generated_by: actorUserId,

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Wallet, Receipt, X, UserCheck, CalendarX, CheckCircle2, LayoutGrid, AlertTriangle } from 'lucide-react';
+import { Wallet, Receipt, X, UserCheck, CalendarX, CheckCircle2, LayoutGrid, AlertTriangle, Lock } from 'lucide-react';
 import DateInput from '../../../components/common/DateInput';
 
 const useIsMobile = (query = '(max-width: 639px)') => {
@@ -108,6 +108,7 @@ const CareTimeline = ({
   reschedules = [],      // [{ reschedule_id, shift_slot_id, original_date, new_date, new_start_time, assignment_id, makeup_staff_name, shift_number, shift_label }]
   manualSalaryDay = false,
   manualInvoiceDay = false,
+  pauses = [],           // [{ paused_date, resume_date, resumed_date }] — booking_pauses rows, any order
 }) => {
   const [monthOffset,   setMonthOffset]   = useState(null);
   const [hoveredDay,    setHoveredDay]    = useState(null);
@@ -131,12 +132,96 @@ const CareTimeline = ({
     return d;
   }, [simDate]);
 
+  // ── Pause windows ─────────────────────────────────────────────────────────
+  // A pause blanks out the calendar days between when it started and when it (or its
+  // target resume date) ends — those days look locked/greyed, don't count as service,
+  // and don't get their own "Day N" number. Everything from the resume day onward picks
+  // the numbering back up right where the pause began, so a week-long pause never makes
+  // the client's day count jump by a week for nothing.
+  const pauseWindows = useMemo(() => {
+    if (!start || !pauses.length) return [];
+    const dayNumOf = (dateStr) => {
+      if (!dateStr) return null;
+      const d = new Date(dateStr);
+      if (isNaN(d)) return null;
+      d.setHours(0, 0, 0, 0);
+      return Math.round((d - start) / 86400000) + 1;
+    };
+    return pauses
+      .map((p) => ({
+        pausedDayNum: dayNumOf(p.paused_date),
+        // An already-resumed pause is bounded by when it ACTUALLY resumed, not the
+        // (possibly missed/changed) target resume_date it was set to.
+        endDayNum: p.resumed_date ? dayNumOf(p.resumed_date) : dayNumOf(p.resume_date),
+        openEnded: !p.resumed_date && !p.resume_date,
+      }))
+      .filter((w) => w.pausedDayNum != null)
+      .sort((a, b) => a.pausedDayNum - b.pausedDayNum);
+  }, [pauses, start]);
+
+  // Resolves a raw (uncompressed) calendar day-number to whether it falls inside a
+  // locked gap, and — if not — its display day-number with prior gaps squeezed out.
+  const resolvePauseDay = (rawDayNum) => {
+    let locked = false;
+    let compress = 0;
+    for (const w of pauseWindows) {
+      if (w.openEnded) {
+        if (rawDayNum > w.pausedDayNum) locked = true;
+        continue;
+      }
+      const gapStart = w.pausedDayNum + 1;
+      const gapEnd = w.endDayNum - 1;
+      if (gapEnd < gapStart) continue; // resumed same/next day — no visible gap
+      if (rawDayNum >= gapStart && rawDayNum <= gapEnd) locked = true;
+      else if (rawDayNum > gapEnd) compress += (gapEnd - gapStart + 1);
+    }
+    return { locked, displayDayNum: rawDayNum - compress };
+  };
+
+  // Inverse of resolvePauseDay's compression — plannedDays/paidDays are day-COUNTS
+  // (effective/compressed scale, e.g. "9 days of paid service"), but the calendar grid
+  // needs a RAW calendar day-number to know how many real dates to render. Without
+  // this, a paused booking's grid gets cut short by exactly the length of its pause
+  // gap(s) — the last few paid days after resuming never appear.
+  const effectiveCountToRawDay = (target) => {
+    let raw = target;
+    for (const w of pauseWindows) {
+      if (w.openEnded) break; // nothing meaningfully "beyond" an open-ended pause
+      const gapStart = w.pausedDayNum + 1;
+      const gapEnd = w.endDayNum - 1;
+      if (gapEnd < gapStart) continue;
+      if (raw >= gapStart) raw += (gapEnd - gapStart + 1);
+    }
+    return raw;
+  };
+
   // ── Day counts ────────────────────────────────────────────────────────────
 
   const servedDays = useMemo(() => {
+    // VISITING is a one-time visit — it only ever has a single service day, so
+    // servedDays is always 1 (never inflates with elapsed calendar days, and never
+    // drops to 0 before the visit date either).
+    if (serviceModel === 'VISITING') return 1;
     if (!start) return 0;
-    return Math.max(0, Math.floor((effectiveToday - start) / 86400000) + 1);
-  }, [start, effectiveToday]);
+    const rawDayNum = Math.max(0, Math.floor((effectiveToday - start) / 86400000) + 1);
+    if (rawDayNum === 0) return 0;
+    // While "today" sits inside a locked gap (or past an open-ended pause with no
+    // resume date), service isn't actually happening — freeze the count at the day
+    // the pause started rather than let real calendar time keep inflating it.
+    for (const w of pauseWindows) {
+      if (w.openEnded) {
+        if (rawDayNum > w.pausedDayNum) return resolvePauseDay(w.pausedDayNum).displayDayNum;
+        continue;
+      }
+      const gapStart = w.pausedDayNum + 1;
+      const gapEnd = w.endDayNum - 1;
+      if (gapEnd >= gapStart && rawDayNum >= gapStart && rawDayNum <= gapEnd) {
+        return resolvePauseDay(w.pausedDayNum).displayDayNum;
+      }
+    }
+    return resolvePauseDay(rawDayNum).displayDayNum;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [start, effectiveToday, pauseWindows]);
 
   // SHIFT_BASED bookings are billed per shift, so a "day" of payment covers one
   // full pattern of shifts (shift_rate × shifts/day) — dailyRate plays no part.
@@ -175,11 +260,18 @@ const CareTimeline = ({
     // defaults to just after the scheduled end) — without this, that date falls outside
     // displayDays and renders as a plain "outside booking" cell instead of the makeup shift.
     reschedules.forEach((r) => consider(r.new_date));
+    // A pause's (target or actual) resume date is often well past whatever the plan/
+    // served-days would otherwise reach — without this, displayDays cuts off partway
+    // through the locked gap and the resume day (and everything after it) never renders.
+    pauses.forEach((p) => { consider(p.resume_date); consider(p.resumed_date); });
     return max;
-  }, [start, staffAssignments, scheduledActions, terminationRequests, shiftPatternScheduled, completionDate, reschedules]);
+  }, [start, staffAssignments, scheduledActions, terminationRequests, shiftPatternScheduled, completionDate, reschedules, pauses]);
 
   const hasPlan = (plannedDays || 0) > 0;
-  const displayDays  = Math.max(plannedDays || 0, servedDays, maxEventDayNum);
+  // plannedDays/servedDays are effective (pause-compressed) day-COUNTS — convert to
+  // raw calendar day-numbers before comparing against maxEventDayNum (already raw),
+  // otherwise the grid is cut short by exactly however many days were paused.
+  const displayDays  = Math.max(effectiveCountToRawDay(plannedDays || 0), effectiveCountToRawDay(servedDays), maxEventDayNum);
   // Overrun ("beyond booking end") only makes sense relative to a real paid plan.
   // An unpaid booking has no plan to exceed — every served day is simply unpaid/
   // overdue, rendered like the others rather than flagged as "beyond booking end".
@@ -196,10 +288,18 @@ const CareTimeline = ({
   // take whichever reaches further — matching the extent the rest of the calendar
   // has always painted as "the booking".
   const naturalEndDayNum = useMemo(() => {
+    // plannedDays is an effective (pause-compressed) day-COUNT; this bound is compared
+    // against RAW day-numbers elsewhere, so it needs the same raw-equivalent conversion
+    // as displayDays — otherwise a paused booking's natural end looks like it arrives
+    // one pause-gap's-worth of days too early, and every day after that (that only has
+    // coverage because it was legitimately re-staffed post-resume) gets treated as "not
+    // a real booking day" and greyed out like an outside cell.
+    const rawPlannedDays = (plannedDays || 0) > 0 ? effectiveCountToRawDay(plannedDays) : 0;
+
     // SHIFT_BASED has no booking end date at all — the shift-derived plannedDays
     // is the only natural bound. Before any payment/plan exists there is nothing
     // to bound against, so natural occurrences render on every day the grid reaches.
-    if (isShiftBased) return (plannedDays || 0) > 0 ? plannedDays : null;
+    if (isShiftBased) return rawPlannedDays > 0 ? rawPlannedDays : null;
 
     let schedEnd = 0;
     if (start && scheduledEndDate) {
@@ -209,9 +309,10 @@ const CareTimeline = ({
         schedEnd = Math.round((d - start) / 86400000) + 1;
       }
     }
-    const end = Math.max(schedEnd, plannedDays || 0);
+    const end = Math.max(schedEnd, rawPlannedDays);
     return end > 0 ? end : null;
-  }, [start, scheduledEndDate, plannedDays, isShiftBased]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [start, scheduledEndDate, plannedDays, isShiftBased, pauseWindows]);
 
   // Future days past the booking's natural end carry no shift occurrences of
   // their own — the grid only reaches them because something explicit (e.g. a
@@ -230,8 +331,11 @@ const CareTimeline = ({
     const paidShifts = Math.floor(Number(totalPaid || 0) / shiftRate);
     const remainder = paidShifts - (plannedDays - 1) * shiftSlots.length;
     if (remainder <= 0 || remainder >= shiftSlots.length) return null;
-    return { day: plannedDays, count: remainder };
-  }, [isShiftBased, shiftRate, shiftSlots, plannedDays, totalPaid]);
+    // `day` is matched against the RAW day-number in getNursesForDay — plannedDays
+    // itself is an effective (pause-compressed) count, same conversion as elsewhere.
+    return { day: effectiveCountToRawDay(plannedDays), count: remainder };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isShiftBased, shiftRate, shiftSlots, plannedDays, totalPaid, pauseWindows]);
 
   // ── Reschedules — moved-away origins + makeup occurrences ────────────────
   const movedOrigins = useMemo(() => {
@@ -348,9 +452,11 @@ const CareTimeline = ({
       });
     }
 
-    // Built-in: planned booking end — always derived from start + plannedDays, no API needed
+    // Built-in: planned booking end — start + plannedDays, no API needed. plannedDays is
+    // an effective (pause-compressed) count, so convert to a raw day-number first, or a
+    // pause pushes the real calendar end date out further than this marker would show.
     if (start && plannedDays > 0) {
-      const lastDay = shiftDays(start, plannedDays - 1);
+      const lastDay = shiftDays(start, effectiveCountToRawDay(plannedDays) - 1);
       const cfg = EVENT_CFG.BOOKING_END;
       add(toLocalISO(lastDay), {
         type:  'BOOKING_END',
@@ -376,7 +482,7 @@ const CareTimeline = ({
     }
 
     return map;
-  }, [staffAssignments, scheduledActions, terminationRequests, shiftPatternScheduled, shiftSlots, start, plannedDays, bookingStatus, completionDate]);
+  }, [staffAssignments, scheduledActions, terminationRequests, shiftPatternScheduled, shiftSlots, start, plannedDays, bookingStatus, completionDate, pauseWindows]);
 
   const getDayMeta = (dateISO, delivered) => {
     if (!delivered) return { salary: null, invoice: null };
@@ -417,7 +523,14 @@ const CareTimeline = ({
         aStart.setHours(0, 0, 0, 0);
         const aEnd = (a.service_end_date || a.endDate) ? new Date(a.service_end_date || a.endDate) : null;
         if (aEnd) aEnd.setHours(23, 59, 59, 999);
-        if (dayDate >= aStart && (!aEnd || dayDate <= aEnd)) {
+        // VISITING is a one-time visit — only its single service_start_date day
+        // should be staffed, not every day from then on (unlike LIVE_IN's ongoing range).
+        // Compared as calendar dates (not exact timestamps) since dayDate sits at
+        // noon while aStart sits at midnight.
+        const inRange = serviceModel === 'VISITING'
+          ? toLocalISO(dayDate) === toLocalISO(aStart)
+          : dayDate >= aStart && (!aEnd || dayDate <= aEnd);
+        if (inRange) {
           if (!bestStart || aStart > bestStart) {
             bestStart = aStart;
             const id = a.staff_profile_id || a.staffId || a.id;
@@ -562,15 +675,27 @@ const CareTimeline = ({
     for (let d = 1; d <= daysInMonth; d++) {
       const cellDate  = new Date(year, month, d);
       const dateISO   = toLocalISO(cellDate);
-      const dayNum    = Math.round((cellDate - start) / 86400000) + 1;
-      const inBooking = dayNum >= 1 && dayNum <= displayDays;
+      const rawDayNum = Math.round((cellDate - start) / 86400000) + 1;
+      const inBooking = rawDayNum >= 1 && rawDayNum <= displayDays;
+      const { locked: isPaused, displayDayNum: dayNum } = resolvePauseDay(rawDayNum);
 
-      const nurses = inBooking ? getNursesForDay(dayNum) : [];
+      if (inBooking && isPaused) {
+        cells.push({ type: 'paused', calDay: d, dateISO });
+        continue;
+      }
 
-      // Days past the booking's natural end are only "in" the grid because a
-      // makeup shift somewhere extended it — the in-between days (no makeup of
-      // their own) are not booking days and grey out like any outside day.
-      if (!inBooking || (isBeyondNaturalFuture(dayNum) && nurses.length === 0)) {
+      // getNursesForDay/isBeyondNaturalFuture map a day-number back to a real calendar
+      // date (or compare against naturalEndDayNum, itself derived straight from real
+      // dates) — both need the RAW day-number, not the pause-compressed display one.
+      const nurses = inBooking ? getNursesForDay(rawDayNum) : [];
+      const cellEvents = inBooking ? (eventsByDate.get(dateISO) || []) : [];
+
+      // Days past the booking's natural end are only "in" the grid because a makeup
+      // shift (nurses.length > 0) or a scheduled event (cellEvents.length > 0, e.g. a
+      // termination/completion date set beyond the paid plan) somewhere extended it —
+      // days with neither of their own are not booking days and grey out like any
+      // outside day.
+      if (!inBooking || (isBeyondNaturalFuture(rawDayNum) && nurses.length === 0 && cellEvents.length === 0)) {
         cells.push({ type: 'outside', calDay: d, dateISO });
       } else {
         const isToday   = dayNum === servedDays;
@@ -578,7 +703,6 @@ const CareTimeline = ({
         const isOverrun = hasPlan && dayNum > plannedDays;
         const status    = dayNum <= paidDays ? 'paid' : dayNum <= servedDays ? 'overdue' : 'upcoming';
         const { salary: salaryMeta, invoice: invoiceMeta } = getDayMeta(dateISO, delivered);
-        const cellEvents = eventsByDate.get(dateISO) || [];
         cells.push({
           type: 'booking',
           calDay: d, dayNum, nurses, isToday, delivered, isOverrun, status,
@@ -599,7 +723,7 @@ const CareTimeline = ({
       calRows: rows,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clampedMonthIdx, bookingMonths, start, displayDays, plannedDays, paidDays, servedDays, nurseColorMap, attendanceByDate, invoiceByDate, manualSalaryDay, manualInvoiceDay, shiftSlots, eventsByDate, staffAssignments, reschedules, movedOrigins, assignmentByIdForReschedule, naturalEndDayNum, partialLastDay]);
+  }, [clampedMonthIdx, bookingMonths, start, displayDays, plannedDays, paidDays, servedDays, nurseColorMap, attendanceByDate, invoiceByDate, manualSalaryDay, manualInvoiceDay, shiftSlots, eventsByDate, staffAssignments, reschedules, movedOrigins, assignmentByIdForReschedule, naturalEndDayNum, partialLastDay, pauseWindows]);
 
   const activeCell = useMemo(() => {
     if (hoveredDay == null) return null;
@@ -824,6 +948,23 @@ const CareTimeline = ({
                     }}
                   >
                     <span style={{ fontSize: 10, color: '#D0CAC1', fontWeight: 500 }}>{cell.calDay}</span>
+                  </div>
+                );
+              }
+
+              if (cell.type === 'paused') {
+                return (
+                  <div
+                    key={`p-${cell.calDay}`}
+                    title="Booking paused — no service this day"
+                    style={{
+                      aspectRatio: '1/1', borderRadius: 12,
+                      border: '1px solid #E2DED6', background: 'repeating-linear-gradient(45deg, #EFEBE3, #EFEBE3 6px, #E6E1D7 6px, #E6E1D7 12px)',
+                      display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '4px 5px',
+                    }}
+                  >
+                    <span style={{ fontSize: 10, color: '#A8A199', fontWeight: 500 }}>{cell.calDay}</span>
+                    <Lock style={{ width: 10, height: 10, color: '#A8A199' }} />
                   </div>
                 );
               }
