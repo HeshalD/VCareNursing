@@ -117,7 +117,7 @@ const startDailyInvoicing = () => {
           bsa.booking_id,
           bsa.staff_profile_id,
           bsa.daily_rate,
-          bsa.service_start_date,
+          bsa.service_start_date::text as service_start_date,
           bsa.service_end_date,
           b.client_id,
           b.service_model,
@@ -149,13 +149,32 @@ const startDailyInvoicing = () => {
 
       // Step 3 — Process staff earnings and client invoices
       // Only LIVE_IN bookings are auto-processed by the cron. A live-in nurse is
-      // on-site continuously, so the daily salary is never in question. SHIFT_BASED
-      // and VISITING staff may work far less than a full day (e.g. a 4-hour overnight
-      // shift), so their salary requires an admin to log actual in/out time and
-      // confirm payment manually via the attendance endpoints — see
-      // controllers/dailyAttendanceController.js.
+      // on-site continuously for every FULL day in the middle of the booking, so
+      // daily salary there is never in question. SHIFT_BASED and VISITING staff may
+      // work far less than a full day (e.g. a 4-hour overnight shift), so their
+      // salary requires an admin to log actual in/out time and confirm payment
+      // manually via the attendance endpoints — see controllers/dailyAttendanceController.js.
+      //
+      // LIVE_IN's first and last day are the same kind of partial-day problem — staff
+      // may arrive partway through day one or leave partway through the final day — so
+      // those two boundary days are excluded from auto-pay below and left PENDING for
+      // the admin to log the actual in/out time and decide manually, exactly like
+      // SHIFT_BASED/VISITING. Every day in between still auto-pays as before.
       let staffEarningsCount = 0;
       let clientInvoiceCount = 0;
+
+      // Bookings with a TERMINATION/COMPLETION scheduled for today (or overdue) —
+      // today is that booking's last day. Checked here because post-billing scheduled
+      // actions (which actually flip booking_staff_assignments.status away from ACTIVE)
+      // run AFTER this staff-earnings loop, so service_end_date isn't set yet at this
+      // point and status is still 'ACTIVE' — without this check the assignment would
+      // get auto-paid for its last day same as any other day.
+      const endingTodayRes = await client.query(
+        `SELECT DISTINCT booking_id FROM scheduled_actions
+         WHERE status = 'SCHEDULED' AND effective_date <= $1 AND action_type IN ('TERMINATION', 'COMPLETION')`,
+        [today]
+      );
+      const bookingsEndingToday = new Set(endingTodayRes.rows.map(r => r.booking_id));
 
       // Group assignments by booking for client invoicing
       const bookingMap = new Map();
@@ -181,6 +200,13 @@ const startDailyInvoicing = () => {
       // ===== PROCESS STAFF EARNINGS (LIVE_IN only) =====
       for (const assignment of activeAssignments) {
         if (assignment.service_model !== 'LIVE_IN') continue; // SHIFT_BASED/VISITING require manual confirmation
+
+        const isFirstDay = assignment.service_start_date === today;
+        const isLastDay = bookingsEndingToday.has(assignment.booking_id);
+        if (isFirstDay || isLastDay) {
+          console.log(`⏭️  Staff Earnings: skipping auto-pay for ${assignment.staff_name} on ${today} (${isFirstDay ? 'first' : 'last'} day — needs manual in/out + pay decision)`);
+          continue;
+        }
 
         try {
           const salaryAmount = parseFloat(assignment.daily_rate);
@@ -209,11 +235,34 @@ const startDailyInvoicing = () => {
         }
       }
 
+      // A booking's first day (any of its current assignments starting today) — same
+      // boundary as the staff-earnings loop above. The client is only with us for part
+      // of that day, so it's left for the admin to invoice manually alongside logging
+      // the staff member's start time, instead of auto-charging a full day.
+      const bookingsStartingToday = new Set(
+        activeAssignments.filter(a => a.service_model === 'LIVE_IN' && a.service_start_date === today).map(a => a.booking_id)
+      );
+
+      // VISITING is a one-time visit, not a recurring engagement — only seed a PENDING
+      // invoice on the visit's own date, not every night the booking happens to still be
+      // ACTIVE (e.g. because the admin hasn't gotten around to logging/invoicing it yet).
+      // See services/visitingBookings.maybeAutoCompleteVisitingBooking — once both the
+      // salary and invoice for that date are decided, the booking auto-completes, so
+      // there's nothing to seed on subsequent nights anyway; this only matters for the
+      // window between the visit date and whenever the admin actually finalizes it.
+      const visitingBookingsDueToday = new Set(
+        activeAssignments.filter(a => a.service_model === 'VISITING' && a.service_start_date === today).map(a => a.booking_id)
+      );
+
       // ===== PROCESS CLIENT INVOICES (LIVE_IN + invoicing_mode = AUTO only) =====
       // SHIFT_BASED/VISITING bookings are always manual. LIVE_IN bookings can opt
       // into manual invoicing via bookings.invoicing_mode = 'MANUAL'.
       for (const [bookingId, bookingData] of bookingMap.entries()) {
         if (bookingData.service_model !== 'LIVE_IN' || bookingData.invoicing_mode === 'MANUAL') continue;
+        if (bookingsStartingToday.has(bookingId) || bookingsEndingToday.has(bookingId)) {
+          console.log(`⏭️  Client Invoice: skipping auto-invoice for booking ${bookingId} on ${today} (${bookingsStartingToday.has(bookingId) ? 'first' : 'last'} day — needs manual invoice decision)`);
+          continue;
+        }
 
         try {
           const { amount, notes } = getBillingCharge(bookingData);
@@ -252,11 +301,14 @@ const startDailyInvoicing = () => {
       // which derives occurrences live from the shift pattern instead.
       let pendingSeededCount = 0;
 
-      // VISITING and LIVE_IN MANUAL: one PENDING row per booking per day
+      // LIVE_IN MANUAL: one PENDING row per booking per day. LIVE_IN AUTO bookings also
+      // get one on their first/last day only (see bookingsStartingToday/bookingsEndingToday
+      // above). VISITING gets exactly one, on its visit date (see visitingBookingsDueToday).
       for (const [bookingId, bookingData] of bookingMap.entries()) {
         const isManualType =
-          bookingData.service_model === 'VISITING' ||
-          (bookingData.service_model === 'LIVE_IN' && bookingData.invoicing_mode === 'MANUAL');
+          (bookingData.service_model === 'VISITING' && visitingBookingsDueToday.has(bookingId)) ||
+          (bookingData.service_model === 'LIVE_IN' && bookingData.invoicing_mode === 'MANUAL') ||
+          (bookingData.service_model === 'LIVE_IN' && (bookingsStartingToday.has(bookingId) || bookingsEndingToday.has(bookingId)));
         if (!isManualType) continue;
 
         try {

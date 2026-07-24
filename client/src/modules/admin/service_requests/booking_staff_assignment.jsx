@@ -64,6 +64,7 @@ const BookingStaffAssignmentPage = () => {
     staff_profile_id:    location.state?.selectedStaff?.staff_profile_id || '',
     service_start_date:  '',
     service_start_time:  '',
+    assigned_hours:      '',
     daily_rate:          '',
     ot_rate:             '',
     notes:               '',
@@ -96,6 +97,20 @@ const BookingStaffAssignmentPage = () => {
   };
 
   const [shiftSlots, setShiftSlots] = useState(() => {
+    // Resuming a paused SHIFT_BASED booking passes the exact pre-pause shift times/
+    // labels/staff (see BookingDetailPageV2.handleResume) — restores "left off
+    // exactly as it was", still fully editable including swapping staff.
+    const restored = location.state?.selectedShiftSlots;
+    if (Array.isArray(restored) && restored.length > 0) {
+      return restored.map((s, i) => ({
+        shift_number: s.shift_number || i + 1,
+        start_time: (s.start_time || '08:00').slice(0, 5),
+        duration_hours: s.duration_hours != null ? String(s.duration_hours) : '',
+        label: s.label || `Shift ${s.shift_number || i + 1}`,
+        staff_profile_id: s.staff_profile_id || '',
+        daily_rate: '',
+      }));
+    }
     const queue = location.state?.selectedStaffQueue;
     if (Array.isArray(queue) && queue.length > 0) {
       return buildDefaultShiftSlots(queue.length).map((s, i) => ({
@@ -125,6 +140,7 @@ const BookingStaffAssignmentPage = () => {
   );
 
   const isShiftBased = formData?.booking?.service_model === 'SHIFT_BASED';
+  const isLiveIn     = formData?.booking?.service_model === 'LIVE_IN';
 
   // How many shifts the client's payments cover — amount paid ÷ per-shift rate.
   // (bookings.amount_paid mirrors verified quote payments on conversion; fall back
@@ -188,6 +204,20 @@ const BookingStaffAssignmentPage = () => {
   useEffect(() => {
     if (bookingId) { fetchData(); fetchNotes(); fetchSalespersons(); }
   }, [bookingId]);
+
+  // Pre-select the salesperson currently assigned to this booking's client, so the
+  // admin doesn't have to look it up manually — still fully changeable via the picker.
+  useEffect(() => {
+    const clientId = formData?.booking?.client_id;
+    if (!clientId) return;
+    apiClient.getClientSalesperson(clientId)
+      .then((response) => {
+        const currentSalespersonId = response?.data?.current?.salesperson_id;
+        if (!currentSalespersonId) return;
+        setAssignment((prev) => (prev.salesperson_id ? prev : { ...prev, salesperson_id: currentSalespersonId }));
+      })
+      .catch(() => { /* non-fatal */ });
+  }, [formData?.booking?.client_id]);
 
   // Batched schedule lookup for every candidate on this form — lets the admin see
   // each staff member's existing/upcoming commitments before assigning them here.
@@ -266,6 +296,7 @@ const BookingStaffAssignmentPage = () => {
         staff_profile_id:   assignment.staff_profile_id,
         service_start_date: isoStartDate,
         service_start_time: assignment.service_start_time || null,
+        assigned_hours:     isLiveIn ? 24 : (assignment.assigned_hours ? parseFloat(assignment.assigned_hours) : null),
         daily_rate:         assignment.daily_rate  ? parseFloat(assignment.daily_rate)  : null,
         ot_rate:            assignment.ot_rate     ? parseFloat(assignment.ot_rate)     : null,
         notes:              assignment.notes       || null,
@@ -458,6 +489,23 @@ const BookingStaffAssignmentPage = () => {
                         className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       />
                       <p className="mt-1 text-xs text-gray-400">Sent in the booking confirmation to staff and client.</p>
+                    </FormField>
+                  )}
+
+                  {!isShiftBased && !isLiveIn && (
+                    <FormField label="Assigned Hours (per day)">
+                      <input
+                        type="number"
+                        min="0"
+                        max="24"
+                        step="0.5"
+                        value={assignment.assigned_hours}
+                        onChange={(e) => setAssignment({ ...assignment, assigned_hours: e.target.value })}
+                        onWheel={(e) => e.currentTarget.blur()}
+                        className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        placeholder="e.g. 8"
+                      />
+                      <p className="mt-1 text-xs text-gray-400">Expected hours worked per day — used to compare against logged attendance.</p>
                     </FormField>
                   )}
 

@@ -19,6 +19,7 @@ const PERMISSIONS = {
   VIEW_FINANCIAL:              { label: 'View Financial Overview',          module: 'Financial',            category: 'page' },
   VIEW_STATEMENTS:             { label: 'View Statements',                  module: 'Statements',           category: 'page' },
   VIEW_BANK_ACCOUNTS:          { label: 'View Bank Accounts',               module: 'Bank Accounts',        category: 'page' },
+  VIEW_VENDORS:                { label: 'View Vendors',                     module: 'Vendors',              category: 'page' },
   VIEW_ACTIVITY_LOG:           { label: 'View Activity Log',                module: 'Activity Log',         category: 'page' },
   VIEW_STAFF_REVIEWS:          { label: 'View Staff Reviews',               module: 'Staff Reviews',        category: 'page' },
   VIEW_SETTINGS:               { label: 'View Settings',                    module: 'Settings',             category: 'page' },
@@ -114,6 +115,13 @@ const PERMISSIONS = {
   BANK_ACCOUNT_CREATE:         { label: 'Create Bank Account',              module: 'Bank Accounts',        category: 'action' },
   BANK_ACCOUNT_EDIT:           { label: 'Edit Bank Account',                module: 'Bank Accounts',        category: 'action' },
   BANK_ACCOUNT_DEACTIVATE:     { label: 'Deactivate Bank Account',          module: 'Bank Accounts',        category: 'action' },
+  PETTY_CASH_RECORD_TRANSACTION: { label: 'Record Petty Cash Transaction',  module: 'Bank Accounts',        category: 'action' },
+
+  // ── Vendors ───────────────────────────────────────────────────────────────
+  VENDOR_CREATE:               { label: 'Create Vendor',                    module: 'Vendors',              category: 'action' },
+  VENDOR_EDIT:                 { label: 'Edit Vendor',                      module: 'Vendors',              category: 'action' },
+  VENDOR_RECORD_BILL:          { label: 'Record Vendor Bill',               module: 'Vendors',              category: 'action' },
+  VENDOR_PAY_BILL:             { label: 'Pay Vendor Bill',                  module: 'Vendors',              category: 'action' },
 
   // ── Staff Reviews ─────────────────────────────────────────────────────────
   REVIEW_TOGGLE_VISIBILITY:    { label: 'Toggle Review Visibility',         module: 'Staff Reviews',        category: 'action' },
@@ -155,7 +163,7 @@ const ROLE_TEMPLATES = {
   ACCOUNTS: [
     'VIEW_DASHBOARD', 'VIEW_BOOKINGS', 'VIEW_USER_MANAGEMENT', 'VIEW_QUOTATIONS',
     'VIEW_TRANSACTIONS', 'VIEW_FINANCIAL', 'VIEW_STATEMENTS', 'VIEW_BANK_ACCOUNTS',
-    'VIEW_ADVANCE_REQUESTS', 'VIEW_ACTIVITY_LOG',
+    'VIEW_ADVANCE_REQUESTS', 'VIEW_ACTIVITY_LOG', 'VIEW_VENDORS',
     'BOOKING_RECORD_PAYMENT', 'BOOKING_VERIFY_PAYMENT', 'BOOKING_REJECT_PAYMENT',
     'BOOKING_WALLET_PAYOFF', 'BOOKING_ADD_NOTE',
     'QUOTATION_RECORD_PAYMENT', 'QUOTATION_VERIFY_PAYMENT', 'QUOTATION_REJECT_PAYMENT',
@@ -167,6 +175,8 @@ const ROLE_TEMPLATES = {
     'TRANSACTION_ADD_MANUAL',
     'STATEMENT_SEND', 'STATEMENT_DELETE',
     'BANK_ACCOUNT_CREATE', 'BANK_ACCOUNT_EDIT', 'BANK_ACCOUNT_DEACTIVATE',
+    'PETTY_CASH_RECORD_TRANSACTION',
+    'VENDOR_CREATE', 'VENDOR_EDIT', 'VENDOR_RECORD_BILL', 'VENDOR_PAY_BILL',
   ],
   SALES: [
     'VIEW_DASHBOARD', 'VIEW_BOOKINGS', 'VIEW_QUOTATIONS', 'VIEW_USER_MANAGEMENT',

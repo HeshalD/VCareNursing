@@ -13,6 +13,8 @@
 
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
+const { resolveBankAccountId } = require('../utils/pettyCash');
+const { createVendorBillCore, applyVendorBillPayment } = require('./vendorController');
 
 function extractActorRole(role) {
   const raw = Array.isArray(role) ? role[0] : role;
@@ -46,6 +48,7 @@ class RentalAgreementError extends Error {
 async function createRentalAgreementCore(pgClient, {
   product_id, unit_id, client_id, walk_in_customer_id, quote_id,
   billing_type, rate, start_date, end_date, deposit_amount, notes, createdBy,
+  vendor_payment,
 }) {
   if (!product_id) throw new RentalAgreementError(400, 'product_id is required');
   if (!client_id && !walk_in_customer_id) {
@@ -129,7 +132,48 @@ async function createRentalAgreementCore(pgClient, {
     ]
   );
 
-  return { agreement, invoice: invoiceResult.rows[0], unit };
+  // If this product is sourced from a vendor, record what's owed to them for
+  // this rental and (if the admin chose to pay now) settle it immediately —
+  // same pgClient/transaction as the rest of the agreement.
+  let vendorBill = null;
+  const productResult = await pgClient.query('SELECT vendor_id, cost_price FROM products WHERE product_id = $1', [product_id]);
+  const product = productResult.rows[0];
+  if (product?.vendor_id) {
+    const decision = vendor_payment || {};
+    const billAmount = decision.amount !== undefined && decision.amount !== null && decision.amount !== ''
+      ? parseFloat(decision.amount)
+      : parseFloat(product.cost_price || 0);
+
+    if (billAmount > 0) {
+      vendorBill = await createVendorBillCore(pgClient, {
+        vendor_id: product.vendor_id,
+        source_type: 'RENTAL',
+        product_id,
+        reference_id: agreement.rental_agreement_id,
+        amount: billAmount,
+        description: `Rental agreement ${agreement.rental_agreement_id}`,
+        createdBy,
+      });
+
+      if (decision.pay_now) {
+        const vendorResult = await pgClient.query('SELECT * FROM vendors WHERE vendor_id = $1', [product.vendor_id]);
+        await applyVendorBillPayment(pgClient, {
+          bill: vendorBill,
+          vendor: vendorResult.rows[0],
+          amount: billAmount,
+          payment_method: decision.payment_method,
+          bank_account_id: decision.bank_account_id,
+          cheque_number: decision.cheque_number,
+          cheque_date: decision.cheque_date,
+          reference_number: decision.reference_number,
+          notes: decision.notes,
+          actorUserId: createdBy || null,
+        });
+      }
+    }
+  }
+
+  return { agreement, invoice: invoiceResult.rows[0], unit, vendor_bill: vendorBill };
 }
 
 module.exports.RentalAgreementError = RentalAgreementError;
@@ -247,14 +291,16 @@ exports.createRentalAgreement = async (req, res) => {
   const {
     product_id, unit_id, client_id, walk_in_customer_id, quote_id,
     billing_type, rate, start_date, end_date, deposit_amount, notes,
+    vendor_payment,
   } = req.body;
 
   try {
     await pgClient.query('BEGIN');
 
-    const { agreement, invoice, unit } = await createRentalAgreementCore(pgClient, {
+    const { agreement, invoice, unit, vendor_bill } = await createRentalAgreementCore(pgClient, {
       product_id, unit_id, client_id, walk_in_customer_id, quote_id,
       billing_type, rate, start_date, end_date, deposit_amount, notes,
+      vendor_payment,
       createdBy: req.user?.user_id,
     });
 
@@ -266,12 +312,12 @@ exports.createRentalAgreement = async (req, res) => {
       actionType: 'RENTAL_AGREEMENT_CREATED',
       entityType: 'RENTAL_AGREEMENT',
       entityId: agreement.rental_agreement_id,
-      details: { unit_id: unit.unit_id, product_id, billing_type, rate, deposit_amount: parseFloat(deposit_amount) || 0 },
+      details: { unit_id: unit.unit_id, product_id, billing_type, rate, deposit_amount: parseFloat(deposit_amount) || 0, vendor_bill_id: vendor_bill?.vendor_bill_id || null },
     });
 
     res.status(201).json({
       status: 'success',
-      data: { ...agreement, invoice },
+      data: { ...agreement, invoice, vendor_bill },
     });
   } catch (error) {
     await pgClient.query('ROLLBACK');
@@ -476,11 +522,15 @@ async function createDepositRefundTransaction(pgClient, deposit, { refundAmount,
     refundClientId = agreementResult.rows[0]?.client_id || null;
   }
 
+  // A CASH refund is physical cash leaving the till — route it to Petty Cash
+  // instead of leaving bank_account_id null.
+  const resolvedBankAccountId = await resolveBankAccountId(paymentMethod, companyBankAccountId);
+
   const txResult = await pgClient.query(
     `INSERT INTO transactions (client_id, category, transaction_type, amount, payment_method, bank_account_id, notes, status, verified_by)
      VALUES ($1, 'DEPOSIT_REFUND', 'DEBIT', $2, $3, $4, $5, 'COMPLETED', $6)
      RETURNING transaction_id`,
-    [refundClientId, refundAmount, paymentMethod, companyBankAccountId || null, notes || null, actorUserId || null]
+    [refundClientId, refundAmount, paymentMethod, resolvedBankAccountId, notes || null, actorUserId || null]
   );
   return txResult.rows[0].transaction_id;
 }

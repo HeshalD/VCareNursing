@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
+const { MANUAL_CATEGORIES, flowOf } = require('../utils/transactionFlow');
 
 function extractActorRole(role) {
   const raw = Array.isArray(role) ? role[0] : role;
@@ -27,7 +28,10 @@ const getAllBankAccounts = async (req, res) => {
         ba.created_at,
         ba.updated_at,
         ba.created_by,
-        ba.opening_balance + COALESCE(SUM(t.amount) FILTER (WHERE t.status = 'COMPLETED'), 0) AS current_balance
+        ba.is_petty_cash,
+        ba.opening_balance + COALESCE(SUM(
+          CASE WHEN t.transaction_type = 'DEBIT' THEN -t.amount ELSE t.amount END
+        ) FILTER (WHERE t.status = 'COMPLETED'), 0) AS current_balance
       FROM bank_accounts ba
       LEFT JOIN transactions t ON t.bank_account_id = ba.account_id
       WHERE ba.is_active = true
@@ -81,7 +85,8 @@ const getBankAccountById = async (req, res) => {
         opening_balance_date,
         created_at,
         updated_at,
-        created_by
+        created_by,
+        is_petty_cash
       FROM bank_accounts
       WHERE account_id = $1
     `, [account_id]);
@@ -389,13 +394,20 @@ const deactivateBankAccount = async (req, res) => {
 
     // Check if account exists
     const existsCheck = await db.query(`
-      SELECT account_id, is_active FROM bank_accounts WHERE account_id = $1
+      SELECT account_id, is_active, is_petty_cash FROM bank_accounts WHERE account_id = $1
     `, [account_id]);
 
     if (existsCheck.rows.length === 0) {
       return res.status(404).json({
         status: 'error',
         message: 'Bank account not found'
+      });
+    }
+
+    if (existsCheck.rows[0].is_petty_cash) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'The Petty Cash account cannot be deactivated'
       });
     }
 
@@ -713,9 +725,10 @@ const getAccountReconciliation = async (req, res) => {
 
     // Get all verified transactions for this account
     const transactionsResult = await db.query(`
-      SELECT 
+      SELECT
         transaction_id,
         amount,
+        transaction_type,
         payment_method,
         status,
         created_at,
@@ -726,15 +739,23 @@ const getAccountReconciliation = async (req, res) => {
       ORDER BY created_at ASC
     `, [account_id]);
 
-    // Calculate totals
+    // Calculate totals — DEBIT rows are stored as positive amounts, so they
+    // must be subtracted (not summed in) to net out to the real balance.
     let total_deposits = 0;
+    let total_withdrawals = 0;
     let transaction_details = [];
 
     for (const transaction of transactionsResult.rows) {
-      total_deposits += parseFloat(transaction.amount);
+      const amt = parseFloat(transaction.amount);
+      if (transaction.transaction_type === 'DEBIT') {
+        total_withdrawals += amt;
+      } else {
+        total_deposits += amt;
+      }
       transaction_details.push({
         transaction_id: transaction.transaction_id,
-        amount: parseFloat(transaction.amount),
+        amount: amt,
+        transaction_type: transaction.transaction_type,
         payment_method: transaction.payment_method,
         category: transaction.category,
         date: transaction.created_at,
@@ -751,7 +772,8 @@ const getAccountReconciliation = async (req, res) => {
       summary: {
         opening_balance: opening_balance,
         total_deposits: total_deposits,
-        closing_balance: opening_balance + total_deposits,
+        total_withdrawals: total_withdrawals,
+        closing_balance: opening_balance + total_deposits - total_withdrawals,
         transaction_count: transactionsResult.rows.length,
         reconciliation_status: 'READY_FOR_REVIEW'
       },
@@ -767,6 +789,266 @@ const getAccountReconciliation = async (req, res) => {
   }
 };
 
+function extractActorUserId(req) {
+  return req.user?.user_id || null;
+}
+
+/**
+ * Record a manual CASH transaction against the Petty Cash account.
+ * Available to SUPER_ADMIN and any internal user explicitly granted the
+ * PETTY_CASH_RECORD_TRANSACTION permission (enforced by route middleware).
+ * POST /api/bank-accounts/petty-cash/transactions
+ */
+const recordPettyCashTransaction = async (req, res) => {
+  try {
+    const {
+      category,
+      amount,
+      direction,
+      external_party,
+      reference_number,
+      notes,
+      transaction_date
+    } = req.body;
+
+    if (!category || !MANUAL_CATEGORIES.includes(category)) {
+      return res.status(400).json({
+        status: 'error',
+        message: `category must be one of: ${MANUAL_CATEGORIES.join(', ')}`
+      });
+    }
+
+    const parsedAmount = parseFloat(amount);
+    if (!parsedAmount || parsedAmount <= 0) {
+      return res.status(400).json({ status: 'error', message: 'amount is required and must be > 0' });
+    }
+
+    if (!external_party || !String(external_party).trim()) {
+      return res.status(400).json({ status: 'error', message: 'external_party (paid to / received from) is required' });
+    }
+
+    // Direction is derived from the category by default (same rule as the general
+    // manual transaction tool), but petty cash allows an explicit override since
+    // small cash movements (e.g. a refund into the tin) don't always match the
+    // category's usual flow.
+    const resolvedDirection = ['CREDIT', 'DEBIT'].includes(direction) ? direction : (flowOf(category) === 'IN' ? 'CREDIT' : 'DEBIT');
+
+    if (transaction_date) {
+      const txDate = new Date(transaction_date);
+      if (isNaN(txDate.getTime())) {
+        return res.status(400).json({ status: 'error', message: 'Invalid transaction_date' });
+      }
+      const today = new Date();
+      today.setHours(23, 59, 59, 999);
+      if (txDate > today) {
+        return res.status(400).json({ status: 'error', message: 'transaction_date cannot be in the future' });
+      }
+    }
+
+    const pettyCashResult = await db.query(
+      `SELECT account_id FROM bank_accounts WHERE is_petty_cash = true AND is_active = true LIMIT 1`
+    );
+    if (pettyCashResult.rows.length === 0) {
+      return res.status(500).json({ status: 'error', message: 'Petty cash account is not configured' });
+    }
+    const pettyCashAccountId = pettyCashResult.rows[0].account_id;
+
+    const actorUserId = extractActorUserId(req);
+    const actorRole = extractActorRole(req.user?.role);
+    const nameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [actorUserId]);
+    const actorName = nameRes.rows[0]?.full_name || 'Admin';
+
+    const insertResult = await db.query(
+      `INSERT INTO transactions
+         (category, transaction_type, amount, payment_method, bank_account_id,
+          reference_number, external_party, transaction_date, notes,
+          status, is_manual, created_by, verified_by)
+       VALUES ($1,$2,$3,'CASH',$4,$5,$6,COALESCE($7, CURRENT_DATE),$8,'COMPLETED',TRUE,$9,$9)
+       RETURNING *`,
+      [
+        category, resolvedDirection, parsedAmount, pettyCashAccountId,
+        reference_number || null, String(external_party).trim(),
+        transaction_date || null, notes || null, actorUserId
+      ]
+    );
+    const transaction = insertResult.rows[0];
+
+    await logActivity({
+      actorUserId,
+      actorName,
+      actorRole,
+      actionType: 'PETTY_CASH_TRANSACTION_ADDED',
+      entityType: 'transaction',
+      entityId: transaction.transaction_id,
+      details: {
+        category,
+        transaction_type: resolvedDirection,
+        amount: parsedAmount,
+        external_party: String(external_party).trim(),
+        transaction_date: transaction.transaction_date,
+        reference_number: reference_number || null,
+      },
+    });
+
+    return res.status(201).json({ status: 'success', transaction });
+  } catch (error) {
+    console.error('Error recording petty cash transaction:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to record petty cash transaction',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Transfer funds between two active bank accounts (including Petty Cash).
+ * Records a linked DEBIT (source) + CREDIT (destination) pair, category
+ * ACCOUNT_TRANSFER — deliberately left NEUTRAL in utils/transactionFlow.js
+ * so an internal transfer never inflates company income/expense totals.
+ * POST /api/bank-accounts/transfer
+ */
+const transferFunds = async (req, res) => {
+  const client = await db.pool.connect();
+  try {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const { from_account_id, to_account_id, amount, reference_number, notes, transfer_date } = req.body;
+
+    if (!from_account_id || !uuidRegex.test(from_account_id) || !to_account_id || !uuidRegex.test(to_account_id)) {
+      return res.status(400).json({ status: 'error', message: 'Invalid from_account_id or to_account_id' });
+    }
+    if (from_account_id === to_account_id) {
+      return res.status(400).json({ status: 'error', message: 'Source and destination accounts must be different' });
+    }
+
+    const parsedAmount = parseFloat(amount);
+    if (!parsedAmount || parsedAmount <= 0) {
+      return res.status(400).json({ status: 'error', message: 'amount is required and must be > 0' });
+    }
+
+    if (transfer_date) {
+      const d = new Date(transfer_date);
+      if (isNaN(d.getTime())) {
+        return res.status(400).json({ status: 'error', message: 'Invalid transfer_date' });
+      }
+      const today = new Date();
+      today.setHours(23, 59, 59, 999);
+      if (d > today) {
+        return res.status(400).json({ status: 'error', message: 'transfer_date cannot be in the future' });
+      }
+    }
+
+    await client.query('BEGIN');
+
+    // Lock both rows in a consistent order (by account_id) so two transfers
+    // racing in opposite directions can't deadlock each other, and compute
+    // the source account's real current balance to prevent an overdraw.
+    const accountsResult = await client.query(
+      `SELECT
+         ba.account_id, ba.account_nickname, ba.is_active,
+         ba.opening_balance + COALESCE((
+           SELECT SUM(CASE WHEN t.transaction_type = 'DEBIT' THEN -t.amount ELSE t.amount END)
+           FROM transactions t WHERE t.bank_account_id = ba.account_id AND t.status = 'COMPLETED'
+         ), 0) AS current_balance
+       FROM bank_accounts ba
+       WHERE ba.account_id IN ($1, $2)
+       ORDER BY ba.account_id
+       FOR UPDATE`,
+      [from_account_id, to_account_id]
+    );
+
+    const fromAccount = accountsResult.rows.find((a) => a.account_id === from_account_id);
+    const toAccount = accountsResult.rows.find((a) => a.account_id === to_account_id);
+
+    if (!fromAccount || !toAccount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ status: 'error', message: 'Source or destination account not found' });
+    }
+    if (!fromAccount.is_active || !toAccount.is_active) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ status: 'error', message: 'Both accounts must be active' });
+    }
+
+    const fromBalance = parseFloat(fromAccount.current_balance);
+    if (parsedAmount > fromBalance + 0.01) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        status: 'error',
+        message: `Insufficient balance in ${fromAccount.account_nickname} (available: ${fromBalance.toFixed(2)})`,
+      });
+    }
+
+    const actorUserId = extractActorUserId(req);
+    const actorRole = extractActorRole(req.user?.role);
+    const nameRes = await client.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [actorUserId]);
+    const actorName = nameRes.rows[0]?.full_name || 'Admin';
+
+    const debitNotes = notes || `Transfer to ${toAccount.account_nickname}`;
+    const creditNotes = notes || `Transfer from ${fromAccount.account_nickname}`;
+
+    const debitResult = await client.query(
+      `INSERT INTO transactions
+         (category, transaction_type, amount, payment_method, bank_account_id,
+          reference_number, notes, transaction_date, status, is_manual, created_by, verified_by)
+       VALUES ('ACCOUNT_TRANSFER', 'DEBIT', $1, 'ACCOUNT_TRANSFER', $2, $3, $4, COALESCE($5, CURRENT_DATE), 'COMPLETED', TRUE, $6, $6)
+       RETURNING transaction_id, transaction_date`,
+      [parsedAmount, from_account_id, reference_number || null, debitNotes, transfer_date || null, actorUserId]
+    );
+    const debitTransactionId = debitResult.rows[0].transaction_id;
+
+    const creditResult = await client.query(
+      `INSERT INTO transactions
+         (category, transaction_type, amount, payment_method, bank_account_id,
+          reference_number, notes, transaction_date, status, is_manual, created_by, verified_by)
+       VALUES ('ACCOUNT_TRANSFER', 'CREDIT', $1, 'ACCOUNT_TRANSFER', $2, $3, $4, COALESCE($5, CURRENT_DATE), 'COMPLETED', TRUE, $6, $6)
+       RETURNING transaction_id, transaction_date`,
+      [parsedAmount, to_account_id, reference_number || null, creditNotes, transfer_date || null, actorUserId]
+    );
+    const creditTransactionId = creditResult.rows[0].transaction_id;
+
+    await client.query('COMMIT');
+
+    await logActivity({
+      actorUserId,
+      actorName,
+      actorRole,
+      actionType: 'FUNDS_TRANSFERRED',
+      entityType: 'transaction',
+      entityId: debitTransactionId,
+      details: {
+        from_account_id,
+        from_account_nickname: fromAccount.account_nickname,
+        to_account_id,
+        to_account_nickname: toAccount.account_nickname,
+        amount: parsedAmount,
+        reference_number: reference_number || null,
+        debit_transaction_id: debitTransactionId,
+        credit_transaction_id: creditTransactionId,
+      },
+    });
+
+    return res.status(201).json({
+      status: 'success',
+      message: `Transferred ${parsedAmount.toFixed(2)} from ${fromAccount.account_nickname} to ${toAccount.account_nickname}`,
+      data: {
+        debit_transaction_id: debitTransactionId,
+        credit_transaction_id: creditTransactionId,
+        transaction_date: debitResult.rows[0].transaction_date,
+      },
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error transferring funds:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to transfer funds',
+      error: error.message
+    });
+  } finally {
+    client.release();
+  }
+};
+
 module.exports = {
   getAllBankAccounts,
   getBankAccountById,
@@ -775,5 +1057,7 @@ module.exports = {
   deactivateBankAccount,
   getAccountTransactions,
   verifyAccountTransaction,
-  getAccountReconciliation
+  getAccountReconciliation,
+  recordPettyCashTransaction,
+  transferFunds
 };

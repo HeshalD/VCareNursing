@@ -21,6 +21,22 @@ router.post(
   transactionController.createManualTransaction
 );
 
+// GET /api/transactions/manual-categories — custom OTHER_INCOME/OTHER_EXPENSE categories
+router.get(
+  '/manual-categories',
+  protect,
+  restrictTo(...adminRoles),
+  transactionController.getManualCategories
+);
+
+// POST /api/transactions/manual-categories — create a reusable custom category
+router.post(
+  '/manual-categories',
+  protect,
+  restrictTo(...adminRoles),
+  transactionController.createManualCategory
+);
+
 // GET /api/transactions/export/pdf — same filters, every matching row, as a landscape PDF
 router.get(
   '/export/pdf',

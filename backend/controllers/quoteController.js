@@ -6,6 +6,7 @@ const { uploadBufferToS3 } = require('../config/s3Config');
 const { logActivity } = require('../utils/activityLogger');
 const { createRentalAgreementCore, RentalAgreementError } = require('./rentalController');
 const { generateAndUploadRegFeeInvoice } = require('../utils/regFeeInvoicePdf');
+const { createVendorBillCore, applyVendorBillPayment } = require('./vendorController');
 
 function extractActorRole(role) {
   const raw = Array.isArray(role) ? role[0] : role;
@@ -314,6 +315,11 @@ exports.generatePdfOnly = async (req, res) => {
         const pdfBuffer = await html_to_pdf.generatePdf({ content: html }, { format: 'A4' });
         const pdfKey = `estimates/Estimate_${data.estimate_number}_${Date.now()}.pdf`;
         const pdfUrl = await uploadBufferToS3(pdfBuffer, pdfKey, 'application/pdf');
+
+        // Match generateAndSendPDF: generating the quote PDF (download or send)
+        // moves the service request into PENDING and links this as its active quote.
+        await db.query("UPDATE service_requests SET status = 'PENDING', active_quote_id = $1 WHERE request_id = $2", [quote_id, data.request_id]);
+
         res.status(200).json({ status: 'success', pdf_url: pdfUrl });
     } catch (error) {
         console.error('generatePdfOnly error:', error);
@@ -940,7 +946,11 @@ exports.getProductQuoteWithLineItems = async (req, res) => {
                         'rental_end_date', li.rental_end_date,
                         'deposit_amount', li.deposit_amount,
                         'unit_id', li.unit_id,
-                        'unit_code', ru.unit_code
+                        'unit_code', ru.unit_code,
+                        'vendor_id', p.vendor_id,
+                        'vendor_name', v.name,
+                        'cost_price_snapshot', li.cost_price_snapshot,
+                        'product_cost_price', p.cost_price
                     ) ORDER BY li.sort_order
                 ) FILTER (WHERE li.line_item_id IS NOT NULL), '[]') as line_items
             FROM quotations q
@@ -949,6 +959,8 @@ exports.getProductQuoteWithLineItems = async (req, res) => {
             LEFT JOIN walk_in_customers wc ON q.walk_in_customer_id = wc.walk_in_customer_id
             LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
             LEFT JOIN rental_units ru ON li.unit_id = ru.unit_id
+            LEFT JOIN products p ON li.product_id = p.product_id
+            LEFT JOIN vendors v ON p.vendor_id = v.vendor_id
             WHERE q.quote_id = $1 AND q.quote_type = 'PRODUCT'
             GROUP BY q.quote_id, cp.full_name, cp.company_name, cp.display_name_source, u.mobile_number, wc.full_name, wc.mobile_number
         `, [quote_id]);
@@ -1533,7 +1545,8 @@ exports.acceptProductQuote = async (req, res) => {
         }
 
         const lineItemsResult = await pgClient.query(
-            `SELECT li.*, p.product_type FROM quote_line_items li
+            `SELECT li.*, p.product_type, p.vendor_id, p.cost_price AS product_cost_price
+             FROM quote_line_items li
              LEFT JOIN products p ON li.product_id = p.product_id
              WHERE li.quote_id = $1`,
             [quote_id]
@@ -1546,9 +1559,11 @@ exports.acceptProductQuote = async (req, res) => {
         const rentalItems = lineItemsResult.rows.filter(li => li.product_type === 'RENTAL');
         const otherItems = lineItemsResult.rows.filter(li => li.product_type !== 'RENTAL');
 
+        const vendorPayments = req.body.vendor_payments || {};
         const createdAgreements = [];
+        const createdVendorBills = [];
         for (const item of rentalItems) {
-            const { agreement, invoice } = await createRentalAgreementCore(pgClient, {
+            const { agreement, invoice, vendor_bill } = await createRentalAgreementCore(pgClient, {
                 product_id: item.product_id,
                 unit_id: item.unit_id,
                 client_id: quote.client_id,
@@ -1559,9 +1574,11 @@ exports.acceptProductQuote = async (req, res) => {
                 start_date: item.rental_start_date,
                 end_date: item.rental_end_date,
                 deposit_amount: item.deposit_amount,
+                vendor_payment: vendorPayments[item.line_item_id],
                 createdBy: req.user?.user_id,
             });
             createdAgreements.push({ ...agreement, invoice });
+            if (vendor_bill) createdVendorBills.push(vendor_bill);
         }
 
         let genericInvoice = null;
@@ -1574,6 +1591,53 @@ exports.acceptProductQuote = async (req, res) => {
                 [quote.client_id, quote.walk_in_customer_id, quote_id, otherItemsTotal, req.user?.user_id || null]
             );
             genericInvoice = invoiceResult.rows[0];
+        }
+
+        // Vendor-sourced non-rental line items (plain product sales): record
+        // what's owed to the vendor, and immediately pay it off if the admin
+        // chose to pay now (see AskUserQuestion decision — the prompt happens
+        // inline at time of sale). Rental items are handled inside
+        // createRentalAgreementCore above via the same vendor_payments map.
+        // vendor_payments is keyed by line_item_id: { pay_now, amount,
+        // payment_method, bank_account_id, cheque_number, cheque_date, reference_number, notes }.
+        for (const item of otherItems) {
+            if (!item.vendor_id) continue;
+
+            const decision = vendorPayments[item.line_item_id] || {};
+            const defaultAmount = parseFloat(item.cost_price_snapshot ?? item.product_cost_price ?? 0) * parseFloat(item.quantity || 1);
+            const billAmount = decision.amount !== undefined && decision.amount !== null && decision.amount !== ''
+                ? parseFloat(decision.amount)
+                : defaultAmount;
+            if (!billAmount || billAmount <= 0) continue;
+
+            const bill = await createVendorBillCore(pgClient, {
+                vendor_id: item.vendor_id,
+                source_type: 'PRODUCT_SALE',
+                product_id: item.product_id,
+                reference_id: quote_id,
+                amount: billAmount,
+                description: item.description,
+                createdBy: req.user?.user_id,
+            });
+
+            if (decision.pay_now) {
+                const vendorResult = await pgClient.query('SELECT * FROM vendors WHERE vendor_id = $1', [item.vendor_id]);
+                const vendor = vendorResult.rows[0];
+                await applyVendorBillPayment(pgClient, {
+                    bill,
+                    vendor,
+                    amount: billAmount,
+                    payment_method: decision.payment_method,
+                    bank_account_id: decision.bank_account_id,
+                    cheque_number: decision.cheque_number,
+                    cheque_date: decision.cheque_date,
+                    reference_number: decision.reference_number,
+                    notes: decision.notes,
+                    actorUserId: req.user?.user_id || null,
+                });
+            }
+
+            createdVendorBills.push(bill);
         }
 
         await pgClient.query(`UPDATE quotations SET status = 'ACCEPTED' WHERE quote_id = $1`, [quote_id]);
@@ -1590,12 +1654,13 @@ exports.acceptProductQuote = async (req, res) => {
                 quote_id,
                 rental_agreement_ids: createdAgreements.map(a => a.rental_agreement_id),
                 generic_invoice_id: genericInvoice?.invoice_id || null,
+                vendor_bill_ids: createdVendorBills.map(b => b.vendor_bill_id),
             },
         });
 
         res.status(201).json({
             status: 'success',
-            data: { rental_agreements: createdAgreements, invoice: genericInvoice },
+            data: { rental_agreements: createdAgreements, invoice: genericInvoice, vendor_bills: createdVendorBills },
         });
     } catch (error) {
         await pgClient.query('ROLLBACK');

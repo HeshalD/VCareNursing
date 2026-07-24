@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
 const { createPaymentReceipt } = require('../services/receiptService');
+const { resolveBankAccountId } = require('../utils/pettyCash');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -169,6 +170,9 @@ const recordClientPayment = async (req, res) => {
       }
     }
 
+    // CASH payments have no client-supplied bank account — route them to Petty Cash instead.
+    const resolvedBankAccountId = await resolveBankAccountId(payment_method, bank_account_id);
+
     // Resolve actor info
     const actorUserId = req.user.user_id;
     const actorRole = extractActorRole(req.user.role);
@@ -187,7 +191,7 @@ const recordClientPayment = async (req, res) => {
        RETURNING *`,
       [
         client_id, parsedTotal, payment_method,
-        bank_account_id || null, cheque_number || null, cheque_date || null,
+        resolvedBankAccountId, cheque_number || null, cheque_date || null,
         reference_number || null, finalSlipUrl, notes || null,
         actorUserId, actorName,
       ]
@@ -211,7 +215,7 @@ const recordClientPayment = async (req, res) => {
            RETURNING booking_payment_id`,
           [
             alloc.booking_id, client_id, amount, payment_method,
-            bank_account_id || null, cheque_number || null, cheque_date || null,
+            resolvedBankAccountId, cheque_number || null, cheque_date || null,
             reference_number || null, finalSlipUrl, notes || null, actorUserId,
           ]
         );
@@ -233,7 +237,7 @@ const recordClientPayment = async (req, res) => {
            RETURNING transaction_id`,
           [
             client_id, alloc.booking_id, amount, payment_method,
-            bank_account_id || null, cheque_number || null, cheque_date || null,
+            resolvedBankAccountId, cheque_number || null, cheque_date || null,
             reference_number || null, finalSlipUrl, notes || null, actorUserId,
           ]
         );
@@ -280,7 +284,7 @@ const recordClientPayment = async (req, res) => {
            RETURNING booking_payment_id`,
           [
             new_booking_id, client_id, amount, payment_method,
-            bank_account_id || null, cheque_number || null, cheque_date || null,
+            resolvedBankAccountId, cheque_number || null, cheque_date || null,
             reference_number || null, finalSlipUrl, notes || null, actorUserId,
           ]
         );
@@ -295,7 +299,7 @@ const recordClientPayment = async (req, res) => {
            RETURNING transaction_id`,
           [
             client_id, new_booking_id, amount, payment_method,
-            bank_account_id || null, cheque_number || null, cheque_date || null,
+            resolvedBankAccountId, cheque_number || null, cheque_date || null,
             reference_number || null, finalSlipUrl, notes || null, actorUserId,
           ]
         );
@@ -328,7 +332,7 @@ const recordClientPayment = async (req, res) => {
            RETURNING transaction_id`,
           [
             client_id, amount, payment_method,
-            bank_account_id || null, cheque_number || null, cheque_date || null,
+            resolvedBankAccountId, cheque_number || null, cheque_date || null,
             reference_number || null, finalSlipUrl, notes || null, actorUserId,
           ]
         );
@@ -410,7 +414,7 @@ const recordClientPayment = async (req, res) => {
           payment_method,
           reference_number: reference_number || null,
           cheque_number: cheque_number || null,
-          bank_account_id: bank_account_id || null,
+          bank_account_id: resolvedBankAccountId,
           payment_date: new Date(),
           line_items: lineItems,
           generated_by: actorUserId,

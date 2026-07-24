@@ -4,7 +4,7 @@ import {
   Settings, LogOut, Bell, Search,
   ShieldCheck, FileText, SendHorizontal, Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet, Landmark,
   ChevronLeft, ChevronRight, ChevronDown, ClipboardList, History, HeartPulse, ArrowLeftRight, Banknote, Star, Lock, UserCog, CalendarClock, Briefcase, Receipt, CalendarOff, MonitorSmartphone,
-  Menu, X, ReceiptText, Package, Upload
+  Menu, X, ReceiptText, Package, Upload, Truck
 } from 'lucide-react';
 import logo from '../../../assets/Logo/VCareLogo.png';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -31,9 +31,13 @@ const NAV_SECTIONS = [
     icon: Users,
     items: [
       { icon: Users, label: 'Client Management', path: '/admin/users', match: (p) => p === '/admin/users' || p.startsWith('/admin/users/') },
-      { icon: UserCog, label: 'Staff Management', path: '/admin/staff-management', match: (p) => p === '/admin/staff-management' || p === '/admin/proxy-user-management' },
+      {
+        icon: UserCog, label: 'Staff Management', path: '/admin/staff-management',
+        match: (p) => p === '/admin/staff-management' || p === '/admin/proxy-user-management'
+          || p.startsWith('/admin/staff/') || p === '/admin/staff-roster' || p.startsWith('/admin/staff-history/'),
+      },
       { icon: Settings, label: 'Internal Staff', path: '/admin/internal-staff' },
-      { icon: Briefcase, label: 'Salespersons', path: '/admin/salespersons' },
+      { icon: Briefcase, label: 'Salespersons', path: '/admin/salespersons', match: (p) => p === '/admin/salespersons' || p.startsWith('/admin/salespersons/') },
       { icon: Upload, label: 'Bulk Import', path: '/admin/bulk-import' },
     ],
   },
@@ -41,18 +45,22 @@ const NAV_SECTIONS = [
     section: 'Operations',
     icon: SendHorizontal,
     items: [
-      { icon: SendHorizontal, label: 'Service Requests', path: '/admin/service-requests' },
+      {
+        icon: SendHorizontal, label: 'Service Requests', path: '/admin/service-requests',
+        match: (p) => p === '/admin/service-requests' || p.startsWith('/admin/service-requests/')
+          || p === '/admin/proxy-service-requests' || p.startsWith('/admin/quote-builder') || p.startsWith('/admin/modular-quote-builder'),
+      },
       { icon: AlertTriangle, label: 'Termination Requests', path: '/admin/termination-requests' },
       { icon: CalendarOff, label: 'Leave Requests', path: '/admin/leave-requests' },
       { icon: CalendarClock, label: 'Upcoming Events', path: '/admin/upcoming-events' },
-      { icon: CalendarDays, label: 'Bookings', path: '/admin/bookings' },
+      { icon: CalendarDays, label: 'Bookings', path: '/admin/bookings', match: (p) => p === '/admin/bookings' || p.startsWith('/admin/bookings/') },
     ],
   },
   {
     section: 'Sales',
     icon: ReceiptText,
     items: [
-      { icon: FileText, label: 'Quotations', path: '/admin/quotations' },
+      { icon: FileText, label: 'Quotations', path: '/admin/quotations', match: (p) => p === '/admin/quotations' || p.startsWith('/admin/quotations/') },
       { icon: Package, label: 'Products', path: '/admin/products' },
       { icon: ReceiptText, label: 'Invoices', path: '/admin/invoices' },
       { icon: FileText, label: 'Statements', path: '/admin/statements' },
@@ -69,15 +77,16 @@ const NAV_SECTIONS = [
       { icon: Banknote, label: 'Staff Salaries', path: '/admin/salaries' },
       { icon: FileText, label: 'Salary Sheets', path: '/admin/salary-sheets' },
       { icon: Landmark, label: 'Bank Accounts', path: '/admin/bank-accounts' },
+      { icon: Truck, label: 'Vendors', path: '/admin/vendors', match: (p) => p === '/admin/vendors' || p.startsWith('/admin/vendors/') },
     ],
   },
   {
     section: 'Care',
     icon: HeartPulse,
     items: [
-      { icon: HeartPulse, label: 'Care Profiles', path: '/admin/patients' },
+      { icon: HeartPulse, label: 'Care Profiles', path: '/admin/patients', match: (p) => p === '/admin/patients' || p.startsWith('/admin/patients/') },
       { icon: ClipboardList, label: 'Change Requests', path: '/admin/change-requests' },
-      { icon: ShieldCheck, label: 'Worker Verification', path: '/admin/workers' },
+      { icon: ShieldCheck, label: 'Worker Verification', path: '/admin/workers', match: (p) => p === '/admin/workers' || p.startsWith('/admin/workers/') },
       { icon: Star, label: 'Reviews', path: '/admin/reviews' },
     ],
   },
@@ -169,15 +178,15 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
   return (
     <div className="flex h-screen bg-slate-50 font-sans text-slate-900">
       {/* Sidebar (desktop) */}
-      <aside className={`bg-slate-900 text-white hidden md:flex flex-col flex-shrink-0 transition-all duration-300 ${collapsed ? 'w-20' : 'w-64'}`}>
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between gap-2">
+      <aside className={`bg-white text-slate-700 border-r border-slate-200 hidden md:flex flex-col flex-shrink-0 transition-all duration-300 ${collapsed ? 'w-20' : 'w-64'}`}>
+        <div className="p-4 border-b border-slate-200 flex items-center justify-between gap-2">
           <div className="flex items-center gap-3">
             <img src={logo} alt="VCare" className={`rounded-md object-contain ${collapsed ? 'w-8 h-8' : 'w-10 h-10'}`} />
-            {!collapsed && <span className="text-xl font-bold tracking-tight">VCare Admin</span>}
+            {!collapsed && <span className="text-xl font-bold tracking-tight text-slate-900">VCare Admin</span>}
           </div>
           <button
             onClick={() => setCollapsed(!collapsed)}
-            className="p-1 rounded-md text-slate-300 hover:text-white hover:bg-slate-800"
+            className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100"
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             title={collapsed ? 'Expand' : 'Collapse'}
           >
@@ -201,10 +210,10 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
           ))}
         </nav>
 
-        <div className="p-3 border-t border-slate-800">
+        <div className="p-3 border-t border-slate-200">
           <button
             onClick={handleLogout}
-            className={`flex items-center gap-3 text-slate-400 hover:text-white transition-colors w-full px-3 py-2 rounded-lg hover:bg-slate-800 ${collapsed ? 'justify-center' : ''}`}
+            className={`flex items-center gap-3 text-slate-500 hover:text-slate-900 transition-colors w-full px-3 py-2 rounded-lg hover:bg-slate-100 ${collapsed ? 'justify-center' : ''}`}
             title="Logout"
           >
             <LogOut className="w-5 h-5" />
@@ -217,15 +226,15 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
       {mobileOpen && (
         <div className="md:hidden fixed inset-0 z-50">
           <div className="absolute inset-0 bg-black/50" onClick={() => setMobileOpen(false)} />
-          <aside className="absolute left-0 top-0 bottom-0 w-72 max-w-[85vw] bg-slate-900 text-white flex flex-col">
-            <div className="p-4 border-b border-slate-800 flex items-center justify-between gap-2">
+          <aside className="absolute left-0 top-0 bottom-0 w-72 max-w-[85vw] bg-white text-slate-700 flex flex-col">
+            <div className="p-4 border-b border-slate-200 flex items-center justify-between gap-2">
               <div className="flex items-center gap-3">
                 <img src={logo} alt="VCare" className="w-9 h-9 rounded-md object-contain" />
-                <span className="text-lg font-bold tracking-tight">VCare Admin</span>
+                <span className="text-lg font-bold tracking-tight text-slate-900">VCare Admin</span>
               </div>
               <button
                 onClick={() => setMobileOpen(false)}
-                className="p-1.5 rounded-md text-slate-300 hover:text-white hover:bg-slate-800"
+                className="p-1.5 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100"
                 aria-label="Close menu"
               >
                 <X className="w-5 h-5" />
@@ -246,10 +255,10 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
                 />
               ))}
             </nav>
-            <div className="p-3 border-t border-slate-800">
+            <div className="p-3 border-t border-slate-200">
               <button
                 onClick={handleLogout}
-                className="flex items-center gap-3 text-slate-400 hover:text-white transition-colors w-full px-3 py-2 rounded-lg hover:bg-slate-800"
+                className="flex items-center gap-3 text-slate-500 hover:text-slate-900 transition-colors w-full px-3 py-2 rounded-lg hover:bg-slate-100"
               >
                 <LogOut className="w-5 h-5" />
                 <span className="font-medium">Logout</span>
@@ -350,8 +359,8 @@ const SidebarSection = ({ section, sectionIcon, items, itemActive, collapsed, is
         onClick={onExpand}
         title={section}
         className={`w-full flex items-center justify-center px-3 py-2 rounded-lg mb-1 transition-colors duration-200 ${active
-            ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50'
-            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+            ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20'
+            : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'
           }`}
       >
         {sectionIcon && React.createElement(sectionIcon, { className: 'w-4 h-4' })}
@@ -359,11 +368,17 @@ const SidebarSection = ({ section, sectionIcon, items, itemActive, collapsed, is
     );
   }
 
+  const sectionActive = items.some(itemActive);
+
   return (
     <div className="mb-2">
       <button
         onClick={onToggle}
-        className="w-full flex items-center justify-between px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500 hover:text-slate-300 transition-colors"
+        className={`w-full flex items-center justify-between px-3 py-1.5 rounded-md text-xs font-semibold uppercase tracking-wider transition-colors ${
+          sectionActive
+            ? 'text-blue-600 bg-blue-50'
+            : 'text-slate-400 hover:text-slate-600'
+        }`}
       >
         <span className="flex items-center gap-2">
           {sectionIcon && React.createElement(sectionIcon, { className: 'w-3.5 h-3.5' })}
@@ -372,7 +387,7 @@ const SidebarSection = ({ section, sectionIcon, items, itemActive, collapsed, is
         <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isOpen ? '' : '-rotate-90'}`} />
       </button>
       {isOpen && (
-        <div className="space-y-0.5 mt-0.5 pl-2 border-l border-slate-800 ml-3">
+        <div className="space-y-0.5 mt-0.5 pl-2 border-l border-slate-200 ml-3">
           {items.map((item) => (
             <SidebarItem
               key={item.path}
@@ -395,8 +410,8 @@ const SidebarItem = ({ icon: Icon, label, path, active, badge, collapsed, nested
     to={path}
     title={label}
     className={`w-full flex items-center ${collapsed ? 'justify-center' : 'justify-between'} px-3 ${nested ? 'py-1.5' : 'py-2'} rounded-lg mb-1 transition-colors duration-200 ${active
-        ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50'
-        : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+        ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20'
+        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
       }`}
   >
     <div className={`flex items-center gap-2.5 ${collapsed ? 'justify-center' : ''}`}>

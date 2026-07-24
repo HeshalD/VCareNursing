@@ -210,6 +210,26 @@ async function runMigration() {
     END $$;
   `);
 
+  // Internal movement between two company bank accounts (including Petty
+  // Cash) — deliberately left out of IN_CATEGORIES/OUT_CATEGORIES in
+  // utils/transactionFlow.js so transfers never skew income/expense totals.
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'ACCOUNT_TRANSFER';
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  // Office/back-office staff salaries paid outside the care-worker wallet payout flow
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'INTERNAL_STAFF_SALARY';
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
   await db.query(`
     DO $$ BEGIN
       CREATE TYPE transaction_type_enum AS ENUM (
@@ -283,6 +303,18 @@ async function runMigration() {
       created_by UUID REFERENCES users(user_id)
 
     );
+  `);
+
+  // Petty cash is a bank_accounts row like any other, flagged so CASH payments
+  // can be auto-routed to it and so it can't be deactivated/duplicated.
+  await db.query(`
+    ALTER TABLE bank_accounts
+    ADD COLUMN IF NOT EXISTS is_petty_cash BOOLEAN NOT NULL DEFAULT false
+  `);
+
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_accounts_one_petty_cash
+    ON bank_accounts (is_petty_cash) WHERE is_petty_cash = true
   `);
 
   await db.query(`
@@ -577,6 +609,29 @@ async function runMigration() {
     );
   `);
 
+  // Admin-entered label for a custom manual category (e.g. "Vehicle
+  // Maintenance") — the enum `category` column stays OTHER_INCOME/
+  // OTHER_EXPENSE for accounting/flow purposes, this holds the display name.
+  await db.query(`
+    ALTER TABLE transactions
+    ADD COLUMN IF NOT EXISTS custom_category_label VARCHAR(100);
+  `);
+
+  // Reusable custom categories admins add from the manual transaction form.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS manual_transaction_categories (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(100) NOT NULL,
+      direction VARCHAR(6) NOT NULL CHECK (direction IN ('CREDIT', 'DEBIT')),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_manual_transaction_categories_unique
+    ON manual_transaction_categories (direction, lower(name));
+  `);
+
     // =========================================================
     // STAFF PAYMENTS / BANK ACCOUNTS
     // =========================================================
@@ -783,6 +838,40 @@ async function runMigration() {
     CREATE UNIQUE INDEX IF NOT EXISTS uniq_open_scheduled_action
       ON scheduled_actions (booking_id, action_type, COALESCE(payload->>'shift_slot_id', ''))
       WHERE status = 'SCHEDULED'
+  `);
+
+  // LIVE_IN/SHIFT_BASED bookings can be paused (client wants a temporary break) and
+  // resumed later. Full history table (not just current-state columns on bookings) so
+  // a booking's pause/resume cycles over its lifetime stay queryable — bookings.status
+  // flips to 'PAUSED' while a row here has resumed_at IS NULL. resume_date is a
+  // target/reminder only; resuming is always a manual admin action (re-assigns staff).
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS booking_pauses (
+      pause_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      booking_id UUID NOT NULL REFERENCES bookings(booking_id) ON DELETE CASCADE,
+      paused_date DATE NOT NULL,
+      resume_date DATE,
+      reason TEXT,
+      paused_by UUID REFERENCES users(user_id),
+      paused_by_name VARCHAR(255),
+      paused_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      resumed_date DATE,
+      resumed_by UUID REFERENCES users(user_id),
+      resumed_by_name VARCHAR(255),
+      resumed_at TIMESTAMP WITH TIME ZONE
+    );
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_booking_pauses_booking_id
+    ON booking_pauses(booking_id);
+  `);
+
+  // At most one open (unresumed) pause per booking at a time.
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_open_booking_pause
+      ON booking_pauses (booking_id)
+      WHERE resumed_at IS NULL
   `);
 
   await db.query(`
@@ -1092,6 +1181,16 @@ async function runMigration() {
   await db.query(`
     ALTER TABLE booking_staff_assignments
     ADD COLUMN IF NOT EXISTS service_start_time TIME
+  `);
+
+  // Expected hours per day/visit for this assignment (VISITING/LIVE_IN — SHIFT_BASED
+  // assignments get their expected hours from booking_shift_slots.duration_hours
+  // instead). Used to compare against staff_daily_attendance.hours_served in the
+  // attendance UI. Optional — attendance still works without a value, just without
+  // the served-vs-assigned comparison.
+  await db.query(`
+    ALTER TABLE booking_staff_assignments
+    ADD COLUMN IF NOT EXISTS assigned_hours NUMERIC(4, 2)
   `);
 
   // Care profile (patient) gender captured on the lead/service request
@@ -2426,10 +2525,15 @@ async function runMigration() {
       WHERE shift_slot_id IS NULL
   `);
 
+  // reschedule_id IS NULL scopes this to the slot's standing (non-makeup) invoice row —
+  // a same-day "cover shift" reschedule creates a second, reschedule-scoped row for the
+  // same (booking_id, service_date, shift_slot_id), which must not collide with this one.
+  // Mirrors uniq_attendance_with_slot's assignment_id-scoped equivalent above.
+  await db.query(`DROP INDEX IF EXISTS uniq_daily_invoice_with_slot`);
   await db.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS uniq_daily_invoice_with_slot
       ON booking_daily_invoices (booking_id, service_date, shift_slot_id)
-      WHERE shift_slot_id IS NOT NULL
+      WHERE shift_slot_id IS NOT NULL AND reschedule_id IS NULL
   `);
 
   await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS company_name VARCHAR(150)`);
@@ -2597,6 +2701,99 @@ async function runMigration() {
   `);
 
   // =========================================================
+  // VENDORS — external suppliers a product can be sourced from, and
+  // recurring-expense payees (utilities etc.) treated the same way.
+  // vendor_bills/vendor_bill_payments mirrors invoices/invoice_payments:
+  // one "amount owed" header row + N payment rows, each optionally linked
+  // to a bank_account_id/transaction_id. Vendor balances are computed live
+  // from these, never stored (same approach as bank_accounts).
+  // =========================================================
+
+  await db.query(`
+    DO $$ BEGIN
+      CREATE TYPE vendor_type_enum AS ENUM ('SUPPLIER', 'UTILITY', 'OTHER');
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  await db.query(`
+    DO $$ BEGIN
+      CREATE TYPE vendor_bill_source_enum AS ENUM ('PRODUCT_SALE', 'RENTAL', 'UTILITY', 'OTHER');
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  await db.query(`
+    DO $$ BEGIN
+      CREATE TYPE vendor_bill_status_enum AS ENUM ('UNPAID', 'PARTIALLY_PAID', 'PAID');
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS vendors (
+      vendor_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      vendor_type vendor_type_enum NOT NULL DEFAULT 'SUPPLIER',
+      contact_person VARCHAR(255),
+      phone VARCHAR(50),
+      email VARCHAR(255),
+      address TEXT,
+      notes TEXT,
+      is_active BOOLEAN DEFAULT true,
+      created_by UUID REFERENCES users(user_id),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // Nullable — a product with no vendor_id is sourced from in-house stock.
+  await db.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS vendor_id UUID REFERENCES vendors(vendor_id)`);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_products_vendor_id ON products(vendor_id)`);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS vendor_bills (
+      vendor_bill_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      vendor_id UUID NOT NULL REFERENCES vendors(vendor_id),
+      source_type vendor_bill_source_enum NOT NULL,
+      product_id UUID REFERENCES products(product_id),
+      reference_id UUID,
+      amount NUMERIC(12,2) NOT NULL,
+      description TEXT,
+      status vendor_bill_status_enum NOT NULL DEFAULT 'UNPAID',
+      created_by UUID REFERENCES users(user_id),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_vendor_bills_vendor_id ON vendor_bills(vendor_id)`);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_vendor_bills_reference_id ON vendor_bills(reference_id)`);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS vendor_bill_payments (
+      vendor_bill_payment_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      vendor_bill_id UUID NOT NULL REFERENCES vendor_bills(vendor_bill_id) ON DELETE CASCADE,
+      transaction_id UUID REFERENCES transactions(transaction_id),
+      amount NUMERIC(12,2) NOT NULL,
+      payment_method VARCHAR(50),
+      bank_account_id UUID REFERENCES bank_accounts(account_id),
+      cheque_number VARCHAR(50),
+      cheque_date DATE,
+      reference_number VARCHAR(100),
+      notes TEXT,
+      verified_by UUID REFERENCES users(user_id),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_vendor_bill_payments_vendor_bill_id ON vendor_bill_payments(vendor_bill_id);
+  `);
+
+  await db.query(`ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'VENDOR_PAYMENT'`);
+
+  // =========================================================
   // SEED DEFAULT PRESET ITEMS
   // =========================================================
 
@@ -2608,7 +2805,40 @@ async function runMigration() {
 
   await seedDefaultAdminUser();
 
+  // =========================================================
+  // SEED PETTY CASH ACCOUNT
+  // =========================================================
+
+  await seedPettyCashAccount();
+
   console.log('Migration completed successfully!');
+}
+
+async function seedPettyCashAccount() {
+  try {
+    const existing = await db.query('SELECT account_id FROM bank_accounts WHERE is_petty_cash = true');
+    if (existing.rows.length > 0) {
+      console.log('Petty cash account already seeded. Skipping...');
+      return;
+    }
+
+    await db.query(
+      `INSERT INTO bank_accounts (
+        account_nickname, account_number, account_holder_name, bank_name,
+        branch_name, currency, opening_balance, opening_balance_date,
+        is_active, is_petty_cash
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_DATE, true, true)`,
+      [
+        'Petty Cash', 'PETTY-CASH', 'VCare Nursing', 'Internal - Petty Cash',
+        null, 'LKR', 0,
+      ]
+    );
+
+    console.log('Seeded default Petty Cash account (opening balance: 0)');
+  } catch (error) {
+    console.error('Error seeding petty cash account:', error.message);
+    // Don't fail migration if seeding fails
+  }
 }
 
 async function seedDefaultAdminUser() {

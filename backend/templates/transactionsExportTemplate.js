@@ -7,7 +7,7 @@ const fmtDateTime = (d) => d ? new Date(d).toLocaleDateString('en-GB', { day: '2
 const CATEGORY_LABELS = {
   CLIENT_PAYMENT: 'Client Payment', BOOKING_PAYMENT: 'Booking Payment', WALLET_TOPUP: 'Wallet Top-up',
   OTHER_INCOME: 'Other Income', STAFF_SALARY_PAID: 'Salary Paid', STAFF_ADVANCE: 'Salary Advance',
-  AGENCY_FEE: 'Agency Fee', OTHER_EXPENSE: 'Other Expense', STAFF_SALARY: 'Staff Salary',
+  AGENCY_FEE: 'Agency Fee', INTERNAL_STAFF_SALARY: 'Internal Staff Salary', OTHER_EXPENSE: 'Other Expense', STAFF_SALARY: 'Staff Salary',
   SERVICE_INVOICE: 'Service Invoice', REGISTRATION_FEE: 'Registration Fee', WALLET_DEBIT: 'Wallet Debit',
   WALLET_REFUND: 'Wallet Refund', BOOKING_SETTLEMENT: 'Booking Settlement', PRODUCT_SALE: 'Product Sale',
   RENTAL_PAYMENT: 'Rental Payment', DEPOSIT_REFUND: 'Deposit Refund',
@@ -40,7 +40,7 @@ module.exports = (data) => {
     return `
       <tr>
         <td>${fmtDate(tx.transaction_date)}</td>
-        <td>${CATEGORY_LABELS[tx.category] || (tx.category || '').replace(/_/g, ' ')}</td>
+        <td>${tx.custom_category_label || CATEGORY_LABELS[tx.category] || (tx.category || '').replace(/_/g, ' ')}</td>
         <td>${relatedTo(tx)}</td>
         <td>${(tx.payment_method || '—').replace(/_/g, ' ')}</td>
         <td>${tx.reference_number || '—'}</td>

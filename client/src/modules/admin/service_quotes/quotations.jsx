@@ -196,6 +196,8 @@ const QuotationsPage = () => {
   const [actingPaymentId, setActingPaymentId] = useState(null);
   const [quoteStatusBusy, setQuoteStatusBusy] = useState('');
   const [quotePdfBusy, setQuotePdfBusy] = useState(false);
+  const [quoteSendBusy, setQuoteSendBusy] = useState(false);
+  const [quoteSent, setQuoteSent] = useState(false);
   const [sendingInvoice, setSendingInvoice] = useState(false);
   const [invoiceSent, setInvoiceSent] = useState(false);
   const [showReceiptPopup, setShowReceiptPopup] = useState(false);
@@ -355,6 +357,7 @@ const QuotationsPage = () => {
     setShowPaymentModal(false);
     setSelectedQuoteItems(null);
     setInvoiceSent(false);
+    setQuoteSent(false);
     setEditingLineItems(false);
     await Promise.all([fetchPayments(quote.quote_id), fetchSelectedQuoteItems(quote)]);
   };
@@ -540,6 +543,20 @@ const QuotationsPage = () => {
       setError(err.message || 'Failed to generate PDF');
     } finally {
       setQuotePdfBusy(false);
+    }
+  };
+
+  const handleSendQuotePdf = async (quoteId, productQuoteId) => {
+    setQuoteSendBusy(true);
+    setQuoteSent(false);
+    try {
+      setError('');
+      await apiClient.sendQuotePDF(quoteId, productQuoteId);
+      setQuoteSent(true);
+    } catch (err) {
+      setError(err.message || 'Failed to send quotation');
+    } finally {
+      setQuoteSendBusy(false);
     }
   };
 
@@ -918,6 +935,15 @@ const QuotationsPage = () => {
                               >
                                 {quotePdfBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
                                 {quotePdfBusy ? 'Generating…' : 'Download Quote PDF'}
+                              </button>
+
+                              <button
+                                onClick={() => handleSendQuotePdf(selectedQuote.quote_id, selectedQuoteItems?.product_quote_id)}
+                                disabled={quoteSendBusy}
+                                className={ghostBtnCls}
+                              >
+                                {quoteSendBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                                {quoteSendBusy ? 'Sending…' : quoteSent ? 'Sent!' : 'Resend via WhatsApp'}
                               </button>
 
                               {canAction && (

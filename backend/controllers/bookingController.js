@@ -23,6 +23,8 @@ const {
 } = require('../services/scheduledActions');
 const { computeRegFeeSplit, settleRegistrationFee } = require('../services/registrationFeeSplit');
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
+const { maybeAutoCompleteVisitingBooking } = require('../services/visitingBookings');
+const { closeActivePatternForPause } = require('../services/shiftPatternService');
 
 function extractActorRole(role) {
     const raw = Array.isArray(role) ? role[0] : role;
@@ -350,6 +352,253 @@ exports.completeBooking = async (req, res) => {
 
 exports.adminTerminateBooking = async (req, res) => {
     return finalizeBookingState(req, res, 'TERMINATED', 'Admin terminate booking', true);
+};
+
+/**
+ * @route   POST /api/bookings/:booking_id/pause
+ * @desc    Client wants a temporary break in service (LIVE_IN/SHIFT_BASED only).
+ *          Closes the current staff assignment(s)/shift pattern as of today (freeing
+ *          the staff, same mechanics as termination), flips the booking to PAUSED —
+ *          which drops it out of the cron's ACTIVE/OVERDUE processing entirely, so
+ *          no billing or staff pay happens while paused — and logs a booking_pauses
+ *          row. resume_date is a target/reminder only; resuming is always a manual
+ *          admin action (see resumeBooking).
+ *
+ *          If the booking already has a scheduled TERMINATION/COMPLETION, that date
+ *          was computed assuming continuous service and is now stale — it's always
+ *          cancelled here (so the cron can't fire it mid-pause). When resume_date is
+ *          set, the admin can choose to reschedule it to a new date in the same call
+ *          (end_date_action='RESCHEDULE' + new_end_date) or explicitly leave the
+ *          booking with no scheduled end (end_date_action='CLEAR', or just omitted).
+ * @body    resume_date (optional, YYYY-MM-DD), reason (optional),
+ *          end_date_action ('RESCHEDULE' | 'CLEAR', optional), new_end_date (required if RESCHEDULE)
+ * @access  Private (SUPER_ADMIN, COORDINATOR)
+ */
+exports.pauseBooking = async (req, res) => {
+    const { booking_id } = req.params;
+    const { resume_date, reason, end_date_action, new_end_date } = req.body || {};
+
+    if (end_date_action === 'RESCHEDULE' && (!resume_date || !new_end_date)) {
+        return res.status(400).json({ status: 'error', message: 'new_end_date requires both resume_date and new_end_date' });
+    }
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const bookingRes = await client.query(
+            `SELECT booking_id, status, service_model FROM bookings WHERE booking_id = $1 FOR UPDATE`,
+            [booking_id]
+        );
+        if (bookingRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Booking not found' });
+        }
+        const booking = bookingRes.rows[0];
+
+        if (!['LIVE_IN', 'SHIFT_BASED'].includes(booking.service_model)) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ status: 'error', message: 'Only LIVE_IN and SHIFT_BASED bookings can be paused' });
+        }
+        if (!['ACTIVE', 'OVERDUE'].includes(booking.status)) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ status: 'error', message: `Booking cannot be paused while ${booking.status}` });
+        }
+
+        const businessDate = await getBusinessDate(client);
+
+        if (booking.service_model === 'SHIFT_BASED') {
+            await closeActivePatternForPause(client, booking_id, businessDate);
+        } else {
+            await client.query(
+                `UPDATE staff_profiles sp
+                 SET current_status = 'AVAILABLE'
+                 FROM booking_staff_assignments bsa
+                 WHERE bsa.booking_id = $1 AND bsa.status IN ('ACTIVE', 'SCHEDULED')
+                   AND sp.staff_profile_id = bsa.staff_profile_id`,
+                [booking_id]
+            );
+            await client.query(
+                `UPDATE booking_staff_assignments
+                 SET service_end_date = $2, status = 'COMPLETED'
+                 WHERE booking_id = $1 AND status IN ('ACTIVE', 'SCHEDULED')`,
+                [booking_id, businessDate]
+            );
+            await client.query(
+                `UPDATE scheduled_actions SET status = 'CANCELLED'
+                 WHERE booking_id = $1 AND action_type = 'ASSIGNMENT_START' AND status = 'SCHEDULED'`,
+                [booking_id]
+            );
+        }
+
+        // A pre-existing scheduled TERMINATION/COMPLETION was computed assuming
+        // continuous service — the pause invalidates it, so cancel it unconditionally
+        // (otherwise the cron could fire it mid-pause). If the admin gave a fixed
+        // resume date and asked to reschedule, re-enqueue it at the new date, carrying
+        // over its settlement payload/reason (and service_terminations.end_date, for
+        // a TERMINATION) so it behaves exactly like the original once it fires.
+        const openFinalizationRes = await client.query(
+            `SELECT * FROM scheduled_actions
+             WHERE booking_id = $1 AND action_type IN ('TERMINATION', 'COMPLETION') AND status = 'SCHEDULED'
+             FOR UPDATE`,
+            [booking_id]
+        );
+        const openFinalization = openFinalizationRes.rows[0] || null;
+
+        if (openFinalization) {
+            await client.query(`UPDATE scheduled_actions SET status = 'CANCELLED' WHERE action_id = $1`, [openFinalization.action_id]);
+
+            if (resume_date && end_date_action === 'RESCHEDULE' && new_end_date) {
+                if (openFinalization.action_type === 'TERMINATION' && openFinalization.termination_id) {
+                    await client.query(
+                        `UPDATE service_terminations SET end_date = $1 WHERE termination_id = $2`,
+                        [new_end_date, openFinalization.termination_id]
+                    );
+                }
+                await enqueueScheduledAction(client, {
+                    booking_id,
+                    action_type: openFinalization.action_type,
+                    effective_date: new_end_date,
+                    payload: openFinalization.payload || {},
+                    reason: openFinalization.reason || null,
+                    termination_id: openFinalization.termination_id || null,
+                    created_by: req.user?.user_id || null,
+                });
+            }
+        }
+
+        // assigned_staff_id is a denormalized pointer to whoever's currently on the booking
+        // (getAdminBookingDetail's current_staff reads it directly, not the live assignment
+        // row) — must be cleared here or the UI keeps showing the just-freed staff member as
+        // "current staff" after resume, hiding the Assign Staff button that's supposed to
+        // reappear once there's genuinely no one assigned.
+        await client.query(`UPDATE bookings SET status = 'PAUSED', assigned_staff_id = NULL WHERE booking_id = $1`, [booking_id]);
+
+        const pausedByName = await getActorName(req.user?.user_id);
+        const pauseRes = await client.query(
+            `INSERT INTO booking_pauses (booking_id, paused_date, resume_date, reason, paused_by, paused_by_name)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING *`,
+            [booking_id, businessDate, resume_date || null, reason || null, req.user?.user_id || null, pausedByName]
+        );
+
+        await client.query('COMMIT');
+
+        try {
+            await logActivity({
+                actorUserId: req.user?.user_id,
+                actorName: pausedByName,
+                actorRole: extractActorRole(req.user?.role),
+                actionType: 'BOOKING_PAUSED',
+                entityType: 'BOOKING',
+                entityId: String(booking_id),
+                details: {
+                    booking_id,
+                    resume_date: resume_date || null,
+                    reason: reason || null,
+                    cancelled_finalization: openFinalization ? { action_type: openFinalization.action_type, was_effective_date: openFinalization.effective_date } : null,
+                    rescheduled_end_date: (end_date_action === 'RESCHEDULE' && new_end_date) ? new_end_date : null,
+                },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (pauseBooking):', logErr.message);
+        }
+
+        res.status(200).json({ status: 'success', data: pauseRes.rows[0] });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Pause booking error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to pause booking' });
+    } finally {
+        client.release();
+    }
+};
+
+/**
+ * @route   POST /api/bookings/:booking_id/resume
+ * @desc    Flips a PAUSED booking back to ACTIVE and closes its open booking_pauses
+ *          row. Does not assign staff itself — the booking simply re-enters the same
+ *          "no staff assigned yet" state a brand-new booking is in, so the existing
+ *          Assign Staff / shift-pattern-creation flow handles staffing it for the
+ *          resumed period (possibly with a different staff member than before).
+ * @access  Private (SUPER_ADMIN, COORDINATOR)
+ */
+exports.resumeBooking = async (req, res) => {
+    const { booking_id } = req.params;
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const bookingRes = await client.query(
+            `SELECT booking_id, status FROM bookings WHERE booking_id = $1 FOR UPDATE`,
+            [booking_id]
+        );
+        if (bookingRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Booking not found' });
+        }
+        if (bookingRes.rows[0].status !== 'PAUSED') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ status: 'error', message: 'Booking is not paused' });
+        }
+
+        const businessDate = await getBusinessDate(client);
+        const resumedByName = await getActorName(req.user?.user_id);
+
+        const pauseRes = await client.query(
+            `UPDATE booking_pauses
+             SET resumed_date = $2, resumed_by = $3, resumed_by_name = $4, resumed_at = NOW()
+             WHERE booking_id = $1 AND resumed_at IS NULL
+             RETURNING *`,
+            [booking_id, businessDate, req.user?.user_id || null, resumedByName]
+        );
+
+        await client.query(`UPDATE bookings SET status = 'ACTIVE' WHERE booking_id = $1`, [booking_id]);
+
+        await client.query('COMMIT');
+
+        try {
+            await logActivity({
+                actorUserId: req.user?.user_id,
+                actorName: resumedByName,
+                actorRole: extractActorRole(req.user?.role),
+                actionType: 'BOOKING_RESUMED',
+                entityType: 'BOOKING',
+                entityId: String(booking_id),
+                details: { booking_id },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (resumeBooking):', logErr.message);
+        }
+
+        res.status(200).json({ status: 'success', data: pauseRes.rows[0] || null });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Resume booking error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to resume booking' });
+    } finally {
+        client.release();
+    }
+};
+
+/**
+ * @route   GET /api/bookings/:booking_id/pauses
+ * @desc    Full pause/resume history for a booking, most recent first.
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ */
+exports.getBookingPauses = async (req, res) => {
+    const { booking_id } = req.params;
+    try {
+        const result = await db.query(
+            `SELECT * FROM booking_pauses WHERE booking_id = $1 ORDER BY paused_at DESC`,
+            [booking_id]
+        );
+        res.status(200).json({ status: 'success', data: result.rows });
+    } catch (error) {
+        console.error('Get booking pauses error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to fetch pause history' });
+    }
 };
 
 // Refactored convertToBooking - ONLY creates booking (Step 2B)
@@ -1036,11 +1285,13 @@ exports.getAdminBookingDetail = async (req, res) => {
                     bsa.daily_rate,
                     bsa.service_start_date,
                     bsa.service_start_time,
+                    bsa.assigned_hours,
                     bsa.service_end_date,
                     bsa.amount_allocated,
                     bsa.status,
                     bsa.notes,
                     bsa.shift_slot_id,
+                    bsa.reschedule_id,
                     ss.shift_number,
                     ss.start_time as shift_start_time,
                     ss.duration_hours as shift_duration_hours,
@@ -1615,6 +1866,10 @@ exports.confirmDailyInvoice = async (req, res) => {
                     RETURNING *`,
                     [booking_id, service_date, approve ? 'INVOICED' : 'SKIPPED', finalAmount, transactionId, req.user?.user_id || null, decidedByName]
                 );
+
+        // A VISITING booking's one-time visit may now be fully decided (salary + invoice)
+        // — auto-complete it rather than leaving it ACTIVE for a manual close-out.
+        await maybeAutoCompleteVisitingBooking(client, booking_id);
 
         await client.query('COMMIT');
         res.status(200).json({ status: 'success', data: result.rows[0] });

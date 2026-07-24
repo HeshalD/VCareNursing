@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Loader2, X, ArrowDownLeft, ArrowUpRight, PenLine } from 'lucide-react';
+import { Loader2, X, ArrowDownLeft, ArrowUpRight, PenLine, Check } from 'lucide-react';
 import apiClient from '../../../api/api';
 import DateInput from '../../../components/common/DateInput';
 
@@ -7,8 +7,17 @@ const PAYMENT_METHODS = ['CASH', 'BANK_TRANSFER', 'CASH_DEPOSIT', 'CHEQUE', 'ONL
 
 // Manual entries are limited to off-platform money movements.
 // Must mirror MANUAL_CATEGORIES in backend/utils/transactionFlow.js.
-const CREDIT_CATEGORIES = ['OTHER_INCOME'];
-const DEBIT_CATEGORIES = ['OTHER_EXPENSE', 'AGENCY_FEE'];
+// AGENCY_FEE is a fixed DEBIT-only category; OTHER_INCOME/OTHER_EXPENSE are
+// the generic buckets admins can attach a reusable custom label to.
+const FIXED_OPTIONS = {
+  CREDIT: [{ key: 'OTHER_INCOME', category: 'OTHER_INCOME', label: 'Other Income (General)' }],
+  DEBIT: [
+    { key: 'AGENCY_FEE', category: 'AGENCY_FEE', label: 'Agency Fee' },
+    { key: 'INTERNAL_STAFF_SALARY', category: 'INTERNAL_STAFF_SALARY', label: 'Internal Staff Salary' },
+    { key: 'OTHER_EXPENSE', category: 'OTHER_EXPENSE', label: 'Other Expense (General)' },
+  ],
+};
+const ADD_NEW_KEY = '__add_new__';
 
 const labelCls = 'block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1';
 const inputCls = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500';
@@ -19,7 +28,7 @@ const todayStr = () => new Date().toISOString().split('T')[0];
 const AddTransactionModal = ({ onClose, onSuccess }) => {
   const [form, setForm] = useState({
     transaction_type: 'CREDIT',
-    category: 'OTHER_INCOME',
+    categoryKey: 'OTHER_INCOME',
     amount: '',
     transaction_date: todayStr(),
     payment_method: 'CASH',
@@ -31,12 +40,19 @@ const AddTransactionModal = ({ onClose, onSuccess }) => {
     notes: '',
   });
   const [bankAccounts, setBankAccounts] = useState([]);
+  const [customCategories, setCustomCategories] = useState({ CREDIT: [], DEBIT: [] });
+  const [addingCategory, setAddingCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [categorySaving, setCategorySaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     apiClient.getBankAccounts()
       .then(res => setBankAccounts(res.data || []))
+      .catch(() => {});
+    apiClient.getManualCategories()
+      .then(res => setCustomCategories(res.categories || { CREDIT: [], DEBIT: [] }))
       .catch(() => {});
   }, []);
 
@@ -46,11 +62,52 @@ const AddTransactionModal = ({ onClose, onSuccess }) => {
     setForm(f => ({
       ...f,
       transaction_type: type,
-      category: type === 'CREDIT' ? 'OTHER_INCOME' : 'OTHER_EXPENSE',
+      categoryKey: type === 'CREDIT' ? 'OTHER_INCOME' : 'OTHER_EXPENSE',
     }));
+    setAddingCategory(false);
+    setNewCategoryName('');
   };
 
-  const categories = form.transaction_type === 'CREDIT' ? CREDIT_CATEGORIES : DEBIT_CATEGORIES;
+  const categoryOptions = [
+    ...FIXED_OPTIONS[form.transaction_type],
+    ...customCategories[form.transaction_type].map(c => ({
+      key: `custom:${c.id}`,
+      category: form.transaction_type === 'CREDIT' ? 'OTHER_INCOME' : 'OTHER_EXPENSE',
+      label: c.name,
+    })),
+  ];
+
+  const handleCategoryChange = (value) => {
+    if (value === ADD_NEW_KEY) {
+      setAddingCategory(true);
+      setNewCategoryName('');
+      return;
+    }
+    updateField('categoryKey', value);
+  };
+
+  const handleSaveNewCategory = async () => {
+    const name = newCategoryName.trim();
+    if (!name) return;
+    setError('');
+    try {
+      setCategorySaving(true);
+      const res = await apiClient.createManualCategory({ name, direction: form.transaction_type });
+      const created = res.category;
+      setCustomCategories(prev => ({
+        ...prev,
+        [form.transaction_type]: [...prev[form.transaction_type], created],
+      }));
+      updateField('categoryKey', `custom:${created.id}`);
+      setAddingCategory(false);
+      setNewCategoryName('');
+    } catch (err) {
+      setError(err.message || 'Failed to add category');
+    } finally {
+      setCategorySaving(false);
+    }
+  };
+
   const needsBank = ['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(form.payment_method);
   const needsCheque = form.payment_method === 'CHEQUE';
   const isCredit = form.transaction_type === 'CREDIT';
@@ -59,9 +116,13 @@ const AddTransactionModal = ({ onClose, onSuccess }) => {
     e.preventDefault();
     setError('');
 
+    const selected = categoryOptions.find(o => o.key === form.categoryKey) || categoryOptions[0];
+    const isCustom = selected.key.startsWith('custom:');
+
     const payload = {
       transaction_type: form.transaction_type,
-      category: form.category,
+      category: selected.category,
+      custom_category_label: isCustom ? selected.label : null,
       amount: parseFloat(form.amount),
       transaction_date: form.transaction_date || null,
       payment_method: form.payment_method,
@@ -167,16 +228,52 @@ const AddTransactionModal = ({ onClose, onSuccess }) => {
             {/* Category */}
             <div>
               <label className={labelCls}>Category *</label>
-              <select
-                required
-                className={selectCls}
-                value={form.category}
-                onChange={e => updateField('category', e.target.value)}
-              >
-                {categories.map(c => (
-                  <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>
-                ))}
-              </select>
+              {!addingCategory ? (
+                <select
+                  required
+                  className={selectCls}
+                  value={form.categoryKey}
+                  onChange={e => handleCategoryChange(e.target.value)}
+                >
+                  {categoryOptions.map(o => (
+                    <option key={o.key} value={o.key}>{o.label}</option>
+                  ))}
+                  <option value={ADD_NEW_KEY}>+ Add New Category…</option>
+                </select>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="e.g. Vehicle Maintenance"
+                    className={inputCls}
+                    maxLength={100}
+                    value={newCategoryName}
+                    onChange={e => setNewCategoryName(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') { e.preventDefault(); handleSaveNewCategory(); }
+                      if (e.key === 'Escape') setAddingCategory(false);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveNewCategory}
+                    disabled={categorySaving || !newCategoryName.trim()}
+                    className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                    title="Save category"
+                  >
+                    {categorySaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAddingCategory(false)}
+                    className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-slate-200 text-slate-400 hover:bg-slate-50"
+                    title="Cancel"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Payment method */}

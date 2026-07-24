@@ -17,6 +17,7 @@ const staffLeaveRoutes = require('./routes/staffLeaveRoutes');
 const staffReviewRoutes = require('./routes/staffReviewRoutes')
 const financesRoutes = require('./routes/financesRoutes')
 const bankAccountRoutes = require('./routes/bankAccountRoutes');
+const vendorRoutes = require('./routes/vendorRoutes');
 const staffAssignmentRoutes = require('./routes/staffAssignmentRoutes');
 const staffChangeRequestRoutes = require('./routes/staffChangeRequestRoutes');
 const activityLogRoutes = require('./routes/activityLogRoutes');
@@ -129,6 +130,7 @@ app.use('/api/staff-reviews', staffReviewRoutes);
 
 app.use('/api/finances', financesRoutes);
 app.use('/api/bank-accounts', bankAccountRoutes);
+app.use('/api/vendors', vendorRoutes);
 app.use('/api/assignments', staffAssignmentRoutes);
 app.use('/api/staff-change-requests', staffChangeRequestRoutes);
 app.use('/api/activity-log', activityLogRoutes);

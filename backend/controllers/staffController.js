@@ -5,9 +5,11 @@ const { sendSms } = require('../utils/sms');
 const { logActivity } = require('../utils/activityLogger');
 const { generateAndUploadSalarySheet } = require('../utils/salaryPdf');
 const { creditRecruiterForStaff } = require('../services/recruiterService');
+const { resolveBankAccountId } = require('../utils/pettyCash');
 
 const _MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const _METHOD_LABELS = { BANK_TRANSFER: 'Bank Transfer', CASH: 'Cash', CHEQUE: 'Cheque' };
+const _VALID_PAYOUT_METHODS = ['BANK_TRANSFER', 'CASH', 'CHEQUE'];
 
 function _extractActorRole(role) {
     const raw = Array.isArray(role) ? role[0] : role;
@@ -890,7 +892,7 @@ exports.getAttendanceCalendar = async (req, res) => {
             }
         }
 
-        const [assignmentsRes, attendanceRes, reschedulesRes] = await Promise.all([
+        const [assignmentsRes, attendanceRes, reschedulesRes, pendingResumptionsRes] = await Promise.all([
             db.query(`
                 SELECT
                     bsa.assignment_id, bsa.booking_id, bsa.service_start_date, bsa.service_end_date,
@@ -930,6 +932,31 @@ exports.getAttendanceCalendar = async (req, res) => {
                 FROM shift_reschedules r
                 JOIN booking_staff_assignments bsa ON bsa.booking_id = r.booking_id
                 WHERE bsa.staff_profile_id = $1 AND r.status = 'ACTIVE'
+            `, [staff_profile_id]),
+            // Bookings currently PAUSED (not yet resumed) with a fixed target resume date,
+            // where this staff member was the one whose assignment closed exactly on the
+            // pause date — i.e. they're expected back on this booking from that date, same
+            // "projected" treatment CareTimeline gives the booking side of a pending resume.
+            // scheduled_end_date (if any) caps how far the projection should be trusted.
+            db.query(`
+                SELECT
+                    bp.booking_id, bp.resume_date::text as resume_date, bp.paused_date::text as paused_date,
+                    b.daily_rate, c.full_name as client_name, p.full_name as patient_name,
+                    (SELECT MIN(sa.effective_date)::text FROM scheduled_actions sa
+                     WHERE sa.booking_id = bp.booking_id AND sa.action_type IN ('COMPLETION', 'TERMINATION') AND sa.status = 'SCHEDULED'
+                    ) as scheduled_end_date
+                FROM booking_pauses bp
+                JOIN bookings b ON b.booking_id = bp.booking_id
+                LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
+                LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+                WHERE bp.resumed_at IS NULL
+                  AND bp.resume_date IS NOT NULL
+                  AND EXISTS (
+                    SELECT 1 FROM booking_staff_assignments bsa
+                    WHERE bsa.booking_id = bp.booking_id
+                      AND bsa.staff_profile_id = $1
+                      AND bsa.service_end_date::date = bp.paused_date::date
+                  )
             `, [staff_profile_id])
         ]);
 
@@ -938,7 +965,8 @@ exports.getAttendanceCalendar = async (req, res) => {
             data: {
                 assignments: assignmentsRes.rows,
                 attendance: attendanceRes.rows,
-                reschedules: reschedulesRes.rows
+                reschedules: reschedulesRes.rows,
+                pending_resumptions: pendingResumptionsRes.rows
             }
         });
     } catch (error) {
@@ -1648,6 +1676,14 @@ exports.createStaffPayout = async (req, res) => {
             return res.status(400).json({ status: 'error', message: 'Invalid amount' });
         }
 
+        if (payment_method && !_VALID_PAYOUT_METHODS.includes(payment_method)) {
+            return res.status(400).json({ status: 'error', message: `payment_method must be one of: ${_VALID_PAYOUT_METHODS.join(', ')}` });
+        }
+
+        if (payment_method === 'BANK_TRANSFER' && !company_bank_account_id) {
+            return res.status(400).json({ status: 'error', message: 'company_bank_account_id is required for BANK_TRANSFER' });
+        }
+
         const client = await db.pool.connect();
         try {
             await client.query('BEGIN');
@@ -1680,11 +1716,14 @@ exports.createStaffPayout = async (req, res) => {
                 [payoutAmount, staff_profile_id]
             );
 
+            // A CASH payout is physical cash paid out of the till — route it to Petty Cash.
+            const resolvedCompanyBankAccountId = await resolveBankAccountId(payment_method, company_bank_account_id);
+
             // Insert into transactions ledger
             const insertTrans = await client.query(
                 `INSERT INTO transactions (staff_profile_id, category, amount, transaction_type, bank_account_id, payment_method, reference_number, verified_by, status, created_at)
                  VALUES ($1, 'STAFF_SALARY_PAID', $2, 'DEBIT', $3, $4, $5, $6, 'COMPLETED', NOW()) RETURNING transaction_id`,
-                [staff_profile_id, payoutAmount, company_bank_account_id || null, payment_method || null, reference_number || null, req.user.user_id]
+                [staff_profile_id, payoutAmount, resolvedCompanyBankAccountId, payment_method || null, reference_number || null, req.user.user_id]
             );
 
             const transaction_id = insertTrans.rows[0].transaction_id;
@@ -1694,7 +1733,7 @@ exports.createStaffPayout = async (req, res) => {
                 `INSERT INTO staff_payments_tracking (staff_profile_id, company_bank_account_id, staff_bank_account_id, transaction_id, amount_paid, payment_method, reference_number, notes, paid_by, paid_at, status, created_at)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'COMPLETED', NOW())
                  RETURNING staff_payment_id`,
-                [staff_profile_id, company_bank_account_id || null, staff_bank_account_id || null, transaction_id, payoutAmount, payment_method || null, reference_number || null, notes || null, req.user.user_id]
+                [staff_profile_id, resolvedCompanyBankAccountId, staff_bank_account_id || null, transaction_id, payoutAmount, payment_method || null, reference_number || null, notes || null, req.user.user_id]
             );
             const staffPaymentId = insertPayment.rows[0].staff_payment_id;
 
@@ -3654,6 +3693,17 @@ exports.bulkStaffPayouts = async (req, res) => {
         return res.status(400).json({ status: 'error', message: 'payouts array is required' });
     }
 
+    const bulkPaymentMethod = payment_method || 'BANK_TRANSFER';
+    if (!_VALID_PAYOUT_METHODS.includes(bulkPaymentMethod)) {
+        return res.status(400).json({ status: 'error', message: `payment_method must be one of: ${_VALID_PAYOUT_METHODS.join(', ')}` });
+    }
+    if (bulkPaymentMethod === 'BANK_TRANSFER' && !company_bank_account_id) {
+        return res.status(400).json({ status: 'error', message: 'company_bank_account_id is required for BANK_TRANSFER' });
+    }
+
+    // A CASH payout is physical cash paid out of the till — route it to Petty Cash.
+    const resolvedCompanyBankAccountId = await resolveBankAccountId(bulkPaymentMethod, company_bank_account_id);
+
     const results = [];
 
     for (const item of payouts) {
@@ -3703,7 +3753,7 @@ exports.bulkStaffPayouts = async (req, res) => {
                 `INSERT INTO transactions (staff_profile_id, category, amount, transaction_type, bank_account_id, payment_method, reference_number, verified_by, status, created_at)
                  VALUES ($1, 'STAFF_SALARY_PAID', $2, 'DEBIT', $3, $4, $5, $6, 'COMPLETED', NOW())
                  RETURNING transaction_id`,
-                [staff_profile_id, payoutAmount, company_bank_account_id || null, payment_method || 'BANK_TRANSFER', reference_number || null, req.user.user_id]
+                [staff_profile_id, payoutAmount, resolvedCompanyBankAccountId, bulkPaymentMethod, reference_number || null, req.user.user_id]
             );
 
             const transaction_id = insertTrans.rows[0].transaction_id;
@@ -3712,7 +3762,7 @@ exports.bulkStaffPayouts = async (req, res) => {
                 `INSERT INTO staff_payments_tracking (staff_profile_id, company_bank_account_id, staff_bank_account_id, transaction_id, amount_paid, payment_method, reference_number, notes, paid_by, paid_at, status, created_at)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'COMPLETED', NOW())
                  RETURNING staff_payment_id`,
-                [staff_profile_id, company_bank_account_id || null, staff_bank_account_id || null, transaction_id, payoutAmount, payment_method || 'BANK_TRANSFER', reference_number || null, notes || null, req.user.user_id]
+                [staff_profile_id, resolvedCompanyBankAccountId, staff_bank_account_id || null, transaction_id, payoutAmount, bulkPaymentMethod, reference_number || null, notes || null, req.user.user_id]
             );
             const bulkStaffPaymentId = insertBulkPayment.rows[0].staff_payment_id;
 
@@ -3729,7 +3779,7 @@ exports.bulkStaffPayouts = async (req, res) => {
                     actionType: 'STAFF_PAYOUT_CREATED',
                     entityType: 'STAFF_PAYOUT',
                     entityId: String(transaction_id),
-                    details: { staff_profile_id, amount: payoutAmount, payment_method: payment_method || 'BANK_TRANSFER', bulk: true },
+                    details: { staff_profile_id, amount: payoutAmount, payment_method: bulkPaymentMethod, bulk: true },
                 });
             } catch (logErr) {
                 console.error('Activity log failed (bulkStaffPayouts):', logErr.message);

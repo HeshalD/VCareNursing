@@ -55,6 +55,7 @@ exports.getAssignmentFormData = async (req, res) => {
       SELECT
         b.booking_id,
         b.request_id,
+        b.client_id,
         b.service_model,
         b.service_type,
         b.daily_rate AS booking_daily_rate,
@@ -184,6 +185,7 @@ exports.getAssignmentFormData = async (req, res) => {
       data: {
         booking: {
           booking_id: booking.booking_id,
+          client_id: booking.client_id,
           service_model: booking.service_model,
           booking_status: booking.booking_status,
           start_date: booking.start_date,
@@ -240,7 +242,7 @@ exports.getAssignmentFormData = async (req, res) => {
 exports.assignStaffToBooking = async (req, res) => {
   try {
     const { booking_id } = req.params;
-    const { staff_profile_id, service_start_date, service_start_time, daily_rate, ot_rate, notes, salesperson_id } = req.body;
+    const { staff_profile_id, service_start_date, service_start_time, assigned_hours, daily_rate, ot_rate, notes, salesperson_id } = req.body;
     const assigned_by = req.user.user_id;
 
     // UUID validation
@@ -408,17 +410,39 @@ exports.assignStaffToBooking = async (req, res) => {
       }
     }
 
+    if (assigned_hours !== undefined && assigned_hours !== null && assigned_hours !== '') {
+      const parsedHours = parseFloat(assigned_hours);
+      if (Number.isNaN(parsedHours) || parsedHours <= 0) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'assigned_hours must be a positive number'
+        });
+      }
+    }
+
+    // Whether this booking has ever had staff before — only a genuinely first
+    // assignment should sync bookings.start_date to service_start_date below. A
+    // reassignment (e.g. after a pause/resume) reuses this same endpoint with a
+    // later service_start_date; overwriting start_date there would erase the
+    // booking's original epoch that CareTimeline's day-numbering and payment
+    // calculations are anchored to.
+    const priorAssignmentRes = await db.query(
+      `SELECT 1 FROM booking_staff_assignments WHERE booking_id = $1 LIMIT 1`,
+      [booking_id]
+    );
+    const isFirstAssignment = priorAssignmentRes.rows.length === 0;
+
     // Create assignment record — service_end_date is left null and set when the booking
     // ends (COMPLETED/TERMINATED) or a staff swap occurs
     const insertQuery = `
       INSERT INTO booking_staff_assignments
         (booking_id, staff_profile_id, assigned_on, assigned_by, daily_rate,
-         service_start_date, service_start_time, service_end_date, amount_allocated, status, notes)
+         service_start_date, service_start_time, assigned_hours, service_end_date, amount_allocated, status, notes)
       VALUES
-        ($1, $2, NOW(), $3, $4, $5, $6, NULL, $7, $8, $9)
+        ($1, $2, NOW(), $3, $4, $5, $6, $7, NULL, $8, $9, $10)
       RETURNING
         assignment_id, booking_id, staff_profile_id, assigned_on, daily_rate,
-        service_start_date, service_start_time, service_end_date, amount_allocated, status
+        service_start_date, service_start_time, assigned_hours, service_end_date, amount_allocated, status
     `;
 
     const values = [
@@ -428,6 +452,7 @@ exports.assignStaffToBooking = async (req, res) => {
       staffDailyRate,
       service_start_date,
       service_start_time || null,
+      assigned_hours !== undefined && assigned_hours !== null && assigned_hours !== '' ? parseFloat(assigned_hours) : null,
       amount_allocated,
       isFuture ? 'SCHEDULED' : 'ACTIVE',
       notes || null
@@ -445,14 +470,16 @@ exports.assignStaffToBooking = async (req, res) => {
     );
 
     if (isFuture) {
-      // Keep the booking's start_date in sync with the assignment, even though
-      // activation is deferred to the cron on the effective date.
-      await db.query(
-        `UPDATE bookings
-         SET start_date = $2
-         WHERE booking_id = $1`,
-        [booking_id, service_start_date]
-      );
+      // Keep the booking's start_date in sync with the assignment, but only on a
+      // genuinely first assignment — see isFirstAssignment above.
+      if (isFirstAssignment) {
+        await db.query(
+          `UPDATE bookings
+           SET start_date = $2
+           WHERE booking_id = $1`,
+          [booking_id, service_start_date]
+        );
+      }
 
       await enqueueScheduledAction(db, {
         booking_id,
@@ -463,10 +490,12 @@ exports.assignStaffToBooking = async (req, res) => {
       });
     } else {
       await db.query(
-        `UPDATE bookings
-         SET status = 'ACTIVE', ot_rate = $2, assigned_staff_id = $3, start_date = $4
-         WHERE booking_id = $1`,
-        [booking_id, bookingOtRate, staff_profile_id, service_start_date]
+        isFirstAssignment
+          ? `UPDATE bookings SET status = 'ACTIVE', ot_rate = $2, assigned_staff_id = $3, start_date = $4 WHERE booking_id = $1`
+          : `UPDATE bookings SET status = 'ACTIVE', ot_rate = $2, assigned_staff_id = $3 WHERE booking_id = $1`,
+        isFirstAssignment
+          ? [booking_id, bookingOtRate, staff_profile_id, service_start_date]
+          : [booking_id, bookingOtRate, staff_profile_id]
       );
     }
 
@@ -605,6 +634,7 @@ exports.assignStaffToBooking = async (req, res) => {
         daily_rate: parseFloat(assignment.daily_rate),
         service_start_date: assignment.service_start_date,
         service_start_time: assignment.service_start_time,
+        assigned_hours: assignment.assigned_hours !== null ? parseFloat(assignment.assigned_hours) : null,
         service_end_date: assignment.service_end_date,
         amount_allocated: parseFloat(assignment.amount_allocated),
         ot_rate: bookingOtRate,
@@ -851,7 +881,7 @@ exports.getBookingAssignments = async (req, res) => {
 exports.updateAssignment = async (req, res) => {
   try {
     const { assignment_id } = req.params;
-    const { service_start_date, service_start_time, service_end_date, daily_rate, notes } = req.body;
+    const { service_start_date, service_start_time, assigned_hours, service_end_date, daily_rate, notes } = req.body;
 
     // UUID validation
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -863,7 +893,7 @@ exports.updateAssignment = async (req, res) => {
     }
 
     // Require at least one field to update
-    if (!service_start_date && service_start_time === undefined && !service_end_date && !daily_rate && !notes) {
+    if (!service_start_date && service_start_time === undefined && assigned_hours === undefined && !service_end_date && !daily_rate && !notes) {
       return res.status(400).json({
         status: 'error',
         message: 'At least one field is required for update'
@@ -907,6 +937,24 @@ exports.updateAssignment = async (req, res) => {
     if (service_start_time !== undefined) {
       updateFields.push(`service_start_time = $${paramCount}`);
       updateValues.push(service_start_time || null);
+      paramCount++;
+    }
+
+    if (assigned_hours !== undefined) {
+      if (assigned_hours !== null && assigned_hours !== '') {
+        const parsedHours = parseFloat(assigned_hours);
+        if (Number.isNaN(parsedHours) || parsedHours <= 0) {
+          return res.status(400).json({
+            status: 'error',
+            message: 'assigned_hours must be a positive number'
+          });
+        }
+        updateFields.push(`assigned_hours = $${paramCount}`);
+        updateValues.push(parsedHours);
+      } else {
+        updateFields.push(`assigned_hours = $${paramCount}`);
+        updateValues.push(null);
+      }
       paramCount++;
     }
 
@@ -988,6 +1036,7 @@ exports.updateAssignment = async (req, res) => {
         assignment_id: updatedAssignment.assignment_id,
         service_start_date: updatedAssignment.service_start_date,
         service_start_time: updatedAssignment.service_start_time,
+        assigned_hours: updatedAssignment.assigned_hours !== null ? parseFloat(updatedAssignment.assigned_hours) : null,
         service_end_date: updatedAssignment.service_end_date,
         daily_rate: parseFloat(updatedAssignment.daily_rate),
         amount_allocated: parseFloat(updatedAssignment.amount_allocated),

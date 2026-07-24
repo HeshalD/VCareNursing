@@ -8,6 +8,7 @@ const { ensureCombinedInvoice, ensureRegFeeInvoiceRecord } = require('./quoteCon
 const { applyInvoicePayment } = require('./invoiceController');
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const { computeRegFeeSplit, settleRegistrationFee } = require('../services/registrationFeeSplit');
+const { resolveBankAccountId } = require('../utils/pettyCash');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -249,6 +250,9 @@ const recordPayment = async (req, res) => {
     const quotation = quoteCheck.rows[0];
     const transactionCategory = quotation.booking_id ? 'BOOKING_PAYMENT' : 'CLIENT_PAYMENT';
 
+    // CASH payments have no client-supplied bank account — route them to Petty Cash instead.
+    const resolvedBankAccountId = await resolveBankAccountId(payment_method, bank_account_id);
+
     // Bootstrap a client profile if this quotation belongs to a brand-new customer
     const clientBootstrap = await getOrCreateClientProfileForQuotation(client, quotation);
     const client_id = clientBootstrap.client_id;
@@ -311,7 +315,7 @@ const recordPayment = async (req, res) => {
       client_id,
       amount_received,
       payment_method,
-      bank_account_id || null,
+      resolvedBankAccountId,
       cheque_number || null,
       cheque_date || null,
       reference_number || null,
@@ -368,7 +372,7 @@ const recordPayment = async (req, res) => {
           client_id,
           amount_received,
           payment_method,
-          bank_account_id || null,
+          resolvedBankAccountId,
           cheque_number || null,
           cheque_date || null,
           reference_number || null,
@@ -457,7 +461,7 @@ const recordPayment = async (req, res) => {
         client_id,
         regFeeSplit.regFeePortion,
         payment_method,
-        bank_account_id || null,
+        resolvedBankAccountId,
         cheque_number || null,
         cheque_date || null,
         reference_number || null,
@@ -514,7 +518,7 @@ const recordPayment = async (req, res) => {
         transactionCategory,
         regFeeSplit.remainderAmount,
         payment_method,
-        bank_account_id || null,
+        resolvedBankAccountId,
         cheque_number || null,
         cheque_date || null,
         reference_number || null,
@@ -526,14 +530,14 @@ const recordPayment = async (req, res) => {
       ]);
     }
 
-    // Fetch bank account details if provided
+    // Fetch bank account details (client-supplied, or the Petty Cash account for CASH)
     let bank_account = null;
-    if (bank_account_id) {
+    if (resolvedBankAccountId) {
       const bankResult = await client.query(`
         SELECT account_id, account_nickname, account_number, bank_name
         FROM bank_accounts
         WHERE account_id = $1
-      `, [bank_account_id]);
+      `, [resolvedBankAccountId]);
 
       if (bankResult.rows.length > 0) {
         bank_account = bankResult.rows[0];
@@ -623,7 +627,7 @@ const recordPayment = async (req, res) => {
           payment_method,
           reference_number: reference_number || null,
           cheque_number: cheque_number || null,
-          bank_account_id: bank_account_id || null,
+          bank_account_id: resolvedBankAccountId,
           payment_date: payment.payment_date || new Date(),
           line_items: [lineItem],
           generated_by: verified_by,
@@ -863,6 +867,9 @@ const recordAllocatedPayment = async (req, res) => {
     const quotation = quoteCheck.rows[0];
     const transactionCategory = quotation.booking_id ? 'BOOKING_PAYMENT' : 'CLIENT_PAYMENT';
 
+    // CASH payments have no client-supplied bank account — route them to Petty Cash instead.
+    const resolvedBankAccountId = await resolveBankAccountId(payment_method, bank_account_id);
+
     const clientBootstrap = await getOrCreateClientProfileForQuotation(client, quotation);
     const client_id = clientBootstrap.client_id;
 
@@ -939,7 +946,7 @@ const recordAllocatedPayment = async (req, res) => {
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'VERIFIED', $10, $11, NOW(), NOW())
         RETURNING payment_id, quote_id, amount_received, payment_method, reference_number, status, payment_date, verified_at
       `, [
-        quote_id, client_id, svcAmount, payment_method, bank_account_id || null,
+        quote_id, client_id, svcAmount, payment_method, resolvedBankAccountId,
         cheque_number || null, cheque_date || null, reference_number || null,
         paymentSlipUrl, verified_by, notes || null
       ]);
@@ -955,7 +962,7 @@ const recordAllocatedPayment = async (req, res) => {
            RETURNING booking_payment_id, booking_id, quote_id, amount_received, payment_method, reference_number, status, payment_date, verified_at`,
           [
             payment.payment_id, quotation.booking_id, quote_id, client_id, svcAmount,
-            payment_method, bank_account_id || null, cheque_number || null, cheque_date || null,
+            payment_method, resolvedBankAccountId, cheque_number || null, cheque_date || null,
             reference_number || null, paymentSlipUrl, verified_by, notes || null,
             payment.payment_date, payment.verified_at
           ]
@@ -989,7 +996,7 @@ const recordAllocatedPayment = async (req, res) => {
           ) VALUES ($1, $2, $3, $4, 'REGISTRATION_FEE', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'CREDIT', NOW())
         `, [
           payment.payment_id, quotation.booking_id || null, quote_id, client_id, regFeeAlloc,
-          payment_method, bank_account_id || null, cheque_number || null, cheque_date || null,
+          payment_method, resolvedBankAccountId, cheque_number || null, cheque_date || null,
           reference_number || null, paymentSlipUrl, verified_by, 'COMPLETED', notes || null,
         ]);
         receiptLineItems.push({ label: 'Registration Fee', description: 'Payment toward registration fee', amount: regFeeAlloc });
@@ -1004,7 +1011,7 @@ const recordAllocatedPayment = async (req, res) => {
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'CREDIT', NOW())
         `, [
           payment.payment_id, quotation.booking_id || null, quote_id, client_id, transactionCategory, serviceAlloc,
-          payment_method, bank_account_id || null, cheque_number || null, cheque_date || null,
+          payment_method, resolvedBankAccountId, cheque_number || null, cheque_date || null,
           reference_number || null, paymentSlipUrl, verified_by, 'COMPLETED', notes || null,
         ]);
         receiptLineItems.push({ label: 'Service Charges', description: 'Payment toward service charges', amount: serviceAlloc });
@@ -1066,7 +1073,7 @@ const recordAllocatedPayment = async (req, res) => {
              notes, status, verified_by
            ) VALUES ($1, $2, 'WALLET_TOPUP', 'CREDIT', $3, $4, $5, $6, $7, $8, $9, $10, 'COMPLETED', $11)`,
           [
-            client_id, quote_id, overflowAmount, payment_method, bank_account_id || null,
+            client_id, quote_id, overflowAmount, payment_method, resolvedBankAccountId,
             cheque_number || null, cheque_date || null, reference_number || null,
             paymentSlipUrl, notes || 'Overpayment credited to wallet', verified_by,
           ]
@@ -1115,7 +1122,7 @@ const recordAllocatedPayment = async (req, res) => {
              status, verified_at, verified_by
            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'VERIFIED',NOW(),$11)`,
           [
-            targetBooking.booking_id, client_id, overflowAmount, payment_method, bank_account_id || null,
+            targetBooking.booking_id, client_id, overflowAmount, payment_method, resolvedBankAccountId,
             cheque_number || null, cheque_date || null, reference_number || null,
             paymentSlipUrl, notes || `Overpayment applied to booking ${targetBooking.booking_code}`, verified_by,
           ]
@@ -1131,7 +1138,7 @@ const recordAllocatedPayment = async (req, res) => {
              notes, status, verified_by
            ) VALUES ($1,$2,'BOOKING_PAYMENT','CREDIT',$3,$4,$5,$6,$7,$8,$9,$10,'COMPLETED',$11)`,
           [
-            client_id, targetBooking.booking_id, overflowAmount, payment_method, bank_account_id || null,
+            client_id, targetBooking.booking_id, overflowAmount, payment_method, resolvedBankAccountId,
             cheque_number || null, cheque_date || null, reference_number || null,
             paymentSlipUrl, notes || null, verified_by,
           ]
@@ -1166,7 +1173,7 @@ const recordAllocatedPayment = async (req, res) => {
           payment_method,
           reference_number: reference_number || null,
           cheque_number: cheque_number || null,
-          bank_account_id: bank_account_id || null,
+          bank_account_id: resolvedBankAccountId,
           payment_date: payment?.payment_date || new Date(),
           line_items: receiptLineItems.length > 0
             ? receiptLineItems
@@ -1333,6 +1340,10 @@ const recordBookingPayment = async (req, res) => {
     }
 
     const booking = bookingCheck.rows[0];
+
+    // CASH payments have no client-supplied bank account — route them to Petty Cash instead.
+    const resolvedBankAccountId = await resolveBankAccountId(payment_method, bank_account_id);
+
     const totalPaidResult = await client.query(
       `SELECT COALESCE(SUM(amount_received), 0) as total_paid
        FROM booking_payment_tracking
@@ -1379,7 +1390,7 @@ const recordBookingPayment = async (req, res) => {
         booking.client_id,
         amount_received,
         payment_method,
-        bank_account_id || null,
+        resolvedBankAccountId,
         cheque_number || null,
         cheque_date || null,
         reference_number || null,
@@ -1431,7 +1442,7 @@ const recordBookingPayment = async (req, res) => {
         'BOOKING_PAYMENT',
         amount_received,
         payment_method,
-        bank_account_id || null,
+        resolvedBankAccountId,
         cheque_number || null,
         cheque_date || null,
         reference_number || null,
@@ -1471,7 +1482,7 @@ const recordBookingPayment = async (req, res) => {
           payment_method,
           reference_number: reference_number || null,
           cheque_number: cheque_number || null,
-          bank_account_id: bank_account_id || null,
+          bank_account_id: resolvedBankAccountId,
           payment_date: payment.payment_date || new Date(),
           line_items: [{
             label: `Booking ${row.booking_code || ''}`.trim(),

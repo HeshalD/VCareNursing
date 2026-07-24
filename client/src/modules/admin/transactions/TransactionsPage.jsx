@@ -173,7 +173,7 @@ const TransactionsPage = () => {
         return [
           fmtDate(tx.transaction_date),
           flowDir === 'IN' ? 'In' : flowDir === 'OUT' ? 'Out' : 'Neutral',
-          CATEGORY_CONFIG[tx.category]?.label || (tx.category || '').replace(/_/g, ' '),
+          tx.custom_category_label || CATEGORY_CONFIG[tx.category]?.label || (tx.category || '').replace(/_/g, ' '),
           [related.primary, related.secondary].filter(Boolean).join(' — '),
           tx.payment_method ? tx.payment_method.replace(/_/g, ' ') : '—',
           tx.reference_number || '—',
@@ -406,7 +406,7 @@ const TransactionsPage = () => {
                               </span>
                             )}
                           </td>
-                          <td className="px-4 py-3 whitespace-nowrap">{categoryBadge(tx.category)}</td>
+                          <td className="px-4 py-3 whitespace-nowrap">{categoryBadge(tx.category, tx.custom_category_label)}</td>
                           <td className="px-4 py-3 max-w-[220px]">
                             <p className="font-semibold text-slate-900 truncate leading-tight">{related.primary}</p>
                             {related.secondary && (

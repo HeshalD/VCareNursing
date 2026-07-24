@@ -458,7 +458,12 @@ const ModularQuoteBuilder = () => {
   // Dedicated rate line items — item_subtype is what quoteController reads to
   // populate quotations.daily_rate/per_shift_rate; one of each per quote.
   const isShiftBased = serviceRequest?.service_model === 'SHIFT_BASED';
-  const isDailyModel = ['LIVE_IN', 'VISITING'].includes(serviceRequest?.service_model);
+  const isLiveInModel = serviceRequest?.service_model === 'LIVE_IN';
+  // VISITING is a one-time visit, not a recurring stay — it reuses the same RATE_DAILY
+  // item_subtype (so quoteController.daily_rate/bookings.daily_rate populate the same
+  // way as LIVE_IN), but defaults to a single visit instead of a week of care.
+  const isVisitingModel = serviceRequest?.service_model === 'VISITING';
+  const isDailyModel = isLiveInModel || isVisitingModel;
   const hasShiftRateItem = lineItems.some(i => i.item_subtype === 'RATE_SHIFT');
   const hasDailyRateItem = lineItems.some(i => i.item_subtype === 'RATE_DAILY');
   const canAddShiftRate = isShiftBased && !hasShiftRateItem;
@@ -473,7 +478,15 @@ const ModularQuoteBuilder = () => {
   const addDailyRateItem = () =>
     setLineItems(prev => [
       ...prev,
-      { item_type: 'CHARGE', description: 'Care Rate', quantity: 7, unit_price: '', amount: 0, item_subtype: 'RATE_DAILY', sort_order: prev.length },
+      {
+        item_type: 'CHARGE',
+        description: isVisitingModel ? 'Visit Fee' : 'Care Rate',
+        quantity: isVisitingModel ? 1 : 7,
+        unit_price: '',
+        amount: 0,
+        item_subtype: 'RATE_DAILY',
+        sort_order: prev.length,
+      },
     ]);
 
   const addRegistrationFeeItem = () => {
@@ -859,6 +872,7 @@ const ModularQuoteBuilder = () => {
                                 key={`svc-${index}`}
                                 item={item}
                                 index={index}
+                                labelOverride={item.item_subtype === 'RATE_DAILY' && isVisitingModel ? { label: 'Visit Fee', qtyLabel: 'Visits' } : undefined}
                                 onUpdate={(updated) => updateLineItem(index, updated)}
                                 onDelete={() => deleteLineItem(index)}
                               />
@@ -933,7 +947,7 @@ const ModularQuoteBuilder = () => {
                         className="inline-flex items-center gap-1.5 text-[13px] text-blue-700 hover:text-blue-900 font-medium transition-colors"
                       >
                         <CalendarClock className="w-3.5 h-3.5" />
-                        Add Care Rate
+                        {isVisitingModel ? 'Add Visit Fee' : 'Add Care Rate'}
                       </button>
                       <span className="text-gray-200 select-none">|</span>
                     </>

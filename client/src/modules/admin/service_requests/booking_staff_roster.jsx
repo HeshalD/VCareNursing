@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, ArrowRight, Search, UserCheck, UserX, Home, User, Clock,
-  MapPin, AlertCircle, Stethoscope, Star, ChevronDown, ChevronUp,
+  AlertCircle, Stethoscope, Star, ChevronDown, ChevronUp,
   BadgeCheck, Send, Check, Loader2, X, CheckCircle, CalendarClock,
-  TriangleAlert, FileText, Phone,
+  TriangleAlert, FileText,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -231,6 +231,7 @@ const BookingStaffRosterPage = () => {
   const clientName   = request?.payer_name       || booking?.client_name   || '—';
   const patientName  = request?.patient_name     || booking?.patient_name  || '—';
   const serviceModel = request?.service_model    || booking?.service_model;
+  const serviceType  = request?.service_type     || booking?.service_type;
   const prefGender   = request?.preferred_gender || booking?.preferred_gender;
   const startDate    = request?.start_date       || booking?.start_date;
   const reqStatus    = request?.status           || booking?.status;
@@ -289,6 +290,9 @@ const BookingStaffRosterPage = () => {
               <span className="text-sm text-gray-500">
                 Patient: <span className="font-medium text-gray-700">{patientName}</span>
               </span>
+              {serviceType && (
+                <Chip>{humanize(serviceType)}</Chip>
+              )}
               {serviceModel && serviceModel !== 'NO_PREFERENCE' && (
                 <Chip>{humanize(serviceModel)}</Chip>
               )}
@@ -406,6 +410,9 @@ const BookingStaffRosterPage = () => {
             <option value="NURSE">Nurse</option>
             <option value="CARETAKER">Caregiver</option>
             <option value="NANNY">Nanny</option>
+            <option value="NURSING_ASSISTANT">Nursing Assistant</option>
+            <option value="PHYSIOTHERAPIST">Physiotherapist</option>
+            <option value="COUNSELLOR">Counsellor</option>
           </FilterSelect>
           <FilterSelect value={genderFilter} onChange={setGenderFilter}>
             <option value="all">Any gender</option>
@@ -458,7 +465,7 @@ const BookingStaffRosterPage = () => {
         </div>
       )}
 
-      {/* ── Staff grid ── */}
+      {/* ── Staff table ── */}
       {staffLoading ? (
         <div className="flex items-center justify-center rounded-lg border border-gray-200 bg-white py-16">
           <Loader2 className="h-5 w-5 animate-spin text-gray-300" />
@@ -476,113 +483,35 @@ const BookingStaffRosterPage = () => {
           )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {filteredStaff.map((member) => {
-            const isPreferred = member.staff_profile_id === preferredStaffId;
-            const roles = Array.isArray(member.role)
-              ? member.role
-              : String(member.role || '').replace(/[{}"]/g, '').split(',').filter(Boolean);
-            const queueIndex = selectedQueue.findIndex((m) => m.staff_profile_id === member.staff_profile_id);
-            const inQueue    = queueIndex !== -1;
-            const isSent     = sentCandidateIds.has(member.staff_profile_id);
-            const isSending  = sendingCandidateId === member.staff_profile_id;
-            const ini        = mkInitials(member.full_name);
-            const dotCls     = STATUS_DOT[member.current_status] || 'bg-gray-400';
-            const statusLabel = humanize(member.current_status) || 'Unknown';
+        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 bg-gray-50">
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Staff</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Contact</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Role</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Location</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Rating</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Schedule</th>
+                  <th className="px-4 py-3" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {filteredStaff.map((member) => {
+                  const isPreferred = member.staff_profile_id === preferredStaffId;
+                  const roles = Array.isArray(member.role)
+                    ? member.role
+                    : String(member.role || '').replace(/[{}"]/g, '').split(',').filter(Boolean);
+                  const queueIndex = selectedQueue.findIndex((m) => m.staff_profile_id === member.staff_profile_id);
+                  const inQueue    = queueIndex !== -1;
+                  const isSent     = sentCandidateIds.has(member.staff_profile_id);
+                  const isSending  = sendingCandidateId === member.staff_profile_id;
+                  const ini        = mkInitials(member.full_name);
+                  const dotCls     = STATUS_DOT[member.current_status] || 'bg-gray-400';
+                  const statusLabel = humanize(member.current_status) || 'Unknown';
 
-            return (
-              <div
-                key={member.staff_profile_id}
-                className={`flex flex-col overflow-hidden rounded-lg border bg-white ${
-                  isPreferred ? 'border-gray-300' : 'border-gray-200'
-                }`}
-              >
-                {/* Card body */}
-                <div className="flex items-start gap-3 p-4">
-                  {/* Avatar */}
-                  <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-gray-100 text-sm font-semibold text-gray-500 flex items-center justify-center">
-                    {member.profile_picture_url
-                      ? <img src={member.profile_picture_url} alt={member.full_name} className="h-10 w-10 object-cover" />
-                      : ini}
-                  </div>
-
-                  {/* Name + status */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <p className="font-semibold text-sm text-gray-900 truncate">{member.full_name}</p>
-                          {isPreferred && (
-                            <Star className="h-3 w-3 fill-yellow-400 text-yellow-400 shrink-0" title="Client's preferred staff" />
-                          )}
-                        </div>
-                        <p className="text-xs text-gray-500 truncate mt-0.5">{member.designation || 'Staff Member'}</p>
-                      </div>
-                      {/* Status badge — neutral bg, only the dot is coloured */}
-                      <span className="shrink-0 inline-flex items-center gap-1.5 rounded bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">
-                        <span className={`h-1.5 w-1.5 rounded-full ${dotCls}`} />
-                        {statusLabel}
-                      </span>
-                    </div>
-
-                    {/* Rating + availability */}
-                    <div className="mt-1.5 flex flex-wrap items-center gap-3">
-                      {member.average_rating != null ? (
-                        <span className="flex items-center gap-1">
-                          <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                          <span className="text-xs font-semibold text-gray-700">{parseFloat(member.average_rating).toFixed(1)}</span>
-                          {member.total_reviews > 0 && (
-                            <span className="text-xs text-gray-400">({member.total_reviews})</span>
-                          )}
-                        </span>
-                      ) : (
-                        <span className="text-xs text-gray-400">No reviews</span>
-                      )}
-                      {member.current_status === 'ASSIGNED' && (
-                        <span className="flex items-center gap-1 text-xs text-gray-400">
-                          <CalendarClock className="h-3 w-3 shrink-0" />
-                          {member.active_assignment_end_date
-                            ? <>Free {new Date(member.active_assignment_end_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</>
-                            : 'End date not set'}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Meta row */}
-                <div className="border-t border-gray-100 px-4 py-2.5 flex flex-wrap gap-x-4 gap-y-1">
-                  {member.gender && (
-                    <span className="flex items-center gap-1 text-xs text-gray-500">
-                      <User className="h-3 w-3 text-gray-400" />{humanize(member.gender)}
-                    </span>
-                  )}
-                  {(member.location || member.home_address) && (
-                    <span className="flex items-center gap-1 text-xs text-gray-500 truncate max-w-[140px]">
-                      <MapPin className="h-3 w-3 text-gray-400 shrink-0" />
-                      {member.location || member.home_address}
-                    </span>
-                  )}
-                  {member.mobile_number && (
-                    <span className="flex items-center gap-1 text-xs text-gray-500">
-                      <Phone className="h-3 w-3 text-gray-400" />{member.mobile_number}
-                    </span>
-                  )}
-                  {roles.map((r) => (
-                    <span key={r} className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">
-                      {humanize(r)}
-                    </span>
-                  ))}
-                  {member.willing_to_live_in && (
-                    <span className="flex items-center gap-1 rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">
-                      <Home className="h-2.5 w-2.5" /> Live-in
-                    </span>
-                  )}
-                </div>
-
-                {/* Schedule — current + upcoming commitments, so admins can spot conflicts
-                    with this booking's start date before assigning this person */}
-                {(() => {
                   const memberSchedule = schedules[member.staff_profile_id] || [];
                   const hasConflict = startDate && memberSchedule.some((e) => {
                     const ref = String(startDate).slice(0, 10);
@@ -591,81 +520,176 @@ const BookingStaffRosterPage = () => {
                     return s && s <= ref && (!en || en >= ref);
                   });
                   const isExpanded = expandedScheduleId === member.staff_profile_id;
+
                   return (
-                    <div className="border-t border-gray-100 px-4 py-2">
-                      <button
-                        type="button"
-                        onClick={() => setExpandedScheduleId(isExpanded ? null : member.staff_profile_id)}
-                        className={`flex w-full items-center justify-between gap-2 text-xs font-medium transition-colors ${
-                          hasConflict ? 'text-rose-600' : 'text-gray-500 hover:text-gray-700'
-                        }`}
-                      >
-                        <span className="flex items-center gap-1.5">
-                          <CalendarClock className="h-3.5 w-3.5 shrink-0" />
-                          {schedulesLoading
-                            ? 'Checking schedule…'
-                            : hasConflict
-                              ? 'Busy on this booking’s start date'
-                              : memberSchedule.length > 0
-                                ? `${memberSchedule.length} other commitment${memberSchedule.length === 1 ? '' : 's'}`
-                                : 'No other commitments'}
-                        </span>
-                        {(memberSchedule.length > 0 || schedulesLoading) && (
-                          isExpanded ? <ChevronUp className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-                        )}
-                      </button>
+                    <React.Fragment key={member.staff_profile_id}>
+                      <tr className={isPreferred ? 'bg-yellow-50/40' : undefined}>
+                        {/* Staff */}
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2.5 min-w-[180px]">
+                            {member.profile_picture_url ? (
+                              <img src={member.profile_picture_url} alt={member.full_name}
+                                className="w-8 h-8 rounded-full object-cover flex-shrink-0 ring-1 ring-gray-200" />
+                            ) : (
+                              <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0 ring-1 ring-gray-200 text-xs font-semibold text-gray-500">
+                                {ini}
+                              </div>
+                            )}
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <p className="font-semibold text-gray-900 leading-tight">{member.full_name}</p>
+                                {isPreferred && (
+                                  <Star className="h-3 w-3 fill-yellow-400 text-yellow-400 shrink-0" title="Client's preferred staff" />
+                                )}
+                              </div>
+                              {member.staff_code && (
+                                <p className="text-xs text-gray-400 font-mono">{member.staff_code}</p>
+                              )}
+                              <p className="text-xs text-gray-500">{member.designation || 'Staff Member'}</p>
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Contact */}
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <p className="text-gray-700">{member.mobile_number || '—'}</p>
+                          <p className="text-xs text-gray-400">{humanize(member.gender)}</p>
+                        </td>
+
+                        {/* Role */}
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap gap-1">
+                            {roles.length > 0 ? roles.map((r) => (
+                              <span key={r} className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">
+                                {humanize(r)}
+                              </span>
+                            )) : '—'}
+                            {member.willing_to_live_in && (
+                              <span className="flex items-center gap-1 rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">
+                                <Home className="h-2.5 w-2.5" /> Live-in
+                              </span>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Location */}
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <span className="text-gray-600">{member.location || member.home_address || '—'}</span>
+                        </td>
+
+                        {/* Status */}
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1.5 rounded bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">
+                            <span className={`h-1.5 w-1.5 rounded-full ${dotCls}`} />
+                            {statusLabel}
+                          </span>
+                          {member.current_status === 'ASSIGNED' && (
+                            <p className="mt-1 flex items-center gap-1 text-xs text-gray-400">
+                              <CalendarClock className="h-3 w-3 shrink-0" />
+                              {member.active_assignment_end_date
+                                ? <>Free {new Date(member.active_assignment_end_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</>
+                                : 'End date not set'}
+                            </p>
+                          )}
+                        </td>
+
+                        {/* Rating */}
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          {member.average_rating != null ? (
+                            <span className="flex items-center gap-1">
+                              <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                              <span className="text-xs font-semibold text-gray-700">{parseFloat(member.average_rating).toFixed(1)}</span>
+                              {member.total_reviews > 0 && (
+                                <span className="text-xs text-gray-400">({member.total_reviews})</span>
+                              )}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-400">No reviews</span>
+                          )}
+                        </td>
+
+                        {/* Schedule */}
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedScheduleId(isExpanded ? null : member.staff_profile_id)}
+                            className={`flex items-center gap-1.5 text-xs font-medium transition-colors ${
+                              hasConflict ? 'text-rose-600' : 'text-gray-500 hover:text-gray-700'
+                            }`}
+                          >
+                            <CalendarClock className="h-3.5 w-3.5 shrink-0" />
+                            {schedulesLoading
+                              ? 'Checking…'
+                              : hasConflict
+                                ? 'Busy on start date'
+                                : memberSchedule.length > 0
+                                  ? `${memberSchedule.length} other${memberSchedule.length === 1 ? '' : 's'}`
+                                  : 'Clear'}
+                            {(memberSchedule.length > 0 || schedulesLoading) && (
+                              isExpanded ? <ChevronUp className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                            )}
+                          </button>
+                        </td>
+
+                        {/* Actions */}
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-2">
+                            {isShiftBased ? (
+                              <button
+                                onClick={() => toggleQueueStaff(member)}
+                                className={`whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+                                  inQueue
+                                    ? 'bg-gray-800 text-white hover:bg-gray-900'
+                                    : 'bg-blue-600 text-white hover:bg-blue-700'
+                                }`}
+                              >
+                                {inQueue ? `✓ Shift ${queueIndex + 1}` : 'Add to shifts'}
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => selectStaff(member)}
+                                className="whitespace-nowrap rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition-colors"
+                              >
+                                Select
+                              </button>
+                            )}
+
+                            {requestId && (
+                              isSent ? (
+                                <span className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-500">
+                                  <Check className="h-3.5 w-3.5 text-gray-400" /> Sent
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={() => handleSendCandidate(member)}
+                                  disabled={isSending}
+                                  title="Send this candidate's profile to the client via WhatsApp"
+                                  className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 transition-colors"
+                                >
+                                  {isSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                                </button>
+                              )
+                            )}
+                          </div>
+                        </td>
+                      </tr>
                       {isExpanded && (
-                        <div className="mt-2">
-                          <StaffScheduleTimeline schedule={memberSchedule} loading={schedulesLoading} referenceDate={startDate} compact />
-                        </div>
+                        <tr>
+                          <td colSpan={8} className="border-t border-gray-100 bg-gray-50 px-4 py-3">
+                            <StaffScheduleTimeline schedule={memberSchedule} loading={schedulesLoading} referenceDate={startDate} compact />
+                          </td>
+                        </tr>
                       )}
-                    </div>
+                    </React.Fragment>
                   );
-                })()}
+                })}
+              </tbody>
+            </table>
+          </div>
 
-                {/* Actions */}
-                <div className="mt-auto border-t border-gray-100 px-4 py-3 flex items-center gap-2">
-                  {isShiftBased ? (
-                    <button
-                      onClick={() => toggleQueueStaff(member)}
-                      className={`flex-1 rounded-md py-1.5 text-sm font-semibold transition-colors ${
-                        inQueue
-                          ? 'bg-gray-800 text-white hover:bg-gray-900'
-                          : 'bg-blue-600 text-white hover:bg-blue-700'
-                      }`}
-                    >
-                      {inQueue ? `✓ Shift ${queueIndex + 1} — Remove` : 'Add to shifts'}
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => selectStaff(member)}
-                      className="flex-1 rounded-md bg-blue-600 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 transition-colors"
-                    >
-                      Select
-                    </button>
-                  )}
-
-                  {requestId && (
-                    isSent ? (
-                      <span className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-500">
-                        <Check className="h-3.5 w-3.5 text-gray-400" /> Sent
-                      </span>
-                    ) : (
-                      <button
-                        onClick={() => handleSendCandidate(member)}
-                        disabled={isSending}
-                        title="Send this candidate's profile to the client via WhatsApp"
-                        className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 transition-colors"
-                      >
-                        {isSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-                        Send
-                      </button>
-                    )
-                  )}
-                </div>
-              </div>
-            );
-          })}
+          <div className="border-t border-gray-100 px-4 py-2.5 text-xs text-gray-400">
+            Showing {filteredStaff.length} of {pagination.total_count} staff member{pagination.total_count !== 1 ? 's' : ''}
+          </div>
         </div>
       )}
 

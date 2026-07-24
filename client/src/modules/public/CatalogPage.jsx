@@ -20,7 +20,7 @@ const ProductCard = ({ product, delay }) => (
       to={`/products/${product.product_id}`}
       className="group block bg-white rounded-2xl border border-slate-100 shadow-lg hover:border-blue-100 hover:shadow-xl transition-all overflow-hidden"
     >
-      <div className="h-48 bg-slate-50 flex items-center justify-center overflow-hidden">
+      <div className="aspect-square bg-slate-50 flex items-center justify-center overflow-hidden">
         {product.image_url ? (
           <img
             src={product.image_url}

@@ -148,7 +148,7 @@ const ProxyUserManagement = () => {
     try {
       setLoading(true);
       setError(null);
-      const response = await apiClient.getAllStaff();
+      const response = await apiClient.getAllStaff({ limit: 1000 });
       setWorkers(response.data || []);
     } catch (err) {
       setError('Failed to load workers');

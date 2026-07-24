@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const bankAccountController = require('../controllers/bankAccountController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 /**
  * Bank Account Routes
@@ -30,6 +30,30 @@ router.post(
   protect,
   restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
   bankAccountController.createBankAccount
+);
+
+/**
+ * @route   POST /api/bank-accounts/transfer
+ * @desc    Transfer funds between two active bank accounts (including Petty Cash)
+ * @access  Private (SUPER_ADMIN, ACCOUNTS)
+ */
+router.post(
+  '/transfer',
+  protect,
+  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  bankAccountController.transferFunds
+);
+
+/**
+ * @route   POST /api/bank-accounts/petty-cash/transactions
+ * @desc    Record a manual CASH transaction against the Petty Cash account
+ * @access  Private (SUPER_ADMIN, or any user granted PETTY_CASH_RECORD_TRANSACTION)
+ */
+router.post(
+  '/petty-cash/transactions',
+  protect,
+  requirePermission('PETTY_CASH_RECORD_TRANSACTION'),
+  bankAccountController.recordPettyCashTransaction
 );
 
 /**
