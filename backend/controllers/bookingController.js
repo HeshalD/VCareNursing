@@ -1872,6 +1872,19 @@ exports.confirmDailyInvoice = async (req, res) => {
         await maybeAutoCompleteVisitingBooking(client, booking_id);
 
         await client.query('COMMIT');
+
+        const isShift = Boolean(shift_slot_id);
+        logActivity({
+            actorUserId: req.user?.user_id,
+            actorRole: req.user?.role,
+            actionType: approve
+                ? (isShift ? 'SHIFT_INVOICE_CONFIRMED' : 'DAILY_INVOICE_CONFIRMED')
+                : (isShift ? 'SHIFT_INVOICE_SKIPPED' : 'DAILY_INVOICE_SKIPPED'),
+            entityType: 'BOOKING',
+            entityId: String(booking_id),
+            details: { service_date, amount: finalAmount, shift_slot_id: shift_slot_id || null },
+        }).catch(err => console.error('Activity log failed:', err));
+
         res.status(200).json({ status: 'success', data: result.rows[0] });
     } catch (error) {
         await client.query('ROLLBACK');
@@ -2140,6 +2153,16 @@ exports.waiveShiftOccurrence = async (req, res) => {
         }
 
         await client.query('COMMIT');
+
+        logActivity({
+            actorUserId: req.user?.user_id,
+            actorRole: req.user?.role,
+            actionType: 'SHIFT_OCCURRENCE_WAIVED',
+            entityType: 'BOOKING',
+            entityId: String(booking_id),
+            details: { service_date, shift_slot_id, assignment_id, notes },
+        }).catch(err => console.error('Activity log failed:', err));
+
         res.status(200).json({ status: 'success', message: 'Shift waived — no charge and no pay recorded' });
     } catch (error) {
         await client.query('ROLLBACK');
@@ -2237,6 +2260,16 @@ exports.rescheduleShiftOccurrence = async (req, res) => {
         );
 
         await client.query('COMMIT');
+
+        logActivity({
+            actorUserId: req.user?.user_id,
+            actorRole: req.user?.role,
+            actionType: 'SHIFT_OCCURRENCE_RESCHEDULED',
+            entityType: 'BOOKING',
+            entityId: String(booking_id),
+            details: { shift_slot_id, original_date, new_date, reason: reason || null },
+        }).catch(err => console.error('Activity log failed:', err));
+
         res.status(201).json({
             status: 'success',
             data: { ...reschedule, assignment_id: makeupAssignmentId }
@@ -2297,6 +2330,16 @@ exports.cancelShiftReschedule = async (req, res) => {
         }
 
         await client.query('COMMIT');
+
+        logActivity({
+            actorUserId: req.user?.user_id,
+            actorRole: req.user?.role,
+            actionType: 'SHIFT_RESCHEDULE_CANCELLED',
+            entityType: 'BOOKING',
+            entityId: String(booking_id),
+            details: { reschedule_id, shift_slot_id: reschedule.shift_slot_id, original_date: reschedule.original_date },
+        }).catch(err => console.error('Activity log failed:', err));
+
         res.status(200).json({ status: 'success', message: 'Reschedule cancelled' });
     } catch (error) {
         await client.query('ROLLBACK');
@@ -2385,6 +2428,15 @@ exports.updateInvoicingMode = async (req, res) => {
             `UPDATE bookings SET invoicing_mode = $1 WHERE booking_id = $2 RETURNING booking_id, invoicing_mode`,
             [invoicing_mode, booking_id]
         );
+
+        logActivity({
+            actorUserId: req.user?.user_id,
+            actorRole: req.user?.role,
+            actionType: 'INVOICING_MODE_UPDATED',
+            entityType: 'BOOKING',
+            entityId: String(booking_id),
+            details: { invoicing_mode },
+        }).catch(err => console.error('Activity log failed:', err));
 
         res.status(200).json({ status: 'success', data: result.rows[0] });
     } catch (error) {
@@ -2698,6 +2750,15 @@ exports.approveTerminationRequest = async (req, res) => {
 
             await client.query('COMMIT');
 
+            logActivity({
+                actorUserId: req.user?.user_id,
+                actorRole: req.user?.role,
+                actionType: 'TERMINATION_APPROVED',
+                entityType: 'BOOKING',
+                entityId: String(request.booking_id),
+                details: { termination_id, scheduled: true, effective_date: toDateStr(officialEndDate), settlement_action },
+            }).catch(err => console.error('Activity log failed:', err));
+
             return res.status(200).json({
                 status: 'success',
                 scheduled: true,
@@ -2724,6 +2785,15 @@ exports.approveTerminationRequest = async (req, res) => {
         await client.query('COMMIT');
 
         notify();
+
+        logActivity({
+            actorUserId: req.user?.user_id,
+            actorRole: req.user?.role,
+            actionType: 'TERMINATION_APPROVED',
+            entityType: 'BOOKING',
+            entityId: String(request.booking_id),
+            details: { termination_id, scheduled: false, effective_date: toDateStr(officialEndDate), settlement_action },
+        }).catch(err => console.error('Activity log failed:', err));
 
         res.status(200).json({
             status: 'success',
@@ -3400,6 +3470,16 @@ exports.markShiftBookingOverdue = async (req, res) => {
     );
 
     await client.query('COMMIT');
+
+    logActivity({
+      actorUserId: req.user?.user_id,
+      actorRole: req.user?.role,
+      actionType: 'BOOKING_MARKED_OVERDUE',
+      entityType: 'BOOKING',
+      entityId: String(booking_id),
+      details: { as_of_date, reason: reason || null },
+    }).catch(err => console.error('Activity log failed:', err));
+
     res.status(200).json({ status: 'success', message: 'Booking flagged as OVERDUE', data: { booking_id, status: 'OVERDUE' } });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -3457,6 +3537,16 @@ exports.resolveShiftBookingOverdue = async (req, res) => {
     );
 
     await client.query('COMMIT');
+
+    logActivity({
+      actorUserId: req.user?.user_id,
+      actorRole: req.user?.role,
+      actionType: 'BOOKING_OVERDUE_RESOLVED',
+      entityType: 'BOOKING',
+      entityId: String(booking_id),
+      details: { notes: notes || null },
+    }).catch(err => console.error('Activity log failed:', err));
+
     res.status(200).json({ status: 'success', message: 'Booking resolved back to ACTIVE', data: { booking_id, status: 'ACTIVE' } });
   } catch (error) {
     await client.query('ROLLBACK');

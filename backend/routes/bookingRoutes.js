@@ -5,7 +5,7 @@ const paymentTrackingController = require('../controllers/paymentTrackingControl
 const bookingNotesController = require('../controllers/bookingNotesController');
 const dailyAttendanceController = require('../controllers/dailyAttendanceController');
 const shiftPatternController = require('../controllers/shiftPatternController');
-const { protect, restrictTo, attachSalesScope, requireOwnSalesRecord } = require('../middleware/authMiddleware');
+const { protect, restrictTo, attachSalesScope, requireOwnSalesRecord, requirePermission } = require('../middleware/authMiddleware');
 const { upload } = require('../config/cloudinaryConfig');
 
 router.post(
@@ -175,17 +175,17 @@ router.post(
 router.patch('/:booking_id/extend', protect, restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'), bookingController.extendBooking);
 
 // Manual overdue flag/clear for SHIFT_BASED bookings (no automatic cron detection for this model)
-router.post('/:booking_id/mark-overdue', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.markShiftBookingOverdue);
-router.post('/:booking_id/resolve-overdue', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.resolveShiftBookingOverdue);
+router.post('/:booking_id/mark-overdue', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), requirePermission('BOOKING_MARK_OVERDUE'), bookingController.markShiftBookingOverdue);
+router.post('/:booking_id/resolve-overdue', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), requirePermission('BOOKING_RESOLVE_OVERDUE'), bookingController.resolveShiftBookingOverdue);
 
 router.post('/:booking_id/swap-staff', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), bookingController.swapStaff);
 router.get('/:booking_id/swap-history', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.getSwapHistory);
 
 // Daily attendance (staff in/out time + manual salary confirmation)
 router.get('/:booking_id/attendance', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), dailyAttendanceController.getBookingAttendance);
-router.post('/:booking_id/attendance', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), dailyAttendanceController.upsertAttendance);
-router.post('/:booking_id/attendance/absent', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), dailyAttendanceController.markAbsent);
-router.post('/attendance/:attendance_id/confirm-salary', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), dailyAttendanceController.confirmSalary);
+router.post('/:booking_id/attendance', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), requirePermission('ATTENDANCE_RECORD'), dailyAttendanceController.upsertAttendance);
+router.post('/:booking_id/attendance/absent', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), requirePermission('ATTENDANCE_MARK_ABSENT'), dailyAttendanceController.markAbsent);
+router.post('/attendance/:attendance_id/confirm-salary', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), requirePermission('ATTENDANCE_CONFIRM_SALARY'), dailyAttendanceController.confirmSalary);
 
 // Shift patterns + per-shift staff assignment (SHIFT_BASED only)
 router.get('/:booking_id/shift-pattern', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), shiftPatternController.getShiftPattern);
@@ -197,15 +197,15 @@ router.post('/:booking_id/shift-slots/:shift_slot_id/reassign-staff', protect, r
 
 // Manual daily client invoicing (SHIFT_BASED/VISITING always, LIVE_IN when invoicing_mode = MANUAL)
 router.get('/:booking_id/daily-invoices', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.getBookingDailyInvoices);
-router.post('/:booking_id/daily-invoices', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.confirmDailyInvoice);
-router.patch('/:booking_id/invoicing-mode', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.updateInvoicingMode);
+router.post('/:booking_id/daily-invoices', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), requirePermission('BOOKING_CONFIRM_DAILY_INVOICE'), bookingController.confirmDailyInvoice);
+router.patch('/:booking_id/invoicing-mode', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), requirePermission('BOOKING_UPDATE_INVOICING_MODE'), bookingController.updateInvoicingMode);
 
 // Per-shift schedule (derived, manual — no cron) + waive/reschedule for SHIFT_BASED bookings
 router.get('/:booking_id/shift-schedule', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.getShiftSchedule);
 router.get('/:booking_id/shift-reschedules', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.getShiftReschedules);
-router.post('/:booking_id/shift-occurrences/waive', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.waiveShiftOccurrence);
-router.post('/:booking_id/shift-occurrences/reschedule', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.rescheduleShiftOccurrence);
-router.post('/:booking_id/shift-occurrences/:reschedule_id/cancel', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.cancelShiftReschedule);
+router.post('/:booking_id/shift-occurrences/waive', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), requirePermission('BOOKING_WAIVE_SHIFT'), bookingController.waiveShiftOccurrence);
+router.post('/:booking_id/shift-occurrences/reschedule', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), requirePermission('BOOKING_RESCHEDULE_SHIFT'), bookingController.rescheduleShiftOccurrence);
+router.post('/:booking_id/shift-occurrences/:reschedule_id/cancel', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), requirePermission('BOOKING_CANCEL_RESCHEDULE'), bookingController.cancelShiftReschedule);
 
 // Notes CRUD
 router.post('/:booking_id/notes', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingNotesController.addNote);

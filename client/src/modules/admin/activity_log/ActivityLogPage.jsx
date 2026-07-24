@@ -5,20 +5,147 @@ import apiClient from '../../../api/api';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
 import DateInput from '../../../components/common/DateInput';
 
+// Every action_type string any backend controller currently emits via logActivity().
+// Keep alphabetized — this list is also what powers "Action Type" filtering.
 const ACTION_TYPE_OPTIONS = [
-  'CHANGE_REQUEST_SUBMITTED',
-  'CHANGE_REQUEST_CLAIMED',
-  'CHANGE_REQUEST_APPROVED',
-  'CHANGE_REQUEST_REJECTED',
-  'CLIENT_PAYMENT_RECORDED',
-  'MANUAL_TRANSACTION_ADDED',
-  'BANK_ACCOUNT_CREATED',
-  'BANK_ACCOUNT_UPDATED',
-  'BANK_ACCOUNT_DEACTIVATED',
-  'STAFF_ASSIGNED',
-  'ASSIGNMENT_UPDATED',
+  'ADVANCE_APPROVED',
+  'ADVANCE_REJECTED',
+  'ADVANCE_THRESHOLD_UPDATED',
+  'APPLICATION_ACCEPTED',
+  'APPLICATION_AGREEMENT_SENT',
+  'APPLICATION_REJECTED',
+  'APPLICATION_UPDATED',
   'ASSIGNMENT_COMPLETED',
+  'ASSIGNMENT_UPDATED',
+  'ATTENDANCE_RECORDED',
+  'BANK_ACCOUNT_CREATED',
+  'BANK_ACCOUNT_DEACTIVATED',
+  'BANK_ACCOUNT_UPDATED',
+  'BOOKING_COMPLETED',
+  'BOOKING_CREATED',
+  'BOOKING_MARKED_OVERDUE',
+  'BOOKING_NOTE_ADDED',
+  'BOOKING_NOTE_DELETED',
+  'BOOKING_NOTE_UPDATED',
+  'BOOKING_OVERDUE_RESOLVED',
+  'BOOKING_PAUSED',
+  'BOOKING_PAYMENT_RECORDED',
+  'BOOKING_RESUMED',
+  'BOOKING_TERMINATED',
+  'BULK_IMPORT_COMMITTED',
+  'CANDIDATE_PROFILE_SENT',
+  'CHANGE_REQUEST_APPROVED',
+  'CHANGE_REQUEST_CLAIMED',
+  'CHANGE_REQUEST_REJECTED',
+  'CHANGE_REQUEST_SUBMITTED',
+  'CLIENT_ACCOUNT_DEACTIVATED',
+  'CLIENT_ACCOUNT_REACTIVATED',
+  'CLIENT_BILLING_UPDATED',
+  'CLIENT_NOTE_ADDED',
+  'CLIENT_NOTE_DELETED',
+  'CLIENT_NOTE_UPDATED',
+  'CLIENT_PAYMENT_RECORDED',
+  'CLIENT_PROFILE_CREATED',
+  'CLIENT_PROFILE_UPDATED',
+  'CLIENT_SALESPERSON_CREDITED',
+  'CLIENT_SALESPERSON_SWITCHED',
+  'DAILY_INVOICE_CONFIRMED',
+  'DAILY_INVOICE_RESENT',
+  'DAILY_INVOICE_SKIPPED',
+  'DEDUCTION_APPLIED',
+  'DEPOSIT_FORFEITED',
+  'DEPOSIT_REFUNDED',
+  'DEVICE_ASSIGNED',
+  'DEVICE_REVOKED',
+  'DOC_REQUEST_SENT',
+  'FUNDS_TRANSFERRED',
+  'INTERNAL_STAFF_CREATED',
+  'INTERNAL_STAFF_REMOVED',
+  'INTERNAL_STAFF_UPDATED',
+  'INVOICE_SENT',
+  'INVOICING_MODE_UPDATED',
+  'LEAVE_APPROVED',
+  'LEAVE_REJECTED',
+  'MANUAL_TRANSACTION_ADDED',
+  'PATIENT_CREATED',
+  'PATIENT_DELETED',
+  'PATIENT_UPDATED',
+  'PAYMENT_RECEIPT_SENT',
+  'PAYMENT_REJECTED',
+  'PAYMENT_VERIFIED',
+  'PERMISSIONS_UPDATED',
+  'PETTY_CASH_TRANSACTION_ADDED',
+  'PRESET_ITEM_CREATED',
+  'PRESET_ITEM_DELETED',
+  'PRESET_ITEM_UPDATED',
+  'PRODUCT_CREATED',
+  'PRODUCT_DEACTIVATED',
+  'PRODUCT_INTEREST_SUBMITTED',
+  'PRODUCT_INVOICE_CREATED',
+  'PRODUCT_INVOICE_RESENT',
+  'PRODUCT_QUOTATION_ACCEPTED',
+  'PRODUCT_QUOTATION_SENT',
+  'PRODUCT_UPDATED',
+  'QUOTATION_CREATED',
+  'QUOTATION_SENT',
+  'QUOTATION_UPDATED',
+  'QUOTE_PAYMENT_ALLOCATED',
+  'QUOTE_PAYMENT_RECORDED',
+  'RECRUITER_CREDITED',
+  'RECRUITER_SWITCHED',
+  'REG_FEE_INVOICE_RESENT',
+  'REG_FEE_INVOICE_SENT',
+  'REG_FEE_MEMBERSHIP_EXPIRED',
+  'REG_FEE_PAYMENT_VERIFIED',
+  'REG_FEE_RECEIPT_UPLOADED_BY_ADMIN',
+  'REG_FEE_STATUS_UPDATED',
+  'RENTAL_AGREEMENT_CREATED',
+  'RENTAL_UNIT_RETURNED',
+  'REVIEW_ADDED_BY_ADMIN',
+  'REVIEW_REQUEST_SENT',
+  'REVIEW_VISIBILITY_TOGGLED',
+  'SALARY_EXPORT_DOWNLOADED',
+  'SALARY_SHEET_NOTIFICATION_SENT',
+  'SALESPERSON_CREDITED',
+  'SALESPERSON_SWITCHED',
+  'SCHEDULED_ACTION_CANCELLED',
+  'SERVICE_REQUEST_CREATED',
+  'SERVICE_REQUEST_UPDATED',
+  'SESSION_FORCE_LOGOUT',
+  'SHIFT_INVOICE_CONFIRMED',
+  'SHIFT_INVOICE_SKIPPED',
+  'SHIFT_OCCURRENCE_RESCHEDULED',
+  'SHIFT_OCCURRENCE_WAIVED',
+  'SHIFT_PATTERN_CHANGED',
+  'SHIFT_PATTERN_CHANGE_SCHEDULED',
+  'SHIFT_RESCHEDULE_CANCELLED',
+  'SHIFT_STAFF_ASSIGNED',
+  'SHIFT_STAFF_REASSIGNED',
+  'STAFF_ACCOUNT_DEACTIVATED',
+  'STAFF_ACCOUNT_REACTIVATED',
+  'STAFF_ASSIGNED',
+  'STAFF_BANK_ACCOUNT_CREATED',
+  'STAFF_BANK_ACCOUNT_DELETED',
+  'STAFF_BANK_ACCOUNT_UPDATED',
+  'STAFF_MARKED_ABSENT',
+  'STAFF_PAYOUT_CREATED',
+  'STAFF_PROFILE_CREATED',
+  'STAFF_PROFILE_UPDATED',
+  'STAFF_SALARY_CONFIRMED',
+  'STAFF_SALARY_SKIPPED',
+  'STAFF_SWAPPED',
+  'STATEMENT_DELETED',
+  'STATEMENT_DOWNLOADED',
+  'STATEMENT_GENERATED',
+  'STATEMENT_SENT_WHATSAPP',
   'TERMINATION_APPROVED',
+  'TERMINATION_REJECTED',
+  'VENDOR_BILL_CREATED',
+  'VENDOR_BILL_PAYMENT_RECORDED',
+  'VENDOR_CREATED',
+  'VENDOR_DEACTIVATED',
+  'VENDOR_UPDATED',
+  'WALLET_BOOKING_PAYOFF',
 ];
 
 const ROLE_DOT = {
@@ -27,20 +154,27 @@ const ROLE_DOT = {
   ACCOUNTS:    'bg-teal-500',
 };
 
-const ACTION_DOT = {
-  CHANGE_REQUEST_SUBMITTED:  'bg-slate-400',
-  CHANGE_REQUEST_CLAIMED:    'bg-blue-400',
-  CHANGE_REQUEST_APPROVED:   'bg-emerald-500',
-  CHANGE_REQUEST_REJECTED:   'bg-red-400',
-  CLIENT_PAYMENT_RECORDED:   'bg-emerald-500',
-  MANUAL_TRANSACTION_ADDED:  'bg-amber-400',
-  BANK_ACCOUNT_CREATED:      'bg-indigo-400',
-  BANK_ACCOUNT_UPDATED:      'bg-cyan-500',
-  BANK_ACCOUNT_DEACTIVATED:  'bg-red-400',
-  STAFF_ASSIGNED:            'bg-teal-500',
-  ASSIGNMENT_UPDATED:        'bg-sky-400',
-  ASSIGNMENT_COMPLETED:      'bg-emerald-500',
-  TERMINATION_APPROVED:      'bg-orange-400',
+// Action types are too numerous (~130) to hand-color one by one, and new ones get
+// added as controllers grow — so color is derived from the verb at the end of the
+// action_type instead of a lookup table, and stays correct without upkeep.
+const dotForAction = (actionType) => {
+  if (!actionType) return 'bg-slate-400';
+  if (/(REJECTED|DELETED|DEACTIVATED|REVOKED|CANCELLED|SKIPPED|ABSENT|FORFEITED|REMOVED)$/.test(actionType)) {
+    return 'bg-red-400';
+  }
+  if (/(CREATED|ADDED|APPROVED|CONFIRMED|ACCEPTED|CREDITED|VERIFIED|COMPLETED|RECORDED|ASSIGNED|REACTIVATED)$/.test(actionType)) {
+    return 'bg-emerald-500';
+  }
+  if (/(SENT|RESENT|DOWNLOADED|GENERATED)$/.test(actionType)) {
+    return 'bg-blue-400';
+  }
+  if (/(UPDATED|CHANGED|REASSIGNED|SWAPPED|RESCHEDULED|TOGGLED|SWITCHED|SUBMITTED|CLAIMED|ALLOCATED|OVERDUE)$/.test(actionType)) {
+    return 'bg-cyan-500';
+  }
+  if (/(PAUSED|RESOLVED|APPLIED)$/.test(actionType)) {
+    return 'bg-amber-400';
+  }
+  return 'bg-slate-400';
 };
 
 const Tag = ({ label, dot }) => (
@@ -207,7 +341,7 @@ const ActivityLogPage = () => {
                           <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmt(log.created_at)}</td>
                           <td className="px-4 py-3 font-semibold text-slate-900">{log.actor_name}</td>
                           <td className="px-4 py-3 whitespace-nowrap"><Tag label={log.actor_role} dot={ROLE_DOT[log.actor_role]} /></td>
-                          <td className="px-4 py-3 whitespace-nowrap"><Tag label={log.action_type.replace(/_/g, ' ')} dot={ACTION_DOT[log.action_type]} /></td>
+                          <td className="px-4 py-3 whitespace-nowrap"><Tag label={log.action_type.replace(/_/g, ' ')} dot={dotForAction(log.action_type)} /></td>
                           <td className="px-4 py-3 text-slate-500">
                             {log.entity_type ? log.entity_type.replace(/_/g, ' ').toUpperCase() : '—'}
                           </td>

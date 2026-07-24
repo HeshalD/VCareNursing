@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const bcrypt = require('bcryptjs');
+const { logActivity } = require('../utils/activityLogger');
 
 const LOGIN_ROLES = new Set(['COORDINATOR', 'ACCOUNTS', 'SALES']);
 const SELECTABLE = 'id, user_id, full_name, role, email, phone, base_salary, joined_date, status, address, total_sales_amount, bookings_brought_count, created_at, updated_at';
@@ -64,6 +65,16 @@ exports.create = async (req, res) => {
     );
 
     await client.query('COMMIT');
+
+    logActivity({
+      actorUserId: req.user?.user_id,
+      actorRole: req.user?.role,
+      actionType: 'INTERNAL_STAFF_CREATED',
+      entityType: 'STAFF',
+      entityId: String(result.rows[0].id),
+      details: { full_name: full_name.trim(), role: role.trim() },
+    }).catch(err => console.error('Activity log failed:', err));
+
     res.status(201).json({ staff: result.rows[0] });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -109,6 +120,16 @@ exports.update = async (req, res) => {
     if (!result.rows.length) {
       return res.status(404).json({ message: 'Staff member not found' });
     }
+
+    logActivity({
+      actorUserId: req.user?.user_id,
+      actorRole: req.user?.role,
+      actionType: 'INTERNAL_STAFF_UPDATED',
+      entityType: 'STAFF',
+      entityId: String(id),
+      details: { updated_fields: allowed.filter(k => Object.prototype.hasOwnProperty.call(body, k)) },
+    }).catch(err => console.error('Activity log failed:', err));
+
     res.json({ staff: result.rows[0] });
   } catch (err) {
     if (err.code === '23505') {
@@ -141,6 +162,16 @@ exports.remove = async (req, res) => {
     }
 
     await client.query('COMMIT');
+
+    logActivity({
+      actorUserId: req.user?.user_id,
+      actorRole: req.user?.role,
+      actionType: 'INTERNAL_STAFF_REMOVED',
+      entityType: 'STAFF',
+      entityId: String(id),
+      details: { full_name },
+    }).catch(err => console.error('Activity log failed:', err));
+
     res.json({ message: `${full_name} has been removed` });
   } catch (err) {
     await client.query('ROLLBACK');

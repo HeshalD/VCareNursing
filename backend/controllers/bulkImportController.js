@@ -4,6 +4,7 @@ const db = require('../config/db');
 const { creditStaffSalary } = require('../services/billingService');
 const { creditRecruiterForStaff } = require('../services/recruiterService');
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
+const { logActivity } = require('../utils/activityLogger');
 
 const SHEET_NAMES = {
   staff: 'Staff',
@@ -282,15 +283,30 @@ function normalizeBookingRow(row, { isAdditionalStaffRow = false } = {}) {
 
   const start_date = row.start_date ? String(row.start_date).trim() : null;
   if (start_date && !DATE_RE.test(start_date)) errors.push('start_date must be in YYYY-MM-DD format');
+  // This sheet is for bookings already in progress — status/staffing/billing all go
+  // live immediately on commit, with none of the SCHEDULED/ASSIGNMENT_START deferral
+  // machinery the normal booking flow uses for a future start date. A future-dated
+  // row here would start billing the client and paying the staff before service has
+  // actually begun.
+  if (start_date && DATE_RE.test(start_date)) {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    if (start_date > todayStr) {
+      errors.push('start_date cannot be in the future — Active Bookings import is for bookings already in progress; use the normal Assign Staff flow for upcoming bookings');
+    }
+  }
 
   if (assigned_staff_mobile_number && !staff_daily_rate) {
     errors.push('staff_daily_rate is required when assigned_staff_mobile_number is provided (needed to credit the staff member\'s ongoing daily earnings)');
   }
 
+  // Always required (not just when staff is pre-assigned) so every imported booking
+  // gets a backfilled quote with a real client rate — otherwise a booking imported
+  // without staff has no linked quote, and assigning staff to it later has no client
+  // rate to bill against.
   const client_daily_rate = toNumberOrNull(row.client_daily_rate);
   if (Number.isNaN(client_daily_rate)) errors.push('client_daily_rate must be a number');
-  if (assigned_staff_mobile_number && !client_daily_rate) {
-    errors.push('client_daily_rate is required when assigned_staff_mobile_number is provided (this is what the client is billed going forward — it can differ from staff_daily_rate)');
+  if (!client_daily_rate) {
+    errors.push('client_daily_rate is required (this is what the client is billed going forward — it can differ from staff_daily_rate)');
   }
 
   const service_model = row.service_model ? String(row.service_model).trim().toUpperCase() : 'SHIFT_BASED';
@@ -368,6 +384,36 @@ async function findInternalStaffIdByEmail(executor, email) {
 
 async function mobileNumberTaken(executor, mobileNumber) {
   const res = await executor.query(`SELECT 1 FROM users WHERE mobile_number = $1`, [mobileNumber]);
+  return res.rows.length > 0;
+}
+
+// Mirrors the conflict check in staffAssignmentController.assignStaffToBooking — a
+// staff member already committed to an overlapping ACTIVE/SCHEDULED assignment
+// elsewhere must not be silently double-booked by the import. excludeBookingId lets
+// a staff member legitimately cover more than one shift slot on the SAME booking
+// (e.g. an additional-staff row assigning them to a second shift) without tripping
+// this check against their own other slot.
+async function findConflictingAssignment(executor, staffId, serviceStartDate, excludeBookingId = null) {
+  const res = await executor.query(
+    `SELECT 1
+     FROM booking_staff_assignments bsa
+     LEFT JOIN LATERAL (
+         SELECT effective_date FROM scheduled_actions
+         WHERE booking_id = bsa.booking_id
+           AND action_type IN ('TERMINATION', 'COMPLETION')
+           AND status = 'SCHEDULED'
+         ORDER BY effective_date ASC
+         LIMIT 1
+     ) sa ON bsa.service_end_date IS NULL
+     WHERE bsa.staff_profile_id = $1
+       AND ($2::uuid IS NULL OR bsa.booking_id != $2)
+       AND bsa.status IN ('ACTIVE', 'SCHEDULED')
+       AND bsa.service_start_date <= $3::date
+       AND (COALESCE(bsa.service_end_date, sa.effective_date) IS NULL
+            OR COALESCE(bsa.service_end_date, sa.effective_date) >= $3::date)
+     LIMIT 1`,
+    [staffId, excludeBookingId, serviceStartDate]
+  );
   return res.rows.length > 0;
 }
 
@@ -506,8 +552,17 @@ exports.previewImport = async (req, res) => {
         if (data.shift_number < 1 || data.shift_number > primary.shift_count) {
           errors.push(`shift_number ${data.shift_number} is out of range for booking_ref ${data.booking_ref} (this booking has ${primary.shift_count} shift(s))`);
         }
-        const staffKnown = seenStaffMobiles.has(data.assigned_staff_mobile_number) || await findStaffIdByMobile(db, data.assigned_staff_mobile_number);
+        const existingStaffId = await findStaffIdByMobile(db, data.assigned_staff_mobile_number);
+        const staffKnown = seenStaffMobiles.has(data.assigned_staff_mobile_number) || existingStaffId;
         if (!staffKnown) errors.push(`assigned_staff_mobile_number ${data.assigned_staff_mobile_number} not found in Staff sheet or existing staff`);
+        // Only checkable against staff who already exist in the DB — a brand-new
+        // staff member created earlier in this same batch can't have a prior
+        // conflicting assignment. excludeBookingId is the primary row's own booking
+        // once it exists post-commit; at preview time nothing has been created yet,
+        // so this can only catch conflicts against OTHER pre-existing bookings.
+        if (existingStaffId && primary && await findConflictingAssignment(db, existingStaffId, primary.start_date)) {
+          errors.push(`assigned_staff_mobile_number ${data.assigned_staff_mobile_number} is already committed to another active booking over this date range`);
+        }
       }
       results.bookings.push({ row_number: rowNumber, status: errors.length ? 'error' : 'ok', errors });
       continue;
@@ -526,8 +581,12 @@ exports.previewImport = async (req, res) => {
       if (!patientKnown) errors.push(`patient_full_name "${data.patient_full_name}" not found for this client in Care Profiles sheet or existing care profiles`);
 
       if (data.assigned_staff_mobile_number) {
-        const staffKnown = seenStaffMobiles.has(data.assigned_staff_mobile_number) || await findStaffIdByMobile(db, data.assigned_staff_mobile_number);
+        const existingStaffId = await findStaffIdByMobile(db, data.assigned_staff_mobile_number);
+        const staffKnown = seenStaffMobiles.has(data.assigned_staff_mobile_number) || existingStaffId;
         if (!staffKnown) errors.push(`assigned_staff_mobile_number ${data.assigned_staff_mobile_number} not found in Staff sheet or existing staff`);
+        if (existingStaffId && await findConflictingAssignment(db, existingStaffId, data.start_date || new Date().toISOString().slice(0, 10))) {
+          errors.push(`assigned_staff_mobile_number ${data.assigned_staff_mobile_number} is already committed to another active booking over this date range`);
+        }
       }
     }
     if (!errors.length && data.booking_ref) {
@@ -535,6 +594,7 @@ exports.previewImport = async (req, res) => {
         client_mobile_number: data.client_mobile_number,
         patient_full_name: data.patient_full_name,
         shift_count: data.shift_count,
+        start_date: data.start_date || new Date().toISOString().slice(0, 10),
       });
     }
     results.bookings.push({ row_number: rowNumber, status: errors.length ? 'error' : 'ok', errors });
@@ -748,7 +808,7 @@ async function commitPatientRow(data, clientId) {
 // Adds one more staff member to an already-imported SHIFT_BASED booking's
 // shift slot (a "same booking_ref" row). Does not touch bookings/transactions
 // — those were already created by the primary row for this booking_ref.
-async function commitAdditionalStaffAssignmentRow(data, targetBookingId, shiftSlotId, staffId, assignedBy, serviceStartDate) {
+async function commitAdditionalStaffAssignmentRow(data, targetBookingId, shiftSlotId, staffId, assignedBy, serviceStartDate, bookingAmountPaid) {
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
@@ -759,6 +819,10 @@ async function commitAdditionalStaffAssignmentRow(data, targetBookingId, shiftSl
     );
     if (existing.rows.length > 0) {
       throw new Error(`shift_number ${data.shift_number} for booking_ref ${data.booking_ref} already has an active staff assignment`);
+    }
+
+    if (await findConflictingAssignment(client, staffId, serviceStartDate, targetBookingId)) {
+      throw new Error(`assigned_staff_mobile_number for shift_number ${data.shift_number} is already committed to another active booking over this date range`);
     }
 
     // The slot was created with a placeholder time copied from the primary
@@ -778,9 +842,9 @@ async function commitAdditionalStaffAssignmentRow(data, targetBookingId, shiftSl
     await client.query(
       `INSERT INTO booking_staff_assignments (
          booking_id, staff_profile_id, assigned_on, assigned_by, daily_rate,
-         service_start_date, status, shift_slot_id, notes
-       ) VALUES ($1, $2, NOW(), $3, $4, $5, 'ACTIVE', $6, 'LEGACY_IMPORT: migrated assignment (additional shift)')`,
-      [targetBookingId, staffId, assignedBy?.user_id || null, data.staff_daily_rate, serviceStartDate, shiftSlotId]
+         service_start_date, amount_allocated, status, shift_slot_id, notes
+       ) VALUES ($1, $2, NOW(), $3, $4, $5, $6, 'ACTIVE', $7, 'LEGACY_IMPORT: migrated assignment (additional shift)')`,
+      [targetBookingId, staffId, assignedBy?.user_id || null, data.staff_daily_rate, serviceStartDate, bookingAmountPaid || null, shiftSlotId]
     );
 
     await client.query(
@@ -806,9 +870,14 @@ async function commitBookingRow(data, clientId, patientId, staffId, assignedBy) 
     const amountQuotated = data.amount_paid + data.amount_outstanding;
     const serviceStartDate = data.start_date || new Date().toISOString().slice(0, 10);
 
-    // If a client-facing rate was given, back-fill a minimal quote so the
-    // client is billed at that rate going forward instead of falling back to
-    // the staff's own pay rate (see createBackfilledQuoteForBooking).
+    if (staffId && await findConflictingAssignment(client, staffId, serviceStartDate)) {
+      throw new Error('assigned_staff_mobile_number is already committed to another active booking over this date range');
+    }
+
+    // client_daily_rate is always required now (see normalizeBookingRow), so every
+    // imported booking gets a backfilled quote — both so the client is billed at the
+    // correct rate going forward instead of the staff's own pay rate (no margin), and
+    // so a booking imported without staff still has a rate to assign staff against later.
     let requestId = null;
     let quoteId = null;
     if (data.client_daily_rate) {
@@ -826,11 +895,13 @@ async function commitBookingRow(data, clientId, patientId, staffId, assignedBy) 
     }
 
     const isShiftBased = data.service_model === 'SHIFT_BASED';
+    // ot_rate has no sheet column — default to 500, matching assignStaffToBooking's
+    // own fallback when an admin doesn't specify one via the real assign-staff form.
     const bookingRes = await client.query(
       `INSERT INTO bookings (
          client_id, patient_id, service_type, service_model, start_date, assigned_staff_id,
-         status, amount_quotated, amount_paid, request_id, daily_rate, shift_rate
-       ) VALUES ($1, $2, $3, $4::service_model_enum, $5, $6, 'ACTIVE', $7, $8, $9, $10, $11)
+         status, amount_quotated, amount_paid, request_id, daily_rate, shift_rate, ot_rate
+       ) VALUES ($1, $2, $3, $4::service_model_enum, $5, $6, 'ACTIVE', $7, $8, $9, $10, $11, 500)
        RETURNING booking_id`,
       [
         clientId, patientId, data.service_type, data.service_model, data.start_date, staffId,
@@ -845,11 +916,22 @@ async function commitBookingRow(data, clientId, patientId, staffId, assignedBy) 
       await client.query(`UPDATE quotations SET booking_id = $1 WHERE quote_id = $2`, [bookingId, quoteId]);
     }
 
-    await client.query(
-      `INSERT INTO transactions (client_id, booking_id, category, transaction_type, amount, status, notes, created_at)
-       VALUES ($1, $2, 'SERVICE_INVOICE', 'DEBIT', $3, 'COMPLETED', 'LEGACY_IMPORT: migrated booking invoice', NOW())`,
-      [clientId, bookingId, amountQuotated]
-    );
+    // Only the amount already owed as of the migration cutover (amount_outstanding)
+    // is invoiced here — NOT the full contract value (amountQuotated). The nightly
+    // cron (LIVE_IN) / manual attendance flows (SHIFT_BASED/VISITING) invoice
+    // day-by-day exactly like any other booking, starting from today; pre-invoicing
+    // the whole contract here would double-bill the client as those future days are
+    // delivered and invoiced for real. amountQuotated is still recorded on
+    // bookings.amount_quotated and the backfilled quote's total_amount purely as a
+    // reference total — see getClientOverdueBreakdown, which nets it against paid to
+    // reconstruct amount_outstanding for the client-level overdue summary.
+    if (data.amount_outstanding > 0) {
+      await client.query(
+        `INSERT INTO transactions (client_id, booking_id, category, transaction_type, amount, status, notes, created_at)
+         VALUES ($1, $2, 'SERVICE_INVOICE', 'DEBIT', $3, 'COMPLETED', 'LEGACY_IMPORT: opening balance already owed as of migration', NOW())`,
+        [clientId, bookingId, data.amount_outstanding]
+      );
+    }
 
     if (data.amount_paid > 0) {
       await client.query(
@@ -1036,7 +1118,7 @@ exports.commitImport = async (req, res) => {
         );
         if (!slotRes.rows[0]) throw new Error(`shift_number ${data.shift_number} slot not found for booking_ref ${data.booking_ref}`);
 
-        await commitAdditionalStaffAssignmentRow(data, primary.booking_id, slotRes.rows[0].shift_slot_id, staffId, assignedBy, primary.start_date);
+        await commitAdditionalStaffAssignmentRow(data, primary.booking_id, slotRes.rows[0].shift_slot_id, staffId, assignedBy, primary.start_date, primary.amount_paid);
         results.bookings.push({ row_number: rowNumber, status: 'created', booking_id: primary.booking_id, message: `Staff added to shift ${data.shift_number}` });
       } catch (err) {
         results.bookings.push({ row_number: rowNumber, status: 'error', message: err.message });
@@ -1069,6 +1151,7 @@ exports.commitImport = async (req, res) => {
         bookingRefMap.set(data.booking_ref, {
           booking_id: created.booking_id, pattern_id: patternId, shift_count: data.shift_count,
           client_mobile_number: data.client_mobile_number, patient_full_name: data.patient_full_name,
+          amount_paid: data.amount_paid,
           start_date: data.start_date || new Date().toISOString().slice(0, 10),
         });
       }
@@ -1081,6 +1164,22 @@ exports.commitImport = async (req, res) => {
 
   await db.query(`UPDATE import_batches SET row_summary = $1 WHERE import_batch_id = $2`,
     [JSON.stringify(results), importBatchId]);
+
+  const countCreated = (rows) => rows.filter(r => r.status === 'created').length;
+  logActivity({
+    actorUserId: req.user?.user_id,
+    actorRole: req.user?.role,
+    actionType: 'BULK_IMPORT_COMMITTED',
+    entityType: 'BULK_IMPORT',
+    entityId: String(importBatchId),
+    details: {
+      original_filename: req.file.originalname || null,
+      staff_created: countCreated(results.staff),
+      clients_created: countCreated(results.clients),
+      patients_created: countCreated(results.patients),
+      bookings_created: countCreated(results.bookings),
+    },
+  }).catch(err => console.error('Activity log failed:', err));
 
   res.status(200).json({ status: 'success', data: { import_batch_id: importBatchId, results } });
 };

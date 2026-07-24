@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { MonitorSmartphone, Loader2, LogOut } from 'lucide-react';
+import { MonitorSmartphone, Loader2, LogOut, RefreshCw } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 
@@ -12,6 +12,7 @@ const FILTERS = [
 const ActiveSessionsPage = () => {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [loggingOutId, setLoggingOutId] = useState(null);
   const [toast, setToast] = useState(null);
   const [filter, setFilter] = useState('all');
@@ -19,6 +20,7 @@ const ActiveSessionsPage = () => {
   useEffect(() => { loadSessions(); }, []);
 
   const loadSessions = async () => {
+    setRefreshing(true);
     try {
       const res = await apiClient.listAllSessions();
       setSessions(res.sessions || []);
@@ -26,6 +28,7 @@ const ActiveSessionsPage = () => {
       console.error('loadSessions error:', err);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -58,7 +61,21 @@ const ActiveSessionsPage = () => {
   const activeCount = useMemo(() => sessions.filter((s) => s.is_active).length, [sessions]);
 
   return (
-    <AdminLayout title="Active Sessions" subtitle="Devices assigned to staff and their current login status">
+    <AdminLayout
+      title="Active Sessions"
+      subtitle="Devices assigned to staff and their current login status"
+      actions={
+        <button
+          onClick={loadSessions}
+          title="Refresh"
+          disabled={refreshing}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+          Refresh
+        </button>
+      }
+    >
       {toast && (
         <div
           className={`fixed top-6 right-6 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium animate-fade-in ${

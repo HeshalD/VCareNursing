@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const db = require('../config/db');
+const { logActivity } = require('../utils/activityLogger');
 
 const DEVICE_RESTRICTED_ROLES = new Set(['COORDINATOR', 'ACCOUNTS']);
 
@@ -35,6 +36,15 @@ exports.assign = async (req, res) => {
        RETURNING id, user_id, label, status, activation_code, assigned_at`,
       [user_id, code, label.trim(), req.user.user_id]
     );
+
+    logActivity({
+      actorUserId: req.user?.user_id,
+      actorRole: req.user?.role,
+      actionType: 'DEVICE_ASSIGNED',
+      entityType: 'STAFF',
+      entityId: String(user_id),
+      details: { label: label.trim() },
+    }).catch(err => console.error('Activity log failed:', err));
 
     res.status(201).json({ device: result.rows[0] });
   } catch (err) {
@@ -97,7 +107,7 @@ exports.revoke = async (req, res) => {
 
   try {
     const deviceResult = await db.query(
-      `UPDATE staff_devices SET status = 'REVOKED', revoked_at = NOW() WHERE id = $1 RETURNING device_id`,
+      `UPDATE staff_devices SET status = 'REVOKED', revoked_at = NOW() WHERE id = $1 RETURNING device_id, user_id, label`,
       [id]
     );
 
@@ -105,13 +115,22 @@ exports.revoke = async (req, res) => {
       return res.status(404).json({ message: 'Device not found' });
     }
 
-    const { device_id } = deviceResult.rows[0];
+    const { device_id, user_id, label } = deviceResult.rows[0];
     if (device_id) {
       await db.query(
         `UPDATE staff_sessions SET is_active = false, logout_at = NOW() WHERE device_id = $1 AND is_active = true`,
         [device_id]
       );
     }
+
+    logActivity({
+      actorUserId: req.user?.user_id,
+      actorRole: req.user?.role,
+      actionType: 'DEVICE_REVOKED',
+      entityType: 'STAFF',
+      entityId: String(user_id),
+      details: { label },
+    }).catch(err => console.error('Activity log failed:', err));
 
     res.json({ message: 'Device revoked' });
   } catch (err) {
@@ -178,12 +197,22 @@ exports.forceLogout = async (req, res) => {
 
   try {
     const result = await db.query(
-      `UPDATE staff_sessions SET is_active = false, logout_at = NOW() WHERE id = $1 RETURNING id`,
+      `UPDATE staff_sessions SET is_active = false, logout_at = NOW() WHERE id = $1 RETURNING id, user_id`,
       [id]
     );
     if (!result.rows.length) {
       return res.status(404).json({ message: 'Session not found' });
     }
+
+    logActivity({
+      actorUserId: req.user?.user_id,
+      actorRole: req.user?.role,
+      actionType: 'SESSION_FORCE_LOGOUT',
+      entityType: 'STAFF',
+      entityId: String(result.rows[0].user_id),
+      details: { session_id: id },
+    }).catch(err => console.error('Activity log failed:', err));
+
     res.json({ message: 'Session logged out' });
   } catch (err) {
     console.error('device.forceLogout error:', err);
