@@ -2,6 +2,7 @@
 const db = require('../config/db');
 const { creditStaffSalary } = require('../services/billingService');
 const { maybeAutoCompleteVisitingBooking } = require('../services/visitingBookings');
+const { logActivity } = require('../utils/activityLogger');
 
 async function getDeciderName(userId) {
     const result = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [userId]);
@@ -183,6 +184,15 @@ exports.upsertAttendance = async (req, res) => {
                     [booking_id, assignment_id, staffProfileId, service_date, in_time, out_time, hoursServed.toFixed(2), notes || null]
                 );
 
+        logActivity({
+            actorUserId: req.user?.user_id,
+            actorRole: req.user?.role,
+            actionType: 'ATTENDANCE_RECORDED',
+            entityType: 'BOOKING',
+            entityId: String(booking_id),
+            details: { assignment_id, service_date, hours_served: hoursServed.toFixed(2) },
+        }).catch(err => console.error('Activity log failed:', err));
+
         res.status(200).json({ status: 'success', data: result.rows[0] });
     } catch (error) {
         console.error('Upsert attendance error:', error);
@@ -308,6 +318,15 @@ exports.markAbsent = async (req, res) => {
             autoCompleteClient.release();
         }
 
+        logActivity({
+            actorUserId: req.user?.user_id,
+            actorRole: req.user?.role,
+            actionType: 'STAFF_MARKED_ABSENT',
+            entityType: 'BOOKING',
+            entityId: String(booking_id),
+            details: { assignment_id, service_date, notes: absentNotes },
+        }).catch(err => console.error('Activity log failed:', err));
+
         res.status(200).json({ status: 'success', data: result.rows[0] });
     } catch (error) {
         console.error('Mark attendance absent error:', error);
@@ -404,6 +423,16 @@ exports.confirmSalary = async (req, res) => {
         await maybeAutoCompleteVisitingBooking(client, attendance.booking_id);
 
         await client.query('COMMIT');
+
+        logActivity({
+            actorUserId: req.user?.user_id,
+            actorRole: req.user?.role,
+            actionType: approve ? 'STAFF_SALARY_CONFIRMED' : 'STAFF_SALARY_SKIPPED',
+            entityType: 'BOOKING',
+            entityId: String(attendance.booking_id),
+            details: { attendance_id, service_date: attendance.service_date, amount: salaryAmount },
+        }).catch(err => console.error('Activity log failed:', err));
+
         res.status(200).json({ status: 'success', data: updated.rows[0] });
     } catch (error) {
         await client.query('ROLLBACK');

@@ -129,6 +129,39 @@ const PERMISSIONS = {
 
   // ── Settings ──────────────────────────────────────────────────────────────
   SETTINGS_TOGGLE_MAINTENANCE: { label: 'Toggle Public Maintenance Mode',   module: 'Settings',             category: 'action' },
+
+  // ── Active Sessions / Devices (SUPER_ADMIN-only routes — not yet enforced
+  //    server-side; registered here for visibility, no effect until the route
+  //    restriction is loosened) ─────────────────────────────────────────────
+  SESSION_FORCE_LOGOUT:        { label: 'Force Logout Session',             module: 'Active Sessions',      category: 'action' },
+  DEVICE_ASSIGN:                { label: 'Assign Device',                   module: 'Active Sessions',      category: 'action' },
+  DEVICE_REVOKE:                { label: 'Revoke Device',                   module: 'Active Sessions',      category: 'action' },
+
+  // ── Permissions (SUPER_ADMIN-only route — not yet enforced server-side) ───
+  PERMISSIONS_MANAGE:          { label: 'Manage Staff Permissions',         module: 'Permissions',          category: 'action' },
+
+  // ── Internal Staff (SUPER_ADMIN-only routes — not yet enforced server-side) ─
+  INTERNAL_STAFF_CREATE:       { label: 'Create Internal Staff',            module: 'Internal Staff',       category: 'action' },
+  INTERNAL_STAFF_EDIT:         { label: 'Edit Internal Staff',              module: 'Internal Staff',       category: 'action' },
+  INTERNAL_STAFF_REMOVE:       { label: 'Remove Internal Staff',            module: 'Internal Staff',       category: 'action' },
+
+  // ── Bulk Import ───────────────────────────────────────────────────────────
+  BULK_IMPORT_COMMIT:          { label: 'Commit Bulk Import',               module: 'Bulk Import',          category: 'action' },
+
+  // ── Upcoming Events / Scheduled Actions ──────────────────────────────────
+  SCHEDULED_ACTION_CANCEL:     { label: 'Cancel Scheduled Action',          module: 'Upcoming Events',      category: 'action' },
+
+  // ── Bookings — day-to-day operations (SHIFT_BASED/VISITING service delivery) ─
+  BOOKING_CONFIRM_DAILY_INVOICE: { label: 'Confirm/Skip Daily or Shift Invoice', module: 'Bookings',        category: 'action' },
+  BOOKING_WAIVE_SHIFT:         { label: 'Waive Shift Occurrence',           module: 'Bookings',             category: 'action' },
+  BOOKING_RESCHEDULE_SHIFT:    { label: 'Reschedule Shift Occurrence',      module: 'Bookings',             category: 'action' },
+  BOOKING_CANCEL_RESCHEDULE:   { label: 'Cancel Shift Reschedule',          module: 'Bookings',             category: 'action' },
+  BOOKING_MARK_OVERDUE:        { label: 'Mark Booking Overdue',             module: 'Bookings',             category: 'action' },
+  BOOKING_RESOLVE_OVERDUE:     { label: 'Resolve Booking Overdue',          module: 'Bookings',             category: 'action' },
+  BOOKING_UPDATE_INVOICING_MODE: { label: 'Toggle Invoicing Mode',          module: 'Bookings',             category: 'action' },
+  ATTENDANCE_RECORD:           { label: 'Record Staff Attendance',          module: 'Bookings',             category: 'action' },
+  ATTENDANCE_MARK_ABSENT:      { label: 'Mark Staff Absent',                module: 'Bookings',             category: 'action' },
+  ATTENDANCE_CONFIRM_SALARY:   { label: 'Confirm/Skip Staff Daily Salary',  module: 'Bookings',             category: 'action' },
 };
 
 // Role templates — pre-built permission sets shown in the Super Admin UI.
@@ -159,6 +192,11 @@ const ROLE_TEMPLATES = {
     'PATIENT_CREATE', 'PATIENT_EDIT', 'PATIENT_DELETE',
     'STATEMENT_SEND',
     'REVIEW_TOGGLE_VISIBILITY', 'REVIEW_SEND_REQUEST',
+    'BULK_IMPORT_COMMIT', 'SCHEDULED_ACTION_CANCEL',
+    'BOOKING_CONFIRM_DAILY_INVOICE', 'BOOKING_WAIVE_SHIFT', 'BOOKING_RESCHEDULE_SHIFT',
+    'BOOKING_CANCEL_RESCHEDULE', 'BOOKING_MARK_OVERDUE', 'BOOKING_RESOLVE_OVERDUE',
+    'BOOKING_UPDATE_INVOICING_MODE',
+    'ATTENDANCE_RECORD', 'ATTENDANCE_MARK_ABSENT', 'ATTENDANCE_CONFIRM_SALARY',
   ],
   ACCOUNTS: [
     'VIEW_DASHBOARD', 'VIEW_BOOKINGS', 'VIEW_USER_MANAGEMENT', 'VIEW_QUOTATIONS',
@@ -177,6 +215,10 @@ const ROLE_TEMPLATES = {
     'BANK_ACCOUNT_CREATE', 'BANK_ACCOUNT_EDIT', 'BANK_ACCOUNT_DEACTIVATE',
     'PETTY_CASH_RECORD_TRANSACTION',
     'VENDOR_CREATE', 'VENDOR_EDIT', 'VENDOR_RECORD_BILL', 'VENDOR_PAY_BILL',
+    'BOOKING_CONFIRM_DAILY_INVOICE', 'BOOKING_WAIVE_SHIFT', 'BOOKING_RESCHEDULE_SHIFT',
+    'BOOKING_CANCEL_RESCHEDULE', 'BOOKING_MARK_OVERDUE', 'BOOKING_RESOLVE_OVERDUE',
+    'BOOKING_UPDATE_INVOICING_MODE',
+    'ATTENDANCE_RECORD', 'ATTENDANCE_MARK_ABSENT', 'ATTENDANCE_CONFIRM_SALARY',
   ],
   SALES: [
     'VIEW_DASHBOARD', 'VIEW_BOOKINGS', 'VIEW_QUOTATIONS', 'VIEW_USER_MANAGEMENT',

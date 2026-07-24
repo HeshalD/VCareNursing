@@ -12,6 +12,7 @@
 
 const db = require('../config/db');
 const { dispatchScheduledAction } = require('../services/scheduledActions');
+const { logActivity } = require('../utils/activityLogger');
 
 function extractActorRole(role) {
     const raw = Array.isArray(role) ? role[0] : role;
@@ -331,6 +332,15 @@ exports.cancelScheduledAction = async (req, res) => {
         );
 
         await client.query('COMMIT');
+
+        logActivity({
+            actorUserId: req.user?.user_id,
+            actorRole: extractActorRole(req.user?.role),
+            actionType: 'SCHEDULED_ACTION_CANCELLED',
+            entityType: 'BOOKING',
+            entityId: String(action.booking_id),
+            details: { action_id, scheduled_action_type: action.action_type, effective_date: action.effective_date },
+        }).catch(err => console.error('Activity log failed:', err));
 
         res.status(200).json({ status: 'success', message: 'Scheduled action cancelled.' });
     } catch (error) {

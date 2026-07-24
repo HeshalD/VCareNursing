@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const scheduledActionsController = require('../controllers/scheduledActionsController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 router.get(
     '/upcoming',
@@ -21,6 +21,7 @@ router.post(
     '/:action_id/cancel',
     protect,
     restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR'),
+    requirePermission('SCHEDULED_ACTION_CANCEL'),
     scheduledActionsController.cancelScheduledAction
 );
 

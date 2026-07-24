@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const { PERMISSIONS, ROLE_TEMPLATES, VALID_KEYS } = require('../config/permissions');
 const { invalidatePermissionCache } = require('../middleware/authMiddleware');
+const { logActivity } = require('../utils/activityLogger');
 
 function parseRoles(rawRole) {
   if (Array.isArray(rawRole)) {
@@ -114,6 +115,16 @@ exports.setUserPermissions = async (req, res) => {
 
     await client.query('COMMIT');
     invalidatePermissionCache(userId);
+
+    logActivity({
+      actorUserId: req.user?.user_id,
+      actorRole: req.user?.role,
+      actionType: 'PERMISSIONS_UPDATED',
+      entityType: 'STAFF',
+      entityId: String(userId),
+      details: { permissions, count: permissions.length },
+    }).catch(err => console.error('Activity log failed:', err));
+
     res.json({ message: 'Permissions updated', count: permissions.length });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -146,6 +157,16 @@ exports.grantPermission = async (req, res) => {
       [userId, key, req.user.user_id]
     );
     invalidatePermissionCache(userId);
+
+    logActivity({
+      actorUserId: req.user?.user_id,
+      actorRole: req.user?.role,
+      actionType: 'PERMISSIONS_UPDATED',
+      entityType: 'STAFF',
+      entityId: String(userId),
+      details: { granted: key },
+    }).catch(err => console.error('Activity log failed:', err));
+
     res.json({ message: `Granted ${key} to ${userId}` });
   } catch (err) {
     console.error('grantPermission error:', err);
@@ -186,6 +207,16 @@ exports.revokePermission = async (req, res) => {
       [userId, key]
     );
     invalidatePermissionCache(userId);
+
+    logActivity({
+      actorUserId: req.user?.user_id,
+      actorRole: req.user?.role,
+      actionType: 'PERMISSIONS_UPDATED',
+      entityType: 'STAFF',
+      entityId: String(userId),
+      details: { revoked: key },
+    }).catch(err => console.error('Activity log failed:', err));
+
     res.json({ message: `Revoked ${key} from ${userId}` });
   } catch (err) {
     console.error('revokePermission error:', err);
