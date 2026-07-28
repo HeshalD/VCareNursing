@@ -158,7 +158,9 @@ exports.remove = async (req, res) => {
     await client.query('DELETE FROM internal_staff WHERE id = $1', [id]);
 
     if (user_id) {
-      await client.query('DELETE FROM users WHERE user_id = $1', [user_id]);
+      // Deactivate rather than delete: the user may still be referenced by
+      // activity_log (as actor) or other audit records.
+      await client.query('UPDATE users SET is_active = false WHERE user_id = $1', [user_id]);
     }
 
     await client.query('COMMIT');
