@@ -23,7 +23,8 @@
     "earned": "Earned",
     "advance": "Advance",
     "deduction": "Deduction",
-    "payout": "Payout"
+    "payout": "Payout",
+    "revoked": "Salary Revoked"
   },
   "ledgerDescriptions": {
     "dailySalary": "Daily Salary",
@@ -32,6 +33,7 @@
     "approvedBy": "Approved by: ",
     "manualDeduction": "Manual deduction",
     "payout": "Payout",
+    "salaryRevoked": "Salary Revoked",
     "via": "via",
     "to": "To: "
   },

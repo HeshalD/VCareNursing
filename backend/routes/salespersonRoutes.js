@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 const ctrl = require('../controllers/salespersonController');
 
 /**
@@ -11,25 +11,24 @@ const ctrl = require('../controllers/salespersonController');
  */
 
 router.use(protect);
-router.use(restrictTo('SUPER_ADMIN', 'COORDINATOR'));
 
 // Salesperson directory + aggregates
-router.get('/', ctrl.listSalespersons);
+router.get('/', requirePermission('VIEW_SALESPERSONS'), ctrl.listSalespersons);
 
 // Audit trail for one salesperson
-router.get('/:salesperson_id/bookings', ctrl.getSalespersonBookings);
-router.get('/:salesperson_id/clients', ctrl.getSalespersonClients);
+router.get('/:salesperson_id/bookings', requirePermission('VIEW_SALESPERSONS'), ctrl.getSalespersonBookings);
+router.get('/:salesperson_id/clients', requirePermission('VIEW_SALESPERSONS'), ctrl.getSalespersonClients);
 
 // Per-booking current/origin/history
-router.get('/booking/:booking_id', ctrl.getBookingSalespersonHandler);
+router.get('/booking/:booking_id', requirePermission('VIEW_SALESPERSONS'), ctrl.getBookingSalespersonHandler);
 
 // Credit (initial) and switch (pointer-only)
-router.post('/booking/:booking_id/credit', ctrl.creditHandler);
-router.put('/booking/:booking_id/switch', ctrl.switchHandler);
+router.post('/booking/:booking_id/credit', requirePermission('SALESPERSON_CREDIT'), ctrl.creditHandler);
+router.put('/booking/:booking_id/switch', requirePermission('SALESPERSON_CREDIT'), ctrl.switchHandler);
 
 // Per-client current/origin/history (registration crediting — separate metric)
-router.get('/client/:client_id', ctrl.getClientSalespersonHandler);
-router.post('/client/:client_id/credit', ctrl.creditClientHandler);
-router.put('/client/:client_id/switch', ctrl.switchClientHandler);
+router.get('/client/:client_id', requirePermission('VIEW_SALESPERSONS'), ctrl.getClientSalespersonHandler);
+router.post('/client/:client_id/credit', requirePermission('SALESPERSON_CREDIT'), ctrl.creditClientHandler);
+router.put('/client/:client_id/switch', requirePermission('SALESPERSON_CREDIT'), ctrl.switchClientHandler);
 
 module.exports = router;

@@ -2,13 +2,13 @@ const express = require('express');
 const router = express.Router();
 const staffDocUploadController = require('../controllers/staffDocUploadController');
 const { uploadDocReportFiles } = require('../middleware/uploadMiddleware');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 // Admin: send WhatsApp document upload request to an accepted applicant
 router.post(
   '/applications/:applicationId/send-document-request',
   protect,
-  restrictTo('SUPER_ADMIN'),
+  requirePermission('STAFF_DOC_SEND_REQUEST'),
   staffDocUploadController.sendDocumentRequest
 );
 
@@ -16,7 +16,7 @@ router.post(
 router.post(
   '/applications/:applicationId/admin-upload-docs',
   protect,
-  restrictTo('SUPER_ADMIN'),
+  requirePermission('STAFF_DOC_ADMIN_UPLOAD'),
   uploadDocReportFiles,
   staffDocUploadController.adminUploadDocuments
 );

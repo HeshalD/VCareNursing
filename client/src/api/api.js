@@ -1463,6 +1463,13 @@ class ApiClient {
     return this.request(`/bookings/${bookingId}/daily-invoices`);
   }
 
+  async revokeAttendanceDays(bookingId, { service_dates, reason, password }) {
+    return this.request(`/bookings/${bookingId}/attendance/revoke`, {
+      method: 'POST',
+      body: JSON.stringify({ service_dates, reason, password }),
+    });
+  }
+
   async getClientInvoices(clientId, filters = {}) {
     const qs = new URLSearchParams(filters).toString();
     return this.request(qs ? `/client/${clientId}/invoices?${qs}` : `/client/${clientId}/invoices`);
@@ -1539,6 +1546,13 @@ class ApiClient {
     return this.request(`/bookings/${bookingId}/invoicing-mode`, {
       method: 'PATCH',
       body: JSON.stringify({ invoicing_mode }),
+    });
+  }
+
+  async updateBookingHospitalization(bookingId, { is_hospitalized, hospital_name }) {
+    return this.request(`/bookings/${bookingId}/hospitalization`, {
+      method: 'PATCH',
+      body: JSON.stringify({ is_hospitalized, hospital_name }),
     });
   }
 
@@ -2697,6 +2711,10 @@ class ApiClient {
   }
 
   // Permissions endpoints
+  async getMyPermissions() {
+    return this.request('/permissions/my-permissions');
+  }
+
   async getPermissionsRegistry() {
     return this.request('/permissions/registry');
   }

@@ -1131,6 +1131,8 @@ exports.getByBookingID = async (req, res) => {
                 b.actual_end_time,
                 b.ot_rate,
                 b.daily_rate,
+                b.is_hospitalized,
+                b.hospital_name,
                 c.client_profile_id,
                 c.full_name as client_name,
                 c.primary_address as client_address,
@@ -1214,6 +1216,8 @@ exports.getAdminBookingDetail = async (req, res) => {
             b.amount_quotated,
             b.amount_paid,
             b.invoicing_mode,
+            b.is_hospitalized,
+            b.hospital_name,
             c.client_profile_id,
             c.full_name as client_name,
             c.primary_address as client_address,
@@ -1268,7 +1272,7 @@ exports.getAdminBookingDetail = async (req, res) => {
         const quoteId = booking.quote_id;
         const clientId = booking.client_id;
 
-        const [paymentHistoryResult, financialTotalsResult, assignmentHistoryResult, swapHistoryResult, terminationHistoryResult, invoiceSummaryResult] = await Promise.all([
+        const [paymentHistoryResult, financialTotalsResult, assignmentHistoryResult, swapHistoryResult, terminationHistoryResult, invoiceSummaryResult, hospitalizationHistoryResult] = await Promise.all([
             db.query(
                 `SELECT booking_payment_id as payment_id, 'BOOKING'::text as source_type, amount_received, payment_method, bank_account_id, cheque_number, reference_number, slip_url, status, payment_date, verified_at, verified_by, notes
                  FROM booking_payment_tracking
@@ -1353,7 +1357,14 @@ exports.getAdminBookingDetail = async (req, res) => {
                        AND transaction_type = 'DEBIT'`,
                     [booking_id]
                 )
-                : Promise.resolve({ rows: [{ invoice_count: 0, total_invoiced: 0, last_invoice_at: null }] })
+                : Promise.resolve({ rows: [{ invoice_count: 0, total_invoiced: 0, last_invoice_at: null }] }),
+            db.query(
+                `SELECT hospitalization_id, hospital_name, started_date, ended_date
+                 FROM booking_hospitalizations
+                 WHERE booking_id = $1
+                 ORDER BY started_date ASC`,
+                [booking_id]
+            )
         ]);
 
         const verifiedPaid = parseFloat(financialTotalsResult.total_paid || 0);
@@ -1396,6 +1407,8 @@ exports.getAdminBookingDetail = async (req, res) => {
                     amount_quotated: booking.amount_quotated,
                     amount_paid: booking.amount_paid,
                     invoicing_mode: booking.invoicing_mode,
+                    is_hospitalized: booking.is_hospitalized,
+                    hospital_name: booking.hospital_name,
                     quote_id: booking.quote_id,
                     estimate_number: booking.estimate_number,
                     quote_daily_rate: booking.quote_daily_rate,
@@ -1444,7 +1457,8 @@ exports.getAdminBookingDetail = async (req, res) => {
                 payment_history: paymentHistoryResult.rows,
                 staff_assignment_history: assignmentHistoryResult.rows,
                 swap_history: swapHistoryResult.rows,
-                termination_requests: terminationHistoryResult.rows
+                termination_requests: terminationHistoryResult.rows,
+                hospitalization_periods: hospitalizationHistoryResult.rows
             }
         });
     } catch (error) {
@@ -2445,6 +2459,92 @@ exports.updateInvoicingMode = async (req, res) => {
     }
 };
 
+exports.updateHospitalizationStatus = async (req, res) => {
+    const { booking_id } = req.params;
+    const { is_hospitalized, hospital_name } = req.body;
+
+    if (typeof is_hospitalized !== 'boolean') {
+        return res.status(400).json({ status: 'error', message: 'is_hospitalized must be a boolean' });
+    }
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const bookingRes = await client.query(
+            `SELECT booking_id FROM bookings WHERE booking_id = $1 FOR UPDATE`,
+            [booking_id]
+        );
+
+        if (bookingRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Booking not found' });
+        }
+
+        // hospital_name only means something while is_hospitalized is true — clear it
+        // whenever the toggle is switched off so a stale name never lingers.
+        const resolvedHospitalName = is_hospitalized ? (hospital_name || null) : null;
+        const businessDate = await getBusinessDate(client);
+
+        // Maintain the day-by-day history in booking_hospitalizations so the care
+        // timeline can mark exactly which days were hospitalized. The day a period is
+        // closed still counts as hospitalized (ended_date is inclusive) — only the
+        // following day onward drops the marker.
+        const openPeriodRes = await client.query(
+            `SELECT hospitalization_id FROM booking_hospitalizations
+             WHERE booking_id = $1 AND ended_date IS NULL
+             ORDER BY started_date DESC LIMIT 1`,
+            [booking_id]
+        );
+        const openPeriod = openPeriodRes.rows[0] || null;
+
+        if (is_hospitalized) {
+            if (openPeriod) {
+                await client.query(
+                    `UPDATE booking_hospitalizations SET hospital_name = $1 WHERE hospitalization_id = $2`,
+                    [resolvedHospitalName, openPeriod.hospitalization_id]
+                );
+            } else {
+                await client.query(
+                    `INSERT INTO booking_hospitalizations (booking_id, hospital_name, started_date)
+                     VALUES ($1, $2, $3)`,
+                    [booking_id, resolvedHospitalName, businessDate]
+                );
+            }
+        } else if (openPeriod) {
+            await client.query(
+                `UPDATE booking_hospitalizations SET ended_date = $1 WHERE hospitalization_id = $2`,
+                [businessDate, openPeriod.hospitalization_id]
+            );
+        }
+
+        const result = await client.query(
+            `UPDATE bookings SET is_hospitalized = $1, hospital_name = $2 WHERE booking_id = $3
+             RETURNING booking_id, is_hospitalized, hospital_name`,
+            [is_hospitalized, resolvedHospitalName, booking_id]
+        );
+
+        await client.query('COMMIT');
+
+        logActivity({
+            actorUserId: req.user?.user_id,
+            actorRole: req.user?.role,
+            actionType: 'HOSPITALIZATION_STATUS_UPDATED',
+            entityType: 'BOOKING',
+            entityId: String(booking_id),
+            details: { is_hospitalized, hospital_name: resolvedHospitalName },
+        }).catch(err => console.error('Activity log failed:', err));
+
+        res.status(200).json({ status: 'success', data: result.rows[0] });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Update hospitalization status error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to update hospitalization status' });
+    } finally {
+        client.release();
+    }
+};
+
 // 3. Retrieve all active bookings (status = 'ACTIVE')
 exports.getActiveBookings = async (req, res) => {
     try {
@@ -3207,6 +3307,8 @@ exports.getAllBookings = async (req, res) => {
                 b.actual_end_time,
                 b.ot_rate,
                 b.daily_rate,
+                b.is_hospitalized,
+                b.hospital_name,
                 c.client_profile_id,
                 c.full_name as client_name,
                 c.primary_address as client_address,

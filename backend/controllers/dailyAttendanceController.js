@@ -1,6 +1,7 @@
 // controllers/dailyAttendanceController.js
+const bcrypt = require('bcrypt');
 const db = require('../config/db');
-const { creditStaffSalary } = require('../services/billingService');
+const { creditStaffSalary, reverseStaffSalary, reverseServiceInvoice } = require('../services/billingService');
 const { maybeAutoCompleteVisitingBooking } = require('../services/visitingBookings');
 const { logActivity } = require('../utils/activityLogger');
 
@@ -438,6 +439,176 @@ exports.confirmSalary = async (req, res) => {
         await client.query('ROLLBACK');
         console.error('Confirm salary error:', error);
         res.status(500).json({ status: 'error', message: 'Failed to confirm salary decision' });
+    } finally {
+        client.release();
+    }
+};
+
+/**
+ * @route   POST /api/bookings/:booking_id/attendance/revoke
+ * @desc    Corrects a wrongly auto-paid/auto-invoiced LIVE_IN day (e.g. a no-show
+ *          the cron already credited/charged). Reverses BOTH the staff salary and
+ *          the client invoice for each selected day, without mutating the original
+ *          AUTO rows — those stay as the audit trail; a second, linked transaction
+ *          does the actual reversal (see billingService.reverseStaffSalary/
+ *          reverseServiceInvoice). SUPER_ADMIN only, gated by re-entering their
+ *          own login password as an extra confirmation step since this moves money
+ *          on both sides of a booking.
+ * @access  Private (SUPER_ADMIN only)
+ * @body    service_dates (string[]), reason (string), password (string)
+ */
+exports.revokeDays = async (req, res) => {
+    const { booking_id } = req.params;
+    const { service_dates, reason, password } = req.body;
+
+    // Role is already gated to SUPER_ADMIN at the route level (restrictTo).
+
+    if (!Array.isArray(service_dates) || service_dates.length === 0) {
+        return res.status(400).json({ status: 'error', message: 'service_dates (non-empty array) is required' });
+    }
+    if (!reason || !reason.trim()) {
+        return res.status(400).json({ status: 'error', message: 'A reason is required' });
+    }
+    if (!password) {
+        return res.status(400).json({ status: 'error', message: 'Password confirmation is required' });
+    }
+
+    try {
+        const userRes = await db.query('SELECT password_hash FROM users WHERE user_id = $1', [req.user.user_id]);
+        if (userRes.rows.length === 0) {
+            return res.status(401).json({ status: 'error', message: 'Could not verify your account' });
+        }
+        const passwordMatches = await bcrypt.compare(password, userRes.rows[0].password_hash);
+        if (!passwordMatches) {
+            return res.status(401).json({ status: 'error', message: 'Incorrect password' });
+        }
+    } catch (error) {
+        console.error('Revoke password verification error:', error);
+        return res.status(500).json({ status: 'error', message: 'Failed to verify password' });
+    }
+
+    const client = await db.pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        const bookingRes = await client.query(
+            `SELECT booking_id, client_id, service_model FROM bookings WHERE booking_id = $1 FOR UPDATE`,
+            [booking_id]
+        );
+
+        if (bookingRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Booking not found' });
+        }
+
+        const booking = bookingRes.rows[0];
+
+        if (booking.service_model !== 'LIVE_IN') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ status: 'error', message: 'Revoking a day is only supported for LIVE_IN bookings' });
+        }
+
+        const decidedByName = await getDeciderName(req.user?.user_id);
+        const revoked = [];
+        const skipped = [];
+        const salaryReversed = [];
+        const invoiceReversed = [];
+
+        for (const serviceDate of service_dates) {
+            let touchedThisDay = false;
+
+            const attendanceRes = await client.query(
+                `SELECT * FROM staff_daily_attendance
+                 WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id IS NULL AND reschedule_id IS NULL
+                 FOR UPDATE`,
+                [booking_id, serviceDate]
+            );
+            const attendance = attendanceRes.rows[0];
+
+            if (attendance && attendance.salary_status === 'PAID') {
+                const reversalTransactionId = await reverseStaffSalary(client, {
+                    staff_profile_id: attendance.staff_profile_id,
+                    booking_id,
+                    amount: attendance.salary_amount,
+                    notes: `Reversal of ${serviceDate} salary — ${reason}`
+                });
+
+                await client.query(
+                    `UPDATE staff_daily_attendance
+                     SET salary_status = 'REVOKED',
+                         reversal_transaction_id = $1,
+                         revoked_at = NOW(),
+                         revoked_by_user_id = $2,
+                         revoked_by_name = $3,
+                         revoke_reason = $4,
+                         updated_at = NOW()
+                     WHERE attendance_id = $5`,
+                    [reversalTransactionId, req.user?.user_id || null, decidedByName, reason, attendance.attendance_id]
+                );
+
+                salaryReversed.push(serviceDate);
+                touchedThisDay = true;
+            }
+
+            const invoiceRes = await client.query(
+                `SELECT * FROM booking_daily_invoices
+                 WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id IS NULL AND reschedule_id IS NULL
+                 FOR UPDATE`,
+                [booking_id, serviceDate]
+            );
+            const invoice = invoiceRes.rows[0];
+
+            if (invoice && invoice.status === 'INVOICED') {
+                const reversalTransactionId = await reverseServiceInvoice(client, {
+                    booking_id,
+                    client_id: booking.client_id,
+                    amount: invoice.amount,
+                    notes: `Reversal of ${serviceDate} invoice — ${reason}`
+                });
+
+                await client.query(
+                    `UPDATE booking_daily_invoices
+                     SET status = 'REVOKED',
+                         reversal_transaction_id = $1,
+                         revoked_at = NOW(),
+                         revoked_by_user_id = $2,
+                         revoked_by_name = $3,
+                         revoke_reason = $4,
+                         updated_at = NOW()
+                     WHERE daily_invoice_id = $5`,
+                    [reversalTransactionId, req.user?.user_id || null, decidedByName, reason, invoice.daily_invoice_id]
+                );
+
+                invoiceReversed.push(serviceDate);
+                touchedThisDay = true;
+            }
+
+            if (touchedThisDay) revoked.push(serviceDate);
+            else skipped.push(serviceDate);
+        }
+
+        if (revoked.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ status: 'error', message: 'Nothing to revoke for the selected day(s) — they may already be revoked or were never paid/invoiced' });
+        }
+
+        await client.query('COMMIT');
+
+        logActivity({
+            actorUserId: req.user?.user_id,
+            actorRole: req.user?.role,
+            actionType: 'DAY_REVOKED',
+            entityType: 'BOOKING',
+            entityId: String(booking_id),
+            details: { service_dates, reason, salary_reversed: salaryReversed, invoice_reversed: invoiceReversed, skipped },
+        }).catch(err => console.error('Activity log failed:', err));
+
+        res.status(200).json({ status: 'success', data: { revoked, skipped } });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Revoke days error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to revoke selected day(s)' });
     } finally {
         client.release();
     }

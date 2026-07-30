@@ -68,6 +68,7 @@ const LedgerRow = ({ entry }) => {
   const isCredit = entry.transaction_type === 'CREDIT';
   const isDeduction = entry.category === 'STAFF_DEDUCTION';
   const isAdvance = entry.category === 'STAFF_ADVANCE';
+  const isRevocation = entry.category === 'STAFF_SALARY' && entry.transaction_type === 'DEBIT';
 
   return (
     <tr className="hover:bg-slate-50 transition-colors">
@@ -89,6 +90,11 @@ const LedgerRow = ({ entry }) => {
           <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700">
             <Wallet className="h-3 w-3" />
             Advance
+          </span>
+        ) : isRevocation ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-700">
+            <MinusCircle className="h-3 w-3" />
+            Salary Revoked
           </span>
         ) : (
           <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
@@ -122,6 +128,13 @@ const LedgerRow = ({ entry }) => {
             <p className="text-sm font-medium text-slate-800">Salary Advance</p>
             {entry.reviewed_by_name && (
               <p className="text-xs text-slate-400">Approved by: {entry.reviewed_by_name}</p>
+            )}
+          </div>
+        ) : isRevocation ? (
+          <div>
+            <p className="text-sm font-medium text-slate-800">Salary Revoked</p>
+            {entry.notes && (
+              <p className="text-xs text-slate-400 italic">{entry.notes}</p>
             )}
           </div>
         ) : (
@@ -232,7 +245,8 @@ export default function CurrentEarningsBreakdownPage() {
       const isCredit = e.transaction_type === 'CREDIT';
       const isDeduction = e.category === 'STAFF_DEDUCTION';
       const isAdvance = e.category === 'STAFF_ADVANCE';
-      const type = isCredit ? 'Earned' : isDeduction ? 'Deduction' : isAdvance ? 'Advance' : 'Payout';
+      const isRevocation = e.category === 'STAFF_SALARY' && e.transaction_type === 'DEBIT';
+      const type = isCredit ? 'Earned' : isDeduction ? 'Deduction' : isAdvance ? 'Advance' : isRevocation ? 'Salary Revoked' : 'Payout';
       let description = '';
       if (isCredit) {
         description = [e.client_name || 'Daily Salary', e.patient_name && `Care Profile: ${e.patient_name}`, e.service_type].filter(Boolean).join(' | ');
@@ -240,6 +254,8 @@ export default function CurrentEarningsBreakdownPage() {
         description = [e.reason || 'Manual deduction', e.recorded_by && `By: ${e.recorded_by}`].filter(Boolean).join(' | ');
       } else if (isAdvance) {
         description = ['Salary Advance', e.reviewed_by_name && `Approved by: ${e.reviewed_by_name}`].filter(Boolean).join(' | ');
+      } else if (isRevocation) {
+        description = ['Salary Revoked', e.notes].filter(Boolean).join(' | ');
       } else {
         description = [`Payout${e.company_account_name ? ` via ${e.company_account_name}` : ''}`, e.staff_bank_name && `To: ${e.staff_bank_name}${e.staff_account_number ? ` ···${e.staff_account_number.slice(-4)}` : ''}`, e.paid_by_email && `By: ${e.paid_by_email}`].filter(Boolean).join(' | ');
       }

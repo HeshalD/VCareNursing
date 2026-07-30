@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const productController = require('../controllers/productController');
 const { upload } = require('../config/cloudinaryConfig');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const ADMIN_ROLES = ['SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'];
 
@@ -10,7 +10,7 @@ const ADMIN_ROLES = ['SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'];
 router.get('/', productController.getAllProducts);
 
 router.get('/categories', productController.getCategories);
-router.post('/categories', protect, restrictTo(...ADMIN_ROLES), productController.createCategory);
+router.post('/categories', protect, requirePermission('PRODUCT_CATEGORY_MANAGE'), productController.createCategory);
 
 // Client portal: the logged-in client's own purchased/rented products + deposits.
 // Must be registered before the '/:id' catch-all route below.
@@ -21,7 +21,7 @@ router.get('/:id', productController.getProduct);
 router.get(
   '/:id/purchase-history',
   protect,
-  restrictTo(...ADMIN_ROLES),
+  requirePermission('VIEW_PRODUCTS'),
   productController.getProductPurchaseHistory
 );
 
@@ -31,7 +31,7 @@ router.get(
 router.post(
   '/',
   protect,
-  restrictTo(...ADMIN_ROLES),
+  requirePermission('PRODUCT_CREATE'),
   upload.single('image'),
   productController.createProduct
 );
@@ -39,7 +39,7 @@ router.post(
 router.put(
   '/:id',
   protect,
-  restrictTo(...ADMIN_ROLES),
+  requirePermission('PRODUCT_EDIT'),
   upload.single('image'),
   productController.updateProduct
 );
@@ -47,7 +47,7 @@ router.put(
 router.patch(
   '/:id/deactivate',
   protect,
-  restrictTo(...ADMIN_ROLES),
+  requirePermission('PRODUCT_EDIT'),
   productController.deactivateProduct
 );
 

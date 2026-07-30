@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const quoteController = require('../controllers/quoteController');
 const paymentTrackingController = require('../controllers/paymentTrackingController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 const { upload } = require('../config/cloudinaryConfig');
 
 /**
@@ -13,7 +13,7 @@ const { upload } = require('../config/cloudinaryConfig');
 router.post(
     '/create',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'SALES'),
+    requirePermission('QUOTATION_CREATE'),
     quoteController.createQuotation
 );
 
@@ -25,14 +25,14 @@ router.post(
 router.get(
     '/request/:requestId',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'SALES'),
+    requirePermission('VIEW_QUOTATIONS'),
     quoteController.getQuoteByRequest
 );
 
 router.get(
     '/request/:requestId/list',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'SALES'),
+    requirePermission('VIEW_QUOTATIONS'),
     quoteController.getQuotesByRequest
 );
 
@@ -44,7 +44,7 @@ router.get(
 router.post(
     '/send-pdf/:quote_id',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'SALES'),
+    requirePermission('QUOTATION_SEND'),
     quoteController.generateAndSendPDF
 );
 
@@ -68,7 +68,7 @@ router.get('/presets', protect, quoteController.getPresetItems);
 router.post(
     '/presets',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+    requirePermission('PRESET_CREATE'),
     quoteController.createPresetItem
 );
 
@@ -80,7 +80,7 @@ router.post(
 router.put(
     '/presets/:preset_id',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+    requirePermission('PRESET_EDIT'),
     quoteController.updatePresetItem
 );
 
@@ -92,7 +92,7 @@ router.put(
 router.delete(
     '/presets/:preset_id',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+    requirePermission('PRESET_DELETE'),
     quoteController.deletePresetItem
 );
 
@@ -104,7 +104,7 @@ router.delete(
 router.post(
     '/create-modular',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'SALES'),
+    requirePermission('QUOTATION_CREATE'),
     quoteController.createModularQuotation
 );
 
@@ -116,7 +116,7 @@ router.post(
 router.post(
     '/:quote_id/generate-pdf',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('QUOTATION_SEND'),
     quoteController.generatePdfOnly
 );
 
@@ -135,7 +135,7 @@ router.get('/:quote_id/details', protect, quoteController.getQuoteWithLineItems)
 router.put(
     '/:quote_id/line-items',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'SALES'),
+    requirePermission('QUOTATION_EDIT'),
     quoteController.updateQuoteLineItems
 );
 
@@ -159,7 +159,7 @@ router.post('/product/request', protect, quoteController.submitProductInterest);
 router.get(
     '/product/list',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('VIEW_QUOTATIONS'),
     quoteController.listProductQuotes
 );
 
@@ -171,7 +171,7 @@ router.get(
 router.get(
     '/product/:quote_id',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('VIEW_QUOTATIONS'),
     quoteController.getProductQuoteWithLineItems
 );
 
@@ -183,7 +183,7 @@ router.get(
 router.post(
     '/product/:quote_id/generate-pdf',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('QUOTATION_SEND'),
     quoteController.generateProductQuotePdf
 );
 
@@ -195,7 +195,7 @@ router.post(
 router.post(
     '/product/:quote_id/send',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('QUOTATION_SEND'),
     quoteController.sendProductQuotePDF
 );
 
@@ -210,7 +210,7 @@ router.post(
 router.post(
     '/product/:quote_id/accept',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('QUOTATION_ACCEPT'),
     quoteController.acceptProductQuote
 );
 
@@ -226,7 +226,7 @@ router.post(
 router.get(
     '/invoices/list',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('VIEW_INVOICES'),
     quoteController.listCombinedInvoices
 );
 
@@ -238,7 +238,7 @@ router.get(
 router.post(
     '/:quote_id/send-invoice',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('INVOICE_RESEND'),
     quoteController.sendCombinedInvoice
 );
 
@@ -253,7 +253,7 @@ router.post(
 router.post(
     '/:quote_id/record-payment',
     protect,
-    restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'),
+    requirePermission('QUOTATION_RECORD_PAYMENT'),
     upload.single('payment_slip'),
     paymentTrackingController.recordPayment
 );
@@ -270,7 +270,7 @@ router.post(
 router.post(
     '/:quote_id/record-payment-allocated',
     protect,
-    restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'),
+    requirePermission('QUOTATION_RECORD_PAYMENT'),
     upload.single('payment_slip'),
     paymentTrackingController.recordAllocatedPayment
 );
@@ -283,7 +283,7 @@ router.post(
 router.get(
     '/:quote_id/payments',
     protect,
-    restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'),
+    requirePermission('VIEW_QUOTATIONS'),
     paymentTrackingController.getPaymentsByQuote
 );
 
@@ -295,7 +295,7 @@ router.get(
 router.get(
     '/:quote_id/payment-progress',
     protect,
-    restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'),
+    requirePermission('VIEW_QUOTATIONS'),
     paymentTrackingController.getPaymentProgress
 );
 
@@ -307,7 +307,7 @@ router.get(
 router.patch(
     '/:quote_id/status',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('QUOTATION_EDIT'),
     quoteController.updateQuoteStatus
 );
 
@@ -319,7 +319,7 @@ router.patch(
 router.get(
     '/:quote_id/check-booking',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('VIEW_QUOTATIONS'),
     quoteController.checkQuoteBooking
 );
 

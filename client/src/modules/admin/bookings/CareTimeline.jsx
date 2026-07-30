@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Wallet, Receipt, X, UserCheck, CalendarX, CheckCircle2, LayoutGrid, AlertTriangle, Lock } from 'lucide-react';
+import { Wallet, Receipt, X, UserCheck, CalendarX, CheckCircle2, LayoutGrid, AlertTriangle, Lock, Undo2, Check, Cross } from 'lucide-react';
 import DateInput from '../../../components/common/DateInput';
 
 const useIsMobile = (query = '(max-width: 639px)') => {
@@ -30,7 +30,7 @@ const PILL = {
   overdue:  { bg: 'rgba(194,72,60,.24)',  color: '#C2483C', label: 'Overdue' },
   upcoming: { bg: 'rgba(213,207,196,.5)', color: '#8A8478', label: 'Upcoming' },
 };
-const META_COLOR = { PENDING: '#C98A2E', PAID: '#2F8A5B', INVOICED: '#2F8A5B', SKIPPED: '#B4AEA3' };
+const META_COLOR = { PENDING: '#C98A2E', PAID: '#2F8A5B', INVOICED: '#2F8A5B', SKIPPED: '#B4AEA3', REVOKED: '#8A8478' };
 
 // Event type config — colour dot + tooltip icon + label
 const EVENT_CFG = {
@@ -56,6 +56,7 @@ const metaLabel = (meta, doneWord) => {
   if (!meta) return '';
   if (meta.status === 'PENDING') return 'Action needed';
   if (meta.status === 'SKIPPED') return 'Skipped';
+  if (meta.status === 'REVOKED') return 'Revoked';
   return `${doneWord} Rs ${Number(meta.amount || 0).toLocaleString('en-US')}`;
 };
 
@@ -109,11 +110,56 @@ const CareTimeline = ({
   manualSalaryDay = false,
   manualInvoiceDay = false,
   pauses = [],           // [{ paused_date, resume_date, resumed_date }] — booking_pauses rows, any order
+  revokeEnabled = false, // true only for LIVE_IN + the viewer is a Super Admin
+  onRevokeDays,          // async (dates: string[], reason: string, password: string) => void
+  hospitalizationPeriods = [], // [{ started_date, ended_date }] — booking_hospitalizations rows, ended_date null = ongoing
 }) => {
   const [monthOffset,   setMonthOffset]   = useState(null);
   const [hoveredDay,    setHoveredDay]    = useState(null);
   const [showSimPicker, setShowSimPicker] = useState(false);
+  const [selectMode,    setSelectMode]    = useState(false);
+  const [selectedDates, setSelectedDates] = useState(() => new Set());
+  const [showRevokeConfirm, setShowRevokeConfirm] = useState(false);
+  const [revokeReason,  setRevokeReason]  = useState('');
+  const [revokePassword, setRevokePassword] = useState('');
+  const [revokeBusy,    setRevokeBusy]    = useState(false);
+  const [revokeError,   setRevokeError]   = useState('');
   const isMobile = useIsMobile();
+
+  const toggleSelectedDate = (dateISO) => {
+    setSelectedDates((prev) => {
+      const next = new Set(prev);
+      if (next.has(dateISO)) next.delete(dateISO);
+      else next.add(dateISO);
+      return next;
+    });
+  };
+
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedDates(new Set());
+    setShowRevokeConfirm(false);
+    setRevokeReason('');
+    setRevokePassword('');
+    setRevokeError('');
+  };
+
+  const submitRevoke = async () => {
+    if (!revokeReason.trim() || !revokePassword) {
+      setRevokeError('A reason and your password are both required');
+      return;
+    }
+    setRevokeBusy(true);
+    setRevokeError('');
+    try {
+      await onRevokeDays?.([...selectedDates], revokeReason.trim(), revokePassword);
+      exitSelectMode();
+    } catch (err) {
+      setRevokeError(err?.response?.data?.message || err?.message || 'Failed to revoke selected day(s)');
+    } finally {
+      setRevokeBusy(false);
+    }
+  };
 
   const isShiftBased = serviceModel === 'SHIFT_BASED';
 
@@ -387,6 +433,21 @@ const CareTimeline = ({
     return map;
   }, [dailyInvoiceRecords]);
 
+  // Hospitalization periods — each covers [started_date, ended_date] inclusive; an
+  // open (ongoing) period has ended_date null, so it covers every day from
+  // started_date through whatever the grid renders (including future/today).
+  const hospitalizedRanges = useMemo(() => (
+    hospitalizationPeriods
+      .filter((p) => p.started_date)
+      .map((p) => ({
+        start: String(p.started_date).slice(0, 10),
+        end: p.ended_date ? String(p.ended_date).slice(0, 10) : null,
+      }))
+  ), [hospitalizationPeriods]);
+
+  const isDateHospitalized = (dateISO) =>
+    hospitalizedRanges.some((r) => dateISO >= r.start && (r.end === null || dateISO <= r.end));
+
   // Build a map of dateISO → event list from all event sources
   const eventsByDate = useMemo(() => {
     const map = new Map();
@@ -491,7 +552,8 @@ const CareTimeline = ({
     if (salaryRecs.length > 0) {
       const anyPending = salaryRecs.some((r) => r.salary_status === 'PENDING');
       const anyPaid    = salaryRecs.some((r) => r.salary_status === 'PAID');
-      const status = anyPending ? 'PENDING' : anyPaid ? 'PAID' : 'SKIPPED';
+      const anyRevoked = salaryRecs.some((r) => r.salary_status === 'REVOKED');
+      const status = anyPending ? 'PENDING' : anyPaid ? 'PAID' : anyRevoked ? 'REVOKED' : 'SKIPPED';
       const decidedBy = [...new Set(salaryRecs.filter((r) => r.decided_by_name).map((r) => r.decided_by_name))].join(', ') || null;
       const amount = salaryRecs.reduce((sum, r) => sum + (r.salary_status === 'PAID' ? Number(r.salary_amount || 0) : 0), 0);
       salary = { status, decidedBy, amount };
@@ -709,6 +771,7 @@ const CareTimeline = ({
           dateLabel: isToday ? 'Today' : fmtShort(cellDate),
           tipDate:   `${fmtFull(cellDate)} · Day ${dayNum}${isOverrun ? ' · overrun' : ''}`,
           dateISO, salaryMeta, invoiceMeta, cellEvents,
+          isHospitalized: isDateHospitalized(dateISO),
         });
       }
     }
@@ -723,7 +786,7 @@ const CareTimeline = ({
       calRows: rows,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clampedMonthIdx, bookingMonths, start, displayDays, plannedDays, paidDays, servedDays, nurseColorMap, attendanceByDate, invoiceByDate, manualSalaryDay, manualInvoiceDay, shiftSlots, eventsByDate, staffAssignments, reschedules, movedOrigins, assignmentByIdForReschedule, naturalEndDayNum, partialLastDay, pauseWindows]);
+  }, [clampedMonthIdx, bookingMonths, start, displayDays, plannedDays, paidDays, servedDays, nurseColorMap, attendanceByDate, invoiceByDate, manualSalaryDay, manualInvoiceDay, shiftSlots, eventsByDate, staffAssignments, reschedules, movedOrigins, assignmentByIdForReschedule, naturalEndDayNum, partialLastDay, pauseWindows, hospitalizedRanges]);
 
   const activeCell = useMemo(() => {
     if (hoveredDay == null) return null;
@@ -802,6 +865,22 @@ const CareTimeline = ({
         </div>
 
         <div className="flex items-center gap-2 flex-shrink-0">
+
+          {/* ── Revoke day(s) toggle ── */}
+          {revokeEnabled && (
+            <button
+              onClick={() => { if (selectMode) exitSelectMode(); else { setHoveredDay(null); setSelectMode(true); } }}
+              title="Correct a wrongly paid/invoiced day"
+              className="flex items-center gap-1.5 px-2.5 h-8 rounded-lg border text-xs font-semibold transition"
+              style={selectMode
+                ? { background: '#FDECEA', borderColor: '#F3A9A0', color: '#B3261E' }
+                : { background: 'white', borderColor: '#E7E1D6', color: '#8A8478' }
+              }
+            >
+              <Undo2 style={{ width: 13, height: 13 }} />
+              {selectMode ? 'Cancel' : 'Revoke days'}
+            </button>
+          )}
 
           {/* ── Sim date picker ── */}
           <div className="relative">
@@ -981,6 +1060,9 @@ const CareTimeline = ({
               const pill         = PILL[cell.status];
               const isClickable  = Boolean(onDayClick) && cell.delivered;
               const multiShift   = isShiftBased && workingNurses.length > 1;
+              const isRevokable  = revokeEnabled && cell.delivered
+                && (cell.salaryMeta?.status === 'PAID' || cell.invoiceMeta?.status === 'INVOICED');
+              const isSelected   = selectedDates.has(cell.dateISO);
 
               // Background
               let cellBg = buildCellBackground(workingNurses, cell.delivered, serviceModel);
@@ -1018,27 +1100,45 @@ const CareTimeline = ({
               return (
                 <div
                   key={cell.dayNum}
-                  className={`relative flex flex-col justify-between rounded-xl p-1.5 sm:p-2 select-none ${(isMobile || isClickable) ? 'cursor-pointer' : 'cursor-default'}`}
+                  className={`relative flex flex-col justify-between rounded-xl p-1.5 sm:p-2 select-none ${
+                    selectMode ? (isRevokable ? 'cursor-pointer' : 'cursor-not-allowed') : ((isMobile || isClickable) ? 'cursor-pointer' : 'cursor-default')
+                  }`}
                   style={{
                     aspectRatio: '1/1',
                     background: cellBg,
                     ...borderStyle,
-                    boxShadow: cell.isToday
-                      ? '0 0 0 3px rgba(19,122,107,.13)'
-                      : isHovered
-                        ? '0 12px 26px rgba(40,33,22,.18)'
-                        : 'none',
-                    transform: isHovered ? 'translateY(-3px)' : 'none',
+                    ...(isSelected ? { border: '1.5px solid #B3261E', boxShadow: '0 0 0 3px rgba(179,38,30,.16)' } : {}),
+                    opacity: selectMode && !isRevokable ? 0.4 : 1,
+                    boxShadow: isSelected
+                      ? '0 0 0 3px rgba(179,38,30,.16)'
+                      : cell.isToday
+                        ? '0 0 0 3px rgba(19,122,107,.13)'
+                        : isHovered
+                          ? '0 12px 26px rgba(40,33,22,.18)'
+                          : 'none',
+                    transform: isHovered && !selectMode ? 'translateY(-3px)' : 'none',
                     transition: 'transform .15s ease, box-shadow .15s ease',
                     zIndex: isHovered ? 30 : 'auto',
                   }}
-                  onMouseEnter={() => { if (!isMobile) setHoveredDay(cell.dayNum); }}
-                  onMouseLeave={() => { if (!isMobile) setHoveredDay(null); }}
+                  onMouseEnter={() => { if (!isMobile && !selectMode) setHoveredDay(cell.dayNum); }}
+                  onMouseLeave={() => { if (!isMobile && !selectMode) setHoveredDay(null); }}
                   onClick={() => {
+                    if (selectMode) {
+                      if (isRevokable) toggleSelectedDate(cell.dateISO);
+                      return;
+                    }
                     if (isMobile) setHoveredDay((d) => (d === cell.dayNum ? null : cell.dayNum));
                     else if (isClickable) onDayClick(cell.dateISO, cell.dayNum);
                   }}
                 >
+                  {isSelected && (
+                    <span
+                      className="absolute flex items-center justify-center rounded-full"
+                      style={{ top: -6, right: -6, width: 18, height: 18, background: '#B3261E', boxShadow: '0 2px 6px rgba(179,38,30,.4)', zIndex: 5 }}
+                    >
+                      <Check style={{ width: 11, height: 11, color: 'white' }} strokeWidth={3} />
+                    </span>
+                  )}
                   {/* Top row: day number + status icons + nurse dots */}
                   <div className="flex items-center justify-between">
                     {!isMobile && (
@@ -1053,6 +1153,9 @@ const CareTimeline = ({
                       </span>
                     )}
                     <div className="flex items-center gap-0.5 flex-shrink-0 ml-auto">
+                      {cell.isHospitalized && (
+                        <Cross style={{ width: 9, height: 9, color: '#C2483C' }} strokeWidth={2.5} />
+                      )}
                       {cell.salaryMeta && (
                         <Wallet style={{ width: 8, height: 8, color: META_COLOR[cell.salaryMeta.status] }} />
                       )}
@@ -1126,6 +1229,13 @@ const CareTimeline = ({
                       {cell.isOverrun && (
                         <div className="inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-full mt-1" style={{ background: 'rgba(194,72,60,.3)', color: '#E8A09A' }}>
                           Beyond booking end
+                        </div>
+                      )}
+
+                      {cell.isHospitalized && (
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <Cross style={{ width: 11, height: 11, color: '#E8A09A' }} strokeWidth={2.5} />
+                          <span className="text-[10px] font-bold" style={{ color: '#E8A09A' }}>Hospitalized</span>
                         </div>
                       )}
 
@@ -1245,6 +1355,82 @@ const CareTimeline = ({
           </div>
         ))}
       </div>
+
+      {/* ── Revoke selection bar ── */}
+      {selectMode && (
+        <div className="mt-4 rounded-xl border p-3 flex items-center justify-between gap-3 flex-wrap" style={{ background: '#FDECEA', borderColor: '#F3A9A0' }}>
+          <span className="text-xs font-semibold" style={{ color: '#B3261E' }}>
+            {selectedDates.size === 0
+              ? 'Tap the day(s) you need to correct'
+              : `${selectedDates.size} day${selectedDates.size !== 1 ? 's' : ''} selected`}
+          </span>
+          <div className="flex items-center gap-2">
+            <button onClick={exitSelectMode} className="px-3 h-8 rounded-lg border border-[#E7E1D6] bg-white text-xs font-semibold text-[#6F6A60] hover:bg-slate-50 transition">
+              Cancel
+            </button>
+            <button
+              onClick={() => setShowRevokeConfirm(true)}
+              disabled={selectedDates.size === 0}
+              className="px-3 h-8 rounded-lg text-xs font-bold text-white transition disabled:opacity-40"
+              style={{ background: '#B3261E' }}
+            >
+              Revoke selected
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Revoke confirmation modal ── */}
+      {showRevokeConfirm && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: 'rgba(28,23,15,.45)' }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5">
+            <h3 className="text-sm font-bold text-[#2A2722]">Revoke {selectedDates.size} day{selectedDates.size !== 1 ? 's' : ''}?</h3>
+            <p className="text-xs text-[#6F6A60] mt-1.5">
+              This reverses the staff salary and the client invoice for the selected day(s). The original records stay
+              as an audit trail; a corrective transaction is issued on both sides. This cannot be undone from here.
+            </p>
+
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-[#9A9488] mt-4 mb-1">Reason</label>
+            <textarea
+              value={revokeReason}
+              onChange={(e) => setRevokeReason(e.target.value)}
+              rows={2}
+              placeholder="e.g. Client confirmed staff no-show on this date"
+              className="w-full border border-[#E7E1D6] rounded-lg px-2.5 py-1.5 text-sm text-[#2A2722] focus:outline-none focus:ring-2 focus:ring-[#B3261E] resize-none"
+            />
+
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-[#9A9488] mt-3 mb-1">Confirm your Super Admin password</label>
+            <input
+              type="password"
+              value={revokePassword}
+              onChange={(e) => setRevokePassword(e.target.value)}
+              className="w-full border border-[#E7E1D6] rounded-lg px-2.5 py-1.5 text-sm text-[#2A2722] focus:outline-none focus:ring-2 focus:ring-[#B3261E]"
+            />
+
+            {revokeError && (
+              <div className="mt-2.5 text-xs font-semibold text-[#B3261E]">{revokeError}</div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 mt-5">
+              <button
+                onClick={() => { setShowRevokeConfirm(false); setRevokeError(''); }}
+                disabled={revokeBusy}
+                className="px-3 h-8 rounded-lg border border-[#E7E1D6] bg-white text-xs font-semibold text-[#6F6A60] hover:bg-slate-50 transition disabled:opacity-50"
+              >
+                Back
+              </button>
+              <button
+                onClick={submitRevoke}
+                disabled={revokeBusy}
+                className="px-3.5 h-8 rounded-lg text-xs font-bold text-white transition disabled:opacity-50"
+                style={{ background: '#B3261E' }}
+              >
+                {revokeBusy ? 'Revoking…' : 'Confirm revoke'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Mobile detail panel ── */}
       {isMobile && activeCell && (() => {

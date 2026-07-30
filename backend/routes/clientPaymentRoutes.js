@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const clientPaymentController = require('../controllers/clientPaymentController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 const { upload } = require('../config/cloudinaryConfig');
 
 const adminRoles = ['SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'];
@@ -10,7 +10,7 @@ const adminRoles = ['SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'];
 router.get(
   '/record/:record_id',
   protect,
-  restrictTo(...adminRoles),
+  requirePermission('VIEW_USER_MANAGEMENT'),
   clientPaymentController.getPaymentRecordDetail
 );
 
@@ -18,7 +18,7 @@ router.get(
 router.post(
   '/:client_id/record',
   protect,
-  restrictTo(...adminRoles),
+  requirePermission('CLIENT_RECORD_PAYMENT'),
   upload.single('payment_slip'),
   clientPaymentController.recordClientPayment
 );
@@ -27,7 +27,7 @@ router.post(
 router.get(
   '/:client_id',
   protect,
-  restrictTo(...adminRoles),
+  requirePermission('VIEW_USER_MANAGEMENT'),
   clientPaymentController.getClientPaymentRecords
 );
 

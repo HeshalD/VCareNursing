@@ -4,7 +4,7 @@ const staffAppController = require('../controllers/staffAppController');
 const staffController = require('../controllers/staffController');
 const staffDocUploadController = require('../controllers/staffDocUploadController');
 const { uploadApplicationFiles } = require('../middleware/uploadMiddleware');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 const db = require('../config/db');
 const { toE164 } = require('../utils/phone');
 
@@ -31,7 +31,7 @@ router.get('/check-mobile/:mobile', async (req, res) => {
 });
 
 // Admin: Check if a mobile number is already used by an existing staff profile
-router.get('/check-staff-mobile/:mobile', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), async (req, res) => {
+router.get('/check-staff-mobile/:mobile', protect, requirePermission('VIEW_USER_MANAGEMENT'), async (req, res) => {
   try {
     const result = await db.query(
       'SELECT 1 FROM staff_profiles sp JOIN users u ON sp.user_id = u.user_id WHERE u.mobile_number = $1',
@@ -45,7 +45,7 @@ router.get('/check-staff-mobile/:mobile', protect, restrictTo('SUPER_ADMIN', 'CO
 });
 
 // Admin: Check if a staff code is already taken
-router.get('/check-staff-code/:code', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), async (req, res) => {
+router.get('/check-staff-code/:code', protect, requirePermission('VIEW_USER_MANAGEMENT'), async (req, res) => {
   try {
     const result = await db.query(
       'SELECT 1 FROM staff_profiles WHERE LOWER(staff_code) = LOWER($1)',
@@ -68,7 +68,7 @@ router.post('/verify-otp', staffAppController.verifyStaffApplicationOtp);
 router.post('/resend-otp', staffAppController.resendStaffApplicationOtp);
 
 // Admin Only: View all applications (includes docs_complete flag for accepted applications)
-router.get('/applications', protect, restrictTo('SUPER_ADMIN'), async (req, res) => {
+router.get('/applications', protect, requirePermission('VIEW_WORKER_VERIFICATIONS'), async (req, res) => {
   const apps = await db.query(`
     SELECT sa.*,
       sp.grama_niladhari_url,
@@ -93,7 +93,7 @@ router.get('/applications', protect, restrictTo('SUPER_ADMIN'), async (req, res)
 });
 
 // Admin Only: Get single application by ID (includes staff profile compliance fields when accepted)
-router.get('/applications/:applicationId', protect, restrictTo('SUPER_ADMIN'), async (req, res) => {
+router.get('/applications/:applicationId', protect, requirePermission('VIEW_WORKER_VERIFICATIONS'), async (req, res) => {
   try {
     const result = await db.query(`
       SELECT sa.*,
@@ -115,19 +115,19 @@ router.get('/applications/:applicationId', protect, restrictTo('SUPER_ADMIN'), a
 });
 
 // Admin Only: Update application details
-router.put('/applications/:applicationId', uploadApplicationFiles, protect, restrictTo('SUPER_ADMIN'), staffAppController.updateApplication);
+router.put('/applications/:applicationId', uploadApplicationFiles, protect, requirePermission('APPLICATION_UPDATE'), staffAppController.updateApplication);
 
 // Admin Only: Send the Independent Contractor Agreement PDF to an approved applicant via WhatsApp
-router.post('/applications/:applicationId/send-agreement', protect, restrictTo('SUPER_ADMIN'), staffAppController.sendApplicationAgreement);
+router.post('/applications/:applicationId/send-agreement', protect, requirePermission('APPLICATION_SEND_AGREEMENT'), staffAppController.sendApplicationAgreement);
 
 // Admin Only: Suggest the next auto-generated Staff ID (EMP-5000 onwards)
-router.get('/next-staff-code', protect, restrictTo('SUPER_ADMIN'), staffAppController.getNextStaffCode);
+router.get('/next-staff-code', protect, requirePermission('VIEW_WORKER_VERIFICATIONS'), staffAppController.getNextStaffCode);
 
 // Admin Only: Accept Application
 router.post(
   '/accept',
   protect,
-  restrictTo('SUPER_ADMIN'),
+  requirePermission('APPLICATION_ACCEPT'),
   staffAppController.acceptApplication
 );
 
@@ -135,7 +135,7 @@ router.post(
 router.post(
   '/reject',
   protect,
-  restrictTo('SUPER_ADMIN'),
+  requirePermission('APPLICATION_REJECT'),
   staffAppController.rejectApplication
 );
 
@@ -161,7 +161,7 @@ router.get('/top-rated', staffController.getTopRatedStaff);
 router.get(
   '/schedules',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  requirePermission('VIEW_USER_MANAGEMENT'),
   staffController.getStaffSchedules
 );
 
@@ -180,13 +180,13 @@ router.get(
 );
 
 // Create staff profile with file upload support
-router.post('/proxy-create', uploadApplicationFiles, protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), staffController.createStaffProfile);
+router.post('/proxy-create', uploadApplicationFiles, protect, requirePermission('STAFF_PROXY_CREATE'), staffController.createStaffProfile);
 
 // Admin: Staff salaries overview (all staff with outstanding payables)
 router.get(
   '/salaries/overview',
   protect,
-  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  requirePermission('VIEW_USER_MANAGEMENT'),
   staffController.getStaffSalariesOverview
 );
 
@@ -194,7 +194,7 @@ router.get(
 router.post(
   '/salaries/bulk-payouts',
   protect,
-  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  requirePermission('STAFF_CREATE_PAYOUT'),
   staffController.bulkStaffPayouts
 );
 
@@ -202,7 +202,7 @@ router.post(
 router.get(
   '/salaries/full-export',
   protect,
-  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  requirePermission('STAFF_EXPORT_SALARY'),
   staffController.getStaffSalariesExportData
 );
 
@@ -210,7 +210,7 @@ router.get(
 router.get(
   '/salary-sheets/ledger',
   protect,
-  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  requirePermission('VIEW_USER_MANAGEMENT'),
   staffController.getSalarySheetLedger
 );
 
@@ -218,7 +218,7 @@ router.get(
 router.post(
   '/salary-sheets/bulk-send-notifications',
   protect,
-  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  requirePermission('STAFF_NOTIFY_SALARY'),
   staffController.bulkResendSalarySheetNotifications
 );
 
@@ -226,7 +226,7 @@ router.post(
 router.post(
   '/salary-sheets/:staff_payment_id/send-notification',
   protect,
-  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  requirePermission('STAFF_NOTIFY_SALARY'),
   staffController.resendSalarySheetNotification
 );
 
@@ -234,7 +234,7 @@ router.post(
 router.get(
   '/:staff_profile_id/booking-salary-breakdown',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  requirePermission('VIEW_USER_MANAGEMENT'),
   staffController.getStaffBookingSalaryBreakdown
 );
 
@@ -242,7 +242,7 @@ router.get(
 router.get(
   '/:staff_profile_id/monthly-earnings',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  requirePermission('VIEW_USER_MANAGEMENT'),
   staffController.getStaffMonthlyEarnings
 );
 
@@ -256,7 +256,7 @@ router.get(
 router.get(
   '/:staff_profile_id/admin-detail',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  requirePermission('VIEW_USER_MANAGEMENT'),
   staffController.getAdminStaffDetail
 );
 
@@ -264,7 +264,7 @@ router.get(
 router.get(
   '/:staff_profile_id/current-booking',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  requirePermission('VIEW_USER_MANAGEMENT'),
   staffController.getCurrentBooking
 );
 
@@ -272,7 +272,7 @@ router.get(
 router.get(
   '/:staff_profile_id/booking-history',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  requirePermission('VIEW_USER_MANAGEMENT'),
   staffController.getBookingHistory
 );
 
@@ -280,12 +280,14 @@ router.get(
 router.get(
   '/:staff_profile_id/future-bookings',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  requirePermission('VIEW_USER_MANAGEMENT'),
   staffController.getFutureBookings
 );
 
 // Full attendance calendar (assignment spans + per-day attendance) for staff
 // Admins can view any staff member's calendar; staff can only view their own (enforced in controller).
+// NOTE: shared with staff self-service — deliberately NOT gated by requirePermission,
+// since those roles have no staff_permissions row.
 router.get(
   '/:staff_profile_id/attendance-calendar',
   protect,
@@ -297,18 +299,20 @@ router.get(
 router.patch(
   '/:staff_profile_id/deactivate',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  requirePermission('STAFF_DEACTIVATE'),
   staffController.deactivateStaffAccount
 );
 
 router.patch(
   '/:staff_profile_id/reactivate',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  requirePermission('STAFF_REACTIVATE'),
   staffController.reactivateStaffAccount
 );
 
-// Staff bank accounts management (list/create/update/delete)
+// Staff bank accounts management (list/create/update/delete).
+// NOTE: shared with staff self-service (managing their own payout bank account) —
+// deliberately NOT gated by requirePermission, since those roles have no staff_permissions row.
 router.get(
   '/:staff_profile_id/bank-accounts',
   protect,
@@ -341,14 +345,14 @@ router.delete(
 router.get(
   '/:staff_profile_id/payouts/summary',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  requirePermission('VIEW_USER_MANAGEMENT'),
   staffController.getPayoutsSummary
 );
 
 router.get(
   '/:staff_profile_id/payouts',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  requirePermission('VIEW_USER_MANAGEMENT'),
   staffController.getPayouts
 );
 
@@ -356,14 +360,14 @@ router.get(
 router.get(
   '/:staff_profile_id/earnings-summary',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  requirePermission('VIEW_USER_MANAGEMENT'),
   staffController.getEarningsSummary
 );
 
 router.get(
   '/:staff_profile_id/earnings-transactions',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  requirePermission('VIEW_USER_MANAGEMENT'),
   staffController.getEarningsTransactions
 );
 
@@ -371,14 +375,14 @@ router.get(
 router.get(
   '/:staff_profile_id/total-earnings-breakdown',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  requirePermission('VIEW_USER_MANAGEMENT'),
   staffController.getTotalEarningsBreakdown
 );
 
 router.get(
   '/:staff_profile_id/current-earnings-breakdown',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  requirePermission('VIEW_USER_MANAGEMENT'),
   staffController.getCurrentEarningsBreakdown
 );
 
@@ -386,7 +390,7 @@ router.get(
 router.post(
   '/:staff_profile_id/payouts',
   protect,
-  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  requirePermission('STAFF_CREATE_PAYOUT'),
   staffController.createStaffPayout
 );
 
@@ -394,14 +398,14 @@ router.post(
 router.get(
   '/:staff_profile_id/deductions',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  requirePermission('VIEW_USER_MANAGEMENT'),
   staffController.getStaffDeductions
 );
 
 router.post(
   '/:staff_profile_id/deductions',
   protect,
-  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  requirePermission('STAFF_APPLY_DEDUCTION'),
   staffController.createStaffDeduction
 );
 
@@ -409,25 +413,25 @@ router.post(
 router.get(
   '/:staff_profile_id/admin-notes',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+  requirePermission('VIEW_USER_MANAGEMENT'),
   staffController.getStaffAdminNotes
 );
 router.post(
   '/:staff_profile_id/admin-notes',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+  requirePermission('STAFF_ADD_NOTE'),
   staffController.createStaffAdminNote
 );
 router.put(
   '/:staff_profile_id/admin-notes/:note_id',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+  requirePermission('STAFF_EDIT_NOTE'),
   staffController.updateStaffAdminNote
 );
 router.delete(
   '/:staff_profile_id/admin-notes/:note_id',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+  requirePermission('STAFF_DELETE_NOTE'),
   staffController.deleteStaffAdminNote
 );
 
@@ -438,16 +442,16 @@ router.put('/:staff_profile_id/unavailable', protect, staffController.updateStaf
 router.put('/:staff_profile_id/status', protect, staffController.updateStaffStatus);
 
 // Admin Only: Send the Independent Contractor Agreement PDF via WhatsApp (Staff Detail > Documents tab)
-router.post('/:staff_profile_id/send-agreement', protect, restrictTo('SUPER_ADMIN'), staffAppController.sendApplicationAgreementByStaffId);
+router.post('/:staff_profile_id/send-agreement', protect, requirePermission('APPLICATION_SEND_AGREEMENT'), staffAppController.sendApplicationAgreementByStaffId);
 
 // Admin Only: Send the compliance-document upload request via WhatsApp (Staff Detail > Documents tab)
-router.post('/:staff_profile_id/send-document-request', protect, restrictTo('SUPER_ADMIN'), staffDocUploadController.sendDocumentRequestByStaffId);
+router.post('/:staff_profile_id/send-document-request', protect, requirePermission('STAFF_DOC_SEND_REQUEST'), staffDocUploadController.sendDocumentRequestByStaffId);
 
 // Admin Only: update years of experience. Staff profile changes are admin-dashboard-only.
 router.patch(
   '/:staff_profile_id/experience-level',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+  requirePermission('STAFF_EDIT'),
   staffController.updateStaffExperienceLevel
 );
 
@@ -455,7 +459,7 @@ router.patch(
 router.get('/user/:user_id', protect, staffController.getStaffByUserID);
 
 // Update staff profile (handle file uploads from proxy management)
-router.put('/:staff_profile_id', uploadApplicationFiles, protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), staffController.updateStaffProfile);
+router.put('/:staff_profile_id', uploadApplicationFiles, protect, requirePermission('STAFF_EDIT'), staffController.updateStaffProfile);
 
 // Delete staff profile
 router.delete('/:staff_profile_id', protect, staffController.deleteStaffProfile);

@@ -9,12 +9,11 @@ const ctrl = require('../controllers/bulkImportController');
 const upload = multer({ storage: multer.memoryStorage() });
 
 router.use(protect);
-router.use(restrictTo('SUPER_ADMIN', 'COORDINATOR'));
 
-router.get('/template', ctrl.downloadTemplate);
-router.post('/preview', upload.single('file'), ctrl.previewImport);
+router.get('/template', requirePermission('VIEW_BULK_IMPORT'), ctrl.downloadTemplate);
+router.post('/preview', requirePermission('VIEW_BULK_IMPORT'), upload.single('file'), ctrl.previewImport);
 router.post('/commit', requirePermission('BULK_IMPORT_COMMIT'), upload.single('file'), ctrl.commitImport);
-router.get('/batches', ctrl.listBatches);
-router.get('/batches/:id', ctrl.getBatch);
+router.get('/batches', requirePermission('VIEW_BULK_IMPORT'), ctrl.listBatches);
+router.get('/batches/:id', requirePermission('VIEW_BULK_IMPORT'), ctrl.getBatch);
 
 module.exports = router;

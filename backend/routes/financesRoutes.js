@@ -1,12 +1,12 @@
 const express = require('express');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 const { getOverview, getAdvancesSummary, getStaffWalletsSummary, getCreditAlertsSummary, getRevenueChart, getPaymentMethodsChart, getTransactionCategoriesChart, getReceivablesAging, getPayablesAging, getProfitLoss, getProfitLossPdf, getBalanceSheet, getBalanceSheetPdf, getSalesByCustomer, getSalesByCustomerPdf, getCashFlowSummary, getIncomeExpenseChart, getTopExpenses } = require('../controllers/financesController');
 
 const router = express.Router();
 
-// Protect all routes and restrict to SUPER_ADMIN only
+// Protect all routes; access is gated purely by the VIEW_FINANCIAL permission (SUPER_ADMIN bypasses).
 router.use(protect);
-router.use(restrictTo('SUPER_ADMIN'));
+router.use(requirePermission('VIEW_FINANCIAL'));
 
 // GET /api/finances/overview - Get financial overview
 router.get('/overview', getOverview);

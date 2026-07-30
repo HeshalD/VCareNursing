@@ -69,6 +69,8 @@ const BookingStaffAssignmentPage = () => {
     ot_rate:             '',
     notes:               '',
     salesperson_id:      '',
+    is_hospitalized:     false,
+    hospital_name:       '',
   });
 
   const [salespersons, setSalespersons] = useState([]);
@@ -176,6 +178,8 @@ const BookingStaffAssignmentPage = () => {
         ...cur,
         service_start_date: cur.service_start_date || formatDateForDisplay(response.data?.booking?.start_date) || '',
         daily_rate:         cur.daily_rate          || response.data?.booking?.quote_daily_rate || '',
+        is_hospitalized:    response.data?.booking?.is_hospitalized || false,
+        hospital_name:      response.data?.booking?.hospital_name || '',
       }));
     } catch (err) {
       setError(err.message || 'Failed to load assignment form');
@@ -276,6 +280,13 @@ const BookingStaffAssignmentPage = () => {
         catch { /* non-fatal */ }
       }
 
+      try {
+        await apiClient.updateBookingHospitalization(bookingId, {
+          is_hospitalized: assignment.is_hospitalized,
+          hospital_name:   assignment.hospital_name || null,
+        });
+      } catch { /* non-fatal */ }
+
       setSuccess('Shift pattern created and staff assigned successfully.');
       setTimeout(() => navigate(`/admin/bookings/${bookingId}/detail`), 1500);
     } catch (err) {
@@ -302,6 +313,12 @@ const BookingStaffAssignmentPage = () => {
         notes:              assignment.notes       || null,
         salesperson_id:     assignment.salesperson_id || null,
       });
+      try {
+        await apiClient.updateBookingHospitalization(bookingId, {
+          is_hospitalized: assignment.is_hospitalized,
+          hospital_name:   assignment.hospital_name || null,
+        });
+      } catch { /* non-fatal */ }
       setSuccess('Staff assigned successfully.');
       setTimeout(() => navigate(`/admin/bookings/${bookingId}/detail`), 1500);
     } catch (err) {
@@ -545,6 +562,32 @@ const BookingStaffAssignmentPage = () => {
                       placeholder="Optional note for this assignment"
                     />
                   </FormField>
+                </div>
+
+                {/* Hospitalization status */}
+                <div className="rounded-md border border-gray-200 bg-gray-50 p-4">
+                  <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={assignment.is_hospitalized}
+                      onChange={(e) => setAssignment({
+                        ...assignment,
+                        is_hospitalized: e.target.checked,
+                        hospital_name: e.target.checked ? assignment.hospital_name : '',
+                      })}
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    Patient is currently hospitalized
+                  </label>
+                  {assignment.is_hospitalized && (
+                    <input
+                      type="text"
+                      value={assignment.hospital_name}
+                      onChange={(e) => setAssignment({ ...assignment, hospital_name: e.target.value })}
+                      placeholder="Hospital name"
+                      className="mt-2.5 w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    />
+                  )}
                 </div>
 
                 {/* Shift slots (SHIFT_BASED) */}

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const receiptController = require('../controllers/receiptController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const adminRoles = ['SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'];
 
@@ -9,7 +9,7 @@ const adminRoles = ['SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'];
 router.get(
   '/',
   protect,
-  restrictTo(...adminRoles),
+  requirePermission('VIEW_RECEIPTS'),
   receiptController.getAllReceipts
 );
 
@@ -17,7 +17,7 @@ router.get(
 router.get(
   '/client/:client_id',
   protect,
-  restrictTo(...adminRoles),
+  requirePermission('VIEW_RECEIPTS'),
   receiptController.getClientReceipts
 );
 
@@ -25,7 +25,7 @@ router.get(
 router.get(
   '/booking/:booking_id',
   protect,
-  restrictTo(...adminRoles),
+  requirePermission('VIEW_RECEIPTS'),
   receiptController.getBookingReceipts
 );
 
@@ -33,7 +33,7 @@ router.get(
 router.post(
   '/:receipt_id/send',
   protect,
-  restrictTo(...adminRoles),
+  requirePermission('RECEIPT_SEND'),
   receiptController.sendReceiptWhatsApp
 );
 
@@ -41,7 +41,7 @@ router.post(
 router.get(
   '/:receipt_id',
   protect,
-  restrictTo(...adminRoles),
+  requirePermission('VIEW_RECEIPTS'),
   receiptController.getReceipt
 );
 

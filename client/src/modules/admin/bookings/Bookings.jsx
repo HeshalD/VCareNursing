@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { XCircle, Loader2, Calendar, User, Clock, Search, RefreshCw, AlertTriangle, Plus, ChevronRight } from 'lucide-react';
+import { XCircle, Loader2, Calendar, User, Clock, Search, RefreshCw, AlertTriangle, Plus, ChevronRight, Building2 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
@@ -79,6 +79,7 @@ const Bookings = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [typeFilter, setTypeFilter] = useState('ALL');
+  const [hospitalizedOnly, setHospitalizedOnly] = useState(false);
   const [showDirectBooking, setShowDirectBooking] = useState(false);
 
   useEffect(() => {
@@ -158,13 +159,15 @@ const Bookings = () => {
 
       if (typeFilter !== 'ALL' && b.service_model !== typeFilter) return false;
 
+      if (hospitalizedOnly && !b.is_hospitalized) return false;
+
       if (!q) return true;
       const bookingCode = (b.booking_code || String(b.booking_id)).toLowerCase();
       const clientName = (details?.client_name || b.client_name || `client ${b.client_id}`).toLowerCase();
       const patientName = (details?.patient_name || b.patient_name || `patient ${b.patient_id}`).toLowerCase();
       return bookingCode.includes(q) || clientName.includes(q) || patientName.includes(q);
     });
-  }, [bookings, bookingDetails, searchQuery, statusFilter, typeFilter]);
+  }, [bookings, bookingDetails, searchQuery, statusFilter, typeFilter, hospitalizedOnly]);
 
   const statusCounts = useMemo(() => {
     const counts = { ALL: bookings.length, EXPIRING_SOON: 0, PENDING: 0 };
@@ -182,6 +185,11 @@ const Bookings = () => {
     });
     return counts;
   }, [bookings]);
+
+  const hospitalizedCount = useMemo(
+    () => bookings.filter((b) => b.is_hospitalized).length,
+    [bookings],
+  );
 
   if (loading) {
     return (
@@ -262,24 +270,39 @@ const Bookings = () => {
             </div>
           </div>
 
-          {/* Row 2: booking type tabs */}
-          <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-1 w-fit flex-wrap">
-            {TYPE_TABS.map(({ key, label }) => (
-              <button
-                key={key}
-                onClick={() => setTypeFilter(key)}
-                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all whitespace-nowrap ${
-                  typeFilter === key
-                    ? 'bg-white text-slate-900 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                {label}
-                <span className="ml-1.5 tabular-nums text-slate-400">
-                  {typeCounts[key] ?? 0}
-                </span>
-              </button>
-            ))}
+          {/* Row 2: booking type tabs + hospitalized filter */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-1 w-fit flex-wrap">
+              {TYPE_TABS.map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setTypeFilter(key)}
+                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all whitespace-nowrap ${
+                    typeFilter === key
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  {label}
+                  <span className="ml-1.5 tabular-nums text-slate-400">
+                    {typeCounts[key] ?? 0}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={() => setHospitalizedOnly((v) => !v)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap border transition-all ${
+                hospitalizedOnly
+                  ? 'bg-red-50 text-red-700 border-red-200'
+                  : 'bg-white text-slate-500 border-slate-200 hover:text-slate-700'
+              }`}
+            >
+              <Building2 className="w-3.5 h-3.5" />
+              Hospitalized
+              <span className="tabular-nums text-slate-400">{hospitalizedCount}</span>
+            </button>
           </div>
         </div>
 
@@ -332,6 +355,12 @@ const Bookings = () => {
                                 {b.balance_days_remaining != null && b.balance_days_remaining <= 0
                                   ? 'Balance exhausted'
                                   : `~${b.balance_days_remaining}d left`}
+                              </span>
+                            )}
+                            {b.is_hospitalized && (
+                              <span className="inline-flex items-center gap-1 mt-1 text-[11px] font-medium text-red-600" title={b.hospital_name || ''}>
+                                <Building2 className="w-3 h-3" />
+                                {b.hospital_name ? b.hospital_name : 'Hospitalized'}
                               </span>
                             )}
                           </td>
@@ -440,6 +469,12 @@ const Bookings = () => {
                           {b.balance_days_remaining != null && b.balance_days_remaining <= 0
                             ? 'Balance exhausted'
                             : `~${b.balance_days_remaining}d left`}
+                        </span>
+                      )}
+                      {b.is_hospitalized && (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-red-600">
+                          <Building2 className="w-3 h-3" />
+                          {b.hospital_name ? b.hospital_name : 'Hospitalized'}
                         </span>
                       )}
                     </div>

@@ -6,21 +6,20 @@ const { protect, restrictTo, requirePermission } = require('../middleware/authMi
 router.get(
     '/upcoming',
     protect,
-    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('VIEW_UPCOMING_EVENTS'),
     scheduledActionsController.getUpcomingEvents
 );
 
 router.get(
     '/booking/:booking_id',
     protect,
-    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('VIEW_UPCOMING_EVENTS'),
     scheduledActionsController.getBookingScheduledEvents
 );
 
 router.post(
     '/:action_id/cancel',
     protect,
-    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR'),
     requirePermission('SCHEDULED_ACTION_CANCEL'),
     scheduledActionsController.cancelScheduledAction
 );
@@ -28,7 +27,7 @@ router.post(
 router.post(
     '/:action_id/execute-now',
     protect,
-    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR'),
+    requirePermission('SCHEDULED_ACTION_EXECUTE_NOW'),
     scheduledActionsController.executeScheduledActionNow
 );
 

@@ -17,6 +17,23 @@ function _extractActorRole(role) {
     return typeof raw === 'string' ? raw.replace(/\{|\}/g, '').split(',')[0].trim() : String(raw);
 }
 
+// Self-service routes (bank accounts, etc.) are shared between the staff-app owner and
+// internal admins. SUPER_ADMIN always passes; other internal roles need the matching
+// staff_permissions grant; anyone else is only allowed onto their own staff_profile_id.
+async function _canAccessStaffRecord(req, staff_profile_id, permissionKey) {
+    const actorRole = _extractActorRole(req.user.role);
+    if (actorRole === 'SUPER_ADMIN') return true;
+
+    const permRes = await db.query(
+        'SELECT 1 FROM staff_permissions WHERE user_id = $1 AND permission_key = $2',
+        [req.user.user_id, permissionKey]
+    );
+    if (permRes.rows.length > 0) return true;
+
+    const ownProfile = await db.query('SELECT staff_profile_id FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+    return ownProfile.rows.length > 0 && String(ownProfile.rows[0].staff_profile_id) === String(staff_profile_id);
+}
+
 async function _sendSalaryPayoutNotifications(staffProfileId, payoutAmount, paymentMethod, referenceNumber, notes, staffPaymentId, monthYear, autoSend) {
     const staffRes = await db.query(`
         SELECT sp.full_name, sp.designation, u.mobile_number
@@ -1075,6 +1092,9 @@ exports.getPayoutsSummary = async (req, res) => {
 exports.getStaffBankAccounts = async (req, res) => {
     const { staff_profile_id } = req.params;
     try {
+        if (!(await _canAccessStaffRecord(req, staff_profile_id, 'VIEW_USER_MANAGEMENT'))) {
+            return res.status(403).json({ status: 'error', message: 'Not authorized to view this staff member\'s bank accounts' });
+        }
         const resDb = await db.query(
             `SELECT * FROM staff_bank_accounts WHERE staff_profile_id = $1 AND is_active = true ORDER BY created_at DESC`,
             [staff_profile_id]
@@ -1096,6 +1116,9 @@ exports.createStaffBankAccount = async (req, res) => {
     }
 
     try {
+        if (!(await _canAccessStaffRecord(req, staff_profile_id, 'STAFF_ADD_BANK_ACCOUNT'))) {
+            return res.status(403).json({ status: 'error', message: 'Not authorized to add a bank account for this staff member' });
+        }
         const staffRes = await db.query('SELECT user_id FROM staff_profiles WHERE staff_profile_id = $1', [staff_profile_id]);
         if (staffRes.rows.length === 0) return res.status(404).json({ status: 'error', message: 'Staff not found' });
 
@@ -1136,6 +1159,10 @@ exports.updateStaffBankAccount = async (req, res) => {
     const { account_holder_name, bank_name, branch_name, account_number, currency, is_verified, is_active } = req.body;
 
     try {
+        if (!(await _canAccessStaffRecord(req, staff_profile_id, 'STAFF_EDIT_BANK_ACCOUNT'))) {
+            return res.status(403).json({ status: 'error', message: 'Not authorized to edit this staff member\'s bank account' });
+        }
+
         const acctRes = await db.query('SELECT staff_profile_id FROM staff_bank_accounts WHERE staff_bank_account_id = $1', [staff_bank_account_id]);
         if (acctRes.rows.length === 0) return res.status(404).json({ status: 'error', message: 'Bank account not found' });
 
@@ -1189,6 +1216,10 @@ exports.deleteStaffBankAccount = async (req, res) => {
     const { staff_profile_id, staff_bank_account_id } = req.params;
 
     try {
+        if (!(await _canAccessStaffRecord(req, staff_profile_id, 'STAFF_DELETE_BANK_ACCOUNT'))) {
+            return res.status(403).json({ status: 'error', message: 'Not authorized to delete this staff member\'s bank account' });
+        }
+
         const acctRes = await db.query('SELECT staff_profile_id FROM staff_bank_accounts WHERE staff_bank_account_id = $1', [staff_bank_account_id]);
         if (acctRes.rows.length === 0) return res.status(404).json({ status: 'error', message: 'Bank account not found' });
         if (acctRes.rows[0].staff_profile_id !== staff_profile_id) {

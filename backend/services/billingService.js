@@ -156,6 +156,90 @@ const creditStaffSalary = async (client, { staff_profile_id, booking_id, amount,
   return salaryTransactionId;
 };
 
+// ─── Staff Salary Reversal ──────────────────────────────────────────────────────
+// Reverses a previously-credited day's salary (e.g. admin discovers a LIVE_IN
+// no-show that was auto-paid). Decrements current_earnings and staff_wallet.balance
+// by amount — no floor, negative balance is allowed and nets out against future
+// payouts. Inserts an offsetting STAFF_SALARY DEBIT transaction (the original
+// CREDIT row from creditStaffSalary is left untouched as the audit trail of what
+// was originally paid). Must be called within an open client transaction.
+
+const reverseStaffSalary = async (client, { staff_profile_id, booking_id, amount, notes }) => {
+  await client.query(
+    `UPDATE staff_profiles
+     SET current_earnings = current_earnings - $1
+     WHERE staff_profile_id = $2`,
+    [amount, staff_profile_id]
+  );
+
+  const reversalTransactionResult = await client.query(
+    `INSERT INTO transactions (
+      staff_profile_id,
+      booking_id,
+      category,
+      transaction_type,
+      amount,
+      status,
+      notes,
+      created_at
+    ) VALUES ($1, $2, 'STAFF_SALARY', 'DEBIT', $3, 'COMPLETED', $4, NOW())
+    RETURNING transaction_id`,
+    [staff_profile_id, booking_id, amount, notes]
+  );
+
+  const reversalTransactionId = reversalTransactionResult.rows[0].transaction_id;
+
+  await client.query(
+    `INSERT INTO staff_wallet (staff_profile_id, balance, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (staff_profile_id)
+     DO UPDATE SET balance = staff_wallet.balance - EXCLUDED.balance,
+                   updated_at = NOW()`,
+    [staff_profile_id, amount]
+  );
+
+  await client.query(
+    `INSERT INTO staff_wallet_transactions (
+      staff_profile_id,
+      type,
+      amount,
+      reason,
+      reference_id,
+      created_at
+    ) VALUES ($1, 'DEBIT', $2, 'SALARY_REVERSAL', $3, NOW())`,
+    [staff_profile_id, amount, reversalTransactionId]
+  );
+
+  return reversalTransactionId;
+};
+
+// ─── Client Invoice Reversal ────────────────────────────────────────────────────
+// Cancels a previously-created day's invoice by crediting the booking for the
+// same amount, via the same WALLET_REFUND category bookingSettlement.js already
+// uses for cancellations. total_paid sums CREDIT (excl. STAFF_SALARY) and
+// total_invoiced sums DEBIT, so this exactly nets out the booking's outstanding
+// balance by the invoiced amount without mutating the original SERVICE_INVOICE
+// DEBIT row. Must be called within an open client transaction.
+
+const reverseServiceInvoice = async (client, { booking_id, client_id, amount, notes }) => {
+  const result = await client.query(
+    `INSERT INTO transactions (
+      client_id,
+      booking_id,
+      category,
+      transaction_type,
+      amount,
+      status,
+      notes,
+      created_at
+    ) VALUES ($1, $2, 'WALLET_REFUND', 'CREDIT', $3, 'COMPLETED', $4, NOW())
+    RETURNING transaction_id`,
+    [client_id, booking_id, amount, notes]
+  );
+
+  return result.rows[0].transaction_id;
+};
+
 // ─── Client Service Invoice ─────────────────────────────────────────────────────
 // Creates a SERVICE_INVOICE DEBIT transaction for a booking. Returns the new
 // transaction_id. Must be called within an open client transaction.
@@ -216,5 +300,7 @@ module.exports = {
   generateInvoiceNumber,
   creditStaffSalary,
   createServiceInvoice,
+  reverseStaffSalary,
+  reverseServiceInvoice,
   checkAndFlagBookingOverdue
 };

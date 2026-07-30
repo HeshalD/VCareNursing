@@ -19,26 +19,30 @@ const ROLE_LABELS = {
 
 // Single source of truth for nav sections, shared by the desktop sidebar and the mobile drawer.
 // A section with `section: null` renders as a standalone top-level link (no header/collapse).
+// `permKey` gates both sidebar visibility and direct-navigation access (see EXTRA_ROUTE_PERMISSIONS
+// below) — access is decided purely by staff_permissions via the Permissions page; SUPER_ADMIN
+// bypasses every check automatically (see hasPermission in AdminAuthContext).
 const NAV_SECTIONS = [
   {
     section: null,
     items: [
-      { icon: Activity, label: 'Overview', path: '/admin/dashboard' },
+      { icon: Activity, label: 'Overview', path: '/admin/dashboard', permKey: 'VIEW_DASHBOARD' },
     ],
   },
   {
     section: 'People',
     icon: Users,
     items: [
-      { icon: Users, label: 'Client Management', path: '/admin/users', match: (p) => p === '/admin/users' || p.startsWith('/admin/users/') },
+      { icon: Users, label: 'Client Management', path: '/admin/users', match: (p) => p === '/admin/users' || p.startsWith('/admin/users/'), permKey: 'VIEW_USER_MANAGEMENT' },
       {
         icon: UserCog, label: 'Staff Management', path: '/admin/staff-management',
         match: (p) => p === '/admin/staff-management' || p === '/admin/proxy-user-management'
           || p.startsWith('/admin/staff/') || p === '/admin/staff-roster' || p.startsWith('/admin/staff-history/'),
+        permKey: 'VIEW_USER_MANAGEMENT',
       },
-      { icon: Settings, label: 'Internal Staff', path: '/admin/internal-staff' },
-      { icon: Briefcase, label: 'Salespersons', path: '/admin/salespersons', match: (p) => p === '/admin/salespersons' || p.startsWith('/admin/salespersons/') },
-      { icon: Upload, label: 'Bulk Import', path: '/admin/bulk-import' },
+      { icon: Settings, label: 'Internal Staff', path: '/admin/internal-staff', permKey: 'VIEW_INTERNAL_STAFF' },
+      { icon: Briefcase, label: 'Salespersons', path: '/admin/salespersons', match: (p) => p === '/admin/salespersons' || p.startsWith('/admin/salespersons/'), permKey: 'VIEW_SALESPERSONS' },
+      { icon: Upload, label: 'Bulk Import', path: '/admin/bulk-import', permKey: 'VIEW_BULK_IMPORT' },
     ],
   },
   {
@@ -49,58 +53,75 @@ const NAV_SECTIONS = [
         icon: SendHorizontal, label: 'Service Requests', path: '/admin/service-requests',
         match: (p) => p === '/admin/service-requests' || p.startsWith('/admin/service-requests/')
           || p === '/admin/proxy-service-requests' || p.startsWith('/admin/quote-builder') || p.startsWith('/admin/modular-quote-builder'),
+        permKey: 'VIEW_SERVICE_REQUESTS',
       },
-      { icon: AlertTriangle, label: 'Termination Requests', path: '/admin/termination-requests' },
-      { icon: CalendarOff, label: 'Leave Requests', path: '/admin/leave-requests' },
-      { icon: CalendarClock, label: 'Upcoming Events', path: '/admin/upcoming-events' },
-      { icon: CalendarDays, label: 'Bookings', path: '/admin/bookings', match: (p) => p === '/admin/bookings' || p.startsWith('/admin/bookings/') },
+      { icon: AlertTriangle, label: 'Termination Requests', path: '/admin/termination-requests', permKey: 'VIEW_TERMINATION_REQUESTS' },
+      { icon: CalendarOff, label: 'Leave Requests', path: '/admin/leave-requests', permKey: 'VIEW_STAFF_LEAVES' },
+      { icon: CalendarClock, label: 'Upcoming Events', path: '/admin/upcoming-events', permKey: 'VIEW_UPCOMING_EVENTS' },
+      { icon: CalendarDays, label: 'Bookings', path: '/admin/bookings', match: (p) => p === '/admin/bookings' || p.startsWith('/admin/bookings/'), permKey: 'VIEW_BOOKINGS' },
     ],
   },
   {
     section: 'Sales',
     icon: ReceiptText,
     items: [
-      { icon: FileText, label: 'Quotations', path: '/admin/quotations', match: (p) => p === '/admin/quotations' || p.startsWith('/admin/quotations/') },
-      { icon: Package, label: 'Products', path: '/admin/products' },
-      { icon: ReceiptText, label: 'Invoices', path: '/admin/invoices' },
-      { icon: FileText, label: 'Statements', path: '/admin/statements' },
+      { icon: FileText, label: 'Quotations', path: '/admin/quotations', match: (p) => p === '/admin/quotations' || p.startsWith('/admin/quotations/'), permKey: 'VIEW_QUOTATIONS' },
+      { icon: Package, label: 'Products', path: '/admin/products', permKey: 'VIEW_PRODUCTS' },
+      { icon: ReceiptText, label: 'Invoices', path: '/admin/invoices', permKey: 'VIEW_INVOICES' },
+      { icon: FileText, label: 'Statements', path: '/admin/statements', permKey: 'VIEW_STATEMENTS' },
     ],
   },
   {
     section: 'Finance',
     icon: DollarSign,
     items: [
-      { icon: DollarSign, label: 'Financials', path: '/admin/financial' },
-      { icon: ArrowLeftRight, label: 'Transactions', path: '/admin/transactions' },
-      { icon: Receipt, label: 'Client Payments', path: '/admin/client-payments' },
-      { icon: Wallet, label: 'Advance Requests', path: '/admin/advance-requests' },
-      { icon: Banknote, label: 'Staff Salaries', path: '/admin/salaries' },
-      { icon: FileText, label: 'Salary Sheets', path: '/admin/salary-sheets' },
-      { icon: Landmark, label: 'Bank Accounts', path: '/admin/bank-accounts' },
-      { icon: Truck, label: 'Vendors', path: '/admin/vendors', match: (p) => p === '/admin/vendors' || p.startsWith('/admin/vendors/') },
+      { icon: DollarSign, label: 'Financials', path: '/admin/financial', permKey: 'VIEW_FINANCIAL' },
+      { icon: ArrowLeftRight, label: 'Transactions', path: '/admin/transactions', permKey: 'VIEW_TRANSACTIONS' },
+      { icon: Receipt, label: 'Client Payments', path: '/admin/client-payments', permKey: 'VIEW_USER_MANAGEMENT' },
+      { icon: Wallet, label: 'Advance Requests', path: '/admin/advance-requests', permKey: 'VIEW_ADVANCE_REQUESTS' },
+      { icon: Banknote, label: 'Staff Salaries', path: '/admin/salaries', permKey: 'VIEW_USER_MANAGEMENT' },
+      { icon: FileText, label: 'Salary Sheets', path: '/admin/salary-sheets', permKey: 'VIEW_USER_MANAGEMENT' },
+      { icon: Landmark, label: 'Bank Accounts', path: '/admin/bank-accounts', permKey: 'VIEW_BANK_ACCOUNTS' },
+      { icon: Truck, label: 'Vendors', path: '/admin/vendors', match: (p) => p === '/admin/vendors' || p.startsWith('/admin/vendors/'), permKey: 'VIEW_VENDORS' },
     ],
   },
   {
     section: 'Care',
     icon: HeartPulse,
     items: [
-      { icon: HeartPulse, label: 'Care Profiles', path: '/admin/patients', match: (p) => p === '/admin/patients' || p.startsWith('/admin/patients/') },
-      { icon: ClipboardList, label: 'Change Requests', path: '/admin/change-requests' },
-      { icon: ShieldCheck, label: 'Worker Verification', path: '/admin/workers', match: (p) => p === '/admin/workers' || p.startsWith('/admin/workers/') },
-      { icon: Star, label: 'Reviews', path: '/admin/reviews' },
+      { icon: HeartPulse, label: 'Care Profiles', path: '/admin/patients', match: (p) => p === '/admin/patients' || p.startsWith('/admin/patients/'), permKey: 'VIEW_PATIENTS' },
+      { icon: ClipboardList, label: 'Change Requests', path: '/admin/change-requests', permKey: 'VIEW_CHANGE_REQUESTS' },
+      { icon: ShieldCheck, label: 'Worker Verification', path: '/admin/workers', match: (p) => p === '/admin/workers' || p.startsWith('/admin/workers/'), permKey: 'VIEW_WORKER_VERIFICATIONS' },
+      { icon: Star, label: 'Reviews', path: '/admin/reviews', permKey: 'VIEW_STAFF_REVIEWS' },
     ],
   },
   {
     section: 'System',
     icon: Settings,
     items: [
-      { icon: Lock, label: 'Permissions', path: '/admin/permissions' },
-      { icon: MonitorSmartphone, label: 'Active Sessions', path: '/admin/active-sessions' },
-      { icon: History, label: 'Activity Log', path: '/admin/activity-log' },
-      { icon: FileText, label: 'Reports', path: '/admin/reports', match: (p) => p.startsWith('/admin/reports') },
+      { icon: Lock, label: 'Permissions', path: '/admin/permissions', permKey: 'PERMISSIONS_MANAGE' },
+      { icon: MonitorSmartphone, label: 'Active Sessions', path: '/admin/active-sessions', permKey: 'VIEW_ACTIVE_SESSIONS' },
+      { icon: History, label: 'Activity Log', path: '/admin/activity-log', permKey: 'VIEW_ACTIVITY_LOG' },
+      { icon: FileText, label: 'Reports', path: '/admin/reports', match: (p) => p.startsWith('/admin/reports'), permKey: 'VIEW_FINANCIAL' },
     ],
   },
 ];
+
+// Routes reachable by direct navigation but not represented as their own sidebar item
+// (detail/sub-pages of a list above). Gated by the same permission as their parent page.
+const EXTRA_ROUTE_PERMISSIONS = [
+  { match: (p) => p === '/admin/staff-history' || p.startsWith('/admin/staff-history/'), permKey: 'VIEW_ADVANCE_REQUESTS' },
+  { match: (p) => p === '/admin/settings', permKey: 'VIEW_SETTINGS' },
+];
+
+const findRouteRule = (pathname) => {
+  for (const group of NAV_SECTIONS) {
+    for (const item of group.items) {
+      if (item.match ? item.match(pathname) : pathname === item.path) return item;
+    }
+  }
+  return EXTRA_ROUTE_PERMISSIONS.find((rule) => rule.match(pathname)) || null;
+};
 
 const SECTION_STORAGE_KEY = 'adminSidebarCollapsedSections';
 
@@ -115,7 +136,7 @@ const parseToken = (token) => {
 const AdminLayout = ({ children, title, subtitle, actions }) => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { adminToken } = useAdminAuth();
+  const { adminToken, isSuperAdmin, hasPermission, permissionsLoaded } = useAdminAuth();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsedSections, setCollapsedSections] = useState(() => {
@@ -158,6 +179,19 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
   }, [adminToken]);
 
   const itemActive = (item) => (item.match ? item.match(location.pathname) : location.pathname === item.path);
+  const canAccess = (item) => hasPermission(item.permKey);
+
+  // Hide sidebar items/sections the current user has no permission for; SUPER_ADMIN sees everything.
+  const visibleNavSections = useMemo(() => {
+    return NAV_SECTIONS
+      .map((group) => ({ ...group, items: group.items.filter(canAccess) }))
+      .filter((group) => group.items.length > 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSuperAdmin, hasPermission]);
+
+  // Client-side guard for direct navigation to a page the current user isn't permissioned for.
+  const routeRule = findRouteRule(location.pathname);
+  const routeAllowed = !routeRule || canAccess(routeRule);
 
   // Close the mobile drawer whenever the route changes.
   useEffect(() => {
@@ -195,7 +229,7 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
         </div>
 
         <nav className="flex-1 p-2 space-y-1 overflow-y-auto scrollbar-hide">
-          {NAV_SECTIONS.map((group, idx) => (
+          {visibleNavSections.map((group, idx) => (
             <SidebarSection
               key={group.section || `top-${idx}`}
               section={group.section}
@@ -241,7 +275,7 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
               </button>
             </div>
             <nav className="flex-1 p-2 space-y-1 overflow-y-auto scrollbar-hide">
-              {NAV_SECTIONS.map((group, idx) => (
+              {visibleNavSections.map((group, idx) => (
                 <SidebarSection
                   key={group.section || `top-${idx}`}
                   section={group.section}
@@ -316,19 +350,27 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
         {/* Page Content */}
         <main className="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-50">
           <div className="max-w-7xl mx-auto space-y-6 md:space-y-8">
-            {/* Page Header */}
-            {(title || actions) && (
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div>
-                  {title && <h1 className="text-xl sm:text-2xl font-bold text-slate-900">{title}</h1>}
-                  {subtitle && <p className="text-slate-500 text-sm mt-1">{subtitle}</p>}
-                </div>
-                {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
-              </div>
-            )}
+            {!permissionsLoaded ? (
+              <div className="flex items-center justify-center h-64 text-slate-400 text-sm">Loading…</div>
+            ) : !routeAllowed ? (
+              <AccessDenied />
+            ) : (
+              <>
+                {/* Page Header */}
+                {(title || actions) && (
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div>
+                      {title && <h1 className="text-xl sm:text-2xl font-bold text-slate-900">{title}</h1>}
+                      {subtitle && <p className="text-slate-500 text-sm mt-1">{subtitle}</p>}
+                    </div>
+                    {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
+                  </div>
+                )}
 
-            {/* Content Children */}
-            {children}
+                {/* Content Children */}
+                {children}
+              </>
+            )}
           </div>
         </main>
       </div>
@@ -422,6 +464,14 @@ const SidebarItem = ({ icon: Icon, label, path, active, badge, collapsed, nested
       <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">{badge}</span>
     )}
   </Link>
+);
+
+const AccessDenied = () => (
+  <div className="flex flex-col items-center justify-center h-64 text-center">
+    <Lock className="w-10 h-10 text-slate-300 mb-3" />
+    <p className="font-semibold text-slate-700">You don't have access to this page</p>
+    <p className="text-sm text-slate-400 mt-1">Ask a Super Admin to grant you the relevant permission.</p>
+  </div>
 );
 
 export default AdminLayout;

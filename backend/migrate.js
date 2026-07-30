@@ -2794,6 +2794,55 @@ async function runMigration() {
   await db.query(`ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'VENDOR_PAYMENT'`);
 
   // =========================================================
+  // DAY REVOKE (admin correction of a wrongly auto-paid/invoiced LIVE_IN day)
+  // salary_status/status gain an application-level 'REVOKED' value on top of
+  // the existing PENDING/PAID/SKIPPED and PENDING/INVOICED/SKIPPED sets — no
+  // enum change needed since both columns are plain VARCHAR. The original
+  // AUTO row is never mutated beyond these audit columns; the actual money
+  // reversal is a second linked transaction (see billingService.js).
+  // =========================================================
+
+  await db.query(`ALTER TABLE staff_daily_attendance ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP WITH TIME ZONE`);
+  await db.query(`ALTER TABLE staff_daily_attendance ADD COLUMN IF NOT EXISTS revoked_by_user_id UUID REFERENCES users(user_id)`);
+  await db.query(`ALTER TABLE staff_daily_attendance ADD COLUMN IF NOT EXISTS revoked_by_name VARCHAR(255)`);
+  await db.query(`ALTER TABLE staff_daily_attendance ADD COLUMN IF NOT EXISTS revoke_reason TEXT`);
+  await db.query(`ALTER TABLE staff_daily_attendance ADD COLUMN IF NOT EXISTS reversal_transaction_id UUID REFERENCES transactions(transaction_id)`);
+
+  await db.query(`ALTER TABLE booking_daily_invoices ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP WITH TIME ZONE`);
+  await db.query(`ALTER TABLE booking_daily_invoices ADD COLUMN IF NOT EXISTS revoked_by_user_id UUID REFERENCES users(user_id)`);
+  await db.query(`ALTER TABLE booking_daily_invoices ADD COLUMN IF NOT EXISTS revoked_by_name VARCHAR(255)`);
+  await db.query(`ALTER TABLE booking_daily_invoices ADD COLUMN IF NOT EXISTS revoke_reason TEXT`);
+  await db.query(`ALTER TABLE booking_daily_invoices ADD COLUMN IF NOT EXISTS reversal_transaction_id UUID REFERENCES transactions(transaction_id)`);
+
+  // =========================================================
+  // HOSPITALIZATION STATUS (per-booking — patient may be admitted mid-booking)
+  // =========================================================
+
+  await db.query(`
+    ALTER TABLE bookings
+    ADD COLUMN IF NOT EXISTS is_hospitalized BOOLEAN NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS hospital_name VARCHAR(255)
+  `);
+
+  // Per-day history of hospitalization periods so the care timeline can mark exactly
+  // which days the patient was hospitalized. bookings.is_hospitalized/hospital_name
+  // above remain the current-state convenience columns; this table is the source of
+  // truth for date ranges. ended_date IS NULL means the period is still open (ongoing).
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS booking_hospitalizations (
+      hospitalization_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      booking_id UUID NOT NULL REFERENCES bookings(booking_id) ON DELETE CASCADE,
+      hospital_name VARCHAR(255),
+      started_date DATE NOT NULL,
+      ended_date DATE,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_booking_hospitalizations_booking_id ON booking_hospitalizations(booking_id);
+  `);
+
+  // =========================================================
   // SEED DEFAULT PRESET ITEMS
   // =========================================================
 

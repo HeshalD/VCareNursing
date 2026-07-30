@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const staffAssignmentController = require('../controllers/staffAssignmentController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 /**
  * Staff Assignment Routes
@@ -17,7 +17,7 @@ const { protect, restrictTo } = require('../middleware/authMiddleware');
 router.get(
   '/:booking_id/assignment-form',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+  requirePermission('VIEW_BOOKINGS'),
   staffAssignmentController.getAssignmentFormData
 );
 
@@ -30,7 +30,7 @@ router.get(
 router.post(
   '/:booking_id/assign-staff',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+  requirePermission('ASSIGNMENT_ASSIGN'),
   staffAssignmentController.assignStaffToBooking
 );
 
@@ -42,7 +42,7 @@ router.post(
 router.get(
   '/:booking_id/assignments',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+  requirePermission('VIEW_BOOKINGS'),
   staffAssignmentController.getBookingAssignments
 );
 
@@ -51,6 +51,8 @@ router.get(
  * @desc    Get assignment-based bookings for a staff profile
  * @access  Private (staff and admin roles)
  */
+// NOTE: shared with staff self-service (a nurse/caretaker viewing their own bookings) —
+// deliberately NOT gated by requirePermission, since those roles have no staff_permissions row.
 router.get(
   '/staff/:staff_profile_id/bookings',
   protect,
@@ -67,7 +69,7 @@ router.get(
 router.put(
   '/assignment/:assignment_id',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+  requirePermission('ASSIGNMENT_UPDATE'),
   staffAssignmentController.updateAssignment
 );
 
@@ -79,7 +81,7 @@ router.put(
 router.delete(
   '/assignment/:assignment_id',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+  requirePermission('ASSIGNMENT_COMPLETE'),
   staffAssignmentController.completeAssignment
 );
 

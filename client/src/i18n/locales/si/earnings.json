@@ -23,7 +23,8 @@
     "earned": "උපයන ලද",
     "advance": "අත්තිකාරම",
     "deduction": "අඩු කිරීම",
-    "payout": "ගෙවීම"
+    "payout": "ගෙවීම",
+    "revoked": "වැටුප අවලංගු කරන ලදී"
   },
   "ledgerDescriptions": {
     "dailySalary": "දෛනික වැටුප",
@@ -32,6 +33,7 @@
     "approvedBy": "අනුමත කළේ: ",
     "manualDeduction": "අතින් සිදු කළ අඩු කිරීම",
     "payout": "ගෙවීම",
+    "salaryRevoked": "වැටුප අවලංගු කරන ලදී",
     "via": "මගින්",
     "to": "වෙත: "
   },

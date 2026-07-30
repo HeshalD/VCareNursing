@@ -472,6 +472,7 @@ const getMyCurrentEarningsBreakdown = async (req, res) => {
             t.category,
             t.amount,
             t.transaction_type,
+            t.notes,
             t.created_at,
             SUM(
               CASE WHEN t.transaction_type = 'CREDIT' THEN t.amount ELSE -t.amount END

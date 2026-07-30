@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const transactionController = require('../controllers/transactionController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 const adminRoles = ['SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'];
 
@@ -9,7 +9,7 @@ const adminRoles = ['SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'];
 router.get(
   '/meta',
   protect,
-  restrictTo(...adminRoles),
+  requirePermission('VIEW_TRANSACTIONS'),
   transactionController.getTransactionMeta
 );
 
@@ -17,7 +17,7 @@ router.get(
 router.post(
   '/manual',
   protect,
-  restrictTo(...adminRoles),
+  requirePermission('TRANSACTION_ADD_MANUAL'),
   transactionController.createManualTransaction
 );
 
@@ -25,7 +25,7 @@ router.post(
 router.get(
   '/manual-categories',
   protect,
-  restrictTo(...adminRoles),
+  requirePermission('VIEW_TRANSACTIONS'),
   transactionController.getManualCategories
 );
 
@@ -33,7 +33,7 @@ router.get(
 router.post(
   '/manual-categories',
   protect,
-  restrictTo(...adminRoles),
+  requirePermission('TRANSACTION_ADD_MANUAL'),
   transactionController.createManualCategory
 );
 
@@ -41,7 +41,7 @@ router.post(
 router.get(
   '/export/pdf',
   protect,
-  restrictTo(...adminRoles),
+  requirePermission('VIEW_TRANSACTIONS'),
   transactionController.exportTransactionsPdf
 );
 
@@ -49,7 +49,7 @@ router.get(
 router.get(
   '/',
   protect,
-  restrictTo(...adminRoles),
+  requirePermission('VIEW_TRANSACTIONS'),
   transactionController.getAllTransactions
 );
 

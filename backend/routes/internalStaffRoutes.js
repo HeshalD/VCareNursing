@@ -1,14 +1,13 @@
 const express = require('express');
 const router = express.Router();
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, requirePermission } = require('../middleware/authMiddleware');
 const ctrl = require('../controllers/internalStaffController');
 
 router.use(protect);
-router.use(restrictTo('SUPER_ADMIN'));
 
-router.get('/', ctrl.list);
-router.post('/', ctrl.create);
-router.put('/:id', ctrl.update);
-router.delete('/:id', ctrl.remove);
+router.get('/', requirePermission('VIEW_INTERNAL_STAFF'), ctrl.list);
+router.post('/', requirePermission('INTERNAL_STAFF_CREATE'), ctrl.create);
+router.put('/:id', requirePermission('INTERNAL_STAFF_EDIT'), ctrl.update);
+router.delete('/:id', requirePermission('INTERNAL_STAFF_REMOVE'), ctrl.remove);
 
 module.exports = router;

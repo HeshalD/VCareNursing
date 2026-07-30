@@ -10,6 +10,23 @@ function extractActorRole(role) {
   return typeof raw === 'string' ? raw.replace(/\{|\}/g, '').split(',')[0].trim() : String(raw);
 }
 
+// Shared with staff-app self-service (a nurse/caretaker viewing their own assignment
+// bookings). SUPER_ADMIN always passes; other internal roles need the matching
+// staff_permissions grant; anyone else is only allowed onto their own staff_profile_id.
+async function canAccessStaffRecord(req, staff_profile_id, permissionKey) {
+  const actorRole = extractActorRole(req.user.role);
+  if (actorRole === 'SUPER_ADMIN') return true;
+
+  const permRes = await db.query(
+    'SELECT 1 FROM staff_permissions WHERE user_id = $1 AND permission_key = $2',
+    [req.user.user_id, permissionKey]
+  );
+  if (permRes.rows.length > 0) return true;
+
+  const ownProfile = await db.query('SELECT staff_profile_id FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+  return ownProfile.rows.length > 0 && String(ownProfile.rows[0].staff_profile_id) === String(staff_profile_id);
+}
+
 // Turn a stored/input time ("09:00", "09:00:00") into a friendly "9:00 AM" label.
 // Returns '' for empty/invalid input so callers can fall back gracefully.
 function formatTimeLabel(time) {
@@ -64,6 +81,8 @@ exports.getAssignmentFormData = async (req, res) => {
         b.start_date,
         b.amount_quotated,
         b.amount_paid,
+        b.is_hospitalized,
+        b.hospital_name,
         q.estimate_number,
         COALESCE(q.daily_rate, b.daily_rate) AS quote_daily_rate,
         q.qty_days,
@@ -199,7 +218,9 @@ exports.getAssignmentFormData = async (req, res) => {
           qty_shifts: parseInt(booking.qty_shifts || 0, 10),
           amount_quotated: parseFloat(booking.amount_quotated),
           amount_paid: parseFloat(booking.amount_paid),
-          total_amount: parseFloat(booking.total_amount)
+          total_amount: parseFloat(booking.total_amount),
+          is_hospitalized: booking.is_hospitalized,
+          hospital_name: booking.hospital_name
         },
         payment_info: {
           total_verified: parseFloat(paymentInfo.total_verified),
@@ -671,6 +692,13 @@ exports.getStaffAssignmentBookings = async (req, res) => {
       return res.status(400).json({
         status: 'error',
         message: 'Invalid staff profile ID format'
+      });
+    }
+
+    if (!(await canAccessStaffRecord(req, staff_profile_id, 'VIEW_BOOKINGS'))) {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Not authorized to view this staff member\'s assignment bookings'
       });
     }
 

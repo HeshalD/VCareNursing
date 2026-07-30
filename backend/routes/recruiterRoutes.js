@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 const ctrl = require('../controllers/recruiterController');
 
 /**
@@ -11,19 +11,18 @@ const ctrl = require('../controllers/recruiterController');
  */
 
 router.use(protect);
-router.use(restrictTo('SUPER_ADMIN', 'COORDINATOR'));
 
 // Recruiter directory + aggregates
-router.get('/', ctrl.listRecruiters);
+router.get('/', requirePermission('VIEW_RECRUITERS'), ctrl.listRecruiters);
 
 // Audit trail for one recruiter
-router.get('/:recruiter_id/staff', ctrl.getRecruiterStaff);
+router.get('/:recruiter_id/staff', requirePermission('VIEW_RECRUITERS'), ctrl.getRecruiterStaff);
 
 // Per-staff current/origin/history
-router.get('/staff/:staff_profile_id', ctrl.getStaffRecruiterHandler);
+router.get('/staff/:staff_profile_id', requirePermission('VIEW_RECRUITERS'), ctrl.getStaffRecruiterHandler);
 
 // Credit (initial) and switch (pointer-only)
-router.post('/staff/:staff_profile_id/credit', ctrl.creditHandler);
-router.put('/staff/:staff_profile_id/switch', ctrl.switchHandler);
+router.post('/staff/:staff_profile_id/credit', requirePermission('RECRUITER_CREDIT'), ctrl.creditHandler);
+router.put('/staff/:staff_profile_id/switch', requirePermission('RECRUITER_CREDIT'), ctrl.switchHandler);
 
 module.exports = router;

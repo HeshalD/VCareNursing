@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, requirePermission } = require('../middleware/authMiddleware');
 const permissionsController = require('../controllers/permissionsController');
 
 // All routes require authentication.
@@ -9,8 +9,8 @@ router.use(protect);
 // Any logged-in admin fetches their own permissions (frontend uses this after login).
 router.get('/my-permissions', permissionsController.getMyPermissions);
 
-// Everything below is SUPER_ADMIN only.
-router.use(restrictTo('SUPER_ADMIN'));
+// Everything below requires PERMISSIONS_MANAGE (SUPER_ADMIN has it by default).
+router.use(requirePermission('PERMISSIONS_MANAGE'));
 
 router.get('/admin-users', permissionsController.listAdminUsers);
 router.get('/registry', permissionsController.getRegistry);

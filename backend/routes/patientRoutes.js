@@ -1,17 +1,19 @@
 const express = require('express');
 const router = express.Router();
 const patientController = require('../controllers/patientController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 // Route to get all patients (admin view)
 router.get(
     '/all',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('VIEW_PATIENTS'),
     patientController.getAllPatients
 );
 
-// Route to add a patient (Admin / Internal Staff, or a Client adding their own care profile)
+// Route to add a patient (Admin / Internal Staff, or a Client adding their own care profile).
+// NOTE: shared with CLIENT self-service — deliberately NOT gated by requirePermission,
+// since a client account has no staff_permissions row and would always be denied.
 router.post(
     '/create',
     protect,
@@ -30,7 +32,7 @@ router.get(
 router.get(
     '/:patient_id/detail',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('VIEW_PATIENTS'),
     patientController.getPatientDetail
 );
 
@@ -52,7 +54,7 @@ router.put(
 router.delete(
     '/:patient_id',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('PATIENT_DELETE'),
     patientController.deletePatientProfile
 );
 

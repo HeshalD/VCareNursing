@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, ArrowLeft, CheckCircle, Download, DollarSign,
   Loader2, MessageCircle, Phone, RefreshCw, Repeat2, Search, SendHorizontal, ShieldCheck,
-  Upload, User, UserPlus, Users, Wallet, X, XCircle, Briefcase, History, Pause, Play,
+  Upload, User, UserPlus, Users, Wallet, X, XCircle, Briefcase, History, Pause, Play, Building2,
 } from 'lucide-react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
@@ -155,6 +155,23 @@ const Pill = ({ children, tone = 'slate' }) => {
 };
 
 // ─── main component ──────────────────────────────────────────────────────────
+
+// Decodes the role(s) out of the admin JWT — mirrors AdminLayout.jsx's parseToken
+// and authMiddleware.js's restrictTo cleanup (pg can return the role enum[] as
+// either a real array or a "{ROLE1,ROLE2}" string literal).
+const isSuperAdminToken = (token) => {
+  if (!token) return false;
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    const rawRole = payload.role;
+    const roles = Array.isArray(rawRole)
+      ? rawRole.map((r) => String(r).replace(/[{}]/g, '').trim())
+      : String(rawRole || '').replace(/[{}]/g, '').split(',').map((r) => r.trim());
+    return roles.includes('SUPER_ADMIN');
+  } catch {
+    return false;
+  }
+};
 
 const BookingDetailPageV2 = () => {
   const { adminToken } = useAdminAuth();
@@ -321,6 +338,9 @@ const BookingDetailPageV2 = () => {
   const [invoiceAmountInputsBySlot, setInvoiceAmountInputsBySlot] = useState({}); // shift_slot_id -> amount string
   const [salaryAmountInputs, setSalaryAmountInputs] = useState({}); // attendance_id -> amount string
   const [invoicingModeSaving, setInvoicingModeSaving] = useState(false);
+  const [hospitalizationSaving, setHospitalizationSaving] = useState(false);
+  const [hospitalNameDraft, setHospitalNameDraft] = useState('');
+  const [hospitalNameDraftTouched, setHospitalNameDraftTouched] = useState(false);
 
   // ── derived ──────────────────────────────────────────────────────────────
 
@@ -334,6 +354,7 @@ const BookingDetailPageV2 = () => {
   const staffHistory    = Array.isArray(detail?.staff_assignment_history) ? detail.staff_assignment_history : [];
   const swapHistory     = Array.isArray(detail?.swap_history)            ? detail.swap_history            : [];
   const terminationReqs = Array.isArray(detail?.termination_requests)    ? detail.termination_requests    : [];
+  const hospitalizationPeriods = Array.isArray(detail?.hospitalization_periods) ? detail.hospitalization_periods : [];
   const isShiftBased    = bookingSummary.service_model === 'SHIFT_BASED';
 
   const activeStaffRow = staffHistory.find(r => (r.status || '').toLowerCase() === 'active') || staffHistory[0] || null;
@@ -388,9 +409,42 @@ const BookingDetailPageV2 = () => {
   // into manual client invoicing via invoicing_mode.
   const isLiveIn          = bookingSummary.service_model === 'LIVE_IN';
   const invoicingMode     = bookingSummary.invoicing_mode || 'AUTO';
+  const isHospitalized    = !!bookingSummary.is_hospitalized;
+  const hospitalName      = bookingSummary.hospital_name || '';
+  // Most recent hospitalization period's name (even after the current one has been
+  // toggled off and bookingSummary.hospital_name cleared) — used to prefill the
+  // input so the admin doesn't have to retype the same hospital on re-toggle.
+  const lastHospitalName  = useMemo(() => {
+    if (!hospitalizationPeriods.length) return '';
+    const latest = [...hospitalizationPeriods].sort(
+      (a, b) => new Date(b.started_date) - new Date(a.started_date)
+    )[0];
+    return latest?.hospital_name || '';
+  }, [hospitalizationPeriods]);
+
+  // Prefill the (currently hidden) hospital-name input with the last hospital used,
+  // so re-enabling for the same hospital doesn't require retyping it. Only applies
+  // while not hospitalized (that's the only state the input renders in) and only
+  // until the admin actually edits the field themselves.
+  useEffect(() => {
+    if (isHospitalized || hospitalNameDraftTouched) return;
+    setHospitalNameDraft(lastHospitalName);
+  }, [isHospitalized, lastHospitalName, hospitalNameDraftTouched]);
   const manualSalaryDay   = true;
   const manualInvoiceDay  = !isLiveIn || invoicingMode === 'MANUAL';
   const dayClickEnabled   = manualSalaryDay || manualInvoiceDay;
+
+  // Revoking a wrongly auto-paid/invoiced day is LIVE_IN-only and restricted to
+  // Super Admins, gated by re-entering their password (see CareTimeline's revoke
+  // confirmation modal and dailyAttendanceController.revokeDays on the backend).
+  const isSuperAdmin = isSuperAdminToken(adminToken);
+  const revokeEnabled = isLiveIn && isSuperAdmin;
+
+  const revokeDays = async (dates, reason, password) => {
+    apiClient.setToken(adminToken);
+    await apiClient.revokeAttendanceDays(bookingId, { service_dates: dates, reason, password });
+    await Promise.all([fetchDetail(), fetchDailyRecords()]);
+  };
 
   // VISITING is a one-time visit — its lifecycle (scheduled / due today / awaiting
   // finalization / completed) is entirely derived, not stored, so it stays in sync
@@ -1043,6 +1097,25 @@ const BookingDetailPageV2 = () => {
       await fetchDetail();
     } catch (err) { setError(err?.message || 'Failed to update invoicing mode'); }
     finally { setInvoicingModeSaving(false); }
+  };
+
+  const toggleHospitalization = async () => {
+    const next = !isHospitalized;
+    try {
+      setHospitalizationSaving(true); setError('');
+      apiClient.setToken(adminToken);
+      await apiClient.updateBookingHospitalization(bookingId, {
+        is_hospitalized: next,
+        hospital_name: next ? (hospitalNameDraft || null) : null,
+      });
+      setHospitalNameDraft('');
+      // Reset the "touched" guard on turning on so the prefill-on-off-toggle logic
+      // resumes (with this stay's name as the new "last hospital") the next time
+      // this booking is marked not hospitalized.
+      if (next) setHospitalNameDraftTouched(false);
+      await fetchDetail();
+    } catch (err) { setError(err?.message || 'Failed to update hospitalization status'); }
+    finally { setHospitalizationSaving(false); }
   };
 
   const downloadStatement = async () => {
@@ -1745,6 +1818,55 @@ const BookingDetailPageV2 = () => {
           })()}
 
           {/* ══════════════════════════════════════════════════════
+              HOSPITALIZATION BANNER — all service models, toggle anytime
+          ══════════════════════════════════════════════════════ */}
+          <div
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap',
+              marginBottom: 18, padding: '14px 18px', borderRadius: 10,
+              background: isHospitalized ? '#FDF2F2' : '#f8fafc',
+              border: `1px solid ${isHospitalized ? '#F5C9C5' : '#e5e7eb'}`,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ width: 34, height: 34, borderRadius: 8, background: isHospitalized ? '#F5C9C5' : '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Building2 style={{ width: 16, height: 16, color: isHospitalized ? '#BC4338' : '#374151' }} />
+              </div>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 13.5, fontWeight: 700, color: '#111827' }}>Hospitalization status</span>
+                  <span style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 7px', borderRadius: 4, background: isHospitalized ? '#F5C9C5' : '#e5e7eb', color: isHospitalized ? '#BC4338' : '#374151', letterSpacing: '.03em' }}>
+                    {isHospitalized ? 'HOSPITALIZED' : 'NOT HOSPITALIZED'}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12.5, color: '#6b7280', marginTop: 2 }}>
+                  {isHospitalized
+                    ? (hospitalName ? `Currently admitted at ${hospitalName}.` : 'Currently hospitalized — no hospital name recorded.')
+                    : 'Patient is not currently marked as hospitalized.'}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+              {!isHospitalized && (
+                <input
+                  type="text"
+                  placeholder="Hospital name (optional)"
+                  value={hospitalNameDraft}
+                  onChange={(e) => { setHospitalNameDraft(e.target.value); setHospitalNameDraftTouched(true); }}
+                  style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 10px', fontFamily: 'inherit', fontSize: 13, color: '#374151', outline: 'none' }}
+                />
+              )}
+              <button
+                onClick={toggleHospitalization}
+                disabled={hospitalizationSaving}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 14px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#374151', cursor: hospitalizationSaving ? 'wait' : 'pointer', opacity: hospitalizationSaving ? 0.6 : 1 }}
+              >
+                {hospitalizationSaving ? 'Saving…' : isHospitalized ? 'Mark as not hospitalized' : 'Mark as hospitalized'}
+              </button>
+            </div>
+          </div>
+
+          {/* ══════════════════════════════════════════════════════
               INVOICING MODE BANNER — LIVE_IN only, always visible, toggle anytime
           ══════════════════════════════════════════════════════ */}
           {isLiveIn && (
@@ -1900,6 +2022,9 @@ const BookingDetailPageV2 = () => {
                 manualSalaryDay={manualSalaryDay}
                 manualInvoiceDay={manualInvoiceDay}
                 pauses={bookingPauses}
+                revokeEnabled={revokeEnabled}
+                onRevokeDays={revokeDays}
+                hospitalizationPeriods={hospitalizationPeriods}
               />
             </div>
           )}
@@ -3770,10 +3895,11 @@ const BookingDetailPageV2 = () => {
 
                               if (record && record.salary_status !== 'PENDING') {
                                 const paid = record.salary_status === 'PAID';
+                                const revoked = record.salary_status === 'REVOKED';
                                 // A true no-show (Absent — no times ever logged), still on a shift
                                 // slot, that nobody has covered yet — offer Cover Shift right here
                                 // instead of sending the admin to the Client Invoice section.
-                                const isAbsent = !paid && record.hours_served === null;
+                                const isAbsent = !paid && !revoked && record.hours_served === null;
                                 const alreadyCovered = a.shift_slot_id && dayModal.assignments.some(other => other.shift_slot_id === a.shift_slot_id && other.reschedule_id);
                                 const canCover = isAbsent && a.shift_slot_id && !alreadyCovered;
                                 return (
@@ -3789,9 +3915,12 @@ const BookingDetailPageV2 = () => {
                                     <td className={tdCls}><HoursBadge served={record.hours_served !== null ? Number(record.hours_served) : null} assigned={assignedHours} /></td>
                                     <td className={tdCls}>
                                       <div className="flex items-center gap-1.5 flex-wrap">
-                                        <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${paid ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                                          <span className={`w-1.5 h-1.5 rounded-full ${paid ? 'bg-green-500' : 'bg-gray-400'}`} />
-                                          {paid ? `Salary Calculated · Rs.${Number(record.salary_amount).toLocaleString()}` : (isAbsent ? 'Absent' : 'Skipped')}
+                                        <span
+                                          title={revoked ? [record.revoke_reason, record.revoked_by_name ? `by ${record.revoked_by_name}` : null].filter(Boolean).join(' — ') : undefined}
+                                          className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${paid ? 'bg-green-50 text-green-700' : revoked ? 'bg-red-50 text-red-700' : 'bg-gray-100 text-gray-500'}`}
+                                        >
+                                          <span className={`w-1.5 h-1.5 rounded-full ${paid ? 'bg-green-500' : revoked ? 'bg-red-500' : 'bg-gray-400'}`} />
+                                          {paid ? `Salary Calculated · Rs.${Number(record.salary_amount).toLocaleString()}` : revoked ? 'Revoked' : (isAbsent ? 'Absent' : 'Skipped')}
                                         </span>
                                         {canCover && (
                                           <button onClick={() => openRescheduleModal(a.shift_slot_id, true)} title="Hand today's shift to a different staff member — client still billed normally, that staff member's salary is calculated instead" className="px-2.5 py-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded transition">Cover Shift</button>
@@ -3949,9 +4078,12 @@ const BookingDetailPageV2 = () => {
                                 <>
                                   <td className={tdCls + ' tabular-nums'}>{invoiceRecord.status === 'INVOICED' ? `Rs.${Number(invoiceRecord.amount).toLocaleString()}` : '—'}</td>
                                   <td className={tdCls}>
-                                    <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${invoiceRecord.status === 'INVOICED' ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                                      <span className={`w-1.5 h-1.5 rounded-full ${invoiceRecord.status === 'INVOICED' ? 'bg-green-500' : 'bg-gray-400'}`} />
-                                      {invoiceRecord.status === 'INVOICED' ? 'Invoiced' : 'Skipped'}
+                                    <span
+                                      title={invoiceRecord.status === 'REVOKED' ? [invoiceRecord.revoke_reason, invoiceRecord.revoked_by_name ? `by ${invoiceRecord.revoked_by_name}` : null].filter(Boolean).join(' — ') : undefined}
+                                      className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${invoiceRecord.status === 'INVOICED' ? 'bg-green-50 text-green-700' : invoiceRecord.status === 'REVOKED' ? 'bg-red-50 text-red-700' : 'bg-gray-100 text-gray-500'}`}
+                                    >
+                                      <span className={`w-1.5 h-1.5 rounded-full ${invoiceRecord.status === 'INVOICED' ? 'bg-green-500' : invoiceRecord.status === 'REVOKED' ? 'bg-red-500' : 'bg-gray-400'}`} />
+                                      {invoiceRecord.status === 'INVOICED' ? 'Invoiced' : invoiceRecord.status === 'REVOKED' ? 'Revoked' : 'Skipped'}
                                     </span>
                                   </td>
                                 </>

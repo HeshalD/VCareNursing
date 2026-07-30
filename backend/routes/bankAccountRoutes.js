@@ -16,7 +16,7 @@ const { protect, restrictTo, requirePermission } = require('../middleware/authMi
 router.get(
   '/',
   protect,
-  restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'),
+  requirePermission('VIEW_BANK_ACCOUNTS'),
   bankAccountController.getAllBankAccounts
 );
 
@@ -28,7 +28,7 @@ router.get(
 router.post(
   '/',
   protect,
-  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  requirePermission('BANK_ACCOUNT_CREATE'),
   bankAccountController.createBankAccount
 );
 
@@ -40,7 +40,7 @@ router.post(
 router.post(
   '/transfer',
   protect,
-  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  requirePermission('BANK_ACCOUNT_TRANSFER'),
   bankAccountController.transferFunds
 );
 
@@ -64,7 +64,7 @@ router.post(
 router.get(
   '/:account_id',
   protect,
-  restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'),
+  requirePermission('VIEW_BANK_ACCOUNTS'),
   bankAccountController.getBankAccountById
 );
 
@@ -76,7 +76,7 @@ router.get(
 router.put(
   '/:account_id',
   protect,
-  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  requirePermission('BANK_ACCOUNT_EDIT'),
   bankAccountController.updateBankAccount
 );
 
@@ -88,7 +88,7 @@ router.put(
 router.delete(
   '/:account_id',
   protect,
-  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  requirePermission('BANK_ACCOUNT_DEACTIVATE'),
   bankAccountController.deactivateBankAccount
 );
 
@@ -101,7 +101,7 @@ router.delete(
 router.get(
   '/:account_id/transactions',
   protect,
-  restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'),
+  requirePermission('VIEW_BANK_ACCOUNTS'),
   bankAccountController.getAccountTransactions
 );
 
@@ -114,7 +114,7 @@ router.get(
 router.patch(
   '/:account_id/transactions/:transaction_id/verify',
   protect,
-  restrictTo('SUPER_ADMIN'),
+  requirePermission('BANK_TRANSACTION_VERIFY'),
   bankAccountController.verifyAccountTransaction
 );
 
@@ -126,7 +126,7 @@ router.patch(
 router.get(
   '/:account_id/reconciliation',
   protect,
-  restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+  requirePermission('VIEW_BANK_ACCOUNTS'),
   bankAccountController.getAccountReconciliation
 );
 

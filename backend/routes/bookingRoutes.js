@@ -11,7 +11,7 @@ const { upload } = require('../config/cloudinaryConfig');
 router.post(
     '/admin-direct',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR'),
+    requirePermission('BOOKING_CREATE_DIRECT'),
     bookingController.adminDirectBooking
 );
 
@@ -22,26 +22,26 @@ router.post(
  */
 router.post(
     '/convert',
-    protect, 
-    restrictTo('SUPER_ADMIN', 'COORDINATOR'), 
+    protect,
+    requirePermission('BOOKING_CONVERT_FROM_LEAD'),
     bookingController.uploadPaymentSlip,
     bookingController.convertToBooking
 );
 
 router.get('/',protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'SALES'),
+    requirePermission('VIEW_BOOKINGS'),
     attachSalesScope,
     bookingController.getAllBookings
 );
 
-router.get('/active-bookings', protect, 
-    restrictTo('SUPER_ADMIN', 'COORDINATOR'), 
+router.get('/active-bookings', protect,
+    requirePermission('VIEW_BOOKINGS'),
     bookingController.getActiveBookings);
 
 router.get(
     '/:booking_id/admin-detail',
     protect,
-    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR', 'ACCOUNTS', 'SALES'),
+    requirePermission('VIEW_BOOKINGS'),
     requireOwnSalesRecord('booking_id', 'booking_salesperson_assignments'),
     bookingController.getAdminBookingDetail
 );
@@ -49,70 +49,70 @@ router.get(
 router.get(
     '/:booking_id/termination-requests',
     protect,
-    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('VIEW_TERMINATION_REQUESTS'),
     bookingController.getBookingTerminationRequests
 );
 
 router.get(
     '/:booking_id/invoice-breakdown',
     protect,
-    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('VIEW_BOOKINGS'),
     bookingController.getBookingInvoiceBreakdown
 );
 
 router.get(
     '/:booking_id/staff-allocation-history',
     protect,
-    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('VIEW_BOOKINGS'),
     bookingController.getBookingStaffAllocationHistory
 );
 
 router.post(
     '/:booking_id/complete',
     protect,
-    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR'),
+    requirePermission('BOOKING_COMPLETE'),
     bookingController.completeBooking
 );
 
 router.post(
     '/:booking_id/admin-terminate',
     protect,
-    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR'),
+    requirePermission('BOOKING_TERMINATE'),
     bookingController.adminTerminateBooking
 );
 
 router.post(
     '/:booking_id/pause',
     protect,
-    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR'),
+    requirePermission('BOOKING_PAUSE'),
     bookingController.pauseBooking
 );
 
 router.post(
     '/:booking_id/resume',
     protect,
-    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR'),
+    requirePermission('BOOKING_RESUME'),
     bookingController.resumeBooking
 );
 
 router.get(
     '/:booking_id/pauses',
     protect,
-    restrictTo('SUPER_ADMIN', 'ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('VIEW_BOOKINGS'),
     bookingController.getBookingPauses
 );
 
 router.get(
     '/:booking_id/invoice-progress',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('VIEW_BOOKINGS'),
     paymentTrackingController.getBookingInvoiceProgress
 );
 
 router.post(
     '/:booking_id/record-payment',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('BOOKING_RECORD_PAYMENT'),
     upload.single('payment_slip'),
     paymentTrackingController.recordBookingPayment
 );
@@ -120,14 +120,14 @@ router.post(
 router.post(
     '/:booking_id/wallet-payoff',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('BOOKING_WALLET_PAYOFF'),
     paymentTrackingController.walletPayoffBooking
 );
 
 router.get(
     '/:booking_id/payments',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
+    requirePermission('VIEW_BOOKINGS'),
     paymentTrackingController.getPaymentsByBooking
 );
 
@@ -139,7 +139,7 @@ router.get('/client/:client_id', protect, bookingController.getClientBookings);
 router.get(
     '/client/:client_id/overdue-bookings',
     protect,
-    restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'),
+    requirePermission('VIEW_BOOKINGS'),
     paymentTrackingController.getClientOverdueBookings
 );
 
@@ -153,64 +153,69 @@ router.post(
 );
 
 // GET /api/admin/terminations/pending
-router.get('/terminations/pending', protect, restrictTo('SUPER_ADMIN', 'ADMIN'), bookingController.getPendingTerminationRequests);
+router.get('/terminations/pending', protect, requirePermission('VIEW_TERMINATION_REQUESTS'), bookingController.getPendingTerminationRequests);
 
 // GET /api/admin/terminations/history
-router.get('/terminations/history', protect, restrictTo('SUPER_ADMIN', 'ADMIN'), bookingController.getTerminationHistory);
+router.get('/terminations/history', protect, requirePermission('VIEW_TERMINATION_REQUESTS'), bookingController.getTerminationHistory);
 
 // POST /api/admin/terminations/:termination_id/approve
-router.post('/terminations/approve/:termination_id', protect, restrictTo('SUPER_ADMIN', 'ADMIN'), bookingController.approveTerminationRequest);
+router.post('/terminations/approve/:termination_id', protect, requirePermission('TERMINATION_APPROVE'), bookingController.approveTerminationRequest);
 
 // POST /api/admin/terminations/:termination_id/reject
-router.post('/terminations/reject/:termination_id', protect, restrictTo('SUPER_ADMIN', 'ADMIN'), bookingController.rejectTerminationRequest);
+router.post('/terminations/reject/:termination_id', protect, requirePermission('TERMINATION_REJECT'), bookingController.rejectTerminationRequest);
 
 // POST /api/admin/terminations/:booking_id/force-stop
 router.post(
-    '/terminations/force-stop/:booking_id', 
-    protect, 
-    restrictTo('SUPER_ADMIN', 'ADMIN'), 
+    '/terminations/force-stop/:booking_id',
+    protect,
+    requirePermission('BOOKING_FORCE_STOP'),
     bookingController.forceStopBooking
 );
 
-router.patch('/:booking_id/extend', protect, restrictTo('SUPER_ADMIN', 'ACCOUNTS', 'COORDINATOR'), bookingController.extendBooking);
+router.patch('/:booking_id/extend', protect, requirePermission('BOOKING_EXTEND'), bookingController.extendBooking);
 
 // Manual overdue flag/clear for SHIFT_BASED bookings (no automatic cron detection for this model)
-router.post('/:booking_id/mark-overdue', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), requirePermission('BOOKING_MARK_OVERDUE'), bookingController.markShiftBookingOverdue);
-router.post('/:booking_id/resolve-overdue', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), requirePermission('BOOKING_RESOLVE_OVERDUE'), bookingController.resolveShiftBookingOverdue);
+router.post('/:booking_id/mark-overdue', protect, requirePermission('BOOKING_MARK_OVERDUE'), bookingController.markShiftBookingOverdue);
+router.post('/:booking_id/resolve-overdue', protect, requirePermission('BOOKING_RESOLVE_OVERDUE'), bookingController.resolveShiftBookingOverdue);
 
-router.post('/:booking_id/swap-staff', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), bookingController.swapStaff);
-router.get('/:booking_id/swap-history', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.getSwapHistory);
+router.post('/:booking_id/swap-staff', protect, requirePermission('BOOKING_SWAP_STAFF'), bookingController.swapStaff);
+router.get('/:booking_id/swap-history', protect, requirePermission('VIEW_BOOKINGS'), bookingController.getSwapHistory);
 
 // Daily attendance (staff in/out time + manual salary confirmation)
-router.get('/:booking_id/attendance', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), dailyAttendanceController.getBookingAttendance);
-router.post('/:booking_id/attendance', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), requirePermission('ATTENDANCE_RECORD'), dailyAttendanceController.upsertAttendance);
-router.post('/:booking_id/attendance/absent', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), requirePermission('ATTENDANCE_MARK_ABSENT'), dailyAttendanceController.markAbsent);
-router.post('/attendance/:attendance_id/confirm-salary', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), requirePermission('ATTENDANCE_CONFIRM_SALARY'), dailyAttendanceController.confirmSalary);
+router.get('/:booking_id/attendance', protect, requirePermission('VIEW_BOOKINGS'), dailyAttendanceController.getBookingAttendance);
+router.post('/:booking_id/attendance', protect, requirePermission('ATTENDANCE_RECORD'), dailyAttendanceController.upsertAttendance);
+router.post('/:booking_id/attendance/absent', protect, requirePermission('ATTENDANCE_MARK_ABSENT'), dailyAttendanceController.markAbsent);
+router.post('/attendance/:attendance_id/confirm-salary', protect, requirePermission('ATTENDANCE_CONFIRM_SALARY'), dailyAttendanceController.confirmSalary);
+// Revoke a wrongly auto-paid/invoiced LIVE_IN day.
+router.post('/:booking_id/attendance/revoke', protect, requirePermission('ATTENDANCE_REVOKE'), dailyAttendanceController.revokeDays);
 
 // Shift patterns + per-shift staff assignment (SHIFT_BASED only)
-router.get('/:booking_id/shift-pattern', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), shiftPatternController.getShiftPattern);
-router.get('/:booking_id/shift-pattern/history', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), shiftPatternController.getShiftPatternHistory);
-router.post('/:booking_id/shift-pattern', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), shiftPatternController.createOrChangeShiftPattern);
-router.get('/:booking_id/shift-slots', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), shiftPatternController.getShiftSlots);
-router.post('/:booking_id/shift-slots/:shift_slot_id/assign-staff', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), shiftPatternController.assignStaffToSlot);
-router.post('/:booking_id/shift-slots/:shift_slot_id/reassign-staff', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), shiftPatternController.reassignSlotStaff);
+router.get('/:booking_id/shift-pattern', protect, requirePermission('VIEW_BOOKINGS'), shiftPatternController.getShiftPattern);
+router.get('/:booking_id/shift-pattern/history', protect, requirePermission('VIEW_BOOKINGS'), shiftPatternController.getShiftPatternHistory);
+router.post('/:booking_id/shift-pattern', protect, requirePermission('BOOKING_MANAGE_SHIFT_PATTERN'), shiftPatternController.createOrChangeShiftPattern);
+router.get('/:booking_id/shift-slots', protect, requirePermission('VIEW_BOOKINGS'), shiftPatternController.getShiftSlots);
+router.post('/:booking_id/shift-slots/:shift_slot_id/assign-staff', protect, requirePermission('ASSIGNMENT_ASSIGN'), shiftPatternController.assignStaffToSlot);
+router.post('/:booking_id/shift-slots/:shift_slot_id/reassign-staff', protect, requirePermission('ASSIGNMENT_UPDATE'), shiftPatternController.reassignSlotStaff);
 
 // Manual daily client invoicing (SHIFT_BASED/VISITING always, LIVE_IN when invoicing_mode = MANUAL)
-router.get('/:booking_id/daily-invoices', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.getBookingDailyInvoices);
-router.post('/:booking_id/daily-invoices', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), requirePermission('BOOKING_CONFIRM_DAILY_INVOICE'), bookingController.confirmDailyInvoice);
-router.patch('/:booking_id/invoicing-mode', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), requirePermission('BOOKING_UPDATE_INVOICING_MODE'), bookingController.updateInvoicingMode);
+router.get('/:booking_id/daily-invoices', protect, requirePermission('VIEW_BOOKINGS'), bookingController.getBookingDailyInvoices);
+router.post('/:booking_id/daily-invoices', protect, requirePermission('BOOKING_CONFIRM_DAILY_INVOICE'), bookingController.confirmDailyInvoice);
+router.patch('/:booking_id/invoicing-mode', protect, requirePermission('BOOKING_UPDATE_INVOICING_MODE'), bookingController.updateInvoicingMode);
+
+// Hospitalization status (any service model — patient may be admitted mid-booking)
+router.patch('/:booking_id/hospitalization', protect, requirePermission('BOOKING_UPDATE_HOSPITALIZATION'), bookingController.updateHospitalizationStatus);
 
 // Per-shift schedule (derived, manual — no cron) + waive/reschedule for SHIFT_BASED bookings
-router.get('/:booking_id/shift-schedule', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.getShiftSchedule);
-router.get('/:booking_id/shift-reschedules', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingController.getShiftReschedules);
-router.post('/:booking_id/shift-occurrences/waive', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), requirePermission('BOOKING_WAIVE_SHIFT'), bookingController.waiveShiftOccurrence);
-router.post('/:booking_id/shift-occurrences/reschedule', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), requirePermission('BOOKING_RESCHEDULE_SHIFT'), bookingController.rescheduleShiftOccurrence);
-router.post('/:booking_id/shift-occurrences/:reschedule_id/cancel', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), requirePermission('BOOKING_CANCEL_RESCHEDULE'), bookingController.cancelShiftReschedule);
+router.get('/:booking_id/shift-schedule', protect, requirePermission('VIEW_BOOKINGS'), bookingController.getShiftSchedule);
+router.get('/:booking_id/shift-reschedules', protect, requirePermission('VIEW_BOOKINGS'), bookingController.getShiftReschedules);
+router.post('/:booking_id/shift-occurrences/waive', protect, requirePermission('BOOKING_WAIVE_SHIFT'), bookingController.waiveShiftOccurrence);
+router.post('/:booking_id/shift-occurrences/reschedule', protect, requirePermission('BOOKING_RESCHEDULE_SHIFT'), bookingController.rescheduleShiftOccurrence);
+router.post('/:booking_id/shift-occurrences/:reschedule_id/cancel', protect, requirePermission('BOOKING_CANCEL_RESCHEDULE'), bookingController.cancelShiftReschedule);
 
 // Notes CRUD
-router.post('/:booking_id/notes', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingNotesController.addNote);
-router.get('/:booking_id/notes', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingNotesController.getBookingNotes);
-router.patch('/:booking_id/notes/:note_id', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'), bookingNotesController.updateNote);
-router.delete('/:booking_id/notes/:note_id', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR'), bookingNotesController.deleteNote);
+router.post('/:booking_id/notes', protect, requirePermission('BOOKING_ADD_NOTE'), bookingNotesController.addNote);
+router.get('/:booking_id/notes', protect, requirePermission('VIEW_BOOKINGS'), bookingNotesController.getBookingNotes);
+router.patch('/:booking_id/notes/:note_id', protect, requirePermission('BOOKING_EDIT_NOTE'), bookingNotesController.updateNote);
+router.delete('/:booking_id/notes/:note_id', protect, requirePermission('BOOKING_DELETE_NOTE'), bookingNotesController.deleteNote);
 
 module.exports = router;

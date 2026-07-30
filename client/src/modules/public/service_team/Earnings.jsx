@@ -47,6 +47,7 @@ const LedgerRow = ({ entry }) => {
   const isCredit   = entry.transaction_type === 'CREDIT';
   const isAdvance  = entry.category === 'STAFF_ADVANCE';
   const isDeduction = entry.category === 'STAFF_DEDUCTION';
+  const isRevocation = entry.category === 'STAFF_SALARY' && entry.transaction_type === 'DEBIT';
 
   return (
     <tr className="hover:bg-slate-50/70 transition-colors">
@@ -68,6 +69,11 @@ const LedgerRow = ({ entry }) => {
           <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-700">
             <MinusCircle className="h-3 w-3" />
             {t('ledgerTypes.deduction')}
+          </span>
+        ) : isRevocation ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-700">
+            <MinusCircle className="h-3 w-3" />
+            {t('ledgerTypes.revoked')}
           </span>
         ) : (
           <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-700">
@@ -93,6 +99,11 @@ const LedgerRow = ({ entry }) => {
         ) : isDeduction ? (
           <div>
             <p className="text-sm font-medium text-slate-800">{entry.reason || t('ledgerDescriptions.manualDeduction')}</p>
+          </div>
+        ) : isRevocation ? (
+          <div>
+            <p className="text-sm font-medium text-slate-800">{t('ledgerDescriptions.salaryRevoked')}</p>
+            {entry.notes && <p className="text-xs text-slate-400 italic">{entry.notes}</p>}
           </div>
         ) : (
           <div>

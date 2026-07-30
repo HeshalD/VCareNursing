@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const paymentController = require('../controllers/paymentController');
 const paymentTrackingController = require('../controllers/paymentTrackingController');
-const { protect, restrictTo } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 
 // POST /api/statements/:client_id/pay
 router.post(
@@ -22,7 +22,7 @@ router.post(
 router.post(
     '/:payment_id/verify',
     protect,
-    restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+    requirePermission('BOOKING_VERIFY_PAYMENT'),
     paymentTrackingController.verifyPayment
 );
 
@@ -35,7 +35,7 @@ router.post(
 router.post(
     '/:payment_id/reject',
     protect,
-    restrictTo('SUPER_ADMIN', 'ACCOUNTS'),
+    requirePermission('BOOKING_REJECT_PAYMENT'),
     paymentTrackingController.rejectPayment
 );
 
