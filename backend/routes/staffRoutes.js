@@ -6,13 +6,14 @@ const staffDocUploadController = require('../controllers/staffDocUploadControlle
 const { uploadApplicationFiles } = require('../middleware/uploadMiddleware');
 const { protect, restrictTo } = require('../middleware/authMiddleware');
 const db = require('../config/db');
+const { toE164 } = require('../utils/phone');
 
 // Public: Check if a mobile number is already registered as a non-CLIENT user
 router.get('/check-mobile/:mobile', async (req, res) => {
   try {
     const result = await db.query(
       'SELECT role FROM users WHERE mobile_number = $1',
-      [req.params.mobile]
+      [toE164(req.params.mobile) || req.params.mobile]
     );
     if (result.rows.length === 0) return res.json({ available: true });
     const raw = result.rows[0].role;
@@ -34,7 +35,7 @@ router.get('/check-staff-mobile/:mobile', protect, restrictTo('SUPER_ADMIN', 'CO
   try {
     const result = await db.query(
       'SELECT 1 FROM staff_profiles sp JOIN users u ON sp.user_id = u.user_id WHERE u.mobile_number = $1',
-      [req.params.mobile]
+      [toE164(req.params.mobile) || req.params.mobile]
     );
     res.json({ available: result.rows.length === 0 });
   } catch (err) {

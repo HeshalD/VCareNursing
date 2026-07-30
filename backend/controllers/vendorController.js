@@ -11,6 +11,7 @@
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
 const { resolveBankAccountId } = require('../utils/pettyCash');
+const { toE164, isValidPhone } = require('../utils/phone');
 
 const VALID_PAYMENT_METHODS = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
 const VALID_VENDOR_TYPES = ['SUPPLIER', 'UTILITY', 'OTHER'];
@@ -122,13 +123,16 @@ exports.createVendor = async (req, res) => {
   if (vendor_type && !VALID_VENDOR_TYPES.includes(vendor_type)) {
     return res.status(400).json({ message: `vendor_type must be one of: ${VALID_VENDOR_TYPES.join(', ')}` });
   }
+  if (phone && !isValidPhone(phone)) {
+    return res.status(400).json({ message: 'Enter a valid phone number.' });
+  }
 
   try {
     const result = await db.query(
       `INSERT INTO vendors (name, vendor_type, contact_person, phone, email, address, notes, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [name.trim(), vendor_type || 'SUPPLIER', contact_person || null, phone || null, email || null, address || null, notes || null, req.user?.user_id || null]
+      [name.trim(), vendor_type || 'SUPPLIER', contact_person || null, phone ? toE164(phone) : null, email || null, address || null, notes || null, req.user?.user_id || null]
     );
 
     await safeLog({
@@ -154,6 +158,9 @@ exports.updateVendor = async (req, res) => {
   if (vendor_type && !VALID_VENDOR_TYPES.includes(vendor_type)) {
     return res.status(400).json({ message: `vendor_type must be one of: ${VALID_VENDOR_TYPES.join(', ')}` });
   }
+  if (phone && !isValidPhone(phone)) {
+    return res.status(400).json({ message: 'Enter a valid phone number.' });
+  }
 
   try {
     const existing = await db.query('SELECT * FROM vendors WHERE vendor_id = $1', [id]);
@@ -172,7 +179,7 @@ exports.updateVendor = async (req, res) => {
         name || current.name,
         vendor_type || current.vendor_type,
         contact_person !== undefined ? contact_person : current.contact_person,
-        phone !== undefined ? phone : current.phone,
+        phone !== undefined ? (phone ? toE164(phone) : phone) : current.phone,
         email !== undefined ? email : current.email,
         address !== undefined ? address : current.address,
         notes !== undefined ? notes : current.notes,

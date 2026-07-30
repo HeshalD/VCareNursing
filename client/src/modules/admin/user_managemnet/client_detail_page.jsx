@@ -1,6 +1,7 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import DateInput from '../../../components/common/DateInput';
+import PhoneInput, { isValidPhoneNumber } from '../../../components/common/PhoneInput';
 import {
   ArrowLeft,
   ArrowRight,
@@ -781,7 +782,7 @@ const ClientDetailPage = () => {
 
   const saveProfile = async () => {
     if (!profileForm.full_name.trim()) { setProfileError('Full name is required.'); return; }
-    if (!/^0\d{9}$/.test(profileForm.mobile_number.trim())) { setProfileError('Enter a valid 10-digit mobile number.'); return; }
+    if (!isValidPhoneNumber(profileForm.mobile_number || '')) { setProfileError('Enter a valid mobile number.'); return; }
     setProfileLoading(true);
     setProfileError('');
     try {
@@ -3205,12 +3206,10 @@ const ClientDetailPage = () => {
                       </div>
                       <div>
                         <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Phone</label>
-                        <input
-                          type="tel"
+                        <PhoneInput
                           value={profileForm.mobile_number}
                           onChange={(e) => setProfileForm(f => ({ ...f, mobile_number: e.target.value }))}
                           placeholder="07XXXXXXXX"
-                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
                         />
                       </div>
                       <div>

@@ -2,6 +2,7 @@ const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
 const { sendSms } = require('../utils/sms');
 const { sendServiceRequestConfirmed, sendCandidateProfile } = require('../utils/metaWhatsapp');
+const { toE164, isValidPhone } = require('../utils/phone');
 
 const formatServiceType = (type) => {
     if (!type) return 'our services';
@@ -41,7 +42,6 @@ exports.submitServiceRequest = async (req, res) => {
     try {
         const {
             payer_name,
-            payer_mobile,
             patient_name,
             patient_age,
             patient_gender, // Care profile's own gender (MALE/FEMALE/OTHER)
@@ -57,6 +57,11 @@ exports.submitServiceRequest = async (req, res) => {
             preferred_gender,
             preferred_staff_id
         } = req.body;
+
+        if (!isValidPhone(req.body.payer_mobile)) {
+            return res.status(400).json({ message: 'Enter a valid mobile number.' });
+        }
+        const payer_mobile = toE164(req.body.payer_mobile);
 
         // 1. Smart Detection: Does this mobile number belong to an existing client?
         const userCheck = await db.query(
@@ -238,7 +243,6 @@ exports.createServiceRequest = async (req, res) => {
         client_id,
         patient_id,
         payer_name,
-        payer_mobile,
         patient_name,
         patient_age,
         patient_gender, // Care profile's own gender (MALE/FEMALE/OTHER)
@@ -255,15 +259,23 @@ exports.createServiceRequest = async (req, res) => {
         preferred_staff_id,
         status
     } = req.body;
+    const rawPayerMobile = req.body.payer_mobile;
 
     try {
         // Validate required fields
-        if (!payer_name || !payer_mobile || !patient_name || !patient_age || !service_type) {
+        if (!payer_name || !rawPayerMobile || !patient_name || !patient_age || !service_type) {
             return res.status(400).json({
                 status: 'error',
                 message: 'Missing required fields: payer_name, payer_mobile, patient_name, patient_age, service_type'
             });
         }
+        if (!isValidPhone(rawPayerMobile)) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Enter a valid mobile number.'
+            });
+        }
+        const payer_mobile = toE164(rawPayerMobile);
 
         // Validate service_model
         const validServiceModels = ['LIVE_IN', 'SHIFT_BASED', 'VISITING'];
@@ -536,7 +548,6 @@ exports.updateServiceRequest = async (req, res) => {
     const { id } = req.params;
     const {
         payer_name,
-        payer_mobile,
         patient_name,
         patient_age,
         relationship_to_client,
@@ -549,6 +560,11 @@ exports.updateServiceRequest = async (req, res) => {
         preferred_gender,
         status
     } = req.body;
+
+    if (req.body.payer_mobile && !isValidPhone(req.body.payer_mobile)) {
+        return res.status(400).json({ status: 'error', message: 'Enter a valid mobile number.' });
+    }
+    const payer_mobile = req.body.payer_mobile ? toE164(req.body.payer_mobile) : undefined;
 
     try {
         const existing = await db.query('SELECT * FROM service_requests WHERE request_id = $1', [id]);

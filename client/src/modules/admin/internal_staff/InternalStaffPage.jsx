@@ -3,6 +3,7 @@ import { Plus, Pencil, Trash2, X, Loader2, ShieldCheck, Smartphone, Copy, Search
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import DateInput from '../../../components/common/DateInput';
+import PhoneInput, { isValidPhoneNumber } from '../../../components/common/PhoneInput';
 
 // Must match the internal/office roles defined in user_role_enum (backend/migrate.js).
 // Caregiving roles (NURSE, CARETAKER, NANNY, etc.) belong to field staff, not internal staff.
@@ -185,6 +186,10 @@ const InternalStaffPage = () => {
     if (isAdd && isLoginRole) {
       if (!form.phone.trim()) {
         setFormError('Phone is required for COORDINATOR, ACCOUNTS, SALES, and SUPER_ADMIN roles (used as login mobile number).');
+        return;
+      }
+      if (!isValidPhoneNumber(form.phone)) {
+        setFormError('Enter a valid phone number.');
         return;
       }
       if (!form.password.trim()) {
@@ -581,8 +586,7 @@ const InternalStaffPage = () => {
                   />
                 </Field>
                 <Field label="Phone" required={isAdd && isLoginRole}>
-                  <input
-                    className={inputCls}
+                  <PhoneInput
                     placeholder="07X XXX XXXX"
                     value={form.phone}
                     onChange={set('phone')}

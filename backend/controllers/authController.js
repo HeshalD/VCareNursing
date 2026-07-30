@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const sendEmail = require('../utils/email');
 const { sendWhatsAppOtp } = require('../utils/whatsapp');
 const { sendSmsOtp } = require('../utils/sms');
+const { toE164, isValidPhone } = require('../utils/phone');
 
 // Roles that may only log into the admin dashboard from a device the SUPER_ADMIN has assigned them.
 const DEVICE_RESTRICTED_ROLES = new Set(['COORDINATOR', 'ACCOUNTS']);
@@ -20,7 +21,7 @@ function parseRoles(rawRole) {
 }
 
 exports.registerClient = async (req, res, next) => {
-  const { mobile_number, password, full_name, client_type, terms_accepted, email, gender, primary_address, company_name, honorific, display_name_source } = req.body;
+  const { mobile_number: rawMobileNumber, password, full_name, client_type, terms_accepted, email, gender, primary_address, company_name, honorific, display_name_source } = req.body;
 
   try {
     if (!terms_accepted) {
@@ -29,6 +30,10 @@ exports.registerClient = async (req, res, next) => {
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res.status(400).json({ message: "Valid email address is required." });
     }
+    if (!isValidPhone(rawMobileNumber)) {
+      return res.status(400).json({ message: "Enter a valid mobile number." });
+    }
+    const mobile_number = toE164(rawMobileNumber);
 
     // Display name only makes sense once a company name exists; otherwise it's always the person's name.
     const resolvedDisplayNameSource =
@@ -97,7 +102,7 @@ exports.registerClient = async (req, res, next) => {
 };
 
 exports.resendOtp = async (req, res) => {
-  const { mobile_number } = req.body;
+  const mobile_number = toE164(req.body.mobile_number);
 
   try {
     const pendingRes = await db.query(
@@ -144,7 +149,8 @@ exports.resendOtp = async (req, res) => {
 };
 
 exports.verifyOtp = async (req, res) => {
-  const { mobile_number, otp_code } = req.body;
+  const mobile_number = toE164(req.body.mobile_number);
+  const { otp_code } = req.body;
   const dbClient = await db.pool.connect();
 
   try {
@@ -203,7 +209,13 @@ exports.verifyOtp = async (req, res) => {
 };
 
 exports.login = async (req, res) => {
-  const { mobile_number, password, device_id } = req.body;
+  const { password, device_id } = req.body;
+  // Normalize to E.164 for the lookup, but fall back to the raw trimmed input
+  // when it can't be parsed as a valid phone number — a handful of legacy/seed
+  // accounts (e.g. the default admin) have a non-phone placeholder stored
+  // verbatim in mobile_number, and normalizing would turn it into null.
+  const rawMobileNumber = (req.body.mobile_number || '').trim();
+  const mobile_number = toE164(rawMobileNumber) || rawMobileNumber;
 
   try {
     // 1. Find User by Mobile Number
@@ -552,13 +564,14 @@ exports.getUnifiedOverview = async (req, res) => {
  * User enters phone number, system checks if it exists and sends OTP
  */
 exports.requestForgotPasswordOtp = async (req, res) => {
-  const { mobile_number } = req.body;
+  // 1. Validation
+  if (!req.body.mobile_number) {
+    return res.status(400).json({ message: "Mobile number is required." });
+  }
+  const rawMobileNumber = req.body.mobile_number.trim();
+  const mobile_number = toE164(rawMobileNumber) || rawMobileNumber;
 
   try {
-    // 1. Validation
-    if (!mobile_number) {
-      return res.status(400).json({ message: "Mobile number is required." });
-    }
 
     // 2. Check if user exists
     const userResult = await db.query(

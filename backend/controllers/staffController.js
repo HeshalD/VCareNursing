@@ -6,6 +6,7 @@ const { logActivity } = require('../utils/activityLogger');
 const { generateAndUploadSalarySheet } = require('../utils/salaryPdf');
 const { creditRecruiterForStaff } = require('../services/recruiterService');
 const { resolveBankAccountId } = require('../utils/pettyCash');
+const { toE164, isValidPhone } = require('../utils/phone');
 
 const _MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const _METHOD_LABELS = { BANK_TRANSFER: 'Bank Transfer', CASH: 'Cash', CHEQUE: 'Cheque' };
@@ -2494,12 +2495,17 @@ exports.updateStaffProfile = async (req, res) => {
         willing_to_live_in,
         date_of_birth,
         email,
-        mobile_number,
+        mobile_number: rawMobileNumber,
         role,
         nic_number,
         staff_code,
         remove_document_urls
     } = req.body;
+
+    if (rawMobileNumber && !isValidPhone(rawMobileNumber)) {
+        return res.status(400).json({ status: 'error', message: 'Enter a valid mobile number.' });
+    }
+    const mobile_number = rawMobileNumber ? toE164(rawMobileNumber) : rawMobileNumber;
 
     // Extract file URLs from multer/S3
     const uploadedDocuments = req.files && req.files.documents ? req.files.documents.map(file => file.location) : [];
@@ -2768,7 +2774,7 @@ exports.createStaffProfile = async (req, res) => {
         willing_to_live_in,
         date_of_birth,
         email,
-        mobile_number,
+        mobile_number: rawMobileNumber,
         role,
         nic_number,
         staff_code,
@@ -2808,12 +2814,19 @@ exports.createStaffProfile = async (req, res) => {
         // Always create new user for staff profile creation (Admin only).
         // Mobile number is the login username, so it is the only required contact field;
         // email is optional.
-        if (!mobile_number) {
+        if (!rawMobileNumber) {
             return res.status(400).json({
                 status: 'error',
                 message: 'Mobile number is required for staff profile creation'
             });
         }
+        if (!isValidPhone(rawMobileNumber)) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Enter a valid mobile number.'
+            });
+        }
+        const mobile_number = toE164(rawMobileNumber);
         const finalEmail = email && String(email).trim() ? String(email).trim() : null;
 
         // Check if user already exists by mobile (or email, when one was provided)

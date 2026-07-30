@@ -1,0 +1,79 @@
+/* Matches the project's default slate/blue Tailwind input styling used across
+   RegisterPage/WorkerRegistrationPage/admin forms. Individual forms can still
+   override via the className prop passed to <PhoneInput>. */
+
+/* Themeable via CSS custom properties — pass a `style` prop with these vars
+   set (e.g. for a dark-theme form) to override the light defaults below. */
+.vcare-phone-input {
+  --vcare-phone-bg: #f8fafc; /* slate-50 */
+  --vcare-phone-border: #e2e8f0; /* slate-200 */
+  --vcare-phone-text: #0f172a; /* slate-900 */
+  --vcare-phone-placeholder: #94a3b8; /* slate-400 */
+  --vcare-phone-focus: #3b82f6; /* blue-500 */
+
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  background-color: var(--vcare-phone-bg);
+  border: 1px solid var(--vcare-phone-border);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.vcare-phone-input:focus-within {
+  border-color: var(--vcare-phone-focus);
+  box-shadow: 0 0 0 1px var(--vcare-phone-focus);
+}
+
+.vcare-phone-input--error {
+  border-color: #ef4444; /* red-500 */
+}
+
+.vcare-phone-input--error:focus-within {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 1px #ef4444;
+}
+
+.vcare-phone-input .PhoneInputInput {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 0.95rem;
+  color: var(--vcare-phone-text);
+}
+
+.vcare-phone-input .PhoneInputInput::placeholder {
+  color: var(--vcare-phone-placeholder);
+}
+
+.vcare-phone-input .PhoneInputCountry {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding-right: 0.5rem;
+  border-right: 1px solid var(--vcare-phone-border);
+}
+
+.vcare-phone-input .PhoneInputCountrySelect {
+  cursor: pointer;
+  /* The select itself is invisible (opacity: 0, overlaid on the flag icon —
+     see the library's style.css), but its dropdown list is a native browser
+     popup that inherits color/background from the select. Without an
+     explicit color it inherits a faint grey from the page, making the
+     country names in the popup unreadable — so set it explicitly here. */
+  color: #0f172a;
+  background-color: #ffffff;
+}
+
+.vcare-phone-input .PhoneInputCountrySelect option {
+  color: #0f172a;
+  background-color: #ffffff;
+}
+
+.vcare-phone-input.PhoneInput--disabled,
+.vcare-phone-input:has(.PhoneInputCountrySelect:disabled) {
+  opacity: 0.6;
+}

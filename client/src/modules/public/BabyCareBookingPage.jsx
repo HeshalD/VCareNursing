@@ -12,6 +12,7 @@ import apiClient from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 import babyCareBg from '../../assets/images/BabyCare.webp';
 import DateInput, { todayISO } from '../../components/common/DateInput';
+import PhoneInput from '../../components/common/PhoneInput';
 
 // Selectable options for the Service Details step
 const SERVICE_MODELS = [
@@ -472,9 +473,8 @@ const BabyCareBookingPage = () => {
                       </div>
                       <div>
                         <label className="text-sm font-semibold text-slate-600 block mb-1">Mobile Number</label>
-                        <input
-                          type="tel"
-                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-slate-900 placeholder:text-slate-400"
+                        <PhoneInput
+                          name="payer_mobile"
                           value={formData.payer_mobile}
                           onChange={e => setFormData({ ...formData, payer_mobile: e.target.value })}
                           onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}

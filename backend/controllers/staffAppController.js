@@ -7,6 +7,7 @@ const { sendSmsOtp, sendSms } = require('../utils/sms');
 const { sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected, sendStaffAgreement } = require('../utils/metaWhatsapp');
 const { logActivity } = require('../utils/activityLogger');
 const { creditRecruiterForStaff } = require('../services/recruiterService');
+const { toE164, isValidPhone } = require('../utils/phone');
 
 const getUploadedFileUrl = (files, fieldName) => (files && files[fieldName] && files[fieldName][0]) ? files[fieldName][0].location : null;
 
@@ -25,7 +26,6 @@ exports.submitApplication = async (req, res) => {
     const {
       full_name,
       email,
-      mobile_number,
       applied_roles,
       qualifications,
       home_address,
@@ -37,6 +37,11 @@ exports.submitApplication = async (req, res) => {
       date_of_birth,
       experience_level
     } = req.body;
+
+    if (!isValidPhone(req.body.mobile_number)) {
+      return res.status(400).json({ message: 'Enter a valid mobile number.' });
+    }
+    const mobile_number = toE164(req.body.mobile_number);
     
    
     let rolesArray = [];
@@ -814,9 +819,14 @@ exports.rejectApplication = async (req, res) => {
 exports.updateApplication = async (req, res) => {
   const { applicationId } = req.params;
   const {
-    full_name, email, mobile_number, applied_roles, qualifications,
+    full_name, email, applied_roles, qualifications,
     home_address, location, nic_number, gender, date_of_birth, experience_level
   } = req.body;
+
+  if (req.body.mobile_number && !isValidPhone(req.body.mobile_number)) {
+    return res.status(400).json({ message: 'Enter a valid mobile number.' });
+  }
+  const mobile_number = req.body.mobile_number ? toE164(req.body.mobile_number) : req.body.mobile_number;
 
   try {
     const appResult = await db.query(

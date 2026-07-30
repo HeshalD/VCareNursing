@@ -8,6 +8,7 @@ const { creditSalespersonForRegistration } = require('../services/clientSalesper
 const html_to_pdf = require('html-pdf-node');
 const dailyInvoiceTemplate = require('../templates/dailyInvoiceTemplate');
 const { uploadBufferToS3 } = require('../config/s3Config');
+const { toE164, isValidPhone } = require('../utils/phone');
 
 async function getActorName(userId) {
   const result = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [userId]);
@@ -802,14 +803,15 @@ exports.updateClientCompanyName = async (req, res) => {
 // client_profiles (full_name, primary_address, gender) and users (mobile_number, email).
 exports.updateClientProfile = async (req, res) => {
   const { client_id } = req.params;
-  const { full_name, mobile_number, email, primary_address, gender } = req.body;
+  const { full_name, email, primary_address, gender } = req.body;
 
   if (!full_name || !full_name.trim()) {
     return res.status(400).json({ message: 'Full name is required.' });
   }
-  if (!mobile_number || !/^0\d{9}$/.test(mobile_number.trim())) {
-    return res.status(400).json({ message: 'A valid 10-digit mobile number is required.' });
+  if (!isValidPhone(req.body.mobile_number)) {
+    return res.status(400).json({ message: 'A valid mobile number is required.' });
   }
+  const mobile_number = toE164(req.body.mobile_number);
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
     return res.status(400).json({ message: 'Please enter a valid email address.' });
   }
@@ -837,7 +839,7 @@ exports.updateClientProfile = async (req, res) => {
 
     await dbClient.query(
       `UPDATE users SET mobile_number = $1, email = $2 WHERE user_id = $3`,
-      [mobile_number.trim(), email?.trim() || null, user_id]
+      [mobile_number, email?.trim() || null, user_id]
     );
 
     const updated = await dbClient.query(
@@ -858,7 +860,7 @@ exports.updateClientProfile = async (req, res) => {
         actionType: 'CLIENT_PROFILE_UPDATED',
         entityType: 'CLIENT',
         entityId: String(client_id),
-        details: { full_name: full_name.trim(), mobile_number: mobile_number.trim(), email: email?.trim() || null },
+        details: { full_name: full_name.trim(), mobile_number, email: email?.trim() || null },
       });
     } catch (logErr) {
       console.error('Activity log failed (client profile update):', logErr.message);
@@ -1223,11 +1225,15 @@ exports.getClientServiceHistory = async (req, res) => {
 
 // Admin proxy-create client (bypasses OTP)
 exports.proxyCreateClient = async (req, res) => {
-  const { full_name, email, mobile_number, gender, primary_address, client_type, honorific, company_name, display_name_source } = req.body;
+  const { full_name, email, gender, primary_address, client_type, honorific, company_name, display_name_source } = req.body;
 
-  if (!full_name || !mobile_number || !gender) {
+  if (!full_name || !req.body.mobile_number || !gender) {
     return res.status(400).json({ message: 'full_name, mobile_number, and gender are required.' });
   }
+  if (!isValidPhone(req.body.mobile_number)) {
+    return res.status(400).json({ message: 'A valid mobile number is required.' });
+  }
+  const mobile_number = toE164(req.body.mobile_number);
 
   const resolvedDisplayNameSource =
     client_type === 'CORPORATE_PROXY' && company_name && display_name_source === 'COMPANY_NAME'

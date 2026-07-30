@@ -3,6 +3,7 @@ import { ArrowLeft, MapPin, Clock, Star, Shield, Award, ChevronRight, Calendar, 
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import apiClient from "../../api/api";
+import { formatPhoneNumberIntl } from 'react-phone-number-input';
 
 const statusStyle = {
   "Available": { dot: "#34d399", bg: "rgba(52,211,153,0.12)", text: "#059669" },
@@ -334,7 +335,7 @@ export default function StaffProfile() {
     shifts: staff.total_bookings || 0,
     exp: staff.date_of_birth ? `${Math.floor((new Date() - new Date(staff.date_of_birth)) / (365.25 * 24 * 60 * 60 * 1000))} years` : 'Experience not specified',
     location: staff.location || 'Location not specified',
-    phone: staff.mobile_number || 'Not available',
+    phone: (staff.mobile_number && formatPhoneNumberIntl(staff.mobile_number)) || staff.mobile_number || 'Not available',
     joinedYear: new Date(staff.created_at).getFullYear(),
     color: "#4f46e5", // Default color
     bio: staff.qualifications || 'Experienced healthcare professional',

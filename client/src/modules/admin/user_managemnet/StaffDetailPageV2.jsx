@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import DateInput from '../../../components/common/DateInput';
+import PhoneInput from '../../../components/common/PhoneInput';
 import {
   AlertCircle,
   ArrowLeft,
@@ -2073,8 +2074,8 @@ const StaffDetailPageV2 = () => {
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Mobile Number</label>
-              <input type="tel" value={editModal.form.mobile_number} onChange={e => editField('mobile_number', e.target.value)}
-                placeholder="e.g. 0771234567" className={editInputCls} />
+              <PhoneInput value={editModal.form.mobile_number} onChange={e => editField('mobile_number', e.target.value)}
+                placeholder="e.g. 0771234567" />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">

@@ -1,4 +1,5 @@
 const twilio = require('twilio');
+const { toMessagingDigits } = require('./phone');
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -17,27 +18,8 @@ const sendWhatsAppOtp = async (mobileNumber, otp) => {
 
     // Ensure the number is in E.164 format and prefixed with 'whatsapp:'
     // Example: whatsapp:+94771234567
-    let cleanNumber = mobileNumber;
-    
-    // Remove 'whatsapp:' prefix if present
-    if (cleanNumber.startsWith('whatsapp:')) {
-      cleanNumber = cleanNumber.substring(9);
-    }
-    
-    // Remove leading '+' for processing
-    if (cleanNumber.startsWith('+')) {
-      cleanNumber = cleanNumber.substring(1);
-    }
-    
-    // Remove leading '0' (common in some number formats)
-    if (cleanNumber.startsWith('0')) {
-      cleanNumber = cleanNumber.substring(1);
-    }
-    
-    // Add '+' back for E.164 format
-    cleanNumber = '+94' + cleanNumber;
-    
-    const formattedNumber = `whatsapp:${cleanNumber}`;
+    const rawNumber = mobileNumber.startsWith('whatsapp:') ? mobileNumber.substring(9) : mobileNumber;
+    const formattedNumber = `whatsapp:+${toMessagingDigits(rawNumber)}`;
 
     console.log('WhatsApp Debug - Formatted number:', formattedNumber);
 
@@ -67,13 +49,8 @@ const sendWhatsAppMessage = async (mobileNumber, content, mediaOptions = null) =
     return { skipped: true };
   }
   try {
-    let cleanNumber = mobileNumber.replace('whatsapp:', '').replace('+', '');
-    if (cleanNumber.startsWith('0')) cleanNumber = cleanNumber.substring(1);
-    
-    // Ensure Sri Lanka prefix - Adjust if you expand to other countries
-    if (!cleanNumber.startsWith('94')) cleanNumber = '94' + cleanNumber;
-    
-    const formattedNumber = `whatsapp:+${cleanNumber}`;
+    const rawNumber = mobileNumber.replace('whatsapp:', '');
+    const formattedNumber = `whatsapp:+${toMessagingDigits(rawNumber)}`;
 
     const messagePayload = {
       from: process.env.TWILIO_WHATSAPP_NUMBER,

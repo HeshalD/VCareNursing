@@ -1,22 +1,16 @@
 const axios = require('axios');
-
-const formatSriLankaNumber = (mobileNumber) => {
-  let number = mobileNumber.replace(/\s/g, '');
-  if (number.startsWith('+')) number = number.substring(1);
-  if (number.startsWith('0')) number = '94' + number.substring(1);
-  if (!number.startsWith('94')) number = '94' + number;
-  return number;
-};
+const { toMessagingDigits } = require('./phone');
 
 // TEMPORARY KILL SWITCH — SMS sending is blocked. Remove this block to re-enable.
-const MESSAGING_BLOCKED = true;
+// TEMPORARILY set to false to test the phone country-code changes — flip back to true after testing.
+const MESSAGING_BLOCKED = false;
 
 const sendSmsOtp = async (mobileNumber, otp) => {
   if (MESSAGING_BLOCKED) {
     console.log(`[SMS] BLOCKED (messaging disabled): OTP to ${mobileNumber}`);
     return { blocked: true };
   }
-  const number = formatSriLankaNumber(mobileNumber);
+  const number = toMessagingDigits(mobileNumber);
 
   const response = await axios.post(
     'https://dashboard.smsapi.lk/api/v3/sms/send',
@@ -44,7 +38,7 @@ const sendSms = async (mobileNumber, message) => {
     console.log(`[SMS] BLOCKED (messaging disabled): to ${mobileNumber}`);
     return { blocked: true };
   }
-  const number = formatSriLankaNumber(mobileNumber);
+  const number = toMessagingDigits(mobileNumber);
 
   const response = await axios.post(
     'https://dashboard.smsapi.lk/api/v3/sms/send',

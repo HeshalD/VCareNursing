@@ -3,6 +3,7 @@ const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
 const { sendClientWelcomeNew } = require('../utils/metaWhatsapp');
 const { sendSms } = require('../utils/sms');
+const { toE164, isValidPhone } = require('../utils/phone');
 
 async function safeLog(params) {
   try {
@@ -24,13 +25,18 @@ function extractActorRole(role) {
 // immediately and settle the fee later.
 exports.createWalkInCustomer = async (req, res) => {
   const {
-    full_name, mobile_number, gender, email, primary_address,
+    full_name, gender, email, primary_address,
     client_type, honorific, company_name, display_name_source,
   } = req.body;
+  const rawMobileNumber = req.body.mobile_number;
 
-  if (!full_name || !mobile_number || !gender) {
+  if (!full_name || !rawMobileNumber || !gender) {
     return res.status(400).json({ message: 'full_name, mobile_number, and gender are required' });
   }
+  if (!isValidPhone(rawMobileNumber)) {
+    return res.status(400).json({ message: 'A valid mobile number is required.' });
+  }
+  const mobile_number = toE164(rawMobileNumber);
 
   const resolvedDisplayNameSource =
     client_type === 'CORPORATE_PROXY' && company_name && display_name_source === 'COMPANY_NAME'

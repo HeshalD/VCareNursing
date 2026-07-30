@@ -4,6 +4,7 @@ import { Search, UserCircle, ChevronRight, Loader2, Plus, X } from 'lucide-react
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
+import PhoneInput from '../../../components/common/PhoneInput';
 
 const REG_TABS = ['All', 'Pending', 'Invoiced', 'Receipt Submitted', 'Paid', 'Waived', 'Expired'];
 
@@ -18,7 +19,7 @@ const STATUS_CONFIG = {
 
 const TAB_TO_STATUS = {
   Pending:            'PENDING',
-  Invoiced:           'QUOTATED',
+  Invoiced:           'INVOICED',
   'Receipt Submitted':'RECEIPT_UPLOADED',
   Paid:               'PAID',
   Waived:             'WAIVED',
@@ -455,8 +456,8 @@ const ClientManagement = () => {
                     placeholder="e.g. saman@example.com" className={inputCls(false)} />
                 </Field>
                 <Field label="Mobile Number" required>
-                  <input type="tel" name="mobile_number" value={formData.mobile_number} onChange={handleInput}
-                    placeholder="e.g. 0771234567" className={inputCls(false)} />
+                  <PhoneInput name="mobile_number" value={formData.mobile_number} onChange={handleInput}
+                    placeholder="e.g. 0771234567" />
                 </Field>
               </div>
 

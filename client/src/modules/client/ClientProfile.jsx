@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { User, MapPin, Phone, Mail, MessageCircle, Loader2, CheckCircle, AlertCircle, Wallet, Shield, Building2, Upload } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { formatPhoneNumberIntl } from 'react-phone-number-input';
 import apiClient from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 
@@ -206,7 +207,7 @@ const ClientProfile = () => {
             <Field
               label="Mobile Number"
               icon={<Phone size={15} style={styles.fieldIcon} />}
-              display={profile?.mobile_number}
+              display={formatPhoneNumberIntl(profile?.mobile_number || '') || profile?.mobile_number}
             />
             <Field
               label="Email Address"

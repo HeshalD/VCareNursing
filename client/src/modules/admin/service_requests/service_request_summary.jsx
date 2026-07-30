@@ -10,6 +10,7 @@ import {
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
+import PhoneInput from '../../../components/common/PhoneInput';
 import PaymentAllocationModal from '../service_quotes/PaymentAllocationModal';
 import ReceiptSendPopup from '../service_quotes/ReceiptSendPopup';
 import InvoiceSendPopup from '../service_quotes/InvoiceSendPopup';
@@ -698,7 +699,7 @@ const ServiceRequestSummaryPage = () => {
                           </div>
                           <div>
                             <label className={labelCls}>Mobile Number</label>
-                            <input type="tel" value={editForm.payer_mobile} onChange={e => set('payer_mobile')(e.target.value)} className={inputCls} />
+                            <PhoneInput value={editForm.payer_mobile} onChange={e => set('payer_mobile')(e.target.value)} />
                           </div>
                           <div className="sm:col-span-2">
                             <label className={labelCls}>Service Address</label>

@@ -10,6 +10,7 @@ import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import ImageCropModal from '../../../components/common/ImageCropModal';
 import DateInput from '../../../components/common/DateInput';
+import PhoneInput from '../../../components/common/PhoneInput';
 
 const STAFF_ROLES = ['CARETAKER', 'NURSING_ASSISTANT', 'NURSE', 'PHYSIOTHERAPIST', 'NANNY', 'COUNSELLOR'];
 const GENDERS = ['MALE', 'FEMALE', 'OTHER'];
@@ -615,8 +616,11 @@ const WorkerVerificationDetailsPage = () => {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <EditField label="Full Name" value={editData.full_name}
                     onChange={v => setEditData(p => ({ ...p, full_name: v }))} />
-                  <EditField label="Mobile Number" value={editData.mobile_number}
-                    onChange={v => setEditData(p => ({ ...p, mobile_number: v }))} />
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Mobile Number</label>
+                    <PhoneInput value={editData.mobile_number}
+                      onChange={e => setEditData(p => ({ ...p, mobile_number: e.target.value }))} />
+                  </div>
                   <EditField label="Email" type="email" value={editData.email}
                     onChange={v => setEditData(p => ({ ...p, email: v }))} />
                   <div>

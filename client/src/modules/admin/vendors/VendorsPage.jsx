@@ -16,6 +16,7 @@ import {
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import DateInput from '../../../components/common/DateInput';
+import PhoneInput from '../../../components/common/PhoneInput';
 
 const VENDOR_TYPES = [
 	{ value: 'SUPPLIER', label: 'Supplier' },
@@ -523,10 +524,9 @@ const VendorsPage = () => {
 								</Field>
 								<div className="grid grid-cols-2 gap-3">
 									<Field label="Phone">
-										<input
+										<PhoneInput
 											value={formData.phone}
 											onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-											className={inputCls}
 										/>
 									</Field>
 									<Field label="Email">

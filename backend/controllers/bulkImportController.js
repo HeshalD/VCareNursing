@@ -5,6 +5,7 @@ const { creditStaffSalary } = require('../services/billingService');
 const { creditRecruiterForStaff } = require('../services/recruiterService');
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const { logActivity } = require('../utils/activityLogger');
+const { toE164, isValidPhone } = require('../utils/phone');
 
 const SHEET_NAMES = {
   staff: 'Staff',
@@ -99,13 +100,25 @@ function isYes(v) {
   return ['y', 'yes', 'true', '1'].includes(String(v || '').trim().toLowerCase());
 }
 
+// Validates + normalizes a phone column to E.164, pushing an error (and
+// returning the original raw value) instead of silently trusting bad input.
+function normalizePhoneField(rawValue, fieldLabel, errors) {
+  const raw = String(rawValue || '').trim();
+  if (!raw) return raw;
+  if (!isValidPhone(raw)) {
+    errors.push(`${fieldLabel} is not a valid phone number`);
+    return raw;
+  }
+  return toE164(raw);
+}
+
 // ─── Per-row normalization + validation (no DB access) ─────────────────────
 
 function normalizeStaffRow(row) {
   const errors = [];
-  const mobile_number = String(row.mobile_number || '').trim();
+  if (!String(row.mobile_number || '').trim()) errors.push('mobile_number is required');
+  const mobile_number = normalizePhoneField(row.mobile_number, 'mobile_number', errors);
   const full_name = String(row.full_name || '').trim();
-  if (!mobile_number) errors.push('mobile_number is required');
   if (!full_name) errors.push('full_name is required');
 
   const gender = row.gender ? String(row.gender).trim().toUpperCase() : null;
@@ -142,9 +155,9 @@ function normalizeStaffRow(row) {
 
 function normalizeClientRow(row) {
   const errors = [];
-  const mobile_number = String(row.mobile_number || '').trim();
+  if (!String(row.mobile_number || '').trim()) errors.push('mobile_number is required');
+  const mobile_number = normalizePhoneField(row.mobile_number, 'mobile_number', errors);
   const full_name = String(row.full_name || '').trim();
-  if (!mobile_number) errors.push('mobile_number is required');
   if (!full_name) errors.push('full_name is required');
 
   const gender = row.gender ? String(row.gender).trim().toUpperCase() : null;
@@ -190,10 +203,10 @@ function normalizeClientRow(row) {
 
 function normalizeCareProfileRow(row) {
   const errors = [];
-  const client_mobile_number = String(row.client_mobile_number || '').trim();
+  if (!String(row.client_mobile_number || '').trim()) errors.push('client_mobile_number is required');
+  const client_mobile_number = normalizePhoneField(row.client_mobile_number, 'client_mobile_number', errors);
   const full_name = String(row.full_name || '').trim();
   const age = toNumberOrNull(row.age);
-  if (!client_mobile_number) errors.push('client_mobile_number is required');
   if (!full_name) errors.push('full_name is required');
   if (!age || Number.isNaN(age)) errors.push('age is required and must be a number');
 
@@ -232,14 +245,16 @@ function computeAdditionalStaffFlags(rows) {
 
 function normalizeBookingRow(row, { isAdditionalStaffRow = false } = {}) {
   const errors = [];
-  const client_mobile_number = String(row.client_mobile_number || '').trim();
+  if (!String(row.client_mobile_number || '').trim()) errors.push('client_mobile_number is required');
+  const client_mobile_number = normalizePhoneField(row.client_mobile_number, 'client_mobile_number', errors);
   const patient_full_name = String(row.patient_full_name || '').trim();
-  if (!client_mobile_number) errors.push('client_mobile_number is required');
   if (!patient_full_name) errors.push('patient_full_name is required');
 
   const booking_ref = row.booking_ref ? String(row.booking_ref).trim() : null;
 
-  const assigned_staff_mobile_number = row.assigned_staff_mobile_number ? String(row.assigned_staff_mobile_number).trim() : null;
+  const assigned_staff_mobile_number = row.assigned_staff_mobile_number
+    ? normalizePhoneField(row.assigned_staff_mobile_number, 'assigned_staff_mobile_number', errors)
+    : null;
 
   const staff_daily_rate = toNumberOrNull(row.staff_daily_rate);
   if (Number.isNaN(staff_daily_rate)) errors.push('staff_daily_rate must be a number');

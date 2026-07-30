@@ -12,6 +12,15 @@ import apiClient from '../../api/api';
 import { useAuth } from '../../context/AuthContext';
 import homeNursingBg from '../../assets/images/HomeNursing.webp';
 import DateInput, { todayISO } from '../../components/common/DateInput';
+import PhoneInput from '../../components/common/PhoneInput';
+
+const DARK_PHONE_INPUT_STYLE = {
+  '--vcare-phone-bg': '#0b1120',
+  '--vcare-phone-border': 'rgba(255,255,255,0.1)',
+  '--vcare-phone-text': '#ffffff',
+  '--vcare-phone-placeholder': '#475569',
+  '--vcare-phone-focus': '#10b981',
+};
 
 // Selectable options for the Service Details step
 const SERVICE_MODELS = [
@@ -481,9 +490,9 @@ const HomeNursingBookingPage = () => {
                       </div>
                       <div>
                         <label className="text-sm font-semibold text-slate-400 block mb-1">Mobile Number</label>
-                        <input
-                          type="tel"
-                          className="w-full px-4 py-3 bg-[#0b1120] border border-white/10 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-white placeholder:text-slate-600"
+                        <PhoneInput
+                          name="payer_mobile"
+                          style={DARK_PHONE_INPUT_STYLE}
                           value={formData.payer_mobile}
                           onChange={e => setFormData({ ...formData, payer_mobile: e.target.value })}
                           onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}

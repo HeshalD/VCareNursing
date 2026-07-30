@@ -4,6 +4,7 @@ import { Search, UserCircle, FileText, Plus, Edit2, Trash2, X, Upload, Shield, L
 import AdminLayout from '../components/AdminLayout';
 import ImageCropModal from '../../../components/common/ImageCropModal';
 import DateInput from '../../../components/common/DateInput';
+import PhoneInput from '../../../components/common/PhoneInput';
 import apiClient from '../../../api/api';
 
 const ROLE_LABELS = {
@@ -625,9 +626,9 @@ const ProxyUserManagement = () => {
                     className={inputCls(false)} />
                 </Field>
                 <Field label="Mobile Number" required={!isEditMode} error={fieldConflicts.mobile_number}>
-                  <input type="tel" name="mobile_number" value={formData.mobile_number}
-                    onChange={handleInputChange} onBlur={e => handleMobileBlur(e.target.value)}
-                    required={!isEditMode} className={inputCls(!!fieldConflicts.mobile_number)} />
+                  <PhoneInput name="mobile_number" value={formData.mobile_number}
+                    onChange={handleInputChange} onBlur={() => handleMobileBlur(formData.mobile_number)}
+                    required={!isEditMode} className={fieldConflicts.mobile_number ? 'vcare-phone-input--error' : ''} />
                 </Field>
                 <Field label="Gender" required>
                   <select name="gender" value={formData.gender} onChange={handleInputChange} required className={inputCls(false)}>

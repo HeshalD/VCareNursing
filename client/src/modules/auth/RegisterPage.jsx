@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { User, Lock, Eye, EyeOff, Mail, Phone, MapPin, Building2 } from 'lucide-react';
+import { User, Lock, Eye, EyeOff, Mail, MapPin, Building2 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import loginBg from '../../assets/images/Gemini_Generated_Image_5nmpua5nmpua5nmp.png';
 import apiClient from '../../api/api';
+import PhoneInput, { isValidPhoneNumber } from '../../components/common/PhoneInput';
 
 const RegisterPage = () => {
   const navigate = useNavigate();
@@ -63,8 +64,8 @@ const RegisterPage = () => {
       case 'phone':
         if (!value.trim()) {
           error = 'Mobile number is required';
-        } else if (!/^07[0-9]{8}$/.test(value.replace(/\s/g, ''))) {
-          error = 'Mobile number must be 10 digits starting with 07';
+        } else if (!isValidPhoneNumber(value)) {
+          error = 'Enter a valid mobile number';
         }
         break;
       case 'password':
@@ -433,24 +434,12 @@ const RegisterPage = () => {
               {/* Mobile Input */}
               <div className="space-y-1">
                 <label className="text-sm font-medium text-slate-700 block">Mobile Number</label>
-                <div className="relative group">
-                  <input
-                    type="tel"
-                    className={`w-full bg-slate-50 border rounded-lg px-4 py-3 pl-4 pr-12 text-slate-900 placeholder:text-slate-400 focus:outline-none transition-all ${fieldErrors.phone
-                        ? 'border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500'
-                        : 'border-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500'
-                      }`}
-                    placeholder="07XXXXXXXX"
-                    value={formData.phone}
-                    onChange={(e) => handleInputChange('phone', e.target.value)}
-                  />
-                  <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500">
-                    <Phone className="w-5 h-5" />
-                  </div>
-                </div>
-                {fieldErrors.phone && (
-                  <p className="text-xs text-red-500 mt-1">{fieldErrors.phone}</p>
-                )}
+                <PhoneInput
+                  name="phone"
+                  value={formData.phone}
+                  onChange={(e) => handleInputChange('phone', e.target.value)}
+                  error={fieldErrors.phone}
+                />
               </div>
 
               {/* Gender Selection */}

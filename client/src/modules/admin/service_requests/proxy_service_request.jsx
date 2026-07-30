@@ -8,6 +8,7 @@ import {
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
+import PhoneInput, { isValidPhoneNumber } from '../../../components/common/PhoneInput';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -199,7 +200,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
       const missing = ['payer_name', 'payer_mobile', 'patient_name', 'patient_age', 'service_type'].filter(f => !formData[f]);
       if (missing.length) { setError(`Please fill in: ${missing.join(', ')}`); setFormLoading(false); return; }
       if (isNaN(formData.patient_age) || formData.patient_age <= 0) { setError('Age must be a positive number.'); setFormLoading(false); return; }
-      if (!/^[0-9]{10}$/.test(formData.payer_mobile.replace(/\s/g, ''))) { setError('Enter a valid 10-digit mobile number.'); setFormLoading(false); return; }
+      if (!isValidPhoneNumber(formData.payer_mobile)) { setError('Enter a valid mobile number.'); setFormLoading(false); return; }
 
       await apiClient.createProxyServiceRequest({
         ...formData,
@@ -441,7 +442,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                     </div>
                     <div>
                       <label className={labelCls}>Mobile Number <span className="text-red-500">*</span></label>
-                      <input type="tel" name="payer_mobile" value={formData.payer_mobile} onChange={handleInputChange} className={inputCls} placeholder="10-digit mobile number" />
+                      <PhoneInput name="payer_mobile" value={formData.payer_mobile} onChange={handleInputChange} placeholder="Mobile number" />
                     </div>
                   </div>
                 </div>

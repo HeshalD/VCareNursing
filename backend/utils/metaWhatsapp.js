@@ -1,17 +1,11 @@
 const axios = require('axios');
+const { toMessagingDigits: formatNumber } = require('./phone');
 
 const API_URL = `https://graph.facebook.com/v21.0/${process.env.META_WA_PHONE_NUMBER_ID}/messages`;
 
-const formatNumber = (mobileNumber) => {
-  let number = mobileNumber.replace(/\s/g, '');
-  if (number.startsWith('+')) number = number.substring(1);
-  if (number.startsWith('0')) number = '94' + number.substring(1);
-  if (!number.startsWith('94')) number = '94' + number;
-  return number;
-};
-
 // TEMPORARY KILL SWITCH — WhatsApp sending is blocked. Remove this block to re-enable.
-const MESSAGING_BLOCKED = true;
+// TEMPORARILY set to false to test the phone country-code changes — flip back to true after testing.
+const MESSAGING_BLOCKED = false;
 
 const sendDocument = async (mobileNumber, documentUrl, filename, caption = '') => {
   if (MESSAGING_BLOCKED) {

@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const bcrypt = require('bcryptjs');
 const { logActivity } = require('../utils/activityLogger');
+const { toE164, isValidPhone } = require('../utils/phone');
 
 const LOGIN_ROLES = new Set(['COORDINATOR', 'ACCOUNTS', 'SALES', 'SUPER_ADMIN']);
 const SELECTABLE = 'id, user_id, full_name, role, email, phone, base_salary, joined_date, status, address, total_sales_amount, bookings_brought_count, created_at, updated_at';
@@ -18,7 +19,8 @@ exports.list = async (req, res) => {
 };
 
 exports.create = async (req, res) => {
-  const { full_name, role, email, phone, base_salary, joined_date, status, address, password } = req.body;
+  const { full_name, role, email, base_salary, joined_date, status, address, password } = req.body;
+  const rawPhone = req.body.phone;
 
   if (!full_name?.trim() || !role?.trim() || !email?.trim()) {
     return res.status(400).json({ message: 'full_name, role, and email are required' });
@@ -26,9 +28,13 @@ exports.create = async (req, res) => {
 
   const needsLogin = LOGIN_ROLES.has(role.trim().toUpperCase());
   if (needsLogin) {
-    if (!phone?.trim()) return res.status(400).json({ message: 'Phone is required for COORDINATOR, ACCOUNTS, SALES, and SUPER_ADMIN roles' });
+    if (!rawPhone?.trim()) return res.status(400).json({ message: 'Phone is required for COORDINATOR, ACCOUNTS, SALES, and SUPER_ADMIN roles' });
     if (!password?.trim()) return res.status(400).json({ message: 'Password is required for COORDINATOR, ACCOUNTS, SALES, and SUPER_ADMIN roles' });
   }
+  if (rawPhone?.trim() && !isValidPhone(rawPhone)) {
+    return res.status(400).json({ message: 'Enter a valid phone number.' });
+  }
+  const phone = rawPhone?.trim() ? toE164(rawPhone) : null;
 
   const client = await db.pool.connect();
   try {
@@ -42,7 +48,7 @@ exports.create = async (req, res) => {
         `INSERT INTO users (mobile_number, password_hash, email, role, is_active)
          VALUES ($1, $2, $3, ARRAY[$4::user_role_enum], true)
          RETURNING user_id`,
-        [phone.trim(), hash, email.trim(), roleEnum]
+        [phone, hash, email.trim(), roleEnum]
       );
       userId = userResult.rows[0].user_id;
     }
@@ -55,7 +61,7 @@ exports.create = async (req, res) => {
         full_name.trim(),
         role.trim(),
         email.trim(),
-        phone?.trim() || null,
+        phone,
         base_salary != null && base_salary !== '' ? parseFloat(base_salary) : 0,
         joined_date || null,
         status || 'Active',
@@ -93,6 +99,10 @@ exports.update = async (req, res) => {
   const allowed = ['full_name', 'role', 'email', 'phone', 'base_salary', 'joined_date', 'status', 'address'];
   const body = req.body;
 
+  if (body.phone && String(body.phone).trim() && !isValidPhone(body.phone)) {
+    return res.status(400).json({ message: 'Enter a valid phone number.' });
+  }
+
   const setClauses = [];
   const values = [];
   let idx = 1;
@@ -101,7 +111,12 @@ exports.update = async (req, res) => {
     if (Object.prototype.hasOwnProperty.call(body, key)) {
       setClauses.push(`${key} = $${idx++}`);
       const val = body[key];
-      values.push(val === '' ? null : key === 'base_salary' && val != null ? parseFloat(val) : val);
+      values.push(
+        val === '' ? null
+          : key === 'base_salary' && val != null ? parseFloat(val)
+          : key === 'phone' && val ? toE164(val)
+          : val
+      );
     }
   }
 

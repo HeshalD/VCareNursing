@@ -12,6 +12,7 @@ import Footer from '../../../components/layout/Footer';
 import ImageCropModal from '../../../components/common/ImageCropModal';
 import apiClient from '../../../api/api';
 import DateInput, { isoToDisplay } from '../../../components/common/DateInput';
+import PhoneInput, { isValidPhoneNumber } from '../../../components/common/PhoneInput';
 
 // Parses an ISO (YYYY-MM-DD) string into a Date, or null if invalid/empty
 const parseDateOfBirth = (value) => {
@@ -272,8 +273,8 @@ const WorkerRegistrationPage = () => {
       case 'mobile_number':
         if (!value || value.trim() === '') {
           error = 'Mobile number is required';
-        } else if (!/^07[0-9]{8}$/.test(value.replace(/\s/g, ''))) {
-          error = 'Mobile number must be 10 digits starting with 07';
+        } else if (!isValidPhoneNumber(value)) {
+          error = 'Enter a valid mobile number';
         }
         break;
       case 'applied_roles':
@@ -373,7 +374,7 @@ const WorkerRegistrationPage = () => {
   };
 
   const handleMobileBlur = async (value) => {
-    if (!value || !/^07[0-9]{8}$/.test(value.replace(/\s/g, ''))) return;
+    if (!value || !isValidPhoneNumber(value)) return;
     try {
       const result = await apiClient.checkMobileAvailability(value);
       if (!result.available) {
@@ -677,14 +678,12 @@ const WorkerRegistrationPage = () => {
                               <span className="ml-2 text-xs font-normal text-slate-400">Auto-filled</span>
                             )}
                           </label>
-                          <input
-                            type="tel"
-                            className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 placeholder:text-slate-400 disabled:bg-slate-100 disabled:text-slate-500 disabled:border-slate-200 disabled:cursor-not-allowed ${
-                              (fieldErrors.mobile_number || mobileConflict) ? 'bg-red-50 border-red-300' : 'bg-slate-50 border-slate-200'
-                            }`}
+                          <PhoneInput
+                            name="mobile_number"
+                            className={(fieldErrors.mobile_number || mobileConflict) ? 'bg-red-50 border-red-300' : 'bg-slate-50 border-slate-200'}
                             value={formData.mobile_number}
                             onChange={e => handleInputChange('mobile_number', e.target.value)}
-                            onBlur={e => handleMobileBlur(e.target.value)}
+                            onBlur={() => handleMobileBlur(formData.mobile_number)}
                             placeholder="e.g. 0771234567"
                             required
                             disabled={hasClientProfile()}
