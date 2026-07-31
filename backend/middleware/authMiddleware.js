@@ -21,6 +21,12 @@ exports.invalidatePermissionCache = (userId) => {
   _permCache.delete(userId);
 };
 
+// Custom role edits affect every user assigned to that role, and we don't track
+// role membership in the cache — clear it all so changes take effect immediately.
+exports.invalidateAllPermissionCache = () => {
+  _permCache.clear();
+};
+
 // LAYER 3: Does the user have a specific permission?
 // Usage: requirePermission('BOOKING_SWAP_STAFF')
 // SUPER_ADMIN always passes. All others are checked against staff_permissions.
@@ -35,7 +41,11 @@ exports.requirePermission = (permissionKey) => async (req, res, next) => {
 
     if (!cached || now - cached.cachedAt > CACHE_TTL) {
       const result = await db.query(
-        'SELECT permission_key FROM staff_permissions WHERE user_id = $1',
+        `SELECT permission_key FROM staff_permissions WHERE user_id = $1
+         UNION
+         SELECT crp.permission_key FROM custom_role_permissions crp
+           JOIN internal_staff ist ON ist.custom_role_id = crp.role_id
+           WHERE ist.user_id = $1`,
         [userId]
       );
       cached = {

@@ -49,6 +49,55 @@ const formatDateTime = (v) => {
 const safeArray = (v) => (Array.isArray(v) ? v : []);
 const getInitials = (name) => (name || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
 
+// Every role an admin can assign to a staff account. Mirrors the validRoles
+// list enforced server-side in staffController.updateStaffProfile.
+const ROLE_LABELS = {
+  NURSE: 'Professional Nurse',
+  NURSING_ASSISTANT: 'Nursing Assistant',
+  CARETAKER: 'Caretaker',
+  PHYSIOTHERAPIST: 'Physiotherapist',
+  NANNY: 'Nanny',
+  COUNSELLOR: 'Counsellor',
+  COORDINATOR: 'Coordinator',
+};
+const parseRoles = (raw) => {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  return String(raw).replace(/^\{|\}$/g, '').split(',').map((r) => r.trim()).filter(Boolean);
+};
+const formatRoles = (raw) => {
+  const roles = parseRoles(raw);
+  return roles.length ? roles.map((r) => ROLE_LABELS[r] || r.replace(/_/g, ' ')).join(', ') : '—';
+};
+
+// The exact fields the backend requires before it will clear onboarding_status
+// off a bulk-imported PENDING_MIGRATION profile — see the `completeness` CTE
+// in staffController.updateStaffProfile. Kept in sync with that check so this
+// banner never asks the admin for a field the backend doesn't actually need.
+const MIGRATION_REQUIRED_FIELDS = [
+  { label: 'Full name', check: (p) => !!p.full_name },
+  { label: 'Designation', check: (p) => !!p.designation },
+  { label: 'Qualifications', check: (p) => !!p.qualifications },
+  { label: 'Home address', check: (p) => !!p.home_address },
+  { label: 'Location', check: (p) => !!p.location },
+  { label: 'Profile picture', check: (p) => !!p.profile_picture_url },
+  { label: 'Gender', check: (p) => !!p.gender },
+  { label: 'Date of birth', check: (p) => !!p.date_of_birth },
+  { label: 'NIC number', check: (p) => !!p.nic_number },
+  { label: 'NIC front photo', check: (p) => !!p.nic_front_url },
+  { label: 'NIC back photo', check: (p) => !!p.nic_back_url },
+];
+
+const EXPERIENCE_LEVEL_LABELS = {
+  BEGINNER: 'Beginner',
+  '1_YEAR': '1 Year',
+  '2_YEARS': '2 Years',
+  '3_YEARS': '3 Years',
+  '4_YEARS': '4 Years',
+  '5_YEARS': '5 Years',
+  MORE_THAN_5_YEARS: 'More than 5 Years',
+};
+
 // ── design tokens ─────────────────────────────────────────────────────────────
 const STATUS_META = {
   available:           { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500' },
@@ -359,6 +408,58 @@ const AdminNotesCarousel = ({ notes, loading, busy, onAdd, onEdit, onDelete }) =
   );
 };
 
+// ── edit drawer atoms ──────────────────────────────────────────────────────────
+// Hoisted to module scope (not defined inside StaffDetailPageV2) so they keep a
+// stable component identity across renders — defining a component inline in a
+// parent's render body recreates its type every render, which makes React
+// unmount/remount it (and its <input>) on every keystroke, dropping focus after
+// a single character.
+const EditSectionHeader = ({ title, sub }) => (
+  <div className="px-6 pt-5 pb-2.5 border-b border-slate-100">
+    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{title}</p>
+    {sub && <p className="text-xs text-slate-400 mt-0.5 normal-case font-normal">{sub}</p>}
+  </div>
+);
+
+const EditField = ({ label, required, children }) => (
+  <div>
+    <label className="block text-xs font-medium text-slate-600 mb-1">
+      {label}{required && <span className="text-red-500 ml-0.5">*</span>}
+    </label>
+    {children}
+  </div>
+);
+
+const EditFileField = ({ label, selectedFile, currentUrl, onChange, accept = 'image/*,.pdf' }) => (
+  <div>
+    <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
+    <div className="flex items-center gap-2">
+      <label className="flex-1 flex items-center gap-2 rounded-xl border border-dashed border-slate-300 px-3 py-2.5 text-xs text-slate-500 cursor-pointer hover:border-blue-400 hover:bg-blue-50/40 transition-colors">
+        <Upload className="w-3.5 h-3.5 flex-shrink-0 text-slate-400" />
+        <span className="truncate">
+          {selectedFile ? selectedFile.name : currentUrl ? 'Replace file...' : 'Upload file...'}
+        </span>
+        <input
+          type="file"
+          accept={accept}
+          className="hidden"
+          onChange={(e) => onChange(e.target.files?.[0] || null)}
+        />
+      </label>
+      {currentUrl && (
+        <button
+          type="button"
+          onClick={() => window.open(currentUrl, '_blank')}
+          title="View current file"
+          className="inline-flex items-center justify-center w-9 h-9 flex-shrink-0 rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors"
+        >
+          <Eye className="w-4 h-4" />
+        </button>
+      )}
+    </div>
+  </div>
+);
+
 // ── main component ────────────────────────────────────────────────────────────
 const StaffDetailPageV2 = () => {
   const { adminToken, isLoading: authLoading } = useAdminAuth();
@@ -398,6 +499,7 @@ const StaffDetailPageV2 = () => {
   const [activeSection, setActiveSection] = useState('overview');
   const [refreshing, setRefreshing] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
+  const [availabilityUpdating, setAvailabilityUpdating] = useState(false);
   const [payoutSubmitting, setPayoutSubmitting] = useState(false);
   const [payoutSubmitError, setPayoutSubmitError] = useState('');
   const [payoutSubmitSuccess, setPayoutSubmitSuccess] = useState('');
@@ -441,6 +543,10 @@ const StaffDetailPageV2 = () => {
   const activeStatus = String(profile.current_status || '').toLowerCase();
   const isActive = Boolean(profile.is_active);
   const currentAssignment = currentBooking || overviewCurrentBooking;
+  const isPendingMigration = String(profile.onboarding_status || '').toUpperCase() === 'PENDING_MIGRATION';
+  const missingMigrationFields = isPendingMigration
+    ? MIGRATION_REQUIRED_FIELDS.filter(f => !f.check(profile)).map(f => f.label)
+    : [];
 
   const sectionConfig = useMemo(() => ([
     { id: 'overview',        label: 'Overview' },
@@ -637,6 +743,22 @@ const StaffDetailPageV2 = () => {
     }
   };
 
+  // Manual override for staff stuck UNAVAILABLE (e.g. after a legacy import or a
+  // booking that ended without the normal cron/assignment flow flipping them back).
+  // Deliberately scoped to UNAVAILABLE → AVAILABLE only — flipping an ASSIGNED
+  // staff member to AVAILABLE here would desync them from their active booking.
+  const handleMarkAvailable = async () => {
+    try {
+      setAvailabilityUpdating(true);
+      await runAdminRequest(() => apiClient.updateStaffStatus(staffProfileId, 'AVAILABLE'));
+      await loadPage();
+    } catch (e) {
+      setError(e?.message || 'Failed to update staff availability');
+    } finally {
+      setAvailabilityUpdating(false);
+    }
+  };
+
   const refreshData = async () => {
     try { setRefreshing(true); await loadPage(); } finally { setRefreshing(false); }
   };
@@ -802,12 +924,15 @@ const StaffDetailPageV2 = () => {
       email: profile.email || '',
       mobile_number: profile.mobile_number || '',
       designation: profile.designation || '',
+      qualifications: profile.qualifications || '',
+      experience_level: profile.experience_level || '',
       nic_number: profile.nic_number || '',
       location: profile.location || '',
       home_address: profile.home_address || '',
       gender: (profile.gender || '').toUpperCase(),
       date_of_birth: profile.date_of_birth ? String(profile.date_of_birth).slice(0, 10) : '',
       willing_to_live_in: profile.willing_to_live_in ? 'true' : 'false',
+      roles: parseRoles(profile.role),
     },
     files: {
       profile_picture: null,
@@ -834,13 +959,19 @@ const StaffDetailPageV2 = () => {
       setEditModal(p => ({ ...p, error: 'Staff code and full name are required.' }));
       return;
     }
+    if (!form.roles || form.roles.length === 0) {
+      setEditModal(p => ({ ...p, error: 'Select at least one role.' }));
+      return;
+    }
     setEditModal(p => ({ ...p, saving: true, error: '' }));
     try {
       const fd = new FormData();
       Object.entries(form).forEach(([key, value]) => {
+        if (key === 'roles') return; // sent separately as JSON below
         // Skip blanks so the backend keeps the existing value instead of wiping it
         if (String(value).trim() !== '') fd.append(key, String(value).trim());
       });
+      fd.append('roles', JSON.stringify(form.roles));
       if (files.profile_picture) fd.append('profile_picture', files.profile_picture);
       if (files.nic_front) fd.append('nic_front', files.nic_front);
       if (files.nic_back) fd.append('nic_back', files.nic_back);
@@ -978,6 +1109,7 @@ const StaffDetailPageV2 = () => {
               <Field label="NIC number" value={profile.nic_number} mono />
               <Field label="Full name" value={profile.full_name} />
               <Field label="Designation" value={profile.designation} />
+              <Field label="Roles" value={formatRoles(profile.role)} />
               <Field label="Email" value={profile.email} />
               <Field label="Phone" value={profile.mobile_number} />
               <Field label="Location" value={profile.location || profile.home_address} />
@@ -987,6 +1119,8 @@ const StaffDetailPageV2 = () => {
                 color={String(profile.verification_status || '').toLowerCase() === 'verified' ? '#059669' : undefined}
               />
               <Field label="Willing to live in" value={profile.willing_to_live_in ? 'Yes' : 'No'} />
+              <Field label="Experience" value={EXPERIENCE_LEVEL_LABELS[profile.experience_level] || '-'} />
+              <Field label="Qualifications" value={profile.qualifications} />
               <Field label="Member since" value={formatDate(profile.created_at)} />
               <Field label="Average rating" value={averageRating ? `${averageRating.toFixed(1)} / 5` : '-'} />
               <Field label="Total reviews" value={totalReviews || '-'} />
@@ -1015,6 +1149,29 @@ const StaffDetailPageV2 = () => {
               {statusUpdating && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               {isActive ? 'Deactivate account' : 'Reactivate account'}
             </button>
+
+            <div className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border mt-3 ${activeStatus === 'unavailable' ? 'bg-slate-50 border-slate-200' : 'bg-emerald-50 border-emerald-100'}`}>
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${getSM(profile.current_status).dot}`} />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold text-slate-900">Availability: {profile.current_status || 'Unknown'}</div>
+                <div className="text-xs text-slate-500 mt-0.5">
+                  {activeStatus === 'unavailable'
+                    ? "Won't be offered new bookings until marked available."
+                    : 'Normally controlled automatically by booking assignments.'}
+                </div>
+              </div>
+              {activeStatus === 'unavailable' && (
+                <button
+                  type="button"
+                  onClick={handleMarkAvailable}
+                  disabled={availabilityUpdating}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold border border-emerald-200 text-emerald-700 rounded-lg hover:bg-emerald-50 transition-colors disabled:opacity-60 flex-shrink-0"
+                >
+                  {availabilityUpdating && <Loader2 className="w-3 h-3 animate-spin" />}
+                  Mark Available
+                </button>
+              )}
+            </div>
           </CardBody>
         </Card>
 
@@ -1996,196 +2153,227 @@ const StaffDetailPageV2 = () => {
 
   // ── edit profile modal ──────────────────────────────────────────────────────
   const editField = (key, value) => setEditModal(p => ({ ...p, form: { ...p.form, [key]: value } }));
-  const editInputCls = 'w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-100';
-
-  const EditFileField = ({ label, fileKey, currentUrl, accept = 'image/*,.pdf' }) => {
-    const selected = editModal.files[fileKey];
-    return (
-      <div>
-        <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
-        <div className="flex items-center gap-2">
-          <label className="flex-1 flex items-center gap-2 rounded-xl border border-dashed border-slate-300 px-3 py-2.5 text-xs text-slate-500 cursor-pointer hover:border-blue-400 hover:bg-blue-50/40 transition-colors">
-            <Upload className="w-3.5 h-3.5 flex-shrink-0 text-slate-400" />
-            <span className="truncate">
-              {selected ? selected.name : currentUrl ? 'Replace file...' : 'Upload file...'}
-            </span>
-            <input
-              type="file"
-              accept={accept}
-              className="hidden"
-              onChange={(e) => editSetFile(fileKey, e.target.files?.[0] || null)}
-            />
-          </label>
-          {currentUrl && (
-            <button
-              type="button"
-              onClick={() => window.open(currentUrl, '_blank')}
-              title="View current file"
-              className="inline-flex items-center justify-center w-9 h-9 flex-shrink-0 rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors"
-            >
-              <Eye className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  };
+  const editToggleRole = (roleKey) => setEditModal(p => {
+    const has = p.form.roles.includes(roleKey);
+    return {
+      ...p,
+      form: {
+        ...p.form,
+        roles: has ? p.form.roles.filter(r => r !== roleKey) : [...p.form.roles, roleKey],
+      },
+    };
+  });
+  const editInputCls = 'w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100 bg-white';
 
   const renderEditProfileModal = () => !editModal.isOpen ? null : (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-start gap-3 mb-5">
-          <div className="p-2 bg-blue-100 rounded-xl">
-            <Pencil className="h-5 w-5 text-blue-600" />
-          </div>
-          <div>
-            <h3 className="text-lg font-bold text-slate-900">Edit Staff Information</h3>
-            <p className="text-sm text-slate-500">Changes to email or mobile number also update their login credentials.</p>
-          </div>
-        </div>
-        {editModal.error && (
-          <div className="mb-4 bg-rose-50 border border-rose-200 text-rose-700 px-3 py-2 rounded-xl text-sm flex items-center gap-2">
-            <AlertCircle className="h-4 w-4 flex-shrink-0" /> {editModal.error}
-          </div>
-        )}
-        <div className="space-y-3 mb-5">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Staff Code <span className="text-rose-500">*</span></label>
-              <input value={editModal.form.staff_code} onChange={e => editField('staff_code', e.target.value)}
-                placeholder="e.g. VC-0042" className={editInputCls} />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">NIC Number</label>
-              <input value={editModal.form.nic_number} onChange={e => editField('nic_number', e.target.value)}
-                placeholder="e.g. 199012345678" className={editInputCls} />
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">Full Name <span className="text-rose-500">*</span></label>
-            <input value={editModal.form.full_name} onChange={e => editField('full_name', e.target.value)}
-              placeholder="e.g. Nimal Silva" className={editInputCls} />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Email</label>
-              <input type="email" value={editModal.form.email} onChange={e => editField('email', e.target.value)}
-                placeholder="e.g. nimal@example.com" className={editInputCls} />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Mobile Number</label>
-              <PhoneInput value={editModal.form.mobile_number} onChange={e => editField('mobile_number', e.target.value)}
-                placeholder="e.g. 0771234567" />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Designation</label>
-              <input value={editModal.form.designation} onChange={e => editField('designation', e.target.value)}
-                placeholder="e.g. NURSE" className={editInputCls} />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Gender</label>
-              <select value={editModal.form.gender} onChange={e => editField('gender', e.target.value)} className={editInputCls}>
-                <option value="">—</option>
-                <option value="MALE">Male</option>
-                <option value="FEMALE">Female</option>
-                <option value="OTHER">Other</option>
-              </select>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Date of Birth</label>
-              <DateInput value={editModal.form.date_of_birth} onChange={e => editField('date_of_birth', e.target.value)}
-                className={editInputCls} />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Willing to Live In</label>
-              <select value={editModal.form.willing_to_live_in} onChange={e => editField('willing_to_live_in', e.target.value)} className={editInputCls}>
-                <option value="true">Yes</option>
-                <option value="false">No</option>
-              </select>
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">Location</label>
-            <input value={editModal.form.location} onChange={e => editField('location', e.target.value)}
-              placeholder="e.g. Colombo" className={editInputCls} />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">Home Address</label>
-            <input value={editModal.form.home_address} onChange={e => editField('home_address', e.target.value)}
-              placeholder="e.g. 45/A, Galle Road, Dehiwala" className={editInputCls} />
-          </div>
+    <div className="fixed inset-0 z-50 flex">
+      {/* Backdrop */}
+      <div className="flex-1 bg-black/30" onClick={() => !editModal.saving && setEditModal(p => ({ ...p, isOpen: false }))} />
 
-          <div className="pt-2 border-t border-slate-100">
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2.5">Profile photo</p>
-            <EditFileField label="Profile picture" fileKey="profile_picture" currentUrl={profile.profile_picture_url} />
-          </div>
-
-          <div className="pt-2 border-t border-slate-100">
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2.5">Identity documents</p>
-            <div className="grid grid-cols-2 gap-3">
-              <EditFileField label="NIC Front" fileKey="nic_front" currentUrl={profile.nic_front_url} />
-              <EditFileField label="NIC Back" fileKey="nic_back" currentUrl={profile.nic_back_url} />
+      {/* Panel */}
+      <div className="w-full max-w-xl bg-white flex flex-col shadow-2xl overflow-hidden">
+        {/* Drawer header */}
+        <div className="flex items-start justify-between gap-3 px-6 py-4 border-b border-slate-200 flex-shrink-0">
+          <div className="flex items-start gap-3">
+            <div className="p-2 bg-blue-50 rounded-lg mt-0.5">
+              <Pencil className="h-4 w-4 text-blue-600" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900">Edit Staff Information</h3>
+              <p className="text-xs text-slate-500 mt-0.5">Changes to email or mobile number also update their login credentials.</p>
             </div>
           </div>
-
-          <div className="pt-2 border-t border-slate-100">
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2.5">Compliance documents</p>
-            <div className="grid grid-cols-2 gap-3">
-              <EditFileField label="Grama Niladhari Report" fileKey="grama_niladhari" currentUrl={profile.grama_niladhari_url} />
-              <EditFileField label="Police Report" fileKey="police_report" currentUrl={profile.police_report_url} />
-            </div>
-          </div>
-
-          <div className="pt-2 border-t border-slate-100">
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2.5">Supporting documents</p>
-            {safeArray(profile.document_urls).length > 0 && (
-              <div className="flex flex-col gap-1.5 mb-2.5">
-                {safeArray(profile.document_urls).map((url, i) => {
-                  const marked = editModal.removeDocumentUrls.includes(url);
-                  return (
-                    <div key={url + i} className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs ${marked ? 'border-red-200 bg-red-50' : 'border-slate-200 bg-slate-50'}`}>
-                      <button type="button" onClick={() => window.open(url, '_blank')} className={`truncate font-medium ${marked ? 'text-red-500 line-through' : 'text-slate-700 hover:text-blue-600'}`}>
-                        Document {i + 1}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => editToggleRemoveDoc(url)}
-                        className={`flex-shrink-0 text-xs font-semibold px-2 py-0.5 rounded ${marked ? 'text-emerald-700 bg-emerald-100 hover:bg-emerald-200' : 'text-red-600 bg-red-100 hover:bg-red-200'}`}
-                      >
-                        {marked ? 'Undo' : 'Remove'}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            <label className="flex items-center gap-2 rounded-xl border border-dashed border-slate-300 px-3 py-2.5 text-xs text-slate-500 cursor-pointer hover:border-blue-400 hover:bg-blue-50/40 transition-colors">
-              <Upload className="w-3.5 h-3.5 flex-shrink-0 text-slate-400" />
-              <span className="truncate">
-                {editModal.files.documents.length > 0
-                  ? `${editModal.files.documents.length} new file(s) selected`
-                  : 'Add supporting document(s)...'}
-              </span>
-              <input
-                type="file"
-                multiple
-                accept="image/*,.pdf"
-                className="hidden"
-                onChange={(e) => setEditModal(p => ({ ...p, files: { ...p.files, documents: Array.from(e.target.files || []) } }))}
-              />
-            </label>
-          </div>
-        </div>
-        <div className="flex gap-3">
           <button
             type="button"
             onClick={() => setEditModal(p => ({ ...p, isOpen: false }))}
             disabled={editModal.saving}
-            className="flex-1 rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-200 transition-all disabled:opacity-60"
+            className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors disabled:opacity-50 flex-shrink-0"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Scrollable form body */}
+        <div className="flex-1 overflow-y-auto">
+          {editModal.error && (
+            <div className="mx-6 mt-4 px-4 py-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 flex-shrink-0" /> {editModal.error}
+            </div>
+          )}
+
+          {/* Basic information */}
+          <EditSectionHeader title="Basic Information" />
+          <div className="px-6 pt-4 pb-2 space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <EditField label="Staff Code" required>
+                <input value={editModal.form.staff_code} onChange={e => editField('staff_code', e.target.value)}
+                  placeholder="e.g. VC-0042" className={editInputCls} />
+              </EditField>
+              <EditField label="NIC Number">
+                <input value={editModal.form.nic_number} onChange={e => editField('nic_number', e.target.value)}
+                  placeholder="e.g. 199012345678" className={editInputCls} />
+              </EditField>
+            </div>
+            <EditField label="Full Name" required>
+              <input value={editModal.form.full_name} onChange={e => editField('full_name', e.target.value)}
+                placeholder="e.g. Nimal Silva" className={editInputCls} />
+            </EditField>
+            <div className="grid grid-cols-2 gap-3">
+              <EditField label="Email">
+                <input type="email" value={editModal.form.email} onChange={e => editField('email', e.target.value)}
+                  placeholder="e.g. nimal@example.com" className={editInputCls} />
+              </EditField>
+              <EditField label="Mobile Number">
+                <PhoneInput value={editModal.form.mobile_number} onChange={e => editField('mobile_number', e.target.value)}
+                  placeholder="e.g. 0771234567" />
+              </EditField>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <EditField label="Gender">
+                <select value={editModal.form.gender} onChange={e => editField('gender', e.target.value)} className={editInputCls}>
+                  <option value="">—</option>
+                  <option value="MALE">Male</option>
+                  <option value="FEMALE">Female</option>
+                  <option value="OTHER">Other</option>
+                </select>
+              </EditField>
+              <EditField label="Date of Birth">
+                <DateInput value={editModal.form.date_of_birth} onChange={e => editField('date_of_birth', e.target.value)}
+                  className={editInputCls} />
+              </EditField>
+            </div>
+          </div>
+
+          {/* Role & employment */}
+          <EditSectionHeader title="Role & Employment" sub="Roles control what this staff member can be assigned to." />
+          <div className="px-6 pt-4 pb-2 space-y-3">
+            <EditField label="Roles" required>
+              <div className="grid grid-cols-2 gap-2">
+                {Object.entries(ROLE_LABELS).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => editToggleRole(key)}
+                    className={`px-3 py-2 rounded-lg border text-xs font-medium transition-all text-left ${
+                      editModal.form.roles.includes(key)
+                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        : 'border-slate-200 text-slate-600 hover:border-slate-300 bg-white'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {editModal.form.roles.length > 0 && (
+                <p className="text-xs text-slate-400 mt-2">
+                  Selected: {editModal.form.roles.map(r => ROLE_LABELS[r] || r).join(', ')}
+                </p>
+              )}
+            </EditField>
+            <div className="grid grid-cols-2 gap-3">
+              <EditField label="Designation">
+                <input value={editModal.form.designation} onChange={e => editField('designation', e.target.value)}
+                  placeholder="e.g. Senior Nurse" className={editInputCls} />
+              </EditField>
+              <EditField label="Willing to Live In">
+                <select value={editModal.form.willing_to_live_in} onChange={e => editField('willing_to_live_in', e.target.value)} className={editInputCls}>
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </EditField>
+            </div>
+            <EditField label="Experience Level">
+              <select value={editModal.form.experience_level} onChange={e => editField('experience_level', e.target.value)} className={editInputCls}>
+                <option value="">— Not specified —</option>
+                {Object.entries(EXPERIENCE_LEVEL_LABELS).map(([key, label]) => (
+                  <option key={key} value={key}>{label}</option>
+                ))}
+              </select>
+            </EditField>
+            <EditField label="Qualifications">
+              <textarea value={editModal.form.qualifications} onChange={e => editField('qualifications', e.target.value)}
+                placeholder="Describe qualifications, certifications, and relevant training."
+                rows={3} className={`${editInputCls} resize-none`} />
+            </EditField>
+          </div>
+
+          {/* Address & location */}
+          <EditSectionHeader title="Address & Location" />
+          <div className="px-6 pt-4 pb-2 space-y-3">
+            <EditField label="Location">
+              <input value={editModal.form.location} onChange={e => editField('location', e.target.value)}
+                placeholder="e.g. Colombo" className={editInputCls} />
+            </EditField>
+            <EditField label="Home Address">
+              <input value={editModal.form.home_address} onChange={e => editField('home_address', e.target.value)}
+                placeholder="e.g. 45/A, Galle Road, Dehiwala" className={editInputCls} />
+            </EditField>
+          </div>
+
+          {/* Documents */}
+          <EditSectionHeader title="Documents" sub="Uploading a new file replaces the current one." />
+          <div className="px-6 pt-4 pb-6 space-y-4">
+            <EditFileField label="Profile picture" selectedFile={editModal.files.profile_picture} currentUrl={profile.profile_picture_url} onChange={(file) => editSetFile('profile_picture', file)} />
+
+            <div className="grid grid-cols-2 gap-3">
+              <EditFileField label="NIC Front" selectedFile={editModal.files.nic_front} currentUrl={profile.nic_front_url} onChange={(file) => editSetFile('nic_front', file)} />
+              <EditFileField label="NIC Back" selectedFile={editModal.files.nic_back} currentUrl={profile.nic_back_url} onChange={(file) => editSetFile('nic_back', file)} />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <EditFileField label="Grama Niladhari Report" selectedFile={editModal.files.grama_niladhari} currentUrl={profile.grama_niladhari_url} onChange={(file) => editSetFile('grama_niladhari', file)} />
+              <EditFileField label="Police Report" selectedFile={editModal.files.police_report} currentUrl={profile.police_report_url} onChange={(file) => editSetFile('police_report', file)} />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Supporting Documents</label>
+              {safeArray(profile.document_urls).length > 0 && (
+                <div className="flex flex-col gap-1.5 mb-2.5">
+                  {safeArray(profile.document_urls).map((url, i) => {
+                    const marked = editModal.removeDocumentUrls.includes(url);
+                    return (
+                      <div key={url + i} className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs ${marked ? 'border-red-200 bg-red-50' : 'border-slate-200 bg-slate-50'}`}>
+                        <button type="button" onClick={() => window.open(url, '_blank')} className={`truncate font-medium ${marked ? 'text-red-500 line-through' : 'text-slate-700 hover:text-blue-600'}`}>
+                          Document {i + 1}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => editToggleRemoveDoc(url)}
+                          className={`flex-shrink-0 text-xs font-semibold px-2 py-0.5 rounded ${marked ? 'text-emerald-700 bg-emerald-100 hover:bg-emerald-200' : 'text-red-600 bg-red-100 hover:bg-red-200'}`}
+                        >
+                          {marked ? 'Undo' : 'Remove'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <label className="flex items-center gap-2 rounded-lg border border-dashed border-slate-300 px-3 py-2.5 text-xs text-slate-500 cursor-pointer hover:border-blue-400 hover:bg-blue-50/40 transition-colors">
+                <Upload className="w-3.5 h-3.5 flex-shrink-0 text-slate-400" />
+                <span className="truncate">
+                  {editModal.files.documents.length > 0
+                    ? `${editModal.files.documents.length} new file(s) selected`
+                    : 'Add supporting document(s)...'}
+                </span>
+                <input
+                  type="file"
+                  multiple
+                  accept="image/*,.pdf"
+                  className="hidden"
+                  onChange={(e) => setEditModal(p => ({ ...p, files: { ...p.files, documents: Array.from(e.target.files || []) } }))}
+                />
+              </label>
+            </div>
+          </div>
+        </div>
+
+        {/* Drawer footer */}
+        <div className="flex items-center gap-2 px-6 py-4 border-t border-slate-200 bg-slate-50 flex-shrink-0">
+          <button
+            type="button"
+            onClick={() => setEditModal(p => ({ ...p, isOpen: false }))}
+            disabled={editModal.saving}
+            className="flex-1 px-4 py-2 border border-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-100 transition-colors disabled:opacity-60"
           >
             Cancel
           </button>
@@ -2193,10 +2381,10 @@ const StaffDetailPageV2 = () => {
             type="button"
             onClick={handleEditProfileSave}
             disabled={editModal.saving}
-            className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500 transition-all shadow-lg shadow-blue-600/20 disabled:opacity-60"
+            className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {editModal.saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            Save Changes
+            {editModal.saving ? 'Saving…' : 'Save Changes'}
           </button>
         </div>
       </div>
@@ -2276,6 +2464,36 @@ const StaffDetailPageV2 = () => {
           </button>
         </div>
       </div>
+
+      {/* PENDING MIGRATION DISCLAIMER */}
+      {isPendingMigration && (
+        <div className="flex items-start gap-3 px-4 py-3.5 mb-5 rounded-lg border border-amber-200 bg-amber-50">
+          <AlertCircle className="w-4.5 h-4.5 text-amber-500 flex-shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-amber-900">Migration incomplete</p>
+            <p className="text-xs text-amber-700 mt-0.5">
+              This profile was imported from legacy data and is still marked <span className="font-mono font-semibold">Pending Migration</span>.
+              It will only be activated once every field below has been filled in.
+            </p>
+            {missingMigrationFields.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2.5">
+                {missingMigrationFields.map(label => (
+                  <span key={label} className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+                    {label}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={openEditProfileModal}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors flex-shrink-0"
+          >
+            <Pencil className="w-3 h-3" /> Complete Profile
+          </button>
+        </div>
+      )}
 
       {/* HERO */}
       <div className="flex items-start gap-4 flex-wrap mb-5">

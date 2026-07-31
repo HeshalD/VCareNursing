@@ -97,6 +97,7 @@ import ClientPaymentsLedgerPage from './modules/admin/payments/ClientPaymentsLed
 import StaffSalariesPage from './modules/admin/salaries/StaffSalariesPage';
 import SalarySheetLedgerPage from './modules/admin/salaries/SalarySheetLedgerPage';
 import StaffPermissionsPage from './modules/admin/permissions/StaffPermissionsPage';
+import CustomRolesPage from './modules/admin/permissions/CustomRolesPage';
 import InternalStaffPage from './modules/admin/internal_staff/InternalStaffPage';
 import ActiveSessionsPage from './modules/admin/active_sessions/ActiveSessionsPage';
 import SalespersonsPage from './modules/admin/salespersons/SalespersonsPage';
@@ -419,6 +420,11 @@ function App() {
             <Route path="/admin/permissions" element={
               <AdminAuthProvider>
                 <StaffPermissionsPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/roles" element={
+              <AdminAuthProvider>
+                <CustomRolesPage />
               </AdminAuthProvider>
             } />
             <Route path="/admin/internal-staff" element={

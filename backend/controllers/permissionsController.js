@@ -66,7 +66,24 @@ exports.getUserPermissions = async (req, res) => {
        ORDER BY permission_key`,
       [userId]
     );
-    res.json({ user_id: userId, permissions: result.rows });
+
+    const roleRes = await db.query(
+      `SELECT cr.id, cr.name, crp.permission_key
+       FROM internal_staff ist
+       JOIN custom_roles cr ON cr.id = ist.custom_role_id
+       LEFT JOIN custom_role_permissions crp ON crp.role_id = cr.id
+       WHERE ist.user_id = $1`,
+      [userId]
+    );
+    const role = roleRes.rows.length ? { id: roleRes.rows[0].id, name: roleRes.rows[0].name } : null;
+    const rolePermissions = roleRes.rows.map(r => r.permission_key).filter(Boolean);
+
+    res.json({
+      user_id: userId,
+      role,
+      permissions: result.rows,
+      role_permissions: rolePermissions,
+    });
   } catch (err) {
     console.error('getUserPermissions error:', err);
     res.status(500).json({ message: 'Internal server error' });
@@ -175,18 +192,20 @@ exports.grantPermission = async (req, res) => {
 };
 
 // GET /api/permissions/admin-users
-// Lists COORDINATOR / ACCOUNTS internal staff who have a linked login account.
+// Lists every internal staff member who has a linked login account, regardless of
+// their role — the JOIN to users already guarantees a login exists.
 // Joins internal_staff → users so we get full_name from the HR record.
 exports.listAdminUsers = async (req, res) => {
   try {
     const result = await db.query(
       `SELECT u.user_id, ist.full_name, u.mobile_number, u.role,
+              ist.custom_role_id, cr.name AS custom_role_name,
               COUNT(sp.permission_key)::int AS permission_count
        FROM internal_staff ist
        JOIN users u ON u.user_id = ist.user_id
        LEFT JOIN staff_permissions sp ON sp.user_id = u.user_id
-       WHERE ist.role IN ('COORDINATOR', 'ACCOUNTS', 'SALES')
-       GROUP BY u.user_id, ist.full_name, u.mobile_number, u.role
+       LEFT JOIN custom_roles cr ON cr.id = ist.custom_role_id
+       GROUP BY u.user_id, ist.full_name, u.mobile_number, u.role, ist.custom_role_id, cr.name
        ORDER BY ist.full_name`
     );
     res.json({ users: result.rows });

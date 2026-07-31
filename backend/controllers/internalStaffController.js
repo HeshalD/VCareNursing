@@ -2,9 +2,10 @@ const db = require('../config/db');
 const bcrypt = require('bcryptjs');
 const { logActivity } = require('../utils/activityLogger');
 const { toE164, isValidPhone } = require('../utils/phone');
+const { invalidatePermissionCache } = require('../middleware/authMiddleware');
 
-const LOGIN_ROLES = new Set(['COORDINATOR', 'ACCOUNTS', 'SALES', 'SUPER_ADMIN']);
-const SELECTABLE = 'id, user_id, full_name, role, email, phone, base_salary, joined_date, status, address, total_sales_amount, bookings_brought_count, created_at, updated_at';
+const LOGIN_ROLES = new Set(['COORDINATOR', 'ACCOUNTS', 'SALES', 'SUPER_ADMIN', 'CUSTOM_ROLE', 'RECRUITER']);
+const SELECTABLE = 'id, user_id, full_name, role, email, phone, base_salary, joined_date, status, address, total_sales_amount, bookings_brought_count, custom_role_id, created_at, updated_at';
 
 exports.list = async (req, res) => {
   try {
@@ -19,17 +20,21 @@ exports.list = async (req, res) => {
 };
 
 exports.create = async (req, res) => {
-  const { full_name, role, email, base_salary, joined_date, status, address, password } = req.body;
+  const { full_name, role, email, base_salary, joined_date, status, address, password, custom_role_id } = req.body;
   const rawPhone = req.body.phone;
 
   if (!full_name?.trim() || !role?.trim() || !email?.trim()) {
     return res.status(400).json({ message: 'full_name, role, and email are required' });
   }
 
-  const needsLogin = LOGIN_ROLES.has(role.trim().toUpperCase());
+  const roleUpper = role.trim().toUpperCase();
+  const needsLogin = LOGIN_ROLES.has(roleUpper);
   if (needsLogin) {
-    if (!rawPhone?.trim()) return res.status(400).json({ message: 'Phone is required for COORDINATOR, ACCOUNTS, SALES, and SUPER_ADMIN roles' });
-    if (!password?.trim()) return res.status(400).json({ message: 'Password is required for COORDINATOR, ACCOUNTS, SALES, and SUPER_ADMIN roles' });
+    if (!rawPhone?.trim()) return res.status(400).json({ message: 'Phone is required for this role (used as login mobile number)' });
+    if (!password?.trim()) return res.status(400).json({ message: 'Password is required for this role' });
+  }
+  if (roleUpper === 'CUSTOM_ROLE' && !custom_role_id) {
+    return res.status(400).json({ message: 'Select a custom role' });
   }
   if (rawPhone?.trim() && !isValidPhone(rawPhone)) {
     return res.status(400).json({ message: 'Enter a valid phone number.' });
@@ -43,19 +48,18 @@ exports.create = async (req, res) => {
     let userId = null;
     if (needsLogin) {
       const hash = await bcrypt.hash(password.trim(), 10);
-      const roleEnum = role.trim().toUpperCase();
       const userResult = await client.query(
         `INSERT INTO users (mobile_number, password_hash, email, role, is_active)
          VALUES ($1, $2, $3, ARRAY[$4::user_role_enum], true)
          RETURNING user_id`,
-        [phone, hash, email.trim(), roleEnum]
+        [phone, hash, email.trim(), roleUpper]
       );
       userId = userResult.rows[0].user_id;
     }
 
     const result = await client.query(
-      `INSERT INTO internal_staff (full_name, role, email, phone, base_salary, joined_date, status, address, user_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO internal_staff (full_name, role, email, phone, base_salary, joined_date, status, address, user_id, custom_role_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING ${SELECTABLE}`,
       [
         full_name.trim(),
@@ -67,6 +71,7 @@ exports.create = async (req, res) => {
         status || 'Active',
         address?.trim() || null,
         userId,
+        custom_role_id || null,
       ]
     );
 
@@ -96,11 +101,14 @@ exports.create = async (req, res) => {
 
 exports.update = async (req, res) => {
   const { id } = req.params;
-  const allowed = ['full_name', 'role', 'email', 'phone', 'base_salary', 'joined_date', 'status', 'address'];
+  const allowed = ['full_name', 'role', 'email', 'phone', 'base_salary', 'joined_date', 'status', 'address', 'custom_role_id'];
   const body = req.body;
 
   if (body.phone && String(body.phone).trim() && !isValidPhone(body.phone)) {
     return res.status(400).json({ message: 'Enter a valid phone number.' });
+  }
+  if (body.role?.trim().toUpperCase() === 'CUSTOM_ROLE' && !body.custom_role_id) {
+    return res.status(400).json({ message: 'Select a custom role' });
   }
 
   const setClauses = [];
@@ -134,6 +142,10 @@ exports.update = async (req, res) => {
     );
     if (!result.rows.length) {
       return res.status(404).json({ message: 'Staff member not found' });
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, 'custom_role_id') && result.rows[0].user_id) {
+      invalidatePermissionCache(result.rows[0].user_id);
     }
 
     logActivity({

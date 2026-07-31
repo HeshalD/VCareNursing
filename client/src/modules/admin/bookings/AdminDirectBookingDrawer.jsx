@@ -104,7 +104,7 @@ const ClientSelect = ({ clients, value, onChange, disabled }) => {
         }`}
       >
         <span className={selected ? 'text-slate-800' : 'text-slate-400'}>
-          {selected ? `${selected.full_name} — ${selected.mobile_number}` : 'Select a client…'}
+          {selected ? `${selected.full_name} — ${selected.mobile_number || 'no phone on file'}` : 'Select a client…'}
         </span>
         <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
       </button>
@@ -133,7 +133,7 @@ const ClientSelect = ({ clients, value, onChange, disabled }) => {
                     c.client_profile_id === value ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-800'
                   }`}
                 >
-                  {c.full_name} — {c.mobile_number}
+                  {c.full_name} — {c.mobile_number || 'no phone on file'}
                 </button>
               ))
             )}

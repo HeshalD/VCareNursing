@@ -1,5 +1,6 @@
 const XLSX = require('xlsx');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const db = require('../config/db');
 const { creditStaffSalary } = require('../services/billingService');
 const { creditRecruiterForStaff } = require('../services/recruiterService');
@@ -155,10 +156,24 @@ function normalizeStaffRow(row) {
 
 function normalizeClientRow(row) {
   const errors = [];
-  if (!String(row.mobile_number || '').trim()) errors.push('mobile_number is required');
-  const mobile_number = normalizePhoneField(row.mobile_number, 'mobile_number', errors);
-  const full_name = String(row.full_name || '').trim();
-  if (!full_name) errors.push('full_name is required');
+  const client_type = row.client_type ? String(row.client_type).trim().toUpperCase() : 'INDIVIDUAL';
+  const isCorporateProxy = client_type === 'CORPORATE_PROXY';
+  const company_name = row.company_name ? String(row.company_name).trim() : null;
+
+  // A CORPORATE_PROXY row can be created before the company's contact person is
+  // known — company_name anchors the record instead. Individual clients still
+  // need a real mobile_number/full_name.
+  const rawMobile = String(row.mobile_number || '').trim();
+  if (!isCorporateProxy && !rawMobile) errors.push('mobile_number is required');
+  // normalizePhoneField no-ops on a blank value (returns '' with no error pushed).
+  const mobile_number = normalizePhoneField(row.mobile_number, 'mobile_number', errors) || null;
+
+  let full_name = String(row.full_name || '').trim();
+  if (!isCorporateProxy && !full_name) errors.push('full_name is required');
+  if (isCorporateProxy && !company_name) errors.push('company_name is required when client_type is CORPORATE_PROXY');
+  // full_name stays NOT NULL in the DB — default it to company_name so every
+  // downstream consumer that assumes a non-empty full_name keeps working.
+  if (isCorporateProxy && !full_name) full_name = company_name || '';
 
   const gender = row.gender ? String(row.gender).trim().toUpperCase() : null;
   if (gender && !VALID_GENDERS.includes(gender)) errors.push(`gender must be one of ${VALID_GENDERS.join(', ')}`);
@@ -182,7 +197,9 @@ function normalizeClientRow(row) {
 
   const salesperson_email = row.salesperson_email ? String(row.salesperson_email).trim().toLowerCase() : null;
 
-  const onboarding_status = (gender && row.primary_address) ? 'ACTIVE' : 'PENDING_MIGRATION';
+  const onboarding_status = (isCorporateProxy && !mobile_number)
+    ? 'CONTACT_PENDING'
+    : ((gender && row.primary_address) ? 'ACTIVE' : 'PENDING_MIGRATION');
 
   return {
     errors,
@@ -190,8 +207,7 @@ function normalizeClientRow(row) {
       mobile_number, full_name, gender, honorific,
       email: row.email ? String(row.email).trim() : null,
       primary_address: row.primary_address ? String(row.primary_address).trim() : null,
-      client_type: row.client_type ? String(row.client_type).trim().toUpperCase() : 'INDIVIDUAL',
-      company_name: row.company_name ? String(row.company_name).trim() : null,
+      client_type, company_name,
       wallet_balance_opening: wallet_balance_opening || null,
       reg_fee_paid, reg_fee_amount: reg_fee_amount || null, reg_fee_paid_date,
       salesperson_email,
@@ -487,7 +503,57 @@ async function createBackfilledQuoteForBooking(client, { clientId, patientFullNa
 
 // ─── Preview (dry run, no writes) ───────────────────────────────────────────
 
-exports.previewImport = async (req, res) => {
+// ─── Async job progress tracking (in-memory; single-process server) ────────
+// Preview/commit process rows sequentially with a DB round-trip per row, so
+// large files take a while. Rather than holding the HTTP request open, the
+// route responds immediately with a job id and runs the work in the
+// background; the client polls getImportJobProgress for real row counts.
+const importJobs = new Map();
+
+function createImportJob(total) {
+  const jobId = crypto.randomUUID();
+  importJobs.set(jobId, { total, processed: 0, status: 'running', result: null, message: null });
+  return jobId;
+}
+
+function stepImportJob(jobId) {
+  const job = importJobs.get(jobId);
+  if (job) job.processed += 1;
+}
+
+function finishImportJob(jobId, result) {
+  const job = importJobs.get(jobId);
+  if (!job) return;
+  job.status = 'done';
+  job.result = result;
+  job.processed = job.total;
+  setTimeout(() => importJobs.delete(jobId), 10 * 60 * 1000).unref();
+}
+
+function failImportJob(jobId, message) {
+  const job = importJobs.get(jobId);
+  if (!job) return;
+  job.status = 'error';
+  job.message = message;
+  setTimeout(() => importJobs.delete(jobId), 10 * 60 * 1000).unref();
+}
+
+exports.getImportJobProgress = (req, res) => {
+  const job = importJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ status: 'error', message: 'Job not found or expired' });
+  res.status(200).json({
+    status: 'success',
+    data: {
+      status: job.status,
+      total: job.total,
+      processed: job.processed,
+      result: job.status === 'done' ? job.result : null,
+      message: job.message,
+    },
+  });
+};
+
+exports.previewImport = (req, res) => {
   if (!req.file) return res.status(400).json({ status: 'error', message: 'No file uploaded' });
 
   let sheets;
@@ -497,6 +563,17 @@ exports.previewImport = async (req, res) => {
     return res.status(400).json({ status: 'error', message: `Could not read spreadsheet: ${err.message}` });
   }
 
+  const total = sheets.staff.length + sheets.clients.length + sheets.patients.length + sheets.bookings.length;
+  const jobId = createImportJob(total);
+  res.status(202).json({ status: 'success', data: { job_id: jobId, total } });
+
+  runPreviewJob(jobId, sheets).catch((err) => {
+    console.error('previewImport failed:', err);
+    failImportJob(jobId, err.message || 'Preview failed');
+  });
+};
+
+async function runPreviewJob(jobId, sheets) {
   const results = { staff: [], clients: [], patients: [], bookings: [] };
   // In-batch reservation maps so later sheets can reference earlier rows in this same file.
   const seenStaffMobiles = new Set();
@@ -504,6 +581,7 @@ exports.previewImport = async (req, res) => {
   const seenPatients = new Set(); // `${client_mobile}::${full_name_lower}`
 
   for (let i = 0; i < sheets.staff.length; i++) {
+    stepImportJob(jobId);
     const rowNumber = i + 2; // header is row 1
     const { errors, data } = normalizeStaffRow(sheets.staff[i]);
     if (!errors.length) {
@@ -523,21 +601,23 @@ exports.previewImport = async (req, res) => {
   }
 
   for (let i = 0; i < sheets.clients.length; i++) {
+    stepImportJob(jobId);
     const rowNumber = i + 2;
     const { errors, data } = normalizeClientRow(sheets.clients[i]);
     if (!errors.length) {
-      if (seenClientMobiles.has(data.mobile_number) || await mobileNumberTaken(db, data.mobile_number)) {
+      if (data.mobile_number && (seenClientMobiles.has(data.mobile_number) || await mobileNumberTaken(db, data.mobile_number))) {
         errors.push(`mobile_number ${data.mobile_number} already exists`);
       }
       if (data.salesperson_email && !(await findInternalStaffIdByEmail(db, data.salesperson_email))) {
         errors.push(`salesperson_email ${data.salesperson_email} does not match any internal staff member`);
       }
     }
-    if (!errors.length) seenClientMobiles.add(data.mobile_number);
+    if (!errors.length && data.mobile_number) seenClientMobiles.add(data.mobile_number);
     results.clients.push({ row_number: rowNumber, status: errors.length ? 'error' : 'ok', errors });
   }
 
   for (let i = 0; i < sheets.patients.length; i++) {
+    stepImportJob(jobId);
     const rowNumber = i + 2;
     const { errors, data } = normalizeCareProfileRow(sheets.patients[i]);
     if (!errors.length) {
@@ -552,6 +632,7 @@ exports.previewImport = async (req, res) => {
   const bookingRefPrimaries = new Map(); // booking_ref -> { client_mobile_number, patient_full_name, shift_count }
 
   for (let i = 0; i < sheets.bookings.length; i++) {
+    stepImportJob(jobId);
     const rowNumber = i + 2;
     const isAdditionalStaffRow = bookingAdditionalStaffFlags[i];
     const { errors, data } = normalizeBookingRow(sheets.bookings[i], { isAdditionalStaffRow });
@@ -616,19 +697,16 @@ exports.previewImport = async (req, res) => {
   }
 
   const countErrors = (arr) => arr.filter((r) => r.status === 'error').length;
-  res.status(200).json({
-    status: 'success',
-    data: {
-      results,
-      summary: {
-        staff: { total: results.staff.length, errors: countErrors(results.staff) },
-        clients: { total: results.clients.length, errors: countErrors(results.clients) },
-        patients: { total: results.patients.length, errors: countErrors(results.patients) },
-        bookings: { total: results.bookings.length, errors: countErrors(results.bookings) },
-      },
+  finishImportJob(jobId, {
+    results,
+    summary: {
+      staff: { total: results.staff.length, errors: countErrors(results.staff) },
+      clients: { total: results.clients.length, errors: countErrors(results.clients) },
+      patients: { total: results.patients.length, errors: countErrors(results.patients) },
+      bookings: { total: results.bookings.length, errors: countErrors(results.bookings) },
     },
   });
-};
+}
 
 // ─── Commit (actual writes, one transaction per row) ────────────────────────
 
@@ -710,7 +788,7 @@ async function commitClientRow(data, assignedBy) {
   try {
     await client.query('BEGIN');
 
-    if (await mobileNumberTaken(client, data.mobile_number)) {
+    if (data.mobile_number && await mobileNumberTaken(client, data.mobile_number)) {
       throw new Error(`mobile_number ${data.mobile_number} already exists`);
     }
 
@@ -1026,7 +1104,7 @@ async function commitBookingRow(data, clientId, patientId, staffId, assignedBy) 
   }
 }
 
-exports.commitImport = async (req, res) => {
+exports.commitImport = (req, res) => {
   if (!req.file) return res.status(400).json({ status: 'error', message: 'No file uploaded' });
 
   let sheets;
@@ -1036,6 +1114,17 @@ exports.commitImport = async (req, res) => {
     return res.status(400).json({ status: 'error', message: `Could not read spreadsheet: ${err.message}` });
   }
 
+  const total = sheets.staff.length + sheets.clients.length + sheets.patients.length + sheets.bookings.length;
+  const jobId = createImportJob(total);
+  res.status(202).json({ status: 'success', data: { job_id: jobId, total } });
+
+  runCommitJob(jobId, sheets, req).catch((err) => {
+    console.error('commitImport failed:', err);
+    failImportJob(jobId, err.message || 'Import failed');
+  });
+};
+
+async function runCommitJob(jobId, sheets, req) {
   const batchRes = await db.query(
     `INSERT INTO import_batches (uploaded_by, original_filename) VALUES ($1, $2) RETURNING import_batch_id`,
     [req.user?.user_id || null, req.file.originalname || null]
@@ -1049,6 +1138,7 @@ exports.commitImport = async (req, res) => {
   const patientIdByKey = new Map(); // `${client_mobile}::${full_name_lower}`
 
   for (let i = 0; i < sheets.staff.length; i++) {
+    stepImportJob(jobId);
     const rowNumber = i + 2;
     const { errors, data } = normalizeStaffRow(sheets.staff[i]);
     if (errors.length) {
@@ -1065,6 +1155,7 @@ exports.commitImport = async (req, res) => {
   }
 
   for (let i = 0; i < sheets.clients.length; i++) {
+    stepImportJob(jobId);
     const rowNumber = i + 2;
     const { errors, data } = normalizeClientRow(sheets.clients[i]);
     if (errors.length) {
@@ -1081,6 +1172,7 @@ exports.commitImport = async (req, res) => {
   }
 
   for (let i = 0; i < sheets.patients.length; i++) {
+    stepImportJob(jobId);
     const rowNumber = i + 2;
     const { errors, data } = normalizeCareProfileRow(sheets.patients[i]);
     if (errors.length) {
@@ -1102,6 +1194,7 @@ exports.commitImport = async (req, res) => {
   const bookingRefMap = new Map(); // booking_ref -> { booking_id, pattern_id, shift_count, client_mobile_number, patient_full_name }
 
   for (let i = 0; i < sheets.bookings.length; i++) {
+    stepImportJob(jobId);
     const rowNumber = i + 2;
     const isAdditionalStaffRow = bookingAdditionalStaffFlags[i];
     const { errors, data } = normalizeBookingRow(sheets.bookings[i], { isAdditionalStaffRow });
@@ -1196,8 +1289,8 @@ exports.commitImport = async (req, res) => {
     },
   }).catch(err => console.error('Activity log failed:', err));
 
-  res.status(200).json({ status: 'success', data: { import_batch_id: importBatchId, results } });
-};
+  finishImportJob(jobId, { import_batch_id: importBatchId, results });
+}
 
 exports.getBatch = async (req, res) => {
   const { id } = req.params;
@@ -1239,6 +1332,11 @@ exports.downloadTemplate = (req, res) => {
   const clientsSheet = XLSX.utils.aoa_to_sheet([
     ['mobile_number', 'full_name', 'honorific', 'gender', 'email', 'primary_address', 'client_type', 'company_name', 'wallet_balance_opening', 'reg_fee_paid', 'reg_fee_amount', 'reg_fee_paid_date', 'salesperson_email', 'legacy_overdue_balance'],
     ['0712345678', 'Perera', 'Mr.', 'MALE', '', 'Colombo 5', 'INDIVIDUAL', '', '5000', 'Y', '10000', '2025-01-15', 'sales@example.com', '2000'],
+    // For client_type=CORPORATE_PROXY, mobile_number/full_name/gender can be left
+    // blank if the company's contact person isn't known yet — company_name is the
+    // only required field in that case. Fill in the contact person's details later
+    // via the client's Edit Profile page once known.
+    ['', '', '', '', '', '', 'CORPORATE_PROXY', 'ABC Holdings (Pvt) Ltd', '', '', '', '', '', ''],
   ]);
   XLSX.utils.book_append_sheet(workbook, clientsSheet, SHEET_NAMES.clients);
 

@@ -13,6 +13,7 @@ router.use(protect);
 router.get('/template', requirePermission('VIEW_BULK_IMPORT'), ctrl.downloadTemplate);
 router.post('/preview', requirePermission('VIEW_BULK_IMPORT'), upload.single('file'), ctrl.previewImport);
 router.post('/commit', requirePermission('BULK_IMPORT_COMMIT'), upload.single('file'), ctrl.commitImport);
+router.get('/jobs/:jobId', requirePermission('VIEW_BULK_IMPORT'), ctrl.getImportJobProgress);
 router.get('/batches', requirePermission('VIEW_BULK_IMPORT'), ctrl.listBatches);
 router.get('/batches/:id', requirePermission('VIEW_BULK_IMPORT'), ctrl.getBatch);
 

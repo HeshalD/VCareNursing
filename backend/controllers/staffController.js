@@ -2528,10 +2528,19 @@ exports.updateStaffProfile = async (req, res) => {
         email,
         mobile_number: rawMobileNumber,
         role,
+        roles: rolesRaw,
         nic_number,
         staff_code,
+        experience_level,
         remove_document_urls
     } = req.body;
+
+    if (experience_level && !VALID_EXPERIENCE_LEVELS.includes(experience_level)) {
+        return res.status(400).json({
+            status: 'error',
+            message: `Invalid experience level. Must be one of: ${VALID_EXPERIENCE_LEVELS.join(', ')}`
+        });
+    }
 
     if (rawMobileNumber && !isValidPhone(rawMobileNumber)) {
         return res.status(400).json({ status: 'error', message: 'Enter a valid mobile number.' });
@@ -2574,25 +2583,41 @@ exports.updateStaffProfile = async (req, res) => {
             });
         }
 
-        // Validate and set role if provided
-        if (role) {
-            const userRole = role.toUpperCase();
-            const validRoles = ['NURSE', 'NANNY', 'CARETAKER', 'COORDINATOR', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'];
+        // Validate and set role(s) if provided. `roles` (JSON array, e.g. from a
+        // multi-select) takes priority over the legacy single `role` field, which
+        // some older callers still send.
+        let rolesToSet = null;
+        if (rolesRaw !== undefined) {
+            try {
+                rolesToSet = JSON.parse(rolesRaw);
+            } catch {
+                return res.status(400).json({ status: 'error', message: 'Invalid roles payload.' });
+            }
+            if (!Array.isArray(rolesToSet) || rolesToSet.length === 0) {
+                return res.status(400).json({ status: 'error', message: 'At least one role must be selected.' });
+            }
+            rolesToSet = rolesToSet.map(r => String(r).toUpperCase());
+        } else if (role) {
+            rolesToSet = [role.toUpperCase()];
+        }
 
-            if (!validRoles.includes(userRole)) {
+        if (rolesToSet) {
+            const validRoles = ['NURSE', 'NANNY', 'CARETAKER', 'COORDINATOR', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'];
+            const invalidRole = rolesToSet.find(r => !validRoles.includes(r));
+
+            if (invalidRole) {
                 return res.status(400).json({
                     status: 'error',
-                    message: 'Invalid role. Must be one of: NURSE, NANNY, CARETAKER, COORDINATOR, NURSING_ASSISTANT, PHYSIOTHERAPIST, COUNSELLOR'
+                    message: `Invalid role "${invalidRole}". Must be one of: ${validRoles.join(', ')}`
                 });
             }
 
-            // Update user role if provided
             const updateUserRoleQuery = `
-                UPDATE users 
+                UPDATE users
                 SET role = $1::user_role_enum[]
                 WHERE user_id = $2
             `;
-            await db.query(updateUserRoleQuery, [[userRole], existingStaff.user_id]);
+            await db.query(updateUserRoleQuery, [rolesToSet, existingStaff.user_id]);
         }
 
         // Validate date format if provided
@@ -2667,8 +2692,31 @@ exports.updateStaffProfile = async (req, res) => {
         const finalGramaNiladhari = uploadedGramaNiladhari || existingStaff.grama_niladhari_url;
         const finalPoliceReport = uploadedPoliceReport || existingStaff.police_report_url;
 
-        // Update staff profile
+        // Update staff profile.
+        // `completeness` mirrors the fields WorkerRegistrationPage.jsx's isFormValid()
+        // treats as required (minus mobile_number, which is NOT NULL on `users` already;
+        // grama_niladhari/police_report, which aren't collected on that form; and
+        // supporting documents, which admins don't need to chase for migration purposes).
+        // It's computed once via a CTE and reused for both status flips below so a
+        // PENDING_MIGRATION record only clears once every one of those fields is filled in.
         const updateQuery = `
+            WITH completeness AS (
+                SELECT (
+                    COALESCE($2, full_name) IS NOT NULL
+                    AND COALESCE($3, designation) IS NOT NULL
+                    AND COALESCE($4, qualifications) IS NOT NULL
+                    AND COALESCE($6, home_address) IS NOT NULL
+                    AND COALESCE($7, location) IS NOT NULL
+                    AND COALESCE($8, profile_picture_url) IS NOT NULL
+                    AND COALESCE($9, gender) IS NOT NULL
+                    AND COALESCE($11, date_of_birth) IS NOT NULL
+                    AND COALESCE($13, nic_number) IS NOT NULL
+                    AND COALESCE($14, nic_front_url) IS NOT NULL
+                    AND COALESCE($15, nic_back_url) IS NOT NULL
+                ) AS is_complete
+                FROM staff_profiles
+                WHERE staff_profile_id = $1
+            )
             UPDATE staff_profiles
             SET
                 full_name = COALESCE($2, full_name),
@@ -2686,7 +2734,21 @@ exports.updateStaffProfile = async (req, res) => {
                 nic_front_url = COALESCE($14, nic_front_url),
                 nic_back_url = COALESCE($15, nic_back_url),
                 grama_niladhari_url = COALESCE($16, grama_niladhari_url),
-                police_report_url = COALESCE($17, police_report_url)
+                police_report_url = COALESCE($17, police_report_url),
+                experience_level = COALESCE($18, experience_level),
+                onboarding_status = CASE
+                    WHEN onboarding_status = 'PENDING_MIGRATION'
+                     AND (SELECT is_complete FROM completeness)
+                    THEN 'ACTIVE'
+                    ELSE onboarding_status
+                END,
+                current_status = CASE
+                    WHEN onboarding_status = 'PENDING_MIGRATION'
+                     AND current_status = 'UNAVAILABLE'
+                     AND (SELECT is_complete FROM completeness)
+                    THEN 'AVAILABLE'
+                    ELSE current_status
+                END
             WHERE staff_profile_id = $1
             RETURNING
                 staff_profile_id,
@@ -2709,6 +2771,8 @@ exports.updateStaffProfile = async (req, res) => {
                 police_report_url,
                 current_status,
                 verification_status,
+                onboarding_status,
+                experience_level,
                 created_at
         `;
 
@@ -2729,7 +2793,8 @@ exports.updateStaffProfile = async (req, res) => {
             finalNicFront || null,
             finalNicBack || null,
             finalGramaNiladhari || null,
-            finalPoliceReport || null
+            finalPoliceReport || null,
+            experience_level || null
         ];
 
         const result = await db.query(updateQuery, updateValues);

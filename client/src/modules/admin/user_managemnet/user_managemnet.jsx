@@ -76,12 +76,14 @@ const ClientManagement = () => {
   const [activeTab, setActiveTab] = useState('All');
   const [search, setSearch] = useState('');
   const [pendingMigrationOnly, setPendingMigrationOnly] = useState(false);
+  const [contactPendingOnly, setContactPendingOnly] = useState(false);
 
   const [showDrawer, setShowDrawer] = useState(false);
   const [formData, setFormData] = useState(BLANK_FORM);
   const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState(null);
   const [formSuccess, setFormSuccess] = useState(null);
+  const [credentialsSent, setCredentialsSent] = useState(false);
 
   useEffect(() => { fetchClients(); }, []);
 
@@ -110,6 +112,7 @@ const ClientManagement = () => {
     setFormData(BLANK_FORM);
     setFormError(null);
     setFormSuccess(null);
+    setCredentialsSent(false);
     setShowDrawer(true);
   };
 
@@ -117,6 +120,7 @@ const ClientManagement = () => {
     setShowDrawer(false);
     setFormError(null);
     setFormSuccess(null);
+    setCredentialsSent(false);
   };
 
   const handleInput = (e) => {
@@ -131,7 +135,13 @@ const ClientManagement = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.full_name || !formData.mobile_number || !formData.gender) {
+    const isCorporate = formData.client_type === 'CORPORATE_PROXY';
+    if (isCorporate) {
+      if (!formData.company_name) {
+        setFormError('Company name is required for corporate clients.');
+        return;
+      }
+    } else if (!formData.full_name || !formData.mobile_number || !formData.gender) {
       setFormError('Please fill in all required fields.');
       return;
     }
@@ -140,10 +150,10 @@ const ClientManagement = () => {
     setFormSuccess(null);
     try {
       const payload = {
-        full_name: formData.full_name,
+        full_name: formData.full_name || undefined,
         email: formData.email || undefined,
-        mobile_number: formData.mobile_number,
-        gender: formData.gender,
+        mobile_number: formData.mobile_number || undefined,
+        gender: formData.gender || undefined,
         primary_address: formData.primary_address || undefined,
         client_type: formData.client_type || 'INDIVIDUAL',
         honorific: formData.honorific || undefined,
@@ -153,7 +163,12 @@ const ClientManagement = () => {
           : 'FULL_NAME',
       };
       const res = await apiClient.createClientProfile(payload);
-      setFormSuccess(`Temporary password: ${res.data?.tempPassword ?? '(check server)'}`);
+      setCredentialsSent(!!res.data?.tempPassword);
+      setFormSuccess(
+        res.data?.tempPassword
+          ? `Temporary password: ${res.data.tempPassword}`
+          : (res.message || 'Company client profile created. Add a mobile number later via Edit Profile to enable login.')
+      );
       fetchClients();
     } catch (err) {
       setFormError(err.response?.data?.message || 'Failed to create client.');
@@ -163,15 +178,17 @@ const ClientManagement = () => {
   };
 
   const pendingMigrationCount = clients.filter(c => c.onboarding_status === 'PENDING_MIGRATION').length;
+  const contactPendingCount = clients.filter(c => c.onboarding_status === 'CONTACT_PENDING').length;
 
   const filtered = clients.filter(c => {
     const status = c.reg_fee_status || 'PENDING';
     const matchTab = activeTab === 'All' || status === TAB_TO_STATUS[activeTab];
     const matchPendingMigration = !pendingMigrationOnly || c.onboarding_status === 'PENDING_MIGRATION';
+    const matchContactPending = !contactPendingOnly || c.onboarding_status === 'CONTACT_PENDING';
     const q = search.toLowerCase();
     const matchSearch = !q || [c.full_name, c.email, c.mobile_number, c.client_code, c.primary_address]
       .some(v => v?.toLowerCase().includes(q));
-    return matchTab && matchPendingMigration && matchSearch;
+    return matchTab && matchPendingMigration && matchContactPending && matchSearch;
   });
 
   const counts = {
@@ -248,6 +265,19 @@ const ClientManagement = () => {
           </button>
         )}
 
+        {contactPendingCount > 0 && (
+          <button
+            onClick={() => setContactPendingOnly(v => !v)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors whitespace-nowrap ${
+              contactPendingOnly
+                ? 'bg-amber-100 border-amber-300 text-amber-800'
+                : 'bg-white border-slate-200 text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            Contact Info Pending <span className="ml-1 tabular-nums">{contactPendingCount}</span>
+          </button>
+        )}
+
         <div className="relative sm:ml-auto">
           <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
@@ -304,6 +334,11 @@ const ClientManagement = () => {
                         {client.onboarding_status === 'PENDING_MIGRATION' && (
                           <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] font-semibold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
                             Pending Migration
+                          </span>
+                        )}
+                        {client.onboarding_status === 'CONTACT_PENDING' && (
+                          <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] font-semibold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
+                            Contact Info Pending
                           </span>
                         )}
                       </div>
@@ -368,10 +403,12 @@ const ClientManagement = () => {
                 <div className="mx-5 mt-4 px-4 py-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-lg">
                   <p className="font-semibold mb-0.5">Client created successfully.</p>
                   <p>{formSuccess}</p>
-                  <p className="mt-1 text-emerald-600">
-                    Login credentials (mobile number + temporary password) have been sent to the client via SMS,
-                    and a welcome message via WhatsApp. They'll be required to set their own password on first login.
-                  </p>
+                  {credentialsSent && (
+                    <p className="mt-1 text-emerald-600">
+                      Login credentials (mobile number + temporary password) have been sent to the client via SMS,
+                      and a welcome message via WhatsApp. They'll be required to set their own password on first login.
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -386,13 +423,13 @@ const ClientManagement = () => {
                     </select>
                   </Field>
                   <div className="col-span-2">
-                    <Field label="Full Name" required>
+                    <Field label="Full Name" required={formData.client_type !== 'CORPORATE_PROXY'}>
                       <input type="text" name="full_name" value={formData.full_name} onChange={handleInput}
                         placeholder="e.g. Saman Perera" className={inputCls(false)} />
                     </Field>
                   </div>
                 </div>
-                <Field label="Gender" required>
+                <Field label="Gender" required={formData.client_type !== 'CORPORATE_PROXY'}>
                   <select name="gender" value={formData.gender} onChange={handleInput} className={inputCls(false)}>
                     <option value="">Select gender</option>
                     <option value="MALE">Male</option>
@@ -407,7 +444,10 @@ const ClientManagement = () => {
                 </Field>
                 {formData.client_type === 'CORPORATE_PROXY' && (
                   <>
-                    <Field label="Company Name">
+                    <p className="text-xs text-slate-400 -mt-1">
+                      Contact person details can be added later once known — only the company name is required now.
+                    </p>
+                    <Field label="Company Name" required>
                       <input type="text" name="company_name" value={formData.company_name} onChange={handleInput}
                         placeholder="e.g. ABC Holdings (Pvt) Ltd" className={inputCls(false)} />
                     </Field>
@@ -455,7 +495,7 @@ const ClientManagement = () => {
                   <input type="email" name="email" value={formData.email} onChange={handleInput}
                     placeholder="e.g. saman@example.com" className={inputCls(false)} />
                 </Field>
-                <Field label="Mobile Number" required>
+                <Field label="Mobile Number" required={formData.client_type !== 'CORPORATE_PROXY'}>
                   <PhoneInput name="mobile_number" value={formData.mobile_number} onChange={handleInput}
                     placeholder="e.g. 0771234567" />
                 </Field>

@@ -4,7 +4,7 @@ import {
   Settings, LogOut, Bell, Search,
   ShieldCheck, FileText, SendHorizontal, Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet, Landmark,
   ChevronLeft, ChevronRight, ChevronDown, ClipboardList, History, HeartPulse, ArrowLeftRight, Banknote, Star, Lock, UserCog, CalendarClock, Briefcase, Receipt, CalendarOff, MonitorSmartphone,
-  Menu, X, ReceiptText, Package, Upload, Truck
+  Menu, X, ReceiptText, Package, Upload, Truck, KeySquare
 } from 'lucide-react';
 import logo from '../../../assets/Logo/VCareLogo.png';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -100,6 +100,7 @@ const NAV_SECTIONS = [
     icon: Settings,
     items: [
       { icon: Lock, label: 'Permissions', path: '/admin/permissions', permKey: 'PERMISSIONS_MANAGE' },
+      { icon: KeySquare, label: 'Roles', path: '/admin/roles', permKey: 'PERMISSIONS_MANAGE' },
       { icon: MonitorSmartphone, label: 'Active Sessions', path: '/admin/active-sessions', permKey: 'VIEW_ACTIVE_SESSIONS' },
       { icon: History, label: 'Activity Log', path: '/admin/activity-log', permKey: 'VIEW_ACTIVITY_LOG' },
       { icon: FileText, label: 'Reports', path: '/admin/reports', match: (p) => p.startsWith('/admin/reports'), permKey: 'VIEW_FINANCIAL' },

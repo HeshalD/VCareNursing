@@ -629,16 +629,31 @@ class ApiClient {
     return await response.blob();
   }
 
-  async previewBulkImport(file) {
-    const formData = new FormData();
-    formData.append('file', file);
-    return this.request('/bulk-import/preview', { method: 'POST', body: formData });
+  // Preview/commit start a background job on the server and return a job id
+  // immediately; we poll for real per-row progress until it finishes.
+  async pollImportJob(jobId, onProgress) {
+    for (;;) {
+      const res = await this.request(`/bulk-import/jobs/${jobId}`);
+      const job = res.data;
+      if (onProgress) onProgress(job.processed, job.total);
+      if (job.status === 'done') return { data: job.result };
+      if (job.status === 'error') throw new Error(job.message || 'Import job failed');
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
   }
 
-  async commitBulkImport(file) {
+  async previewBulkImport(file, onProgress) {
     const formData = new FormData();
     formData.append('file', file);
-    return this.request('/bulk-import/commit', { method: 'POST', body: formData });
+    const started = await this.request('/bulk-import/preview', { method: 'POST', body: formData });
+    return this.pollImportJob(started.data.job_id, onProgress);
+  }
+
+  async commitBulkImport(file, onProgress) {
+    const formData = new FormData();
+    formData.append('file', file);
+    const started = await this.request('/bulk-import/commit', { method: 'POST', body: formData });
+    return this.pollImportJob(started.data.job_id, onProgress);
   }
 
   async getImportBatches() {
@@ -2732,6 +2747,33 @@ class ApiClient {
       method: 'PUT',
       body: JSON.stringify({ permissions }),
     });
+  }
+
+  // Custom Roles endpoints
+  async listCustomRoles() {
+    return this.request('/custom-roles');
+  }
+
+  async getCustomRole(roleId) {
+    return this.request(`/custom-roles/${roleId}`);
+  }
+
+  async createCustomRole(data) {
+    return this.request('/custom-roles', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateCustomRole(roleId, data) {
+    return this.request(`/custom-roles/${roleId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteCustomRole(roleId) {
+    return this.request(`/custom-roles/${roleId}`, { method: 'DELETE' });
   }
 
   // Internal Staff endpoints

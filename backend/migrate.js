@@ -68,6 +68,27 @@ async function runMigration() {
     END $$;
   `);
 
+  // Generic login role for internal staff whose access comes entirely from an
+  // assigned custom role (see custom_roles/custom_role_permissions) rather than
+  // one of the fixed COORDINATOR/ACCOUNTS/SALES roles.
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE user_role_enum ADD VALUE IF NOT EXISTS 'CUSTOM_ROLE';
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  // RECRUITER was previously an internal_staff-only role with no login account;
+  // it's now also a login role, so it needs a real users.role enum value.
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE user_role_enum ADD VALUE IF NOT EXISTS 'RECRUITER';
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
   await db.query(`
     DO $$ BEGIN
       CREATE TYPE client_type_enum AS ENUM (
@@ -1109,6 +1130,33 @@ async function runMigration() {
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_staff_permissions_user
     ON staff_permissions (user_id);
+  `);
+
+  // =========================================================
+  // RBAC: Custom roles — reusable, named permission sets
+  // =========================================================
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS custom_roles (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name VARCHAR(100) UNIQUE NOT NULL,
+      description TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS custom_role_permissions (
+      role_id UUID NOT NULL REFERENCES custom_roles(id) ON DELETE CASCADE,
+      permission_key VARCHAR(100) NOT NULL,
+      PRIMARY KEY (role_id, permission_key)
+    );
+  `);
+
+  await db.query(`
+    ALTER TABLE internal_staff
+    ADD COLUMN IF NOT EXISTS custom_role_id UUID REFERENCES custom_roles(id) ON DELETE SET NULL;
   `);
 
   // =========================================================
@@ -2654,6 +2702,13 @@ async function runMigration() {
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
+  // CORPORATE_PROXY clients (a company, billed via a proxy contact) can be created
+  // before the company's actual contact person is known — mobile_number can no
+  // longer be a hard requirement at account-creation time. A plain UNIQUE
+  // constraint treats NULLs as distinct, so multiple contact-less accounts can
+  // coexist safely.
+  await db.query(`ALTER TABLE users ALTER COLUMN mobile_number DROP NOT NULL`);
 
   // =========================================================
   // RECRUITER CREDITING

@@ -832,7 +832,12 @@ exports.updateClientProfile = async (req, res) => {
 
     await dbClient.query(
       `UPDATE client_profiles
-       SET full_name = $1, primary_address = $2, gender = $3::gender_enum, updated_at = NOW()
+       SET full_name = $1, primary_address = $2, gender = $3::gender_enum, updated_at = NOW(),
+           onboarding_status = CASE
+               WHEN onboarding_status = 'CONTACT_PENDING' THEN 'ACTIVE'
+               WHEN onboarding_status = 'PENDING_MIGRATION' AND $2 IS NOT NULL AND $3 IS NOT NULL THEN 'ACTIVE'
+               ELSE onboarding_status
+           END
        WHERE client_profile_id = $4`,
       [full_name.trim(), primary_address?.trim() || null, gender || null, client_id]
     );
@@ -1226,14 +1231,37 @@ exports.getClientServiceHistory = async (req, res) => {
 // Admin proxy-create client (bypasses OTP)
 exports.proxyCreateClient = async (req, res) => {
   const { full_name, email, gender, primary_address, client_type, honorific, company_name, display_name_source } = req.body;
+  const resolvedClientType = client_type || 'INDIVIDUAL';
+  const isCorporateProxy = resolvedClientType === 'CORPORATE_PROXY';
 
-  if (!full_name || !req.body.mobile_number || !gender) {
+  const rawMobile = String(req.body.mobile_number || '').trim();
+  // A corporate client's contact person may not be known yet — company_name
+  // anchors the record instead. If any contact-person field is being entered,
+  // still require gender alongside it for data consistency.
+  const contactProvided = !!(full_name && full_name.trim()) || !!rawMobile;
+
+  if (isCorporateProxy) {
+    if (!company_name || !company_name.trim()) {
+      return res.status(400).json({ message: 'company_name is required for corporate clients.' });
+    }
+    if (contactProvided && !gender) {
+      return res.status(400).json({ message: 'gender is required when a contact person is provided.' });
+    }
+  } else if (!full_name || !rawMobile || !gender) {
     return res.status(400).json({ message: 'full_name, mobile_number, and gender are required.' });
   }
-  if (!isValidPhone(req.body.mobile_number)) {
+
+  if (rawMobile && !isValidPhone(rawMobile)) {
     return res.status(400).json({ message: 'A valid mobile number is required.' });
   }
-  const mobile_number = toE164(req.body.mobile_number);
+  const mobile_number = rawMobile ? toE164(rawMobile) : null;
+
+  // full_name stays NOT NULL in the DB — default it to company_name when the
+  // contact person's name isn't known yet, so every existing consumer that
+  // assumes a non-empty full_name (display, invoices, search) keeps working.
+  const resolvedFullName = (full_name && full_name.trim()) || (isCorporateProxy ? company_name.trim() : null);
+
+  const onboardingStatus = (isCorporateProxy && !mobile_number) ? 'CONTACT_PENDING' : 'ACTIVE';
 
   const resolvedDisplayNameSource =
     client_type === 'CORPORATE_PROXY' && company_name && display_name_source === 'COMPANY_NAME'
@@ -1244,7 +1272,7 @@ exports.proxyCreateClient = async (req, res) => {
   const dbClient = await db.pool.connect();
   try {
     const existing = await dbClient.query(
-      'SELECT user_id FROM users WHERE ($1::varchar IS NOT NULL AND email = $1) OR mobile_number = $2',
+      'SELECT user_id FROM users WHERE ($1::varchar IS NOT NULL AND email = $1) OR ($2::varchar IS NOT NULL AND mobile_number = $2)',
       [email || null, mobile_number]
     );
     if (existing.rows.length > 0) {
@@ -1266,12 +1294,12 @@ exports.proxyCreateClient = async (req, res) => {
     const userId = userRes.rows[0].user_id;
 
     const profileRes = await dbClient.query(
-      `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address, company_name, honorific, display_name_source)
-       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8) RETURNING client_profile_id`,
+      `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address, company_name, honorific, display_name_source, onboarding_status)
+       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8, $9) RETURNING client_profile_id`,
       [
-        userId, full_name, client_type || 'INDIVIDUAL',
-        gender.toUpperCase(), primary_address || null,
-        company_name || null, honorific || null, resolvedDisplayNameSource,
+        userId, resolvedFullName, resolvedClientType,
+        gender ? gender.toUpperCase() : null, primary_address || null,
+        company_name || null, honorific || null, resolvedDisplayNameSource, onboardingStatus,
       ]
     );
     const clientProfileId = profileRes.rows[0].client_profile_id;
@@ -1288,8 +1316,8 @@ exports.proxyCreateClient = async (req, res) => {
         entityType: 'CLIENT',
         entityId: String(clientProfileId),
         details: {
-          full_name,
-          client_type: client_type || 'INDIVIDUAL',
+          full_name: resolvedFullName,
+          client_type: resolvedClientType,
           company_name: company_name || null,
           display_name_source: resolvedDisplayNameSource,
         },
@@ -1302,21 +1330,27 @@ exports.proxyCreateClient = async (req, res) => {
     // approval / booking conversion: login credentials (mobile + temp password) go via
     // SMS, and a welcome message goes via WhatsApp. WhatsApp policy disallows sending
     // the password in the template, so the WhatsApp message just welcomes them and
-    // tells them to expect the SMS.
-    const welcomeSms = `Welcome to VCare Nursing, ${full_name}! An account has been created for you. Log in at https://vcarenursing.com/login\n\nUsername (mobile): ${mobile_number}\nTemporary password: ${tempPassword}\n\nYou'll be asked to set your own password on first login. - VCare Nursing`;
+    // tells them to expect the SMS. Skipped entirely when no mobile number is on file
+    // yet (a corporate client whose contact person isn't known) — there's nowhere to
+    // send it until an admin fills one in via Edit Profile.
+    if (mobile_number) {
+      const welcomeSms = `Welcome to VCare Nursing, ${resolvedFullName}! An account has been created for you. Log in at https://vcarenursing.com/login\n\nUsername (mobile): ${mobile_number}\nTemporary password: ${tempPassword}\n\nYou'll be asked to set your own password on first login. - VCare Nursing`;
 
-    Promise.allSettled([
-      sendSms(mobile_number, welcomeSms),
-      sendClientWelcomeNew(mobile_number, full_name),
-    ]).then(([smsResult, waResult]) => {
-      if (smsResult.status === 'rejected') console.error('Client welcome SMS failed:', smsResult.reason?.message);
-      if (waResult.status === 'rejected') console.error('Client welcome WhatsApp failed:', waResult.reason?.message);
-    });
+      Promise.allSettled([
+        sendSms(mobile_number, welcomeSms),
+        sendClientWelcomeNew(mobile_number, resolvedFullName),
+      ]).then(([smsResult, waResult]) => {
+        if (smsResult.status === 'rejected') console.error('Client welcome SMS failed:', smsResult.reason?.message);
+        if (waResult.status === 'rejected') console.error('Client welcome WhatsApp failed:', waResult.reason?.message);
+      });
+    }
 
     res.status(201).json({
       status: 'success',
-      message: 'Client profile created. Login credentials sent via SMS and a welcome message via WhatsApp.',
-      data: { userId, clientProfileId, tempPassword },
+      message: mobile_number
+        ? 'Client profile created. Login credentials sent via SMS and a welcome message via WhatsApp.'
+        : 'Company client profile created. No mobile number on file yet — the client cannot log in until an admin adds contact details via Edit Profile.',
+      data: { userId, clientProfileId, tempPassword: mobile_number ? tempPassword : undefined },
     });
   } catch (error) {
     await dbClient.query('ROLLBACK');

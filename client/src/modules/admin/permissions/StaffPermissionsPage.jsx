@@ -1,18 +1,29 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Users, ChevronDown, ChevronUp, Save, Zap, Lock } from 'lucide-react';
+import { Users, Save, Zap, Lock, KeySquare } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import PermissionModuleList from './PermissionModuleList';
 
-const getRoleLabel = (user) => {
+const getRawRole = (user) => {
   if (typeof user.role === 'string') return user.role.replace(/[{}]/g, '').trim();
   if (Array.isArray(user.role)) return user.role.join(', ');
   return '';
 };
 
-const getRoleColor = (label) => {
-  if (label.includes('COORDINATOR')) return 'bg-blue-100 text-blue-700';
-  if (label.includes('ACCOUNTS')) return 'bg-teal-100 text-teal-700';
-  if (label.includes('SALES')) return 'bg-amber-100 text-amber-700';
+// Custom roles use a generic CUSTOM_ROLE login role under the hood — display the
+// actual role name instead, same as the Internal Staff page does.
+const getRoleLabel = (user) => {
+  const raw = getRawRole(user);
+  return raw === 'CUSTOM_ROLE' ? (user.custom_role_name || 'Custom Role') : raw;
+};
+
+const getRoleColor = (user) => {
+  const raw = getRawRole(user);
+  if (raw === 'CUSTOM_ROLE') return 'bg-indigo-100 text-indigo-700';
+  if (raw.includes('SUPER_ADMIN')) return 'bg-purple-100 text-purple-700';
+  if (raw.includes('COORDINATOR')) return 'bg-blue-100 text-blue-700';
+  if (raw.includes('ACCOUNTS')) return 'bg-teal-100 text-teal-700';
+  if (raw.includes('SALES')) return 'bg-amber-100 text-amber-700';
   return 'bg-slate-100 text-slate-600';
 };
 
@@ -23,6 +34,7 @@ const StaffPermissionsPage = () => {
   const [selectedUser, setSelectedUser] = useState(null);
   const [currentPerms, setCurrentPerms] = useState(new Set());
   const [originalPerms, setOriginalPerms] = useState(new Set());
+  const [rolePerms, setRolePerms] = useState(new Set());
   const [loadingInit, setLoadingInit] = useState(true);
   const [loadingPerms, setLoadingPerms] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -53,6 +65,7 @@ const StaffPermissionsPage = () => {
       const keys = new Set((res.permissions || []).map((p) => p.permission_key));
       setCurrentPerms(new Set(keys));
       setOriginalPerms(new Set(keys));
+      setRolePerms(new Set(res.role_permissions || []));
     } catch (err) {
       console.error('getUserPermissions error:', err);
     } finally {
@@ -61,6 +74,7 @@ const StaffPermissionsPage = () => {
   };
 
   const togglePerm = (key) => {
+    if (rolePerms.has(key)) return; // granted via the assigned role — edit the role to change it
     setSaveMsg(null);
     setCurrentPerms((prev) => {
       const next = new Set(prev);
@@ -103,11 +117,11 @@ const StaffPermissionsPage = () => {
     (currentPerms.size !== originalPerms.size ||
       [...currentPerms].some((k) => !originalPerms.has(k)));
 
+  const effectivePerms = new Set([...currentPerms, ...rolePerms]);
+
   const toggleModule = (mod) => {
     setExpandedModules((prev) => ({ ...prev, [mod]: prev[mod] === false ? true : false }));
   };
-
-  const isModuleExpanded = (mod) => expandedModules[mod] !== false;
 
   return (
     <AdminLayout
@@ -139,8 +153,8 @@ const StaffPermissionsPage = () => {
                 <Users className="w-8 h-8 mx-auto mb-2 opacity-30" />
                 <p className="text-sm font-medium text-slate-500">No staff accounts yet</p>
                 <p className="text-xs mt-1">
-                  Create internal staff accounts with COORDINATOR, ACCOUNTS, or SALES role to
-                  manage their permissions here.
+                  Create an internal staff member with a login account to manage their
+                  permissions here.
                 </p>
               </div>
             ) : (
@@ -160,10 +174,11 @@ const StaffPermissionsPage = () => {
                     <div className="font-medium text-sm text-slate-800 truncate">
                       {user.full_name}
                     </div>
-                    <div className="flex items-center gap-2 mt-1">
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
                       <span
-                        className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${getRoleColor(roleLabel)}`}
+                        className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${getRoleColor(user)}`}
                       >
+                        {getRawRole(user) === 'CUSTOM_ROLE' && <KeySquare className="w-2.5 h-2.5" />}
                         {roleLabel}
                       </span>
                       <span className="text-xs text-slate-400">
@@ -192,7 +207,9 @@ const StaffPermissionsPage = () => {
               {/* Header */}
               <div className="p-5 border-b border-slate-100 flex items-center justify-between gap-4 flex-shrink-0">
                 <div>
-                  <h2 className="font-semibold text-slate-900">{selectedUser.full_name}</h2>
+                  <h2 className="font-semibold text-slate-900 flex items-center gap-2">
+                    {selectedUser.full_name}
+                  </h2>
                   <p className="text-xs text-slate-400 mt-0.5">
                     {selectedUser.mobile_number} · {getRoleLabel(selectedUser)}
                   </p>
@@ -246,8 +263,11 @@ const StaffPermissionsPage = () => {
                 <div className="flex-1 overflow-y-auto p-5 space-y-2">
                   <div className="flex items-center justify-between mb-3">
                     <p className="text-sm text-slate-500">
-                      <span className="font-semibold text-slate-800">{currentPerms.size}</span>{' '}
-                      permission{currentPerms.size !== 1 ? 's' : ''} enabled
+                      <span className="font-semibold text-slate-800">{effectivePerms.size}</span>{' '}
+                      permission{effectivePerms.size !== 1 ? 's' : ''} enabled
+                      {rolePerms.size > 0 && (
+                        <span className="text-slate-400"> ({rolePerms.size} via role)</span>
+                      )}
                     </p>
                     <div className="flex gap-2">
                       <button
@@ -266,86 +286,14 @@ const StaffPermissionsPage = () => {
                     </div>
                   </div>
 
-                  {Object.entries(registry).map(([mod, perms]) => {
-                    const expanded = isModuleExpanded(mod);
-                    const enabledCount = perms.filter((p) => currentPerms.has(p.key)).length;
-                    const pagePerms = perms.filter((p) => p.category === 'page');
-                    const actionPerms = perms.filter((p) => p.category === 'action');
-
-                    return (
-                      <div key={mod} className="border border-slate-200 rounded-lg overflow-hidden">
-                        <button
-                          onClick={() => toggleModule(mod)}
-                          className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors"
-                        >
-                          <div className="flex items-center gap-3">
-                            <span className="font-semibold text-sm text-slate-800">{mod}</span>
-                            <span
-                              className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-                                enabledCount === perms.length && perms.length > 0
-                                  ? 'bg-green-100 text-green-700'
-                                  : enabledCount > 0
-                                  ? 'bg-blue-100 text-blue-700'
-                                  : 'bg-slate-100 text-slate-500'
-                              }`}
-                            >
-                              {enabledCount}/{perms.length}
-                            </span>
-                          </div>
-                          {expanded ? (
-                            <ChevronUp className="w-4 h-4 text-slate-400" />
-                          ) : (
-                            <ChevronDown className="w-4 h-4 text-slate-400" />
-                          )}
-                        </button>
-
-                        {expanded && (
-                          <div>
-                            {pagePerms.length > 0 && (
-                              <div className="px-4 pt-3 pb-2">
-                                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-2">
-                                  Page Access
-                                </p>
-                                <div className="space-y-2">
-                                  {pagePerms.map((perm) => (
-                                    <PermToggle
-                                      key={perm.key}
-                                      label={perm.label}
-                                      checked={currentPerms.has(perm.key)}
-                                      onToggle={() => togglePerm(perm.key)}
-                                    />
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                            {actionPerms.length > 0 && (
-                              <div
-                                className={`px-4 pt-3 pb-3 ${
-                                  pagePerms.length > 0 ? 'border-t border-slate-100' : ''
-                                }`}
-                              >
-                                {pagePerms.length > 0 && (
-                                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-2">
-                                    Actions
-                                  </p>
-                                )}
-                                <div className="space-y-2">
-                                  {actionPerms.map((perm) => (
-                                    <PermToggle
-                                      key={perm.key}
-                                      label={perm.label}
-                                      checked={currentPerms.has(perm.key)}
-                                      onToggle={() => togglePerm(perm.key)}
-                                    />
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                  <PermissionModuleList
+                    registry={registry}
+                    checkedKeys={effectivePerms}
+                    onToggle={togglePerm}
+                    expandedModules={expandedModules}
+                    onToggleModule={toggleModule}
+                    lockedKeys={rolePerms}
+                  />
                 </div>
               )}
             </>
@@ -355,25 +303,5 @@ const StaffPermissionsPage = () => {
     </AdminLayout>
   );
 };
-
-const PermToggle = ({ label, checked, onToggle }) => (
-  <div className="flex items-center justify-between gap-3 py-0.5">
-    <span className="text-sm text-slate-700">{label}</span>
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-pressed={checked}
-      className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-        checked ? 'bg-blue-600' : 'bg-slate-200'
-      }`}
-    >
-      <span
-        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform duration-200 mt-0.5 ${
-          checked ? 'translate-x-4' : 'translate-x-0.5'
-        }`}
-      />
-    </button>
-  </div>
-);
 
 export default StaffPermissionsPage;

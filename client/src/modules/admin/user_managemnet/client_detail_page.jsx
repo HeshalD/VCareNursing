@@ -3550,6 +3550,11 @@ const ClientDetailPage = () => {
                   <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${clientProfile.is_active ? 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200' : 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200'}`}>
                     {clientProfile.is_active ? 'Active' : 'Inactive'}
                   </span>
+                  {clientProfile.onboarding_status === 'CONTACT_PENDING' && (
+                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700">
+                      Contact Info Pending
+                    </span>
+                  )}
                 </div>
                 <div className="mt-1.5 flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-gray-400">
                   <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5" />{clientProfile.mobile_number || 'â€”'}</span>

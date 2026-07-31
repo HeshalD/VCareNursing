@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Pencil, Trash2, X, Loader2, ShieldCheck, Smartphone, Copy, Search, RefreshCw } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, Loader2, ShieldCheck, Smartphone, Copy, Search, RefreshCw, KeySquare } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import DateInput from '../../../components/common/DateInput';
@@ -15,7 +15,8 @@ const ROLE_OPTIONS = [
   { value: 'STORE_MANAGER', label: 'Store Manager' },
   { value: 'RECRUITER', label: 'Recruiter' },
 ];
-const LOGIN_ROLES = new Set(['COORDINATOR', 'ACCOUNTS', 'SALES', 'SUPER_ADMIN']);
+const LOGIN_ROLES = new Set(['COORDINATOR', 'ACCOUNTS', 'SALES', 'SUPER_ADMIN', 'CUSTOM_ROLE', 'RECRUITER']);
+const CUSTOM_ROLE_PREFIX = 'custom:';
 const STATUS_OPTIONS = ['Active', 'Inactive', 'On Leave'];
 const STATUS_TABS = ['All', 'Active', 'Inactive', 'On Leave'];
 
@@ -28,6 +29,7 @@ const empty = {
   joined_date: '',
   status: 'Active',
   password: '',
+  custom_role_id: '',
 };
 
 const STATUS_CONFIG = {
@@ -88,6 +90,7 @@ const StatusBadge = ({ status }) => {
 
 const InternalStaffPage = () => {
   const [staff, setStaff] = useState([]);
+  const [customRoles, setCustomRoles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('All');
   const [search, setSearch] = useState('');
@@ -107,7 +110,12 @@ const InternalStaffPage = () => {
   const [assigningDevice, setAssigningDevice] = useState(false);
   const [revokingDeviceId, setRevokingDeviceId] = useState(null);
 
-  useEffect(() => { loadStaff(); }, []);
+  useEffect(() => {
+    loadStaff();
+    apiClient.listCustomRoles()
+      .then((res) => setCustomRoles(res.roles || []))
+      .catch((err) => console.error('listCustomRoles error:', err));
+  }, []);
 
   const loadStaff = async () => {
     try {
@@ -142,6 +150,7 @@ const InternalStaffPage = () => {
       joined_date: member.joined_date ? member.joined_date.split('T')[0] : '',
       status: member.status || 'Active',
       password: '',
+      custom_role_id: member.custom_role_id || '',
     });
     setFormError('');
     setEditing(member);
@@ -156,10 +165,19 @@ const InternalStaffPage = () => {
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
+  // The Role dropdown lists both fixed roles and custom roles together. Custom
+  // role options are encoded as `custom:<id>` so a single <select> can represent
+  // both without colliding; selecting one stores the CUSTOM_ROLE sentinel plus
+  // the chosen role's id, exactly like selecting COORDINATOR stores that role.
+  const roleSelectValue = form.role === 'CUSTOM_ROLE' ? `${CUSTOM_ROLE_PREFIX}${form.custom_role_id}` : form.role;
+
   const handleRoleChange = (e) => {
-    const role = e.target.value;
+    const val = e.target.value;
+    const isCustom = val.startsWith(CUSTOM_ROLE_PREFIX);
+    const role = isCustom ? 'CUSTOM_ROLE' : val;
+    const custom_role_id = isCustom ? val.slice(CUSTOM_ROLE_PREFIX.length) : '';
     setForm((f) => {
-      const next = { ...f, role };
+      const next = { ...f, role, custom_role_id };
       if (!editing && needsLoginAccount(role) && !f.password) {
         next.password = genPassword();
       }
@@ -178,14 +196,23 @@ const InternalStaffPage = () => {
   const isLoginRole = needsLoginAccount(form.role);
   const isAdd = !editing;
 
+  const customRoleName = (id) => customRoles.find((r) => r.id === id)?.name;
+
+  const displayRoleLabel = (member) =>
+    member.role === 'CUSTOM_ROLE' ? (customRoleName(member.custom_role_id) || 'Custom Role') : roleLabel(member.role);
+
   const handleSave = async () => {
     if (!form.full_name.trim() || !form.role.trim() || !form.email.trim()) {
       setFormError('Full name, role, and email are required.');
       return;
     }
+    if (form.role === 'CUSTOM_ROLE' && !form.custom_role_id) {
+      setFormError('Select a custom role.');
+      return;
+    }
     if (isAdd && isLoginRole) {
       if (!form.phone.trim()) {
-        setFormError('Phone is required for COORDINATOR, ACCOUNTS, SALES, and SUPER_ADMIN roles (used as login mobile number).');
+        setFormError('Phone is required for this role (used as login mobile number).');
         return;
       }
       if (!isValidPhoneNumber(form.phone)) {
@@ -193,7 +220,7 @@ const InternalStaffPage = () => {
         return;
       }
       if (!form.password.trim()) {
-        setFormError('Password is required for COORDINATOR, ACCOUNTS, SALES, and SUPER_ADMIN roles.');
+        setFormError('Password is required for this role.');
         return;
       }
     }
@@ -209,6 +236,7 @@ const InternalStaffPage = () => {
         base_salary: form.base_salary !== '' ? parseFloat(form.base_salary) : 0,
         joined_date: form.joined_date || null,
         status: form.status,
+        custom_role_id: form.role === 'CUSTOM_ROLE' ? form.custom_role_id : null,
       };
       if (isAdd && isLoginRole) {
         payload.password = form.password.trim();
@@ -305,7 +333,7 @@ const InternalStaffPage = () => {
   const filtered = staff.filter((s) => {
     const matchTab = activeTab === 'All' || (s.status || 'Active') === activeTab;
     const q = search.toLowerCase();
-    const matchSearch = !q || [s.full_name, s.email, s.phone, roleLabel(s.role)]
+    const matchSearch = !q || [s.full_name, s.email, s.phone, displayRoleLabel(s)]
       .some((v) => v?.toLowerCase().includes(q));
     return matchTab && matchSearch;
   });
@@ -420,7 +448,12 @@ const InternalStaffPage = () => {
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-slate-600">{roleLabel(member.role)}</td>
+                  <td className="px-4 py-3 text-slate-600">
+                    <span className="inline-flex items-center gap-1">
+                      {member.role === 'CUSTOM_ROLE' && <KeySquare className="w-3 h-3 text-indigo-500" />}
+                      {displayRoleLabel(member)}
+                    </span>
+                  </td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     <p className="text-slate-700">{member.phone || '—'}</p>
                     <p className="text-xs text-slate-400">{member.email}</p>
@@ -557,12 +590,24 @@ const InternalStaffPage = () => {
 
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Role" required>
-                    <select className={inputCls} value={form.role} onChange={handleRoleChange}>
+                    <select className={inputCls} value={roleSelectValue} onChange={handleRoleChange}>
                       <option value="" disabled>Select a role…</option>
                       {ROLE_OPTIONS.map((r) => (
                         <option key={r.value} value={r.value}>{r.label}</option>
                       ))}
+                      {customRoles.length > 0 && (
+                        <optgroup label="Custom Roles">
+                          {customRoles.map((r) => (
+                            <option key={r.id} value={`${CUSTOM_ROLE_PREFIX}${r.id}`}>{r.name}</option>
+                          ))}
+                        </optgroup>
+                      )}
                     </select>
+                    {form.role === 'CUSTOM_ROLE' && (
+                      <p className="text-xs text-slate-400 mt-1">
+                        Grants every permission in this role. Manage roles from Permissions → Roles.
+                      </p>
+                    )}
                   </Field>
                   <Field label="Status">
                     <select className={inputCls} value={form.status} onChange={set('status')}>
