@@ -4,8 +4,7 @@ const { toMessagingDigits: formatNumber } = require('./phone');
 const API_URL = `https://graph.facebook.com/v21.0/${process.env.META_WA_PHONE_NUMBER_ID}/messages`;
 
 // TEMPORARY KILL SWITCH — WhatsApp sending is blocked. Remove this block to re-enable.
-// TEMPORARILY set to false to test the phone country-code changes — flip back to true after testing.
-const MESSAGING_BLOCKED = false;
+const MESSAGING_BLOCKED = true;
 
 const sendDocument = async (mobileNumber, documentUrl, filename, caption = '') => {
   if (MESSAGING_BLOCKED) {
