@@ -2,7 +2,11 @@ import React from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 
 export const PermToggle = ({ label, checked, onToggle, locked }) => (
-  <div className="flex items-center justify-between gap-3 py-0.5">
+  <div
+    className={`flex items-center justify-between gap-3 py-1.5 px-2 -mx-2 rounded-md transition-colors ${
+      locked ? '' : 'hover:bg-slate-100'
+    }`}
+  >
     <span className="text-sm text-slate-700 flex items-center gap-1.5">
       {label}
       {locked && (
@@ -29,6 +33,24 @@ export const PermToggle = ({ label, checked, onToggle, locked }) => (
   </div>
 );
 
+const SectionSelectAll = ({ perms, checkedKeys, lockedKeys, onSectionToggle }) => {
+  const togglable = perms.filter((p) => !lockedKeys?.has(p.key));
+  if (togglable.length === 0) return null;
+  const allChecked = togglable.every((p) => checkedKeys.has(p.key));
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onSectionToggle(togglable.map((p) => p.key), !allChecked);
+      }}
+      className="text-[10px] font-semibold text-blue-600 hover:underline"
+    >
+      {allChecked ? 'Clear all' : 'Select all'}
+    </button>
+  );
+};
+
 // registry: { [moduleName]: [{ key, label, category }] }
 // checkedKeys: Set<string>
 // lockedKeys: optional Set<string> — permissions granted via a role, shown checked + non-interactive
@@ -36,6 +58,7 @@ const PermissionModuleList = ({
   registry,
   checkedKeys,
   onToggle,
+  onSectionToggle,
   expandedModules,
   onToggleModule,
   lockedKeys,
@@ -52,9 +75,9 @@ const PermissionModuleList = ({
 
         return (
           <div key={mod} className="border border-slate-200 rounded-lg overflow-hidden">
-            <button
+            <div
               onClick={() => onToggleModule(mod)}
-              className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors"
+              className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors cursor-pointer"
             >
               <div className="flex items-center gap-3">
                 <span className="font-semibold text-sm text-slate-800">{mod}</span>
@@ -70,20 +93,36 @@ const PermissionModuleList = ({
                   {enabledCount}/{perms.length}
                 </span>
               </div>
-              {expanded ? (
-                <ChevronUp className="w-4 h-4 text-slate-400" />
-              ) : (
-                <ChevronDown className="w-4 h-4 text-slate-400" />
-              )}
-            </button>
+              <div className="flex items-center gap-3">
+                <SectionSelectAll
+                  perms={perms}
+                  checkedKeys={checkedKeys}
+                  lockedKeys={lockedKeys}
+                  onSectionToggle={onSectionToggle}
+                />
+                {expanded ? (
+                  <ChevronUp className="w-4 h-4 text-slate-400" />
+                ) : (
+                  <ChevronDown className="w-4 h-4 text-slate-400" />
+                )}
+              </div>
+            </div>
 
             {expanded && (
               <div>
                 {pagePerms.length > 0 && (
                   <div className="px-4 pt-3 pb-2">
-                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-2">
-                      Page Access
-                    </p>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
+                        Page Access
+                      </p>
+                      <SectionSelectAll
+                        perms={pagePerms}
+                        checkedKeys={checkedKeys}
+                        lockedKeys={lockedKeys}
+                        onSectionToggle={onSectionToggle}
+                      />
+                    </div>
                     <div className="space-y-2">
                       {pagePerms.map((perm) => (
                         <PermToggle
@@ -103,11 +142,21 @@ const PermissionModuleList = ({
                       pagePerms.length > 0 ? 'border-t border-slate-100' : ''
                     }`}
                   >
-                    {pagePerms.length > 0 && (
-                      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-2">
-                        Actions
-                      </p>
-                    )}
+                    <div className="flex items-center justify-between mb-2">
+                      {pagePerms.length > 0 ? (
+                        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
+                          Actions
+                        </p>
+                      ) : (
+                        <span />
+                      )}
+                      <SectionSelectAll
+                        perms={actionPerms}
+                        checkedKeys={checkedKeys}
+                        lockedKeys={lockedKeys}
+                        onSectionToggle={onSectionToggle}
+                      />
+                    </div>
                     <div className="space-y-2">
                       {actionPerms.map((perm) => (
                         <PermToggle

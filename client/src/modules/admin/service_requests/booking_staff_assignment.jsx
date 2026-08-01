@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, RefreshCw, Users, CalendarDays, CircleDollarSign, Clock3,
@@ -299,6 +299,7 @@ const BookingStaffAssignmentPage = () => {
   const handleSubmit = async (event) => {
     event.preventDefault();
     if (isShiftBased) { await handleSubmitShiftBased(); return; }
+    if (!assignment.staff_profile_id) { setError('Select a staff member'); return; }
     const isoStartDate = formatDateForBackend(assignment.service_start_date);
     if (!isoStartDate) { setError('Enter a valid Service Start Date as DD/MM/YYYY'); return; }
     try {
@@ -406,10 +407,10 @@ const BookingStaffAssignmentPage = () => {
         </div>
       ) : (
         <div className="space-y-5">
-          <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
 
             {/* ── Left column ── */}
-            <div className="space-y-5 lg:col-span-2">
+            <div className="space-y-5 lg:col-span-4">
 
               {/* Booking summary */}
               <div className="rounded-lg border border-gray-200 bg-white p-5">
@@ -454,19 +455,11 @@ const BookingStaffAssignmentPage = () => {
                 {/* Staff member select (non-shift) */}
                 {!isShiftBased && (
                   <FormField label="Staff Member">
-                    <select
-                      required
+                    <StaffPicker
+                      staff={formData.available_staff}
                       value={assignment.staff_profile_id}
-                      onChange={(e) => setAssignment({ ...assignment, staff_profile_id: e.target.value })}
-                      className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                    >
-                      <option value="">Select staff member</option>
-                      {formData.available_staff.map((s) => (
-                        <option key={s.staff_profile_id} value={s.staff_profile_id}>
-                          {s.staff_name} — {s.specialization}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(id) => setAssignment({ ...assignment, staff_profile_id: id })}
+                    />
                     {assignment.staff_profile_id && (
                       <div className="mt-2 rounded-md border border-gray-100 bg-gray-50 p-2.5">
                         <StaffScheduleTimeline
@@ -662,20 +655,13 @@ const BookingStaffAssignmentPage = () => {
                                     className="w-full rounded-md border border-gray-200 px-2.5 py-1.5 text-sm text-gray-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                                   />
                                 </td>
-                                <td className="px-3 py-2.5">
-                                  <select
-                                    required
+                                <td className="px-3 py-2.5 min-w-[220px]">
+                                  <StaffPicker
+                                    staff={formData.available_staff}
                                     value={slot.staff_profile_id}
-                                    onChange={(e) => updateShiftSlot(idx, 'staff_profile_id', e.target.value)}
-                                    className="w-full rounded-md border border-gray-200 px-2.5 py-1.5 text-sm text-gray-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                                  >
-                                    <option value="">Select staff…</option>
-                                    {formData.available_staff.map((s) => (
-                                      <option key={s.staff_profile_id} value={s.staff_profile_id}>
-                                        {s.staff_name} — {s.specialization}
-                                      </option>
-                                    ))}
-                                  </select>
+                                    onChange={(id) => updateShiftSlot(idx, 'staff_profile_id', id)}
+                                    compact
+                                  />
                                   {slot.staff_profile_id && (
                                     <div className="mt-1.5">
                                       <StaffScheduleTimeline
@@ -1016,6 +1002,169 @@ const SalespersonPicker = ({ salespersons, value, onChange }) => {
         <p className="border-t border-gray-100 px-3 py-1.5 text-xs text-gray-400">
           Showing {visible.length} of {salespersons.length}. Search to find others.
         </p>
+      )}
+    </div>
+  );
+};
+
+// Bolds the portion of `text` that matches the current search query
+const HighlightMatch = ({ text, query }) => {
+  if (!query) return text;
+  const idx = text.toLowerCase().indexOf(query);
+  if (idx === -1) return text;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark className="rounded-sm bg-yellow-100 text-inherit">{text.slice(idx, idx + query.length)}</mark>
+      {text.slice(idx + query.length)}
+    </>
+  );
+};
+
+const StaffPicker = ({ staff, value, onChange, compact = false }) => {
+  const [search, setSearch] = useState('');
+  const [open,   setOpen]   = useState(false);
+  const [activeIdx, setActiveIdx] = useState(0);
+  const containerRef = useRef(null);
+  const listRef = useRef(null);
+  const inputRef = useRef(null);
+
+  const selected = staff.find((s) => s.staff_profile_id === value) || null;
+  const q = search.trim().toLowerCase();
+
+  const matches = useMemo(() => {
+    if (!q) return staff;
+    return staff.filter((s) =>
+      `${s.staff_code || ''} ${s.staff_name || ''} ${s.mobile_number || ''} ${s.specialization || ''}`
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [staff, q]);
+
+  useEffect(() => { setActiveIdx(0); }, [q, open]);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const el = listRef.current?.children?.[activeIdx];
+    el?.scrollIntoView({ block: 'nearest' });
+  }, [activeIdx, open]);
+
+  const selectedLabel = selected
+    ? `${selected.staff_code ? `${selected.staff_code} — ` : ''}${selected.staff_name}${selected.mobile_number ? ` — ${selected.mobile_number}` : ''}`
+    : '';
+
+  const selectStaff = (s) => {
+    const isSel = s.staff_profile_id === value;
+    onChange(isSel ? '' : s.staff_profile_id);
+    setSearch('');
+    setOpen(false);
+  };
+
+  const handleKeyDown = (e) => {
+    if (!open) {
+      if (e.key === 'ArrowDown' || e.key === 'Enter') { setOpen(true); setSearch(''); }
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActiveIdx((i) => Math.min(i + 1, matches.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveIdx((i) => Math.max(i - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (matches[activeIdx]) selectStaff(matches[activeIdx]);
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+      inputRef.current?.blur();
+    }
+  };
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div className={`flex items-center gap-2 rounded-md border bg-white px-2.5 transition-colors ${compact ? 'py-1.5' : 'px-3 py-2'} ${open ? 'border-blue-400 ring-2 ring-blue-100' : 'border-gray-200'}`}>
+        <Search className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+        <input
+          ref={inputRef}
+          type="text"
+          value={open ? search : selectedLabel}
+          onFocus={() => { setOpen(true); setSearch(''); }}
+          onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Search by employee no., name, or contact number…"
+          className="w-full text-sm text-gray-800 placeholder-gray-400 outline-none"
+        />
+        {matches.length > 0 && open && (
+          <span className="shrink-0 text-[11px] tabular-nums text-gray-300">{matches.length}</span>
+        )}
+        {value && (
+          <button
+            type="button"
+            onClick={() => { onChange(''); setSearch(''); }}
+            className="shrink-0 text-xs font-medium text-gray-400 hover:text-gray-700"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div className="absolute z-50 mt-1 w-full overflow-hidden rounded-md border border-gray-200 bg-white shadow-lg">
+          <div ref={listRef} className="max-h-72 overflow-y-auto">
+            {staff.length === 0 ? (
+              <p className="px-3 py-3 text-sm text-gray-400">No staff available.</p>
+            ) : matches.length === 0 ? (
+              <p className="px-3 py-3 text-sm text-gray-400">No matches for &ldquo;{search}&rdquo;.</p>
+            ) : (
+              matches.map((s, i) => {
+                const isSel = s.staff_profile_id === value;
+                const isActive = i === activeIdx;
+                return (
+                  <button
+                    type="button"
+                    key={s.staff_profile_id}
+                    onMouseEnter={() => setActiveIdx(i)}
+                    onClick={() => selectStaff(s)}
+                    className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition-colors ${
+                      isActive ? 'bg-blue-50' : isSel ? 'bg-gray-50' : ''
+                    }`}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-2">
+                        {s.staff_code && (
+                          <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-mono font-medium text-gray-500">
+                            <HighlightMatch text={s.staff_code} query={q} />
+                          </span>
+                        )}
+                        <span className="truncate font-medium text-gray-900">
+                          <HighlightMatch text={s.staff_name || ''} query={q} />
+                        </span>
+                      </span>
+                      <span className="mt-0.5 flex items-center gap-2 text-xs text-gray-400">
+                        {s.mobile_number && <span><HighlightMatch text={s.mobile_number} query={q} /></span>}
+                        {s.specialization && <span>{s.specialization}</span>}
+                      </span>
+                    </span>
+                    {isSel && <Check className="h-4 w-4 shrink-0 text-blue-600" />}
+                  </button>
+                );
+              })
+            )}
+          </div>
+          {!q && staff.length > 0 && (
+            <p className="border-t border-gray-100 bg-gray-50 px-3 py-1.5 text-[11px] text-gray-400">
+              {staff.length} staff member{staff.length !== 1 ? 's' : ''} — type to filter, ↑↓ to navigate, Enter to select
+            </p>
+          )}
+        </div>
       )}
     </div>
   );

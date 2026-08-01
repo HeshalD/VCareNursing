@@ -77,8 +77,25 @@ const StaffManagement = () => {
     try {
       if (!silent) setLoading(true);
       if (!silent) setError(null);
-      const response = await apiClient.getAllStaff({ limit: 1000 });
-      setWorkers(response.data || []);
+
+      // The API paginates (a single request caps out at PAGE_SIZE rows), so once the
+      // staff roster grows past that we have to walk every page to show everyone —
+      // otherwise the list silently truncates at the first page's worth of records.
+      const PAGE_SIZE = 1000;
+      const first = await apiClient.getAllStaff({ limit: PAGE_SIZE, page: 1 });
+      let all = first.data || [];
+      const totalPages = first.pagination?.total_pages || 1;
+
+      if (totalPages > 1) {
+        const remainingPages = await Promise.all(
+          Array.from({ length: totalPages - 1 }, (_, i) =>
+            apiClient.getAllStaff({ limit: PAGE_SIZE, page: i + 2 }),
+          ),
+        );
+        remainingPages.forEach((res) => { all = all.concat(res.data || []); });
+      }
+
+      setWorkers(all);
     } catch (err) {
       if (!silent) setError('Failed to load staff');
       else console.error('StaffManagement silent refresh error:', err);

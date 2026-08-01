@@ -183,6 +183,7 @@ router.get('/:booking_id/swap-history', protect, requirePermission('VIEW_BOOKING
 
 // Daily attendance (staff in/out time + manual salary confirmation)
 router.get('/:booking_id/attendance', protect, requirePermission('VIEW_BOOKINGS'), dailyAttendanceController.getBookingAttendance);
+router.get('/:booking_id/attendance/history', protect, requirePermission('VIEW_BOOKINGS'), dailyAttendanceController.getAttendanceHistory);
 router.post('/:booking_id/attendance', protect, requirePermission('ATTENDANCE_RECORD'), dailyAttendanceController.upsertAttendance);
 router.post('/:booking_id/attendance/absent', protect, requirePermission('ATTENDANCE_MARK_ABSENT'), dailyAttendanceController.markAbsent);
 router.post('/attendance/:attendance_id/confirm-salary', protect, requirePermission('ATTENDANCE_CONFIRM_SALARY'), dailyAttendanceController.confirmSalary);

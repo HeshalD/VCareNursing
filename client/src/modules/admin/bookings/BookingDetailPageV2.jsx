@@ -326,6 +326,7 @@ const BookingDetailPageV2 = () => {
 
   // daily attendance / manual invoicing
   const [attendanceRecords, setAttendanceRecords]   = useState([]);
+  const [attendanceHistory, setAttendanceHistory]   = useState([]);
   const [dailyInvoiceRecords, setDailyInvoiceRecords] = useState([]);
   const [shiftReschedules, setShiftReschedules]     = useState([]);
   const [reschedulesBusy, setReschedulesBusy]       = useState('');
@@ -334,6 +335,7 @@ const BookingDetailPageV2 = () => {
   const [dayModalError, setDayModalError]           = useState('');
   const [dayModalBusy, setDayModalBusy]              = useState('');
   const [attendanceInputs, setAttendanceInputs]      = useState({}); // assignment_id -> { in_time, out_time }
+  const [editingAttendanceIds, setEditingAttendanceIds] = useState(() => new Set()); // assignment_ids re-opened for correction after saving, pre-salary-decision
   const [invoiceAmountInput, setInvoiceAmountInput]  = useState('');
   const [invoiceAmountInputsBySlot, setInvoiceAmountInputsBySlot] = useState({}); // shift_slot_id -> amount string
   const [salaryAmountInputs, setSalaryAmountInputs] = useState({}); // attendance_id -> amount string
@@ -759,14 +761,16 @@ const BookingDetailPageV2 = () => {
       // Always fetched (not gated on isShiftBased) — bookingSummary may not have
       // resolved yet on the very first call, and this query is a cheap no-op
       // for non-shift bookings anyway (no shift_slot_id rows to match).
-      const [attRes, invRes, rescheduleRes] = await Promise.all([
+      const [attRes, invRes, rescheduleRes, historyRes] = await Promise.all([
         apiClient.getBookingAttendance(bookingId),
         apiClient.getBookingDailyInvoices(bookingId),
         apiClient.getBookingShiftReschedules(bookingId),
+        apiClient.getAttendanceHistory(bookingId),
       ]);
       setAttendanceRecords(Array.isArray(attRes?.data) ? attRes.data : []);
       setDailyInvoiceRecords(Array.isArray(invRes?.data) ? invRes.data : []);
       setShiftReschedules(Array.isArray(rescheduleRes?.data) ? rescheduleRes.data : []);
+      setAttendanceHistory(Array.isArray(historyRes?.data) ? historyRes.data : []);
     } catch {
       // non-fatal — the timeline still renders without these
     }
@@ -857,7 +861,7 @@ const BookingDetailPageV2 = () => {
     setDayModalError('');
     setDayModal({ dateISO, dayNum, assignments });
   };
-  const closeDayModal = () => { setDayModal(null); setDayModalError(''); setAttendanceInputs({}); setInvoiceAmountInput(''); setInvoiceAmountInputsBySlot({}); };
+  const closeDayModal = () => { setDayModal(null); setDayModalError(''); setAttendanceInputs({}); setInvoiceAmountInput(''); setInvoiceAmountInputsBySlot({}); setEditingAttendanceIds(new Set()); };
 
   // LIVE_IN staff stay with the patient continuously until the booking ends (or they're
   // swapped) — so only the booking's first day needs a start time and only its last day
@@ -902,8 +906,32 @@ const BookingDetailPageV2 = () => {
         shift_slot_id: assignment.shift_slot_id || undefined,
       });
       await fetchDailyRecords();
+      setEditingAttendanceIds(prev => { const next = new Set(prev); next.delete(assignmentId); return next; });
     } catch (err) { setDayModalError(err?.message || 'Failed to save attendance times'); }
     finally { setDayModalBusy(''); }
+  };
+
+  // Re-opens a saved-but-not-yet-decided in/out time for correction. The backend
+  // upsert (see upsertAttendance) happily overwrites an existing PENDING row, so
+  // this just needs to get the row back into edit mode with the current values
+  // pre-filled — nothing new to persist until Save is pressed again.
+  const editAttendanceTimes = (assignment, record) => {
+    const assignmentId = assignment.assignment_id;
+    const toLocalHM = (ts) => ts ? new Date(ts).toTimeString().slice(0, 5) : '';
+    setAttendanceInputs(p => ({
+      ...p,
+      [assignmentId]: {
+        date: record.service_date?.slice(0, 10) || dayModal.dateISO,
+        in_time: toLocalHM(record.in_time),
+        out_time: toLocalHM(record.out_time),
+        autoFilled: false,
+      },
+    }));
+    setEditingAttendanceIds(prev => new Set(prev).add(assignmentId));
+  };
+
+  const cancelEditAttendance = (assignmentId) => {
+    setEditingAttendanceIds(prev => { const next = new Set(prev); next.delete(assignmentId); return next; });
   };
 
   // No-show in one step — no in/out time needed. Skips this staff member's salary
@@ -3798,6 +3826,21 @@ const BookingDetailPageV2 = () => {
         const dateRecords = attendanceRecords.filter(r => r.service_date?.slice(0, 10) === dayModal.dateISO);
         const dateInvoiceRecords = dailyInvoiceRecords.filter(r => r.service_date?.slice(0, 10) === dayModal.dateISO);
         const invoiceRecord = dateInvoiceRecords.find(r => !r.shift_slot_id) || dateInvoiceRecords[0];
+        // Audit trail for this specific day — DAY_REVOKED logs a service_dates array
+        // (can cover several days at once), every other attendance/salary action logs
+        // a single service_date, so both shapes need checking.
+        const dayHistory = attendanceHistory.filter(h => {
+          const d = h.details || {};
+          if (Array.isArray(d.service_dates)) return d.service_dates.some(sd => sd?.slice(0, 10) === dayModal.dateISO);
+          return d.service_date?.slice(0, 10) === dayModal.dateISO;
+        });
+        const HISTORY_ACTION_LABEL = {
+          ATTENDANCE_RECORDED: 'Logged Time',
+          STAFF_MARKED_ABSENT: 'Marked Absent',
+          STAFF_SALARY_CONFIRMED: 'Salary Calculated',
+          STAFF_SALARY_SKIPPED: 'Salary Skipped',
+          DAY_REVOKED: 'Revoked',
+        };
         const slotIds = [...new Set(dayModal.assignments.map(a => a.shift_slot_id).filter(Boolean))];
         // LIVE_IN AUTO bookings normally bill automatically overnight, but the client
         // is only with us for part of the first/last day — the cron leaves those days
@@ -3876,6 +3919,7 @@ const BookingDetailPageV2 = () => {
                               const shiftLabel = a.shift_label || (a.shift_number ? `Shift ${a.shift_number}` : null);
                               const inputs = attendanceInputs[a.assignment_id] || { date: dayModal.dateISO, in_time: '', out_time: '' };
                               const rowBorder = idx > 0 ? { borderTop: '1px solid #f3f4f6' } : {};
+                              const isEditing = editingAttendanceIds.has(a.assignment_id);
 
                               // Assigned reference — shift start/duration for SHIFT_BASED, else the
                               // assignment's own service_start_time/assigned_hours (VISITING/LIVE_IN).
@@ -3932,7 +3976,7 @@ const BookingDetailPageV2 = () => {
                                 );
                               }
 
-                              if (record && record.hours_served !== null) {
+                              if (record && record.hours_served !== null && !isEditing) {
                                 return (
                                   <tr key={a.assignment_id} style={rowBorder}>
                                     <td className={tdCls}>
@@ -3945,7 +3989,7 @@ const BookingDetailPageV2 = () => {
                                     <td className={tdCls + ' tabular-nums'}>{fmtTime(record.out_time)}</td>
                                     <td className={tdCls}><HoursBadge served={Number(record.hours_served)} assigned={assignedHours} /></td>
                                     <td className={tdCls}>
-                                      <div className="flex items-center gap-1.5">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
                                         <input
                                           type="number" min="0" step="0.01"
                                           value={salaryAmountInputs[record.attendance_id] ?? (a.daily_rate ?? '')}
@@ -3955,6 +3999,7 @@ const BookingDetailPageV2 = () => {
                                         />
                                         <button onClick={() => decideSalary(record.attendance_id, true, a.daily_rate)} disabled={dayModalBusy === `salary-${record.attendance_id}`} title="Calculates their earnings for this shift — actual payout is handled separately on the Staff Salaries page" className="px-2.5 py-1 text-[11px] font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded transition disabled:opacity-50">Calculate Salary</button>
                                         <button onClick={() => decideSalary(record.attendance_id, false)} disabled={dayModalBusy === `salary-${record.attendance_id}`} className="px-2.5 py-1 text-[11px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded transition disabled:opacity-50">Skip</button>
+                                        <button onClick={() => editAttendanceTimes(a, record)} title="Correct the logged in/out time before deciding salary" className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition">Edit Time</button>
                                       </div>
                                     </td>
                                   </tr>
@@ -4000,7 +4045,11 @@ const BookingDetailPageV2 = () => {
                                   <td className={tdCls}>
                                     <div className="flex items-center gap-1.5">
                                       <button onClick={() => saveAttendanceTimes(a)} disabled={dayModalBusy === `save-${a.assignment_id}`} className="px-3 py-1 text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded transition disabled:opacity-50">Save</button>
-                                      <button onClick={() => markAbsent(a)} disabled={dayModalBusy === `absent-${a.assignment_id}`} title="No-show — skips their salary only, no in/out time needed" className="px-3 py-1 text-[11px] font-semibold text-red-700 bg-red-50 hover:bg-red-100 rounded transition disabled:opacity-50">Absent</button>
+                                      {isEditing ? (
+                                        <button onClick={() => cancelEditAttendance(a.assignment_id)} className="px-3 py-1 text-[11px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded transition">Cancel</button>
+                                      ) : (
+                                        <button onClick={() => markAbsent(a)} disabled={dayModalBusy === `absent-${a.assignment_id}`} title="No-show — skips their salary only, no in/out time needed" className="px-3 py-1 text-[11px] font-semibold text-red-700 bg-red-50 hover:bg-red-100 rounded transition disabled:opacity-50">Absent</button>
+                                      )}
                                     </div>
                                   </td>
                                 </tr>
@@ -4102,6 +4151,46 @@ const BookingDetailPageV2 = () => {
                               )}
                             </tr>
                           )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── History ── */}
+                {dayHistory.length > 0 && (
+                  <div className="px-6 pt-2 pb-6">
+                    <p className="text-[10.5px] font-semibold uppercase tracking-widest text-gray-400 mb-3">History</p>
+                    <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+                      <table className="w-full text-sm border-collapse">
+                        <thead style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                          <tr>
+                            <th className={thCls}>When</th>
+                            <th className={thCls}>Action</th>
+                            <th className={thCls}>By</th>
+                            <th className={thCls}>Details</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {dayHistory.map((h, idx) => {
+                            const d = h.details || {};
+                            const detailBits = [
+                              d.hours_served != null ? `${d.hours_served}h served` : null,
+                              d.amount != null ? `Rs.${Number(d.amount).toLocaleString()}` : null,
+                              d.reason || null,
+                              d.notes && d.notes !== 'Marked absent — no-show' ? d.notes : null,
+                            ].filter(Boolean);
+                            return (
+                              <tr key={h.log_id} style={idx > 0 ? { borderTop: '1px solid #f3f4f6' } : {}}>
+                                <td className={tdCls + ' text-xs text-gray-500 whitespace-nowrap'}>
+                                  {new Date(h.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                                </td>
+                                <td className={tdCls}>{HISTORY_ACTION_LABEL[h.action_type] || h.action_type}</td>
+                                <td className={tdCls + ' text-xs text-gray-600'}>{h.actor_name}{h.actor_role ? ` (${h.actor_role})` : ''}</td>
+                                <td className={tdCls + ' text-xs text-gray-500'}>{detailBits.join(' — ') || '—'}</td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>

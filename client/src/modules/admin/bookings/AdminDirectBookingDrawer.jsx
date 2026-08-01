@@ -451,6 +451,7 @@ const AdminDirectBookingDrawer = ({
                         type="number"
                         value={npAge}
                         onChange={(e) => setNpAge(e.target.value)}
+                        onWheel={(e) => e.target.blur()}
                         min="0"
                         max="150"
                         className={inputCls(false)}
@@ -597,6 +598,7 @@ const AdminDirectBookingDrawer = ({
                     type="number"
                     value={dailyRate}
                     onChange={(e) => { setDailyRate(e.target.value); setErrors((err) => ({ ...err, dailyRate: undefined })); }}
+                    onWheel={(e) => e.target.blur()}
                     min="0"
                     step="0.01"
                     placeholder="e.g. 2500.00"
@@ -619,6 +621,7 @@ const AdminDirectBookingDrawer = ({
                       type="number"
                       value={shiftRate}
                       onChange={(e) => { setShiftRate(e.target.value); setErrors((err) => ({ ...err, shiftRate: undefined })); }}
+                      onWheel={(e) => e.target.blur()}
                       min="0"
                       step="0.01"
                       placeholder="e.g. 3500.00"

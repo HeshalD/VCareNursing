@@ -59,6 +59,39 @@ exports.getBookingAttendance = async (req, res) => {
 };
 
 /**
+ * @route   GET /api/bookings/:booking_id/attendance/history
+ * @desc    Audit trail of attendance/salary changes for a booking (times logged/edited,
+ *          absences, salary confirm/skip, day revokes) — read from the shared activity_log.
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ */
+const ATTENDANCE_HISTORY_ACTION_TYPES = [
+    'ATTENDANCE_RECORDED',
+    'STAFF_MARKED_ABSENT',
+    'STAFF_SALARY_CONFIRMED',
+    'STAFF_SALARY_SKIPPED',
+    'DAY_REVOKED',
+];
+
+exports.getAttendanceHistory = async (req, res) => {
+    const { booking_id } = req.params;
+
+    try {
+        const result = await db.query(
+            `SELECT log_id, actor_name, actor_role, action_type, details, created_at
+             FROM activity_log
+             WHERE entity_type = 'BOOKING' AND entity_id = $1 AND action_type = ANY($2::text[])
+             ORDER BY created_at DESC`,
+            [String(booking_id), ATTENDANCE_HISTORY_ACTION_TYPES]
+        );
+
+        res.status(200).json({ status: 'success', data: result.rows });
+    } catch (error) {
+        console.error('Get attendance history error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to fetch attendance history' });
+    }
+};
+
+/**
  * @route   POST /api/bookings/:booking_id/attendance
  * @desc    Log/update a staff member's in/out time for a given day on a booking.
  *          Computes hours_served from the two timestamps (handles overnight shifts

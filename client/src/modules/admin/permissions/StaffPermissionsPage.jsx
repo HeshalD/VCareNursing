@@ -84,6 +84,19 @@ const StaffPermissionsPage = () => {
     });
   };
 
+  const setSectionPerms = (keys, checked) => {
+    setSaveMsg(null);
+    setCurrentPerms((prev) => {
+      const next = new Set(prev);
+      keys.forEach((key) => {
+        if (rolePerms.has(key)) return; // granted via role — not togglable
+        if (checked) next.add(key);
+        else next.delete(key);
+      });
+      return next;
+    });
+  };
+
   const applyTemplate = (templateName) => {
     setSaveMsg(null);
     setCurrentPerms(new Set(templates[templateName] || []));
@@ -290,6 +303,7 @@ const StaffPermissionsPage = () => {
                     registry={registry}
                     checkedKeys={effectivePerms}
                     onToggle={togglePerm}
+                    onSectionToggle={setSectionPerms}
                     expandedModules={expandedModules}
                     onToggleModule={toggleModule}
                     lockedKeys={rolePerms}

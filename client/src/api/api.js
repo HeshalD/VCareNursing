@@ -1453,6 +1453,10 @@ class ApiClient {
     return this.request(`/bookings/${bookingId}/attendance`);
   }
 
+  async getAttendanceHistory(bookingId) {
+    return this.request(`/bookings/${bookingId}/attendance/history`);
+  }
+
   async upsertBookingAttendance(bookingId, attendanceData) {
     return this.request(`/bookings/${bookingId}/attendance`, {
       method: 'POST',

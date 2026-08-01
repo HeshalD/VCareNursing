@@ -3178,7 +3178,7 @@ const ClientDetailPage = () => {
               );
             })()}
 
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className="grid gap-4 grid-cols-1">
               <DataCard title="Client Information">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Contact &amp; Personal Details</span>
@@ -3194,7 +3194,7 @@ const ClientDetailPage = () => {
 
                 {editingProfile ? (
                   <div className="space-y-3">
-                    <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                       <div>
                         <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Full Name</label>
                         <input
@@ -3234,7 +3234,7 @@ const ClientDetailPage = () => {
                           <option value="OTHER">Other</option>
                         </select>
                       </div>
-                      <div className="sm:col-span-2">
+                      <div className="sm:col-span-2 lg:col-span-4">
                         <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Address</label>
                         <input
                           type="text"
@@ -3264,7 +3264,7 @@ const ClientDetailPage = () => {
                     </div>
                   </div>
                 ) : (
-                  <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                     <InfoRow label="Client Code" value={clientProfile.client_code || clientProfile.client_profile_id} />
                     <InfoRow label="User ID"     value={clientProfile.user_id} />
                     <InfoRow label="Full Name"   value={clientProfile.full_name || '-'} />
@@ -3392,7 +3392,7 @@ const ClientDetailPage = () => {
                       </div>
                     </div>
                   ) : (
-                    <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                       <div>
                         <p className="text-[11px] text-gray-400 mb-0.5">Company Name</p>
                         <p className="text-sm font-medium text-gray-800">{clientProfile.company_name || <span className="text-gray-400 italic">Not set (personal billing)</span>}</p>
@@ -3402,7 +3402,7 @@ const ClientDetailPage = () => {
                         <p className="text-sm font-medium text-gray-800">{clientProfile.honorific || <span className="text-gray-400 italic">None</span>}</p>
                       </div>
                       {clientProfile.company_name && (
-                        <div className="sm:col-span-2">
+                        <div className="sm:col-span-2 lg:col-span-2">
                           <p className="text-[11px] text-gray-400 mb-0.5">Display Name (on documents)</p>
                           <p className="text-sm font-medium text-gray-800">
                             {clientProfile.display_name_source === 'COMPANY_NAME' ? clientProfile.company_name : clientProfile.full_name}
@@ -3418,7 +3418,7 @@ const ClientDetailPage = () => {
               </DataCard>
 
               <DataCard title="Quick Summary">
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   <InfoRow label="Bookings"         value={`${bookingSummary.total_bookings || 0} total`} />
                   <InfoRow label="Care Profiles"    value={patientSummary.total_patients || 0} />
                   <InfoRow label="Quotes"           value={quotationSummary.total_quotes || 0} />

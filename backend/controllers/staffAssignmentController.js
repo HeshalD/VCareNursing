@@ -164,7 +164,9 @@ exports.getAssignmentFormData = async (req, res) => {
         sp.current_status,
         sp.current_earnings,
         sp.average_rating,
-        sp.total_reviews
+        sp.total_reviews,
+        sp.staff_code,
+        u.mobile_number
       FROM staff_profiles sp
       JOIN users u ON sp.user_id = u.user_id
       WHERE sp.is_active = true
@@ -196,7 +198,9 @@ exports.getAssignmentFormData = async (req, res) => {
       current_status: s.current_status,
       current_earnings: parseFloat(s.current_earnings || 0),
       average_rating: s.average_rating !== null ? parseFloat(s.average_rating) : null,
-      total_reviews: s.total_reviews !== null ? parseInt(s.total_reviews, 10) : 0
+      total_reviews: s.total_reviews !== null ? parseInt(s.total_reviews, 10) : 0,
+      staff_code: s.staff_code,
+      mobile_number: s.mobile_number
     }));
 
     return res.status(200).json({
