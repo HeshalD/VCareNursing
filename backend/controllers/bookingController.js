@@ -1853,7 +1853,7 @@ exports.confirmDailyInvoice = async (req, res) => {
                         booking_id, service_date, entry_mode, status, amount, transaction_id,
                         decided_by_user_id, decided_by_name, decided_at, shift_slot_id
                     ) VALUES ($1, $2, 'MANUAL', $3, $4, $5, $6, $7, NOW(), $8)
-                    ON CONFLICT (booking_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL
+                    ON CONFLICT (booking_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL AND reschedule_id IS NULL
                     DO UPDATE SET status = EXCLUDED.status,
                                   amount = EXCLUDED.amount,
                                   transaction_id = EXCLUDED.transaction_id,
@@ -2153,7 +2153,7 @@ exports.waiveShiftOccurrence = async (req, res) => {
             await client.query(
                 `INSERT INTO booking_daily_invoices (booking_id, service_date, entry_mode, status, shift_slot_id, decided_by_user_id, decided_by_name, decided_at, notes)
                  VALUES ($1, $2, 'MANUAL', 'SKIPPED', $3, $4, $5, NOW(), $6)
-                 ON CONFLICT (booking_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL
+                 ON CONFLICT (booking_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL AND reschedule_id IS NULL
                  DO UPDATE SET status = 'SKIPPED', decided_by_user_id = EXCLUDED.decided_by_user_id, decided_by_name = EXCLUDED.decided_by_name, decided_at = NOW(), notes = EXCLUDED.notes, updated_at = NOW()`,
                 [booking_id, service_date, shift_slot_id, req.user?.user_id || null, decidedByName, notes]
             );
