@@ -32,7 +32,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 exports.listRecruiters = async (req, res) => {
   try {
     const includeAll = String(req.query.all || '').toLowerCase() === 'true';
-    const where = includeAll ? '' : `WHERE role ILIKE '%recruit%'`;
+    const where = includeAll ? '' : `WHERE EXISTS (SELECT 1 FROM internal_staff_roles isr WHERE isr.staff_id = internal_staff.id AND isr.role ILIKE '%recruit%')`;
     const result = await db.query(
       `SELECT id, full_name, role, email, phone, status, staff_recruited_count
        FROM internal_staff

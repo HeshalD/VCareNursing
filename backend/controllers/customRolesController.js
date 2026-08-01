@@ -9,10 +9,10 @@ exports.list = async (req, res) => {
     const result = await db.query(
       `SELECT cr.id, cr.name, cr.description, cr.created_at, cr.updated_at,
               COUNT(DISTINCT crp.permission_key)::int AS permission_count,
-              COUNT(DISTINCT ist.id)::int AS assigned_count
+              COUNT(DISTINCT isr.staff_id)::int AS assigned_count
        FROM custom_roles cr
        LEFT JOIN custom_role_permissions crp ON crp.role_id = cr.id
-       LEFT JOIN internal_staff ist ON ist.custom_role_id = cr.id
+       LEFT JOIN internal_staff_roles isr ON isr.custom_role_id = cr.id AND isr.role = 'CUSTOM_ROLE'
        GROUP BY cr.id
        ORDER BY cr.name`
     );
@@ -167,7 +167,10 @@ exports.update = async (req, res) => {
 exports.remove = async (req, res) => {
   const { id } = req.params;
   try {
-    const assigned = await db.query('SELECT COUNT(*)::int AS count FROM internal_staff WHERE custom_role_id = $1', [id]);
+    const assigned = await db.query(
+      `SELECT COUNT(*)::int AS count FROM internal_staff_roles WHERE custom_role_id = $1 AND role = 'CUSTOM_ROLE'`,
+      [id]
+    );
     if (assigned.rows[0].count > 0) {
       return res.status(409).json({
         message: `Cannot delete: ${assigned.rows[0].count} staff member(s) still have this role assigned. Reassign them first.`,

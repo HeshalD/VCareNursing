@@ -1160,6 +1160,45 @@ async function runMigration() {
   `);
 
   // =========================================================
+  // Internal staff can hold more than one role (e.g. COORDINATOR + SALES).
+  // internal_staff.role/custom_role_id remain as the "primary" role — used
+  // for the login account's principal role and for legacy display columns —
+  // while internal_staff_roles holds the full set of roles assigned to a
+  // staff member. A staff member can have multiple CUSTOM_ROLE entries, one
+  // per distinct custom_role_id; every other role can only appear once.
+  // =========================================================
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS internal_staff_roles (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      staff_id UUID NOT NULL REFERENCES internal_staff(id) ON DELETE CASCADE,
+      role VARCHAR(50) NOT NULL,
+      custom_role_id UUID REFERENCES custom_roles(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS internal_staff_roles_unique_fixed
+      ON internal_staff_roles (staff_id, role) WHERE role <> 'CUSTOM_ROLE';
+  `);
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS internal_staff_roles_unique_custom
+      ON internal_staff_roles (staff_id, custom_role_id) WHERE role = 'CUSTOM_ROLE';
+  `);
+
+  // Backfill: every existing staff member's single role becomes their first
+  // (and only) row in internal_staff_roles.
+  await db.query(`
+    INSERT INTO internal_staff_roles (staff_id, role, custom_role_id)
+    SELECT id, role, custom_role_id FROM internal_staff
+    WHERE NOT EXISTS (
+      SELECT 1 FROM internal_staff_roles isr WHERE isr.staff_id = internal_staff.id
+    )
+    ON CONFLICT DO NOTHING;
+  `);
+
+  // =========================================================
   // ALTER TABLE: Add payment tracking columns
   // =========================================================
 

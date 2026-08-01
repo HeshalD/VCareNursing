@@ -5,12 +5,63 @@ const { toE164, isValidPhone } = require('../utils/phone');
 const { invalidatePermissionCache } = require('../middleware/authMiddleware');
 
 const LOGIN_ROLES = new Set(['COORDINATOR', 'ACCOUNTS', 'SALES', 'SUPER_ADMIN', 'CUSTOM_ROLE', 'RECRUITER']);
-const SELECTABLE = 'id, user_id, full_name, role, email, phone, base_salary, joined_date, status, address, total_sales_amount, bookings_brought_count, custom_role_id, created_at, updated_at';
+const SELECTABLE = 's.id, s.user_id, s.full_name, s.role, s.email, s.phone, s.base_salary, s.joined_date, s.status, s.address, s.total_sales_amount, s.bookings_brought_count, s.custom_role_id, s.created_at, s.updated_at';
+
+// A staff member can hold multiple roles. `roles` (the source of truth) lives in
+// internal_staff_roles; internal_staff.role/custom_role_id mirror the first role
+// in that set as a "primary" role for legacy display (salesperson/recruiter list
+// columns, activity log labels, etc).
+const ROLES_SUBQUERY = `
+  COALESCE(
+    (SELECT json_agg(json_build_object('role', isr.role, 'custom_role_id', isr.custom_role_id, 'custom_role_name', cr.name) ORDER BY isr.created_at)
+     FROM internal_staff_roles isr
+     LEFT JOIN custom_roles cr ON cr.id = isr.custom_role_id
+     WHERE isr.staff_id = s.id),
+    '[]'::json
+  ) AS roles
+`;
+
+// Normalizes the `roles` array from the request body: dedupes, uppercases role
+// codes, and strips custom_role_id from non-CUSTOM_ROLE entries.
+function normalizeRoles(input) {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const item of input) {
+    if (!item) continue;
+    const role = String(item.role || '').trim().toUpperCase();
+    if (!role) continue;
+    const custom_role_id = role === 'CUSTOM_ROLE' ? (item.custom_role_id || null) : null;
+    const key = role === 'CUSTOM_ROLE' ? `CUSTOM_ROLE:${custom_role_id}` : role;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ role, custom_role_id });
+  }
+  return out;
+}
+
+function validateRoles(roles) {
+  if (roles.length === 0) return 'Select at least one role';
+  if (roles.some((r) => r.role === 'CUSTOM_ROLE' && !r.custom_role_id)) {
+    return 'Select a custom role for each Custom Role entry';
+  }
+  return null;
+}
+
+async function replaceStaffRoles(client, staffId, roles) {
+  await client.query('DELETE FROM internal_staff_roles WHERE staff_id = $1', [staffId]);
+  for (const r of roles) {
+    await client.query(
+      'INSERT INTO internal_staff_roles (staff_id, role, custom_role_id) VALUES ($1, $2, $3)',
+      [staffId, r.role, r.custom_role_id]
+    );
+  }
+}
 
 exports.list = async (req, res) => {
   try {
     const result = await db.query(
-      `SELECT ${SELECTABLE} FROM internal_staff ORDER BY full_name`
+      `SELECT ${SELECTABLE}, ${ROLES_SUBQUERY} FROM internal_staff s ORDER BY s.full_name`
     );
     res.json({ staff: result.rows });
   } catch (err) {
@@ -20,26 +71,30 @@ exports.list = async (req, res) => {
 };
 
 exports.create = async (req, res) => {
-  const { full_name, role, email, base_salary, joined_date, status, address, password, custom_role_id } = req.body;
+  const { full_name, email, base_salary, joined_date, status, address, password } = req.body;
   const rawPhone = req.body.phone;
+  const roles = normalizeRoles(req.body.roles);
 
-  if (!full_name?.trim() || !role?.trim() || !email?.trim()) {
-    return res.status(400).json({ message: 'full_name, role, and email are required' });
+  if (!full_name?.trim() || !email?.trim()) {
+    return res.status(400).json({ message: 'full_name, email, and at least one role are required' });
+  }
+  const rolesError = validateRoles(roles);
+  if (rolesError) {
+    return res.status(400).json({ message: rolesError });
   }
 
-  const roleUpper = role.trim().toUpperCase();
-  const needsLogin = LOGIN_ROLES.has(roleUpper);
+  const needsLogin = roles.some((r) => LOGIN_ROLES.has(r.role));
   if (needsLogin) {
     if (!rawPhone?.trim()) return res.status(400).json({ message: 'Phone is required for this role (used as login mobile number)' });
     if (!password?.trim()) return res.status(400).json({ message: 'Password is required for this role' });
-  }
-  if (roleUpper === 'CUSTOM_ROLE' && !custom_role_id) {
-    return res.status(400).json({ message: 'Select a custom role' });
   }
   if (rawPhone?.trim() && !isValidPhone(rawPhone)) {
     return res.status(400).json({ message: 'Enter a valid phone number.' });
   }
   const phone = rawPhone?.trim() ? toE164(rawPhone) : null;
+
+  const primary = roles[0];
+  const userRoleArray = [...new Set(roles.map((r) => r.role))];
 
   const client = await db.pool.connect();
   try {
@@ -50,20 +105,20 @@ exports.create = async (req, res) => {
       const hash = await bcrypt.hash(password.trim(), 10);
       const userResult = await client.query(
         `INSERT INTO users (mobile_number, password_hash, email, role, is_active)
-         VALUES ($1, $2, $3, ARRAY[$4::user_role_enum], true)
+         VALUES ($1, $2, $3, $4::user_role_enum[], true)
          RETURNING user_id`,
-        [phone, hash, email.trim(), roleUpper]
+        [phone, hash, email.trim(), userRoleArray]
       );
       userId = userResult.rows[0].user_id;
     }
 
-    const result = await client.query(
+    const inserted = await client.query(
       `INSERT INTO internal_staff (full_name, role, email, phone, base_salary, joined_date, status, address, user_id, custom_role_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       RETURNING ${SELECTABLE}`,
+       RETURNING id`,
       [
         full_name.trim(),
-        role.trim(),
+        primary.role,
         email.trim(),
         phone,
         base_salary != null && base_salary !== '' ? parseFloat(base_salary) : 0,
@@ -71,8 +126,15 @@ exports.create = async (req, res) => {
         status || 'Active',
         address?.trim() || null,
         userId,
-        custom_role_id || null,
+        primary.custom_role_id,
       ]
+    );
+    const staffId = inserted.rows[0].id;
+    await replaceStaffRoles(client, staffId, roles);
+
+    const result = await client.query(
+      `SELECT ${SELECTABLE}, ${ROLES_SUBQUERY} FROM internal_staff s WHERE s.id = $1`,
+      [staffId]
     );
 
     await client.query('COMMIT');
@@ -82,8 +144,8 @@ exports.create = async (req, res) => {
       actorRole: req.user?.role,
       actionType: 'INTERNAL_STAFF_CREATED',
       entityType: 'STAFF',
-      entityId: String(result.rows[0].id),
-      details: { full_name: full_name.trim(), role: role.trim() },
+      entityId: String(staffId),
+      details: { full_name: full_name.trim(), roles: roles.map((r) => r.role) },
     }).catch(err => console.error('Activity log failed:', err));
 
     res.status(201).json({ staff: result.rows[0] });
@@ -101,14 +163,17 @@ exports.create = async (req, res) => {
 
 exports.update = async (req, res) => {
   const { id } = req.params;
-  const allowed = ['full_name', 'role', 'email', 'phone', 'base_salary', 'joined_date', 'status', 'address', 'custom_role_id'];
+  const allowed = ['full_name', 'email', 'phone', 'base_salary', 'joined_date', 'status', 'address'];
   const body = req.body;
+  const rolesProvided = Object.prototype.hasOwnProperty.call(body, 'roles');
+  const roles = rolesProvided ? normalizeRoles(body.roles) : null;
 
   if (body.phone && String(body.phone).trim() && !isValidPhone(body.phone)) {
     return res.status(400).json({ message: 'Enter a valid phone number.' });
   }
-  if (body.role?.trim().toUpperCase() === 'CUSTOM_ROLE' && !body.custom_role_id) {
-    return res.status(400).json({ message: 'Select a custom role' });
+  if (rolesProvided) {
+    const rolesError = validateRoles(roles);
+    if (rolesError) return res.status(400).json({ message: rolesError });
   }
 
   const setClauses = [];
@@ -128,6 +193,14 @@ exports.update = async (req, res) => {
     }
   }
 
+  if (rolesProvided) {
+    const primary = roles[0];
+    setClauses.push(`role = $${idx++}`);
+    values.push(primary.role);
+    setClauses.push(`custom_role_id = $${idx++}`);
+    values.push(primary.custom_role_id);
+  }
+
   if (setClauses.length === 0) {
     return res.status(400).json({ message: 'No fields to update' });
   }
@@ -135,17 +208,40 @@ exports.update = async (req, res) => {
   setClauses.push(`updated_at = NOW()`);
   values.push(id);
 
+  const client = await db.pool.connect();
   try {
-    const result = await db.query(
-      `UPDATE internal_staff SET ${setClauses.join(', ')} WHERE id = $${idx} RETURNING ${SELECTABLE}`,
+    await client.query('BEGIN');
+
+    const result = await client.query(
+      `UPDATE internal_staff SET ${setClauses.join(', ')} WHERE id = $${idx} RETURNING user_id`,
       values
     );
     if (!result.rows.length) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ message: 'Staff member not found' });
     }
+    const { user_id: userId } = result.rows[0];
 
-    if (Object.prototype.hasOwnProperty.call(body, 'custom_role_id') && result.rows[0].user_id) {
-      invalidatePermissionCache(result.rows[0].user_id);
+    if (rolesProvided) {
+      await replaceStaffRoles(client, id, roles);
+      if (userId) {
+        const userRoleArray = [...new Set(roles.map((r) => r.role))];
+        await client.query(
+          `UPDATE users SET role = $1::user_role_enum[] WHERE user_id = $2`,
+          [userRoleArray, userId]
+        );
+      }
+    }
+
+    const staffRow = await client.query(
+      `SELECT ${SELECTABLE}, ${ROLES_SUBQUERY} FROM internal_staff s WHERE s.id = $1`,
+      [id]
+    );
+
+    await client.query('COMMIT');
+
+    if (rolesProvided && userId) {
+      invalidatePermissionCache(userId);
     }
 
     logActivity({
@@ -154,16 +250,22 @@ exports.update = async (req, res) => {
       actionType: 'INTERNAL_STAFF_UPDATED',
       entityType: 'STAFF',
       entityId: String(id),
-      details: { updated_fields: allowed.filter(k => Object.prototype.hasOwnProperty.call(body, k)) },
+      details: {
+        updated_fields: allowed.filter(k => Object.prototype.hasOwnProperty.call(body, k)),
+        ...(rolesProvided ? { roles: roles.map((r) => r.role) } : {}),
+      },
     }).catch(err => console.error('Activity log failed:', err));
 
-    res.json({ staff: result.rows[0] });
+    res.json({ staff: staffRow.rows[0] });
   } catch (err) {
+    await client.query('ROLLBACK');
     if (err.code === '23505') {
       return res.status(409).json({ message: 'A staff member with this email already exists' });
     }
     console.error('internalStaff.update error:', err);
     res.status(500).json({ message: 'Internal server error' });
+  } finally {
+    client.release();
   }
 };
 

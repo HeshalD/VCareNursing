@@ -44,7 +44,8 @@ exports.requirePermission = (permissionKey) => async (req, res, next) => {
         `SELECT permission_key FROM staff_permissions WHERE user_id = $1
          UNION
          SELECT crp.permission_key FROM custom_role_permissions crp
-           JOIN internal_staff ist ON ist.custom_role_id = crp.role_id
+           JOIN internal_staff_roles isr ON isr.custom_role_id = crp.role_id AND isr.role = 'CUSTOM_ROLE'
+           JOIN internal_staff ist ON ist.id = isr.staff_id
            WHERE ist.user_id = $1`,
         [userId]
       );

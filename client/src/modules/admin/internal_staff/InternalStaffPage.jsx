@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Pencil, Trash2, X, Loader2, ShieldCheck, Smartphone, Copy, Search, RefreshCw, KeySquare } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, Loader2, ShieldCheck, Smartphone, Copy, Search, RefreshCw, KeySquare, Check } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import DateInput from '../../../components/common/DateInput';
@@ -16,20 +16,21 @@ const ROLE_OPTIONS = [
   { value: 'RECRUITER', label: 'Recruiter' },
 ];
 const LOGIN_ROLES = new Set(['COORDINATOR', 'ACCOUNTS', 'SALES', 'SUPER_ADMIN', 'CUSTOM_ROLE', 'RECRUITER']);
-const CUSTOM_ROLE_PREFIX = 'custom:';
 const STATUS_OPTIONS = ['Active', 'Inactive', 'On Leave'];
 const STATUS_TABS = ['All', 'Active', 'Inactive', 'On Leave'];
 
+// form.roles holds one entry per selected role box: { role, custom_role_id }.
+// CUSTOM_ROLE can appear multiple times (once per distinct custom role picked);
+// every other role can only appear once.
 const empty = {
   full_name: '',
-  role: '',
+  roles: [],
   email: '',
   phone: '',
   base_salary: '',
   joined_date: '',
   status: 'Active',
   password: '',
-  custom_role_id: '',
 };
 
 const STATUS_CONFIG = {
@@ -38,7 +39,7 @@ const STATUS_CONFIG = {
   'On Leave':  { dot: 'bg-amber-400',   text: 'text-amber-700',   label: 'On Leave' },
 };
 
-const isSalesRole = (role) => (role || '').toLowerCase().includes('sales');
+const isSalesRole = (roles) => (roles || []).some((r) => (r.role || '').toLowerCase().includes('sales'));
 
 const roleLabel = (role) => ROLE_OPTIONS.find((r) => r.value === role)?.label || role;
 
@@ -51,7 +52,7 @@ const deviceStatusColor = (s) => {
 const money = (value) =>
   `LKR ${parseFloat(value || 0).toLocaleString('en-LK', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
-const needsLoginAccount = (role) => LOGIN_ROLES.has(role?.trim().toUpperCase());
+const needsLoginAccount = (roles) => (roles || []).some((r) => LOGIN_ROLES.has(r.role));
 
 const genPassword = () => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
@@ -143,14 +144,15 @@ const InternalStaffPage = () => {
   const openEdit = (member) => {
     setForm({
       full_name: member.full_name || '',
-      role: member.role || '',
+      roles: (member.roles && member.roles.length > 0)
+        ? member.roles.map((r) => ({ role: r.role, custom_role_id: r.custom_role_id || '' }))
+        : (member.role ? [{ role: member.role, custom_role_id: member.custom_role_id || '' }] : []),
       email: member.email || '',
       phone: member.phone || '',
       base_salary: member.base_salary != null ? String(member.base_salary) : '',
       joined_date: member.joined_date ? member.joined_date.split('T')[0] : '',
       status: member.status || 'Active',
       password: '',
-      custom_role_id: member.custom_role_id || '',
     });
     setFormError('');
     setEditing(member);
@@ -165,20 +167,35 @@ const InternalStaffPage = () => {
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
-  // The Role dropdown lists both fixed roles and custom roles together. Custom
-  // role options are encoded as `custom:<id>` so a single <select> can represent
-  // both without colliding; selecting one stores the CUSTOM_ROLE sentinel plus
-  // the chosen role's id, exactly like selecting COORDINATOR stores that role.
-  const roleSelectValue = form.role === 'CUSTOM_ROLE' ? `${CUSTOM_ROLE_PREFIX}${form.custom_role_id}` : form.role;
+  const isRoleSelected = (roleValue) => form.roles.some((r) => r.role === roleValue);
 
-  const handleRoleChange = (e) => {
-    const val = e.target.value;
-    const isCustom = val.startsWith(CUSTOM_ROLE_PREFIX);
-    const role = isCustom ? 'CUSTOM_ROLE' : val;
-    const custom_role_id = isCustom ? val.slice(CUSTOM_ROLE_PREFIX.length) : '';
+  // Toggle a fixed (non-custom) role box on/off.
+  const toggleRole = (roleValue) => {
     setForm((f) => {
-      const next = { ...f, role, custom_role_id };
-      if (!editing && needsLoginAccount(role) && !f.password) {
+      const selected = f.roles.some((r) => r.role === roleValue);
+      const roles = selected
+        ? f.roles.filter((r) => r.role !== roleValue)
+        : [...f.roles, { role: roleValue, custom_role_id: '' }];
+      const next = { ...f, roles };
+      if (!editing && needsLoginAccount(roles) && !f.password) {
+        next.password = genPassword();
+      }
+      return next;
+    });
+  };
+
+  const isCustomRoleSelected = (customRoleId) =>
+    form.roles.some((r) => r.role === 'CUSTOM_ROLE' && r.custom_role_id === customRoleId);
+
+  // Toggle a custom role box on/off. Multiple custom roles can be selected together.
+  const toggleCustomRole = (customRoleId) => {
+    setForm((f) => {
+      const selected = f.roles.some((r) => r.role === 'CUSTOM_ROLE' && r.custom_role_id === customRoleId);
+      const roles = selected
+        ? f.roles.filter((r) => !(r.role === 'CUSTOM_ROLE' && r.custom_role_id === customRoleId))
+        : [...f.roles, { role: 'CUSTOM_ROLE', custom_role_id: customRoleId }];
+      const next = { ...f, roles };
+      if (!editing && needsLoginAccount(roles) && !f.password) {
         next.password = genPassword();
       }
       return next;
@@ -193,20 +210,27 @@ const InternalStaffPage = () => {
     showToast('Password copied.');
   };
 
-  const isLoginRole = needsLoginAccount(form.role);
+  const isLoginRole = needsLoginAccount(form.roles);
   const isAdd = !editing;
 
   const customRoleName = (id) => customRoles.find((r) => r.id === id)?.name;
 
-  const displayRoleLabel = (member) =>
-    member.role === 'CUSTOM_ROLE' ? (customRoleName(member.custom_role_id) || 'Custom Role') : roleLabel(member.role);
+  const displayRoleLabel = (member) => {
+    const roles = (member.roles && member.roles.length > 0)
+      ? member.roles
+      : (member.role ? [{ role: member.role, custom_role_id: member.custom_role_id, custom_role_name: null }] : []);
+    if (roles.length === 0) return '—';
+    return roles
+      .map((r) => (r.role === 'CUSTOM_ROLE' ? (r.custom_role_name || customRoleName(r.custom_role_id) || 'Custom Role') : roleLabel(r.role)))
+      .join(', ');
+  };
 
   const handleSave = async () => {
-    if (!form.full_name.trim() || !form.role.trim() || !form.email.trim()) {
-      setFormError('Full name, role, and email are required.');
+    if (!form.full_name.trim() || form.roles.length === 0 || !form.email.trim()) {
+      setFormError('Full name, at least one role, and email are required.');
       return;
     }
-    if (form.role === 'CUSTOM_ROLE' && !form.custom_role_id) {
+    if (form.roles.some((r) => r.role === 'CUSTOM_ROLE' && !r.custom_role_id)) {
       setFormError('Select a custom role.');
       return;
     }
@@ -230,13 +254,12 @@ const InternalStaffPage = () => {
     try {
       const payload = {
         full_name: form.full_name.trim(),
-        role: form.role.trim(),
+        roles: form.roles.map((r) => ({ role: r.role, custom_role_id: r.role === 'CUSTOM_ROLE' ? r.custom_role_id : null })),
         email: form.email.trim(),
         phone: form.phone.trim() || null,
         base_salary: form.base_salary !== '' ? parseFloat(form.base_salary) : 0,
         joined_date: form.joined_date || null,
         status: form.status,
-        custom_role_id: form.role === 'CUSTOM_ROLE' ? form.custom_role_id : null,
       };
       if (isAdd && isLoginRole) {
         payload.password = form.password.trim();
@@ -449,10 +472,17 @@ const InternalStaffPage = () => {
                     </div>
                   </td>
                   <td className="px-4 py-3 text-slate-600">
-                    <span className="inline-flex items-center gap-1">
-                      {member.role === 'CUSTOM_ROLE' && <KeySquare className="w-3 h-3 text-indigo-500" />}
-                      {displayRoleLabel(member)}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-1 max-w-[220px]">
+                      {(member.roles && member.roles.length > 0 ? member.roles : (member.role ? [{ role: member.role, custom_role_id: member.custom_role_id }] : [])).map((r, i) => (
+                        <span
+                          key={`${r.role}-${r.custom_role_id || ''}-${i}`}
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 text-xs text-slate-600"
+                        >
+                          {r.role === 'CUSTOM_ROLE' && <KeySquare className="w-3 h-3 text-indigo-500" />}
+                          {r.role === 'CUSTOM_ROLE' ? (r.custom_role_name || customRoleName(r.custom_role_id) || 'Custom Role') : roleLabel(r.role)}
+                        </span>
+                      ))}
+                    </div>
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     <p className="text-slate-700">{member.phone || '—'}</p>
@@ -462,7 +492,7 @@ const InternalStaffPage = () => {
                     <StatusBadge status={member.status} />
                   </td>
                   <td className="px-4 py-3">
-                    {isSalesRole(member.role) ? (
+                    {isSalesRole(member.roles) ? (
                       <div className="leading-tight">
                         <div className="font-semibold text-slate-900">
                           {member.bookings_brought_count || 0} booking{(member.bookings_brought_count || 0) !== 1 ? 's' : ''}
@@ -588,35 +618,65 @@ const InternalStaffPage = () => {
                   />
                 </Field>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Role" required>
-                    <select className={inputCls} value={roleSelectValue} onChange={handleRoleChange}>
-                      <option value="" disabled>Select a role…</option>
-                      {ROLE_OPTIONS.map((r) => (
-                        <option key={r.value} value={r.value}>{r.label}</option>
-                      ))}
-                      {customRoles.length > 0 && (
-                        <optgroup label="Custom Roles">
-                          {customRoles.map((r) => (
-                            <option key={r.id} value={`${CUSTOM_ROLE_PREFIX}${r.id}`}>{r.name}</option>
-                          ))}
-                        </optgroup>
-                      )}
-                    </select>
-                    {form.role === 'CUSTOM_ROLE' && (
-                      <p className="text-xs text-slate-400 mt-1">
-                        Grants every permission in this role. Manage roles from Permissions → Roles.
+                <Field label="Roles" required>
+                  <div className="grid grid-cols-2 gap-2">
+                    {ROLE_OPTIONS.map((r) => {
+                      const selected = isRoleSelected(r.value);
+                      return (
+                        <button
+                          key={r.value}
+                          type="button"
+                          onClick={() => toggleRole(r.value)}
+                          className={`flex items-center justify-between gap-2 px-3 py-2 text-sm rounded-lg border transition-colors text-left ${
+                            selected
+                              ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
+                              : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                          }`}
+                        >
+                          {r.label}
+                          {selected && <Check className="w-4 h-4 flex-shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {customRoles.length > 0 && (
+                    <div className="mt-3">
+                      <p className="text-xs font-medium text-slate-500 mb-1.5">Custom Roles</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {customRoles.map((r) => {
+                          const selected = isCustomRoleSelected(r.id);
+                          return (
+                            <button
+                              key={r.id}
+                              type="button"
+                              onClick={() => toggleCustomRole(r.id)}
+                              className={`flex items-center justify-between gap-2 px-3 py-2 text-sm rounded-lg border transition-colors text-left ${
+                                selected
+                                  ? 'border-indigo-500 bg-indigo-50 text-indigo-700 font-medium'
+                                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                              }`}
+                            >
+                              <span className="inline-flex items-center gap-1"><KeySquare className="w-3.5 h-3.5 flex-shrink-0" />{r.name}</span>
+                              {selected && <Check className="w-4 h-4 flex-shrink-0" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="text-xs text-slate-400 mt-1.5">
+                        Custom roles grant every permission assigned to them. Manage roles from Permissions → Roles.
                       </p>
-                    )}
-                  </Field>
-                  <Field label="Status">
-                    <select className={inputCls} value={form.status} onChange={set('status')}>
-                      {STATUS_OPTIONS.map((s) => (
-                        <option key={s} value={s}>{s}</option>
-                      ))}
-                    </select>
-                  </Field>
-                </div>
+                    </div>
+                  )}
+                </Field>
+
+                <Field label="Status">
+                  <select className={inputCls} value={form.status} onChange={set('status')}>
+                    {STATUS_OPTIONS.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </Field>
               </div>
 
               <SectionHeader title="Contact" />
