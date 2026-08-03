@@ -35,7 +35,12 @@ exports.getMyPermissions = async (req, res) => {
     }
 
     const result = await db.query(
-      'SELECT permission_key FROM staff_permissions WHERE user_id = $1',
+      `SELECT permission_key FROM staff_permissions WHERE user_id = $1
+       UNION
+       SELECT crp.permission_key FROM custom_role_permissions crp
+         JOIN internal_staff_roles isr ON isr.custom_role_id = crp.role_id AND isr.role = 'CUSTOM_ROLE'
+         JOIN internal_staff ist ON ist.id = isr.staff_id
+         WHERE ist.user_id = $1`,
       [req.user.user_id]
     );
     res.json({ permissions: result.rows.map(r => r.permission_key) });

@@ -80,6 +80,7 @@ const ClientManagement = () => {
 
   const [showDrawer, setShowDrawer] = useState(false);
   const [formData, setFormData] = useState(BLANK_FORM);
+  const genderLockedByHonorific = formData.honorific === 'Mr.' || formData.honorific === 'Mrs.' || formData.honorific === 'Ms.';
   const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState(null);
   const [formSuccess, setFormSuccess] = useState(null);
@@ -125,9 +126,13 @@ const ClientManagement = () => {
 
   const handleInput = (e) => {
     const { name, value } = e.target;
+    const genderFromHonorific = name === 'honorific'
+      ? (value === 'Mr.' ? 'MALE' : (value === 'Mrs.' || value === 'Ms.') ? 'FEMALE' : null)
+      : null;
     setFormData(p => ({
       ...p,
       [name]: value,
+      ...(genderFromHonorific ? { gender: genderFromHonorific } : {}),
       ...(name === 'client_type' && value !== 'CORPORATE_PROXY' ? { company_name: '', display_name_source: 'FULL_NAME' } : {}),
       ...(name === 'company_name' && !value ? { display_name_source: 'FULL_NAME' } : {}),
     }));
@@ -429,8 +434,9 @@ const ClientManagement = () => {
                     </Field>
                   </div>
                 </div>
-                <Field label="Gender" required={formData.client_type !== 'CORPORATE_PROXY'}>
-                  <select name="gender" value={formData.gender} onChange={handleInput} className={inputCls(false)}>
+                <Field label={`Gender${genderLockedByHonorific ? ' (locked by Title)' : ''}`} required={formData.client_type !== 'CORPORATE_PROXY'}>
+                  <select name="gender" value={formData.gender} onChange={handleInput} disabled={genderLockedByHonorific}
+                    className={`${inputCls(false)} ${genderLockedByHonorific ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''}`}>
                     <option value="">Select gender</option>
                     <option value="MALE">Male</option>
                     <option value="FEMALE">Female</option>

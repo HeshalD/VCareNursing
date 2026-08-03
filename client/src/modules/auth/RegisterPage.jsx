@@ -41,6 +41,8 @@ const RegisterPage = () => {
     color: 'text-gray-500'
   });
 
+  const genderLockedByHonorific = formData.honorific === 'Mr' || formData.honorific === 'Mrs' || formData.honorific === 'Miss';
+
   const validateField = (name, value) => {
     let error = '';
 
@@ -130,11 +132,19 @@ const RegisterPage = () => {
   };
 
   const handleInputChange = (name, value) => {
-    setFormData({ ...formData, [name]: value });
+    const genderFromHonorific = name === 'honorific'
+      ? (value === 'Mr' ? 'MALE' : (value === 'Mrs' || value === 'Miss') ? 'FEMALE' : null)
+      : null;
+
+    setFormData({ ...formData, [name]: value, ...(genderFromHonorific ? { gender: genderFromHonorific } : {}) });
 
     // Real-time validation
     const error = validateField(name, value);
-    setFieldErrors({ ...fieldErrors, [name]: error });
+    setFieldErrors({
+      ...fieldErrors,
+      [name]: error,
+      ...(genderFromHonorific ? { gender: validateField('gender', genderFromHonorific) } : {}),
+    });
 
     // Password strength indicator
     if (name === 'password') {
@@ -444,25 +454,30 @@ const RegisterPage = () => {
 
               {/* Gender Selection */}
               <div className="space-y-1">
-                <label className="text-sm font-medium text-slate-700 block">Gender</label>
+                <label className="text-sm font-medium text-slate-700 block">
+                  Gender
+                  {genderLockedByHonorific && <span className="ml-2 text-xs font-normal text-slate-400">(locked by Title)</span>}
+                </label>
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     type="button"
+                    disabled={genderLockedByHonorific}
                     onClick={() => handleInputChange('gender', 'MALE')}
                     className={`px-4 py-3 rounded-lg border-2 transition-all font-medium ${formData.gender === 'MALE'
                         ? 'border-blue-500 bg-blue-50 text-blue-700'
                         : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
-                      }`}
+                      } ${genderLockedByHonorific ? 'opacity-50 cursor-not-allowed hover:border-slate-200' : ''}`}
                   >
                     Male
                   </button>
                   <button
                     type="button"
+                    disabled={genderLockedByHonorific}
                     onClick={() => handleInputChange('gender', 'FEMALE')}
                     className={`px-4 py-3 rounded-lg border-2 transition-all font-medium ${formData.gender === 'FEMALE'
                         ? 'border-blue-500 bg-blue-50 text-blue-700'
                         : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
-                      }`}
+                      } ${genderLockedByHonorific ? 'opacity-50 cursor-not-allowed hover:border-slate-200' : ''}`}
                   >
                     Female
                   </button>

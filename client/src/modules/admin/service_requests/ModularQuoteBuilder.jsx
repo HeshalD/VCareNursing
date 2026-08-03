@@ -771,6 +771,14 @@ const ModularQuoteBuilder = () => {
               <InfoRow label="Location" value={serviceRequest?.location_address} />
             </div>
 
+            {/* Additional remarks */}
+            {serviceRequest?.remarks && (
+              <div className="px-5 py-4">
+                <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">Additional Remarks</p>
+                <p className="mt-0.5 text-sm text-gray-800 whitespace-pre-wrap">{serviceRequest.remarks}</p>
+              </div>
+            )}
+
             {/* Registration status */}
             {clientProfile && (
               <div className="px-5 py-4">
