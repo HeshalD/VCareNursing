@@ -1389,16 +1389,16 @@ exports.reactivateStaffAccount = async (req, res) => {
 exports.getAllStaff = async (req, res) => {
     try {
         // Optional query parameters for filtering
-        const { status, verification_status, role, page = 1, limit = 10 } = req.query;
-        
+        const { status, verification_status, role, search = '', pending_migration = '', page = 1, limit = 10 } = req.query;
+
         // Build WHERE clause dynamically
         let whereClause = '';
         const queryParams = [];
         let paramIndex = 1;
 
         if (status) {
-            whereClause += ` AND sp.current_status = $${paramIndex}`;
-            queryParams.push(status);
+            whereClause += ` AND LOWER(sp.current_status) = $${paramIndex}`;
+            queryParams.push(status.toLowerCase());
             paramIndex++;
         }
 
@@ -1414,9 +1414,32 @@ exports.getAllStaff = async (req, res) => {
             paramIndex++;
         }
 
+        if (pending_migration === 'true') {
+            whereClause += ` AND sp.onboarding_status = 'PENDING_MIGRATION'`;
+        }
+
+        if (search) {
+            whereClause += ` AND (sp.full_name ILIKE $${paramIndex} OR u.mobile_number ILIKE $${paramIndex} OR sp.staff_code ILIKE $${paramIndex} OR sp.designation ILIKE $${paramIndex})`;
+            queryParams.push(`%${search}%`);
+            paramIndex++;
+        }
+
         // Pagination
         const offset = (page - 1) * limit;
-        
+
+        // Tab/badge counts always reflect the full dataset, independent of the
+        // current filters — mirrors clientController.getAllClients' counts behavior.
+        const countsRes = await db.query(`
+            SELECT
+              COUNT(*) AS all_count,
+              COUNT(*) FILTER (WHERE LOWER(sp.current_status) = 'available') AS available_count,
+              COUNT(*) FILTER (WHERE LOWER(sp.current_status) = 'unavailable') AS unavailable_count,
+              COUNT(*) FILTER (WHERE LOWER(sp.current_status) = 'assigned') AS assigned_count,
+              COUNT(*) FILTER (WHERE sp.onboarding_status = 'PENDING_MIGRATION') AS pending_migration_count
+            FROM staff_profiles sp
+            JOIN users u ON sp.user_id = u.user_id
+        `);
+
         const countQuery = `
             SELECT COUNT(*) as total_count
             FROM staff_profiles sp
@@ -1494,6 +1517,7 @@ exports.getAllStaff = async (req, res) => {
         console.log('Average rating present:', 'average_rating' in (dataResult.rows[0] || {}));
         const totalCount = parseInt(countResult.rows[0].total_count);
         const totalPages = Math.ceil(totalCount / limit);
+        const c = countsRes.rows[0];
 
         res.status(200).json({
             status: 'success',
@@ -1505,14 +1529,21 @@ exports.getAllStaff = async (req, res) => {
                 per_page: parseInt(limit),
                 has_next: page < totalPages,
                 has_prev: page > 1
+            },
+            counts: {
+                All: parseInt(c.all_count, 10),
+                available: parseInt(c.available_count, 10),
+                unavailable: parseInt(c.unavailable_count, 10),
+                assigned: parseInt(c.assigned_count, 10),
+                pending_migration: parseInt(c.pending_migration_count, 10),
             }
         });
 
     } catch (error) {
         console.error('Get All Staff Error:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             status: 'error',
-            message: 'Server error while fetching staff members' 
+            message: 'Server error while fetching staff members'
         });
     }
 };

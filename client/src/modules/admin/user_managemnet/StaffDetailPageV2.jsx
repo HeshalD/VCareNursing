@@ -3,31 +3,46 @@ import { useNavigate, useParams } from 'react-router-dom';
 import DateInput from '../../../components/common/DateInput';
 import PhoneInput from '../../../components/common/PhoneInput';
 import {
+  Activity,
   AlertCircle,
   ArrowLeft,
   ArrowLeftRight,
+  BadgeDollarSign,
+  Briefcase,
+  CalendarClock,
+  CalendarDays,
   Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  ClipboardList,
   Eye,
   FileText,
+  History,
   Landmark,
+  LayoutGrid,
   Loader2,
+  MapPin,
+  Menu,
+  MinusCircle,
   Pencil,
+  Phone,
   Plus,
   Save,
   Send,
+  Star,
   StickyNote,
   Trash2,
   Upload,
+  Wallet,
   X,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import StaffCareTimeline from './StaffCareTimeline';
+import StaffSwitcherSidebar from './StaffSwitcherSidebar';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const moneyFormatter = new Intl.NumberFormat('en-LK', {
@@ -225,6 +240,7 @@ const AdminNotesCarousel = ({ notes, loading, busy, onAdd, onEdit, onDelete }) =
   const [index, setIndex] = useState(0);
   const [editor, setEditor] = useState({ open: false, mode: 'add', noteId: null, text: '' });
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [collapsed, setCollapsed] = useState(true);
 
   const count = notes.length;
 
@@ -237,8 +253,8 @@ const AdminNotesCarousel = ({ notes, loading, busy, onAdd, onEdit, onDelete }) =
     setIndex((i) => Math.max(0, Math.min(count - 1, i + dir)));
   };
 
-  const openAdd = () => setEditor({ open: true, mode: 'add', noteId: null, text: '' });
-  const openEdit = (note) => setEditor({ open: true, mode: 'edit', noteId: note.note_id, text: note.note });
+  const openAdd = () => { setCollapsed(false); setEditor({ open: true, mode: 'add', noteId: null, text: '' }); };
+  const openEdit = (note) => { setCollapsed(false); setEditor({ open: true, mode: 'edit', noteId: note.note_id, text: note.note }); };
   const closeEditor = () => setEditor({ open: false, mode: 'add', noteId: null, text: '' });
 
   const saveEditor = async () => {
@@ -262,20 +278,29 @@ const AdminNotesCarousel = ({ notes, loading, busy, onAdd, onEdit, onDelete }) =
   return (
     <div className="bg-white border border-slate-200 rounded-lg p-4 flex flex-col">
       {/* header */}
-      <div className="flex items-center justify-between gap-2 mb-3">
-        <div className="flex items-center gap-2">
-          <StickyNote className="w-4 h-4 text-amber-500" />
+      <div className={`flex items-center justify-between gap-2 ${collapsed ? '' : 'mb-3'}`}>
+        <button
+          type="button"
+          onClick={() => setCollapsed((c) => !c)}
+          className="flex items-center gap-2 min-w-0 flex-1 text-left"
+        >
+          <StickyNote className="w-4 h-4 text-amber-500 flex-shrink-0" />
           <span className="text-sm font-semibold text-slate-900">Admin Notes</span>
-          {count > 0 && !editor.open && (
-            <span className="text-xs font-medium text-slate-400">{index + 1} / {count}</span>
+          {count > 0 && (
+            <span className="text-xs font-medium text-slate-400">
+              {collapsed ? count : !editor.open ? `${index + 1} / ${count}` : ''}
+            </span>
           )}
-        </div>
-        {!editor.open && (
+          {collapsed
+            ? <ChevronDown className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+            : <ChevronUp className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />}
+        </button>
+        {!collapsed && !editor.open && (
           <button
             type="button"
             onClick={openAdd}
             disabled={busy}
-            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50"
+            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 flex-shrink-0"
           >
             <Plus className="w-3 h-3" /> Add
           </button>
@@ -283,7 +308,7 @@ const AdminNotesCarousel = ({ notes, loading, busy, onAdd, onEdit, onDelete }) =
       </div>
 
       {/* body */}
-      {editor.open ? (
+      {collapsed ? null : editor.open ? (
         <div>
           <textarea
             value={editor.text}
@@ -430,35 +455,117 @@ const EditField = ({ label, required, children }) => (
   </div>
 );
 
-const EditFileField = ({ label, selectedFile, currentUrl, onChange, accept = 'image/*,.pdf' }) => (
-  <div>
-    <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
-    <div className="flex items-center gap-2">
-      <label className="flex-1 flex items-center gap-2 rounded-xl border border-dashed border-slate-300 px-3 py-2.5 text-xs text-slate-500 cursor-pointer hover:border-blue-400 hover:bg-blue-50/40 transition-colors">
-        <Upload className="w-3.5 h-3.5 flex-shrink-0 text-slate-400" />
-        <span className="truncate">
-          {selectedFile ? selectedFile.name : currentUrl ? 'Replace file...' : 'Upload file...'}
-        </span>
-        <input
-          type="file"
-          accept={accept}
-          className="hidden"
-          onChange={(e) => onChange(e.target.files?.[0] || null)}
-        />
-      </label>
-      {currentUrl && (
-        <button
-          type="button"
-          onClick={() => window.open(currentUrl, '_blank')}
-          title="View current file"
-          className="inline-flex items-center justify-center w-9 h-9 flex-shrink-0 rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors"
-        >
-          <Eye className="w-4 h-4" />
-        </button>
-      )}
+// Creates (and schedules cleanup for) a blob URL preview of `file` into `setUrl` —
+// called from an effect rather than inlined so the effect body itself is just a
+// function call, not a bare setState statement.
+const syncFilePreviewUrl = (file, setUrl) => {
+  if (!file) { setUrl(null); return undefined; }
+  const objectUrl = URL.createObjectURL(file);
+  setUrl(objectUrl);
+  return () => URL.revokeObjectURL(objectUrl);
+};
+
+// Renders a browser preview of a not-yet-uploaded File — revokes the generated
+// blob URL on cleanup/change so we don't leak memory across edits.
+const useFilePreviewUrl = (file) => {
+  const [url, setUrl] = useState(null);
+  useEffect(() => syncFilePreviewUrl(file, setUrl), [file]);
+  return url;
+};
+
+const isImageUrl = (url) => !!url && /\.(png|jpe?g|gif|webp|bmp|svg)(\?|$)/i.test(url);
+
+// Small square thumbnail used by document fields — falls back to a generic file
+// icon for PDFs (or if the image fails to load) rather than a broken <img>. Keyed
+// by `src` at each call site so a source change remounts (and resets `errored`)
+// instead of needing an effect to reset it.
+const DocThumb = ({ src, isImage, label }) => {
+  const [errored, setErrored] = useState(false);
+  if (!src || !isImage || errored) {
+    return (
+      <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-400">
+        <FileText className="h-4.5 w-4.5" />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={label}
+      className="h-11 w-11 flex-shrink-0 rounded-lg border border-slate-200 object-cover"
+      onError={() => setErrored(true)}
+    />
+  );
+};
+
+const EditFileField = ({ label, selectedFile, currentUrl, onChange, accept = 'image/*,.pdf' }) => {
+  const previewUrl = useFilePreviewUrl(selectedFile);
+  const src = previewUrl || currentUrl;
+  const isImage = selectedFile ? selectedFile.type.startsWith('image/') : isImageUrl(currentUrl);
+  return (
+    <div>
+      <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
+      <div className="flex items-center gap-2">
+        <DocThumb key={src} src={src} isImage={isImage} label={label} />
+        <label className="flex-1 flex items-center gap-2 rounded-xl border border-dashed border-slate-300 px-3 py-2.5 text-xs text-slate-500 cursor-pointer hover:border-blue-400 hover:bg-blue-50/40 transition-colors">
+          <Upload className="w-3.5 h-3.5 flex-shrink-0 text-slate-400" />
+          <span className="truncate">
+            {selectedFile ? selectedFile.name : currentUrl ? 'Replace file...' : 'Upload file...'}
+          </span>
+          <input
+            type="file"
+            accept={accept}
+            className="hidden"
+            onChange={(e) => onChange(e.target.files?.[0] || null)}
+          />
+        </label>
+        {currentUrl && (
+          <button
+            type="button"
+            onClick={() => window.open(currentUrl, '_blank')}
+            title="View current file"
+            className="inline-flex items-center justify-center w-9 h-9 flex-shrink-0 rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors"
+          >
+            <Eye className="w-4 h-4" />
+          </button>
+        )}
+      </div>
     </div>
-  </div>
-);
+  );
+};
+
+// Preview row for a not-yet-uploaded supporting document.
+const NewDocPreviewRow = ({ file }) => {
+  const previewUrl = useFilePreviewUrl(file);
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs">
+      <DocThumb key={previewUrl} src={previewUrl} isImage={file.type.startsWith('image/')} label={file.name} />
+      <span className="flex-1 min-w-0 truncate font-medium text-blue-700">{file.name}</span>
+    </div>
+  );
+};
+
+// Circular profile-picture preview shown at the top of the edit form — mirrors
+// the circular avatar treatment used everywhere else in the admin (sidebar,
+// topbar, staff switcher).
+const EditAvatarField = ({ selectedFile, currentUrl, onChange, fullName }) => {
+  const previewUrl = useFilePreviewUrl(selectedFile);
+  const src = previewUrl || currentUrl;
+  return (
+    <div className="flex items-center gap-4 px-6 pt-5 pb-4 border-b border-slate-100">
+      <div className="h-16 w-16 flex-shrink-0 overflow-hidden rounded-full border border-slate-200 bg-slate-100 flex items-center justify-center text-lg font-bold text-slate-400">
+        {src ? <img src={src} alt={fullName || 'Profile'} className="h-full w-full object-cover" /> : getInitials(fullName)}
+      </div>
+      <div>
+        <label className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 cursor-pointer hover:bg-slate-50 transition-colors">
+          <Upload className="h-3.5 w-3.5" /> {selectedFile || currentUrl ? 'Change photo' : 'Upload photo'}
+          <input type="file" accept="image/*" className="hidden" onChange={(e) => onChange(e.target.files?.[0] || null)} />
+        </label>
+        <p className="mt-1.5 text-[11px] text-slate-400">JPG or PNG. Shown as a circular avatar across the app.</p>
+      </div>
+    </div>
+  );
+};
 
 // ── main component ────────────────────────────────────────────────────────────
 const StaffDetailPageV2 = () => {
@@ -467,6 +574,7 @@ const StaffDetailPageV2 = () => {
   const { staffProfileId } = useParams();
 
   const [detail, setDetail] = useState(null);
+  const [mobileStaffSidebarOpen, setMobileStaffSidebarOpen] = useState(false);
   const [earningsSummary, setEarningsSummary] = useState(null);
   const [earningsTransactions, setEarningsTransactions] = useState([]);
   const [currentBooking, setCurrentBooking] = useState(null);
@@ -496,7 +604,7 @@ const StaffDetailPageV2 = () => {
   const [sectionErrors, setSectionErrors] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [activeSection, setActiveSection] = useState('overview');
+  const [activeSection, setActiveSection] = useState('care-timeline');
   const [refreshing, setRefreshing] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [availabilityUpdating, setAvailabilityUpdating] = useState(false);
@@ -549,17 +657,18 @@ const StaffDetailPageV2 = () => {
     : [];
 
   const sectionConfig = useMemo(() => ([
-    { id: 'overview',        label: 'Overview' },
-    { id: 'earnings',        label: 'Earnings' },
-    { id: 'current-booking', label: 'Current Booking' },
-    { id: 'future-bookings', label: 'Future Bookings' },
-    { id: 'booking-history', label: 'Booking History' },
-    { id: 'reviews',         label: 'Reviews' },
-    { id: 'payouts',         label: 'Payouts' },
-    { id: 'deductions',      label: 'Deductions' },
-    { id: 'bank-accounts',   label: 'Bank Accounts' },
-    { id: 'documents',       label: 'Documents' },
-    { id: 'change-history',  label: 'Change History' },
+    { id: 'care-timeline',   label: 'Care Timeline',   icon: CalendarDays },
+    { id: 'overview',        label: 'Overview',        icon: LayoutGrid },
+    { id: 'earnings',        label: 'Earnings',        icon: BadgeDollarSign },
+    { id: 'current-booking', label: 'Current Booking', icon: Activity },
+    { id: 'future-bookings', label: 'Future Bookings', icon: CalendarClock },
+    { id: 'booking-history', label: 'Booking History', icon: History },
+    { id: 'reviews',         label: 'Reviews',         icon: Star },
+    { id: 'payouts',         label: 'Payouts',         icon: Wallet },
+    { id: 'deductions',      label: 'Deductions',      icon: MinusCircle },
+    { id: 'bank-accounts',   label: 'Bank Accounts',   icon: Landmark },
+    { id: 'documents',       label: 'Documents',       icon: FileText },
+    { id: 'change-history',  label: 'Change History',  icon: ClipboardList },
   ]), []);
 
   const runAdminRequest = async (fn) => {
@@ -1087,8 +1196,64 @@ const StaffDetailPageV2 = () => {
   };
 
   // ── tab panels ────────────────────────────────────────────────────────────
+  const renderCareTimeline = () => (
+    <StaffCareTimeline
+      assignments={attendanceCalendar.assignments}
+      attendanceRecords={attendanceCalendar.attendance}
+      reschedules={attendanceCalendar.reschedules}
+      leaveDays={leaveSummary.approved_leaves}
+      pendingResumptions={attendanceCalendar.pendingResumptions}
+    />
+  );
+
   const renderOverview = () => (
     <div className="flex flex-col gap-4">
+      {/* STAT CARDS */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div
+          className="bg-white border border-slate-200 rounded-lg p-4 cursor-pointer hover:bg-slate-50 transition-colors"
+          onClick={() => navigate(`/admin/staff/${staffProfileId}/current-earnings`)}
+          title="Click to see current earnings breakdown"
+        >
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Current earnings</p>
+          <p className="text-xl font-bold mt-1.5 text-emerald-600">{formatMoney(currentEarnings)}</p>
+          <p className="text-xs text-blue-600 font-semibold mt-1">View breakdown →</p>
+        </div>
+        <div
+          className="bg-white border border-slate-200 rounded-lg p-4 cursor-pointer hover:bg-slate-50 transition-colors"
+          onClick={() => navigate(`/admin/staff/${staffProfileId}/total-earnings`)}
+          title="Click to see total earnings breakdown"
+        >
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Total earned</p>
+          <p className="text-xl font-bold mt-1.5 text-slate-900">{formatMoney(totalEarned)}</p>
+          <p className="text-xs text-slate-400 font-semibold mt-1">across {totalBookings} bookings</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-lg p-4">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Paid out</p>
+          <p className="text-xl font-bold mt-1.5 text-slate-900">{formatMoney(totalPaidOut)}</p>
+          <p className="text-xs text-slate-400 font-semibold mt-1">total disbursed</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-lg p-4">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Outstanding payable</p>
+          <p className="text-xl font-bold mt-1.5 text-red-600">{formatMoney(outstandingPayable)}</p>
+          <p className="text-xs text-red-500 font-semibold mt-1">awaiting payout</p>
+        </div>
+      </div>
+
+      {/* LEAVE SUMMARY */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-white border border-slate-200 rounded-lg p-4">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Total leaves taken</p>
+          <p className="text-xl font-bold mt-1.5 text-slate-900">{leaveSummary.total_leave_days} day{leaveSummary.total_leave_days === 1 ? '' : 's'}</p>
+          <p className="text-xs text-slate-400 font-semibold mt-1">approved leave, all time</p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-lg p-4">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Leaves this month</p>
+          <p className="text-xl font-bold mt-1.5 text-purple-600">{leaveSummary.month_leave_days} day{leaveSummary.month_leave_days === 1 ? '' : 's'}</p>
+          <p className="text-xs text-slate-400 font-semibold mt-1">current calendar month</p>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
         <Card>
           <CardHead
@@ -2195,6 +2360,13 @@ const StaffDetailPageV2 = () => {
 
         {/* Scrollable form body */}
         <div className="flex-1 overflow-y-auto">
+          <EditAvatarField
+            selectedFile={editModal.files.profile_picture}
+            currentUrl={profile.profile_picture_url}
+            onChange={(file) => editSetFile('profile_picture', file)}
+            fullName={profile.full_name}
+          />
+
           {editModal.error && (
             <div className="mx-6 mt-4 px-4 py-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg flex items-center gap-2">
               <AlertCircle className="h-4 w-4 flex-shrink-0" /> {editModal.error}
@@ -2313,8 +2485,6 @@ const StaffDetailPageV2 = () => {
           {/* Documents */}
           <EditSectionHeader title="Documents" sub="Uploading a new file replaces the current one." />
           <div className="px-6 pt-4 pb-6 space-y-4">
-            <EditFileField label="Profile picture" selectedFile={editModal.files.profile_picture} currentUrl={profile.profile_picture_url} onChange={(file) => editSetFile('profile_picture', file)} />
-
             <div className="grid grid-cols-2 gap-3">
               <EditFileField label="NIC Front" selectedFile={editModal.files.nic_front} currentUrl={profile.nic_front_url} onChange={(file) => editSetFile('nic_front', file)} />
               <EditFileField label="NIC Back" selectedFile={editModal.files.nic_back} currentUrl={profile.nic_back_url} onChange={(file) => editSetFile('nic_back', file)} />
@@ -2332,8 +2502,9 @@ const StaffDetailPageV2 = () => {
                   {safeArray(profile.document_urls).map((url, i) => {
                     const marked = editModal.removeDocumentUrls.includes(url);
                     return (
-                      <div key={url + i} className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs ${marked ? 'border-red-200 bg-red-50' : 'border-slate-200 bg-slate-50'}`}>
-                        <button type="button" onClick={() => window.open(url, '_blank')} className={`truncate font-medium ${marked ? 'text-red-500 line-through' : 'text-slate-700 hover:text-blue-600'}`}>
+                      <div key={url + i} className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs ${marked ? 'border-red-200 bg-red-50' : 'border-slate-200 bg-slate-50'}`}>
+                        <DocThumb key={url} src={url} isImage={isImageUrl(url)} label={`Document ${i + 1}`} />
+                        <button type="button" onClick={() => window.open(url, '_blank')} className={`flex-1 min-w-0 truncate font-medium text-left ${marked ? 'text-red-500 line-through' : 'text-slate-700 hover:text-blue-600'}`}>
                           Document {i + 1}
                         </button>
                         <button
@@ -2346,6 +2517,13 @@ const StaffDetailPageV2 = () => {
                       </div>
                     );
                   })}
+                </div>
+              )}
+              {editModal.files.documents.length > 0 && (
+                <div className="flex flex-col gap-1.5 mb-2.5">
+                  {editModal.files.documents.map((file, i) => (
+                    <NewDocPreviewRow key={file.name + i} file={file} />
+                  ))}
                 </div>
               )}
               <label className="flex items-center gap-2 rounded-lg border border-dashed border-slate-300 px-3 py-2.5 text-xs text-slate-500 cursor-pointer hover:border-blue-400 hover:bg-blue-50/40 transition-colors">
@@ -2395,10 +2573,18 @@ const StaffDetailPageV2 = () => {
   if (loading || authLoading) {
     return (
       <AdminLayout>
-        <div className="flex items-center justify-center h-64">
-          <div className="flex items-center gap-2.5 text-slate-500 text-sm">
-            <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
-            Loading staff detail...
+        <div className="flex items-start gap-4">
+          <aside className="sticky top-6 hidden h-[calc(100vh-8rem)] w-64 shrink-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white lg:flex">
+            <div className="border-b border-slate-100 px-4 py-2.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">All Staff</p>
+            </div>
+            <StaffSwitcherSidebar activeStaffId={staffProfileId} />
+          </aside>
+          <div className="flex flex-1 items-center justify-center h-64">
+            <div className="flex items-center gap-2.5 text-slate-500 text-sm">
+              <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+              Loading staff detail...
+            </div>
           </div>
         </div>
       </AdminLayout>
@@ -2408,15 +2594,23 @@ const StaffDetailPageV2 = () => {
   if (error) {
     return (
       <AdminLayout>
-        <div className="bg-red-50 border border-red-200 rounded-lg p-6">
-          <p className="font-semibold text-red-700 mb-4">{error}</p>
-          <button
-            type="button"
-            onClick={() => navigate('/admin/staff-management')}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-500 transition-colors"
-          >
-            ← Back to staff roster
-          </button>
+        <div className="flex items-start gap-4">
+          <aside className="sticky top-6 hidden h-[calc(100vh-8rem)] w-64 shrink-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white lg:flex">
+            <div className="border-b border-slate-100 px-4 py-2.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">All Staff</p>
+            </div>
+            <StaffSwitcherSidebar activeStaffId={staffProfileId} />
+          </aside>
+          <div className="flex-1 bg-red-50 border border-red-200 rounded-lg p-6">
+            <p className="font-semibold text-red-700 mb-4">{error}</p>
+            <button
+              type="button"
+              onClick={() => navigate('/admin/staff-management')}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-500 transition-colors"
+            >
+              ← Back to staff roster
+            </button>
+          </div>
         </div>
       </AdminLayout>
     );
@@ -2427,12 +2621,53 @@ const StaffDetailPageV2 = () => {
   // ── main render ───────────────────────────────────────────────────────────
   return (
     <AdminLayout>
+      <div className="flex items-start gap-4">
+        {/* Staff switcher sidebar (desktop) */}
+        <aside className="sticky top-6 hidden h-[calc(100vh-8rem)] w-64 shrink-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white lg:flex">
+          <div className="border-b border-slate-100 px-4 py-2.5">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">All Staff</p>
+          </div>
+          <StaffSwitcherSidebar activeStaffId={staffProfileId} />
+        </aside>
+
+        {/* Staff switcher sidebar (mobile drawer) */}
+        {mobileStaffSidebarOpen && (
+          <div className="fixed inset-0 z-50 flex lg:hidden">
+            <div className="absolute inset-0 bg-black/40" onClick={() => setMobileStaffSidebarOpen(false)} />
+            <div className="relative flex h-full w-72 max-w-[85vw] flex-col bg-white shadow-2xl">
+              <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+                <p className="text-[13px] font-semibold text-slate-700">All Staff</p>
+                <button
+                  type="button"
+                  onClick={() => setMobileStaffSidebarOpen(false)}
+                  className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <StaffSwitcherSidebar
+                activeStaffId={staffProfileId}
+                onNavigate={() => setMobileStaffSidebarOpen(false)}
+              />
+            </div>
+          </div>
+        )}
+
+      <div className="min-w-0 flex-1">
       {renderBankModal()}
       {renderEditProfileModal()}
 
       {/* HEADER ROW */}
       <div className="flex items-center justify-between gap-4 flex-wrap mb-5 -mt-2">
         <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setMobileStaffSidebarOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 text-slate-600 text-sm font-semibold rounded-lg hover:bg-slate-100 transition-colors lg:hidden"
+            aria-label="Browse staff"
+          >
+            <Menu className="w-3.5 h-3.5" />
+          </button>
           <button
             type="button"
             onClick={() => navigate('/admin/staff-management')}
@@ -2461,6 +2696,13 @@ const StaffDetailPageV2 = () => {
             className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 text-slate-600 text-sm font-semibold rounded-lg hover:bg-slate-100 transition-colors disabled:opacity-60"
           >
             {refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : '↻'} Refresh
+          </button>
+          <button
+            type="button"
+            onClick={openEditProfileModal}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 text-slate-600 text-sm font-semibold rounded-lg hover:bg-slate-100 transition-colors"
+          >
+            <Pencil className="w-3.5 h-3.5" /> Edit
           </button>
         </div>
       </div>
@@ -2496,121 +2738,79 @@ const StaffDetailPageV2 = () => {
       )}
 
       {/* HERO */}
-      <div className="flex items-start gap-4 flex-wrap mb-5">
-        <div className="w-14 h-14 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center text-xl font-bold flex-shrink-0 overflow-hidden">
-          {profile.profile_picture_url
-            ? <img src={profile.profile_picture_url} alt={profile.full_name} className="w-full h-full object-cover" />
-            : getInitials(profile.full_name)}
-        </div>
-        <div className="flex-1 min-w-[220px]">
-          <div className="flex items-center gap-2.5 flex-wrap mb-1.5">
-            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">{profile.full_name || 'Staff profile'}</h1>
-            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${heroStatus.bg} ${heroStatus.text}`}>
-              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${heroStatus.dot}`} />
-              {profile.current_status || 'Unknown'}
-            </span>
-            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
-              {isActive ? '✓ Active account' : '✗ Deactivated'}
-            </span>
+      <div className="mb-5 overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <div className="flex flex-wrap items-center gap-4 px-6 py-4">
+          <div className="h-14 w-14 shrink-0 overflow-hidden rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-lg font-bold">
+            {profile.profile_picture_url
+              ? <img src={profile.profile_picture_url} alt={profile.full_name} className="h-full w-full object-cover" />
+              : getInitials(profile.full_name)}
           </div>
-          <div className="text-sm font-semibold text-slate-700 mb-1.5">{profile.designation || 'Staff member'}</div>
-          <p className="text-sm text-slate-500">
-            {profile.staff_code || staffProfileId}
-            {profile.mobile_number ? ` · ${profile.mobile_number}` : ''}
-            {profile.created_at ? ` · Joined ${formatDate(profile.created_at)}` : ''}
-            {currentAssignment?.client_name ? ` · Currently on ${currentAssignment.client_name} booking` : ''}
-          </p>
-        </div>
-
-        {/* ADMIN NOTES */}
-        <div className="flex-1 min-w-[280px] max-w-[440px]">
-          <AdminNotesCarousel
-            notes={adminNotes}
-            loading={adminNotesLoading}
-            busy={adminNotesBusy}
-            onAdd={handleAddNote}
-            onEdit={handleEditNote}
-            onDelete={handleDeleteNote}
-          />
-        </div>
-      </div>
-
-      {/* STAT CARDS */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-        <div
-          className="bg-white border border-slate-200 rounded-lg p-4 cursor-pointer hover:bg-slate-50 transition-colors"
-          onClick={() => navigate(`/admin/staff/${staffProfileId}/current-earnings`)}
-          title="Click to see current earnings breakdown"
-        >
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Current earnings</p>
-          <p className="text-xl font-bold mt-1.5 text-emerald-600">{formatMoney(currentEarnings)}</p>
-          <p className="text-xs text-blue-600 font-semibold mt-1">View breakdown →</p>
-        </div>
-        <div
-          className="bg-white border border-slate-200 rounded-lg p-4 cursor-pointer hover:bg-slate-50 transition-colors"
-          onClick={() => navigate(`/admin/staff/${staffProfileId}/total-earnings`)}
-          title="Click to see total earnings breakdown"
-        >
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Total earned</p>
-          <p className="text-xl font-bold mt-1.5 text-slate-900">{formatMoney(totalEarned)}</p>
-          <p className="text-xs text-slate-400 font-semibold mt-1">across {totalBookings} bookings</p>
-        </div>
-        <div className="bg-white border border-slate-200 rounded-lg p-4">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Paid out</p>
-          <p className="text-xl font-bold mt-1.5 text-slate-900">{formatMoney(totalPaidOut)}</p>
-          <p className="text-xs text-slate-400 font-semibold mt-1">total disbursed</p>
-        </div>
-        <div className="bg-white border border-slate-200 rounded-lg p-4">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Outstanding payable</p>
-          <p className="text-xl font-bold mt-1.5 text-red-600">{formatMoney(outstandingPayable)}</p>
-          <p className="text-xs text-red-500 font-semibold mt-1">awaiting payout</p>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-[17px] font-semibold text-slate-900">{profile.full_name || 'Staff profile'}</h1>
+              <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${heroStatus.bg} ${heroStatus.text}`}>
+                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${heroStatus.dot}`} />
+                {profile.current_status || 'Unknown'}
+              </span>
+              <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${isActive ? 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200' : 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200'}`}>
+                {isActive ? 'Active' : 'Inactive'}
+              </span>
+              {isPendingMigration && (
+                <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700">
+                  Pending Migration
+                </span>
+              )}
+            </div>
+            <div className="mt-1.5 flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-slate-500">
+              <span className="flex items-center gap-1.5"><Briefcase className="h-3.5 w-3.5" />{profile.designation || 'Staff member'}</span>
+              <span className="font-mono">{profile.staff_code || staffProfileId}</span>
+              <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5" />{profile.mobile_number || '—'}</span>
+              <span className="flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" />{profile.location || profile.home_address || '—'}</span>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* LEAVE SUMMARY */}
-      <div className="grid grid-cols-2 gap-3 mb-4">
-        <div className="bg-white border border-slate-200 rounded-lg p-4">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Total leaves taken</p>
-          <p className="text-xl font-bold mt-1.5 text-slate-900">{leaveSummary.total_leave_days} day{leaveSummary.total_leave_days === 1 ? '' : 's'}</p>
-          <p className="text-xs text-slate-400 font-semibold mt-1">approved leave, all time</p>
-        </div>
-        <div className="bg-white border border-slate-200 rounded-lg p-4">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Leaves this month</p>
-          <p className="text-xl font-bold mt-1.5 text-purple-600">{leaveSummary.month_leave_days} day{leaveSummary.month_leave_days === 1 ? '' : 's'}</p>
-          <p className="text-xs text-slate-400 font-semibold mt-1">current calendar month</p>
-        </div>
-      </div>
-
-      {/* WORK & PAY CALENDAR */}
-      <div className="mb-4">
-        <StaffCareTimeline
-          assignments={attendanceCalendar.assignments}
-          attendanceRecords={attendanceCalendar.attendance}
-          reschedules={attendanceCalendar.reschedules}
-          leaveDays={leaveSummary.approved_leaves}
-          pendingResumptions={attendanceCalendar.pendingResumptions}
+      {/* ADMIN NOTES */}
+      <div className="mb-5">
+        <AdminNotesCarousel
+          notes={adminNotes}
+          loading={adminNotesLoading}
+          busy={adminNotesBusy}
+          onAdd={handleAddNote}
+          onEdit={handleEditNote}
+          onDelete={handleDeleteNote}
         />
       </div>
 
       {/* TABS */}
-      <div className="flex gap-1 mb-4 bg-slate-100 p-1 rounded-lg w-fit max-w-full flex-wrap">
-        {sectionConfig.map(tab => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setActiveSection(tab.id)}
-            className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all whitespace-nowrap ${
-              activeSection === tab.id
-                ? 'bg-white text-slate-900 shadow-sm'
-                : 'text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+      <div className="flex gap-1 mb-4 bg-slate-100 p-1 rounded-lg w-fit">
+        {sectionConfig.map(tab => {
+          const Icon = tab.icon;
+          return (
+            <div key={tab.id} className="relative group">
+              <button
+                type="button"
+                onClick={() => setActiveSection(tab.id)}
+                aria-label={tab.label}
+                className={`flex items-center justify-center w-9 h-9 rounded-md transition-all ${
+                  activeSection === tab.id
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+              </button>
+              <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[11px] font-medium text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100">
+                {tab.label}
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       {/* TAB PANEL */}
+      {activeSection === 'care-timeline'    && renderCareTimeline()}
       {activeSection === 'overview'        && renderOverview()}
       {activeSection === 'earnings'        && renderEarnings()}
       {activeSection === 'current-booking' && renderCurrentBooking()}
@@ -2623,6 +2823,8 @@ const StaffDetailPageV2 = () => {
       {activeSection === 'documents'       && renderDocuments()}
       {activeSection === 'change-history'  && renderChangeHistory()}
 
+      </div>
+      </div>
     </AdminLayout>
   );
 };

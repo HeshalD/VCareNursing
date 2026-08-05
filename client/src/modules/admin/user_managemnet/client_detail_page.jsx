@@ -40,6 +40,7 @@ import {
   Upload,
   Package,
   RotateCcw,
+  Menu,
 } from 'lucide-react';
 
 const NOTE_TYPE_META = {
@@ -58,6 +59,7 @@ import CreateProductInvoiceDrawer from './CreateProductInvoiceDrawer';
 import RecordPaymentDrawer from './RecordPaymentDrawer';
 import AddCareProfileDrawer from './AddCareProfileDrawer';
 import { AddRequestDrawer as AddServiceRequestDrawer } from '../service_requests/proxy_service_request';
+import ClientSwitcherSidebar from './ClientSwitcherSidebar';
 
 const money = new Intl.NumberFormat('en-LK', {
   style: 'currency',
@@ -210,6 +212,7 @@ const ClientDetailPage = () => {
   const [showDirectBooking, setShowDirectBooking] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const actionsDropdownRef = useRef(null);
+  const [mobileClientSidebarOpen, setMobileClientSidebarOpen] = useState(false);
   const [showRegFeeDrawer, setShowRegFeeDrawer] = useState(false);
 
   const [clientInvoices, setClientInvoices] = useState([]);
@@ -3436,10 +3439,18 @@ const ClientDetailPage = () => {
   if (loading) {
     return (
       <AdminLayout title="Client Details" subtitle="Loading client profile...">
-        <div className="flex min-h-[45vh] items-center justify-center rounded-lg border border-gray-200 bg-white">
-          <div className="flex items-center gap-3 text-gray-500">
-            <Loader2 className="h-5 w-5 animate-spin" />
-            <span className="text-sm">Loading client details...</span>
+        <div className="flex items-start gap-4">
+          <aside className="sticky top-6 hidden h-[calc(100vh-8rem)] w-64 shrink-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white lg:flex">
+            <div className="border-b border-gray-100 px-4 py-2.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">All Clients</p>
+            </div>
+            <ClientSwitcherSidebar activeClientId={clientId} />
+          </aside>
+          <div className="flex min-h-[45vh] flex-1 items-center justify-center rounded-lg border border-gray-200 bg-white">
+            <div className="flex items-center gap-3 text-gray-500">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              <span className="text-sm">Loading client details...</span>
+            </div>
           </div>
         </div>
       </AdminLayout>
@@ -3449,15 +3460,23 @@ const ClientDetailPage = () => {
   if (error) {
     return (
       <AdminLayout title="Client Details" subtitle="Unable to load client profile">
-        <div className="rounded-lg border border-red-200 bg-red-50 p-6 text-red-700">
-          <p className="font-semibold text-sm">{error}</p>
-          <button
-            type="button"
-            onClick={() => navigate('/admin/users')}
-            className="mt-4 inline-flex items-center gap-1.5 rounded bg-red-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-red-700"
-          >
-            <ArrowLeft className="h-4 w-4" /> Back to users
-          </button>
+        <div className="flex items-start gap-4">
+          <aside className="sticky top-6 hidden h-[calc(100vh-8rem)] w-64 shrink-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white lg:flex">
+            <div className="border-b border-gray-100 px-4 py-2.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">All Clients</p>
+            </div>
+            <ClientSwitcherSidebar activeClientId={clientId} />
+          </aside>
+          <div className="flex-1 rounded-lg border border-red-200 bg-red-50 p-6 text-red-700">
+            <p className="font-semibold text-sm">{error}</p>
+            <button
+              type="button"
+              onClick={() => navigate('/admin/users')}
+              className="mt-4 inline-flex items-center gap-1.5 rounded bg-red-600 px-4 py-2 text-[13px] font-semibold text-white hover:bg-red-700"
+            >
+              <ArrowLeft className="h-4 w-4" /> Back to users
+            </button>
+          </div>
         </div>
       </AdminLayout>
     );
@@ -3471,10 +3490,50 @@ const ClientDetailPage = () => {
       title={clientProfile.full_name || 'Client Details'}
       subtitle={`Client Code: ${clientProfile.client_code || clientProfile.client_profile_id || 'â€”'}`}
     >
-      <div className="space-y-4">
-        {/* â”€â”€ Top action bar â”€â”€ */}
+      <div className="flex items-start gap-4">
+        {/* Client switcher sidebar (desktop) */}
+        <aside className="sticky top-6 hidden h-[calc(100vh-8rem)] w-64 shrink-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white lg:flex">
+          <div className="border-b border-gray-100 px-4 py-2.5">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">All Clients</p>
+          </div>
+          <ClientSwitcherSidebar activeClientId={clientId} />
+        </aside>
+
+        {/* Client switcher sidebar (mobile drawer) */}
+        {mobileClientSidebarOpen && (
+          <div className="fixed inset-0 z-50 flex lg:hidden">
+            <div className="absolute inset-0 bg-black/40" onClick={() => setMobileClientSidebarOpen(false)} />
+            <div className="relative flex h-full w-72 max-w-[85vw] flex-col bg-white shadow-2xl">
+              <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+                <p className="text-[13px] font-semibold text-gray-700">All Clients</p>
+                <button
+                  type="button"
+                  onClick={() => setMobileClientSidebarOpen(false)}
+                  className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <ClientSwitcherSidebar
+                activeClientId={clientId}
+                onNavigate={() => setMobileClientSidebarOpen(false)}
+              />
+            </div>
+          </div>
+        )}
+
+      <div className="min-w-0 flex-1 space-y-4">
+        {/* Top action bar */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setMobileClientSidebarOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-2.5 py-1.5 text-[13px] font-medium text-gray-600 hover:bg-gray-50 lg:hidden"
+              aria-label="Browse clients"
+            >
+              <Menu className="h-4 w-4" />
+            </button>
             <button
               type="button"
               onClick={() => navigate('/admin/users')}
@@ -3627,6 +3686,7 @@ const ClientDetailPage = () => {
             </div>
           </div>
         </div>
+      </div>
       </div>
 
       <RecordPaymentDrawer

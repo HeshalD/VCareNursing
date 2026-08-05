@@ -33,6 +33,22 @@ export const PermToggle = ({ label, checked, onToggle, locked }) => (
   </div>
 );
 
+// Plain checkbox used inside an entity/verb table cell — checked+disabled
+// (rather than hidden) when granted via role, so the grid still shows the
+// full picture of what's enabled, just non-interactive for that cell.
+const PermCheckbox = ({ checked, onChange, locked, title }) => (
+  <input
+    type="checkbox"
+    checked={checked}
+    onChange={locked ? undefined : onChange}
+    disabled={locked}
+    title={locked ? `${title} — granted via role` : title}
+    className={`h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 focus:ring-offset-0 ${
+      locked ? 'opacity-70 cursor-not-allowed accent-blue-400' : 'cursor-pointer accent-blue-600'
+    }`}
+  />
+);
+
 const SectionSelectAll = ({ perms, checkedKeys, lockedKeys, onSectionToggle }) => {
   const togglable = perms.filter((p) => !lockedKeys?.has(p.key));
   if (togglable.length === 0) return null;
@@ -44,14 +60,87 @@ const SectionSelectAll = ({ perms, checkedKeys, lockedKeys, onSectionToggle }) =
         e.stopPropagation();
         onSectionToggle(togglable.map((p) => p.key), !allChecked);
       }}
-      className="text-[10px] font-semibold text-blue-600 hover:underline"
+      className="text-[10px] font-semibold text-blue-600 hover:underline flex-shrink-0"
     >
       {allChecked ? 'Clear all' : 'Select all'}
     </button>
   );
 };
 
-// registry: { [moduleName]: [{ key, label, category }] }
+// Entity (rows) x verb (columns) table for one module — the actual "tick one
+// by one" grid. `entityGroups` is { [entityName]: perm[] }; `verbs` is the
+// ordered, deduplicated list of every verb used anywhere in the module (a
+// module's entities rarely share every verb, so most rows have gaps — shown
+// as a dash rather than an empty cell so it reads as "not applicable", not
+// "forgot to check this").
+const EntityVerbTable = ({ entityGroups, verbs, checkedKeys, lockedKeys, onToggle, onSectionToggle }) => {
+  const columnKeys = (verb) =>
+    Object.values(entityGroups)
+      .map((perms) => perms.find((p) => p.verb === verb))
+      .filter(Boolean)
+      .map((p) => p.key);
+
+  return (
+    <div className="overflow-x-auto -mx-1">
+      <table className="min-w-full text-sm border-collapse">
+        <thead>
+          <tr>
+            <th className="text-left text-[10px] font-semibold text-slate-400 uppercase tracking-wide px-2 py-1.5 whitespace-nowrap">
+              Entity
+            </th>
+            {verbs.map((verb) => (
+              <th key={verb} className="text-center px-2 py-1.5 align-bottom">
+                <div className="flex flex-col items-center gap-1">
+                  <span className="text-[10.5px] font-semibold text-slate-500 whitespace-nowrap">{verb}</span>
+                  <SectionSelectAll
+                    perms={columnKeys(verb).map((key) => ({ key }))}
+                    checkedKeys={checkedKeys}
+                    lockedKeys={lockedKeys}
+                    onSectionToggle={onSectionToggle}
+                  />
+                </div>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {Object.entries(entityGroups).map(([entity, perms]) => {
+            const byVerb = new Map(perms.map((p) => [p.verb, p]));
+            return (
+              <tr key={entity} className="border-t border-slate-100 hover:bg-slate-50 transition-colors">
+                <td className="px-2 py-2 whitespace-nowrap">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-slate-700">{entity}</span>
+                    <SectionSelectAll perms={perms} checkedKeys={checkedKeys} lockedKeys={lockedKeys} onSectionToggle={onSectionToggle} />
+                  </div>
+                </td>
+                {verbs.map((verb) => {
+                  const perm = byVerb.get(verb);
+                  return (
+                    <td key={verb} className="text-center px-2 py-2">
+                      {perm ? (
+                        <PermCheckbox
+                          checked={checkedKeys.has(perm.key)}
+                          onChange={() => onToggle(perm.key)}
+                          locked={lockedKeys?.has(perm.key)}
+                          title={perm.label}
+                        />
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
+// registry: { [moduleName]: [{ key, label, category, entity?, verb? }] }
 // checkedKeys: Set<string>
 // lockedKeys: optional Set<string> — permissions granted via a role, shown checked + non-interactive
 const PermissionModuleList = ({
@@ -72,6 +161,25 @@ const PermissionModuleList = ({
         const enabledCount = perms.filter((p) => checkedKeys.has(p.key)).length;
         const pagePerms = perms.filter((p) => p.category === 'page');
         const actionPerms = perms.filter((p) => p.category === 'action');
+
+        // A module with two or more distinct action permissions is worth grouping
+        // by entity (rows) — one lone action (Settings, Receipts, etc.) gets a
+        // table of one cell, which isn't clearer than the plain toggle it'd replace.
+        const useGrid = actionPerms.length > 1;
+        const entityGroups = useGrid
+          ? actionPerms.reduce((acc, perm) => {
+              const entity = perm.entity || mod; // defensive fallback for any unmapped key
+              if (!acc[entity]) acc[entity] = [];
+              acc[entity].push(perm);
+              return acc;
+            }, {})
+          : null;
+        // Column order = first-appearance order of each verb in the registry,
+        // which already clusters related verbs together (e.g. Create/Edit/Delete
+        // before the more one-off actions).
+        const verbs = useGrid
+          ? [...new Set(actionPerms.map((p) => p.verb || p.label))]
+          : null;
 
         return (
           <div key={mod} className="border border-slate-200 rounded-lg overflow-hidden">
@@ -150,24 +258,37 @@ const PermissionModuleList = ({
                       ) : (
                         <span />
                       )}
-                      <SectionSelectAll
-                        perms={actionPerms}
+                      {!useGrid && (
+                        <SectionSelectAll
+                          perms={actionPerms}
+                          checkedKeys={checkedKeys}
+                          lockedKeys={lockedKeys}
+                          onSectionToggle={onSectionToggle}
+                        />
+                      )}
+                    </div>
+                    {useGrid ? (
+                      <EntityVerbTable
+                        entityGroups={entityGroups}
+                        verbs={verbs}
                         checkedKeys={checkedKeys}
                         lockedKeys={lockedKeys}
+                        onToggle={onToggle}
                         onSectionToggle={onSectionToggle}
                       />
-                    </div>
-                    <div className="space-y-2">
-                      {actionPerms.map((perm) => (
-                        <PermToggle
-                          key={perm.key}
-                          label={perm.label}
-                          checked={checkedKeys.has(perm.key)}
-                          onToggle={() => onToggle(perm.key)}
-                          locked={lockedKeys?.has(perm.key)}
-                        />
-                      ))}
-                    </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {actionPerms.map((perm) => (
+                          <PermToggle
+                            key={perm.key}
+                            label={perm.label}
+                            checked={checkedKeys.has(perm.key)}
+                            onToggle={() => onToggle(perm.key)}
+                            locked={lockedKeys?.has(perm.key)}
+                          />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

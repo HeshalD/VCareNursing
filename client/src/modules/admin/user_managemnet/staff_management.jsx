@@ -1,9 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, UserCircle, ChevronRight, Loader2, Plus } from 'lucide-react';
+import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
+import useDebouncedValue from '../../../hooks/useDebouncedValue';
+
+const PAGE_SIZE = 50;
 
 const ROLE_LABELS = {
   CARETAKER: 'Caretaker',
@@ -69,33 +72,33 @@ const StaffManagement = () => {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('All');
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 400);
   const [pendingMigrationOnly, setPendingMigrationOnly] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState(null);
+  const [counts, setCounts] = useState({ All: 0 });
 
-  useEffect(() => { fetchWorkers(); }, []);
+  // Reset back to page 1 whenever a filter/search changes underneath the current page.
+  useEffect(() => { setPage(1); }, [activeTab, debouncedSearch, pendingMigrationOnly]);
+
+  useEffect(() => { fetchWorkers(); }, [activeTab, debouncedSearch, pendingMigrationOnly, page]);
+
+  const buildFilters = () => ({
+    page,
+    limit: PAGE_SIZE,
+    ...(activeTab !== 'All' ? { status: activeTab } : {}),
+    ...(debouncedSearch ? { search: debouncedSearch } : {}),
+    ...(pendingMigrationOnly ? { pending_migration: 'true' } : {}),
+  });
 
   const fetchWorkers = async ({ silent = false } = {}) => {
     try {
       if (!silent) setLoading(true);
       if (!silent) setError(null);
-
-      // The API paginates (a single request caps out at PAGE_SIZE rows), so once the
-      // staff roster grows past that we have to walk every page to show everyone —
-      // otherwise the list silently truncates at the first page's worth of records.
-      const PAGE_SIZE = 1000;
-      const first = await apiClient.getAllStaff({ limit: PAGE_SIZE, page: 1 });
-      let all = first.data || [];
-      const totalPages = first.pagination?.total_pages || 1;
-
-      if (totalPages > 1) {
-        const remainingPages = await Promise.all(
-          Array.from({ length: totalPages - 1 }, (_, i) =>
-            apiClient.getAllStaff({ limit: PAGE_SIZE, page: i + 2 }),
-          ),
-        );
-        remainingPages.forEach((res) => { all = all.concat(res.data || []); });
-      }
-
-      setWorkers(all);
+      const response = await apiClient.getAllStaff(buildFilters());
+      setWorkers(response.data || []);
+      setPagination(response.pagination || null);
+      if (response.counts) setCounts(response.counts);
     } catch (err) {
       if (!silent) setError('Failed to load staff');
       else console.error('StaffManagement silent refresh error:', err);
@@ -106,24 +109,11 @@ const StaffManagement = () => {
 
   useAutoRefresh(() => fetchWorkers({ silent: true }), { intervalMs: 5000 });
 
-  const pendingMigrationCount = workers.filter(w => w.onboarding_status === 'PENDING_MIGRATION').length;
-
-  const filtered = workers.filter(w => {
-    const status = (w.current_status || '').toLowerCase();
-    const matchTab = activeTab === 'All' || status === activeTab;
-    const matchPendingMigration = !pendingMigrationOnly || w.onboarding_status === 'PENDING_MIGRATION';
-    const q = search.toLowerCase();
-    const matchSearch = !q || [w.full_name, w.email, w.mobile_number, w.staff_code, w.location]
-      .some(v => v?.toLowerCase().includes(q));
-    return matchTab && matchPendingMigration && matchSearch;
-  });
-
-  const counts = STATUS_TABS.reduce((acc, t) => {
-    acc[t] = t === 'All'
-      ? workers.length
-      : workers.filter(w => (w.current_status || '').toLowerCase() === t).length;
-    return acc;
-  }, {});
+  const pendingMigrationCount = counts.pending_migration || 0;
+  const totalCount = pagination?.total_count ?? workers.length;
+  const totalPages = pagination?.total_pages ?? 1;
+  const rangeStart = totalCount === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const rangeEnd = totalCount === 0 ? 0 : Math.min(page * PAGE_SIZE, totalCount);
 
   if (loading) {
     return (
@@ -171,7 +161,7 @@ const StaffManagement = () => {
               }`}
             >
               {TAB_LABELS[tab]}
-              <span className="ml-1.5 tabular-nums text-slate-400">{counts[tab]}</span>
+              <span className="ml-1.5 tabular-nums text-slate-400">{counts[tab] ?? 0}</span>
             </button>
           ))}
         </div>
@@ -217,13 +207,13 @@ const StaffManagement = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filtered.length === 0 ? (
+              {workers.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="text-center py-16 text-slate-400 text-sm">
                     No staff members match your filters.
                   </td>
                 </tr>
-              ) : filtered.map(worker => (
+              ) : workers.map(worker => (
                 <tr
                   key={worker.staff_profile_id}
                   onClick={() => navigate(`/admin/staff/${worker.staff_profile_id}/detail`)}
@@ -297,9 +287,28 @@ const StaffManagement = () => {
           </table>
         </div>
 
-        {filtered.length > 0 && (
-          <div className="border-t border-slate-100 px-4 py-2.5 text-xs text-slate-400">
-            Showing {filtered.length} of {workers.length} staff member{workers.length !== 1 ? 's' : ''}
+        {workers.length > 0 && (
+          <div className="flex items-center justify-between border-t border-slate-100 px-4 py-2.5 text-xs text-slate-400">
+            <span>
+              Showing {rangeStart}-{rangeEnd} of {totalCount} staff member{totalCount !== 1 ? 's' : ''}
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={!pagination?.has_prev}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" /> Prev
+              </button>
+              <span className="px-2 tabular-nums">Page {page} of {totalPages}</span>
+              <button
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={!pagination?.has_next}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+              >
+                Next <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         )}
       </div>

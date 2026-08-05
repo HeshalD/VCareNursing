@@ -1723,120 +1723,143 @@ exports.getBookingDailyInvoices = async (req, res) => {
  * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
  * @body    service_date, approve (boolean), amount (optional, defaults to booking.daily_rate)
  */
-exports.confirmDailyInvoice = async (req, res) => {
-    const { booking_id } = req.params;
-    const { service_date, approve, amount, shift_slot_id, reschedule_id } = req.body;
-
+/**
+ * Core validation + upsert for deciding a day's/shift's client invoice. MUST be
+ * called within an open transaction on `client` (locks the invoice row FOR
+ * UPDATE and, on approve, calls createServiceInvoice) — shared by the
+ * single-shot `confirmDailyInvoice` endpoint and the day-draft confirm flow.
+ * Throws an Error with `.statusCode` set on validation failure/conflict.
+ */
+async function applyInvoiceDecision(client, { booking_id, service_date, approve, amount, shift_slot_id, reschedule_id, deciderUserId, deciderName }) {
     if (!service_date || typeof approve !== 'boolean') {
-        return res.status(400).json({ status: 'error', message: 'service_date and approve (boolean) are required' });
+        const err = new Error('service_date and approve (boolean) are required');
+        err.statusCode = 400;
+        throw err;
     }
 
-    const client = await db.pool.connect();
+    const bookingRes = await client.query(
+        `SELECT booking_id, client_id, daily_rate, shift_rate, service_model FROM bookings WHERE booking_id = $1`,
+        [booking_id]
+    );
 
-    try {
-        await client.query('BEGIN');
+    if (bookingRes.rows.length === 0) {
+        const err = new Error('Booking not found');
+        err.statusCode = 404;
+        throw err;
+    }
 
-        const bookingRes = await client.query(
-            `SELECT booking_id, client_id, daily_rate, shift_rate, service_model FROM bookings WHERE booking_id = $1`,
-            [booking_id]
+    const booking = bookingRes.rows[0];
+
+    if (booking.service_model === 'SHIFT_BASED' && !shift_slot_id) {
+        const err = new Error('shift_slot_id is required for SHIFT_BASED bookings');
+        err.statusCode = 400;
+        throw err;
+    }
+    if (booking.service_model !== 'SHIFT_BASED' && shift_slot_id) {
+        const err = new Error('shift_slot_id must not be provided for this booking type');
+        err.statusCode = 400;
+        throw err;
+    }
+
+    if (shift_slot_id) {
+        const slotCheck = await client.query(
+            `SELECT s.shift_slot_id FROM booking_shift_slots s
+             JOIN booking_shift_patterns p ON s.pattern_id = p.pattern_id
+             WHERE s.shift_slot_id = $1 AND p.booking_id = $2`,
+            [shift_slot_id, booking_id]
         );
-
-        if (bookingRes.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ status: 'error', message: 'Booking not found' });
+        if (slotCheck.rows.length === 0) {
+            const err = new Error('Shift slot not found for this booking');
+            err.statusCode = 404;
+            throw err;
         }
+    }
 
-        const booking = bookingRes.rows[0];
-
-        if (booking.service_model === 'SHIFT_BASED' && !shift_slot_id) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ status: 'error', message: 'shift_slot_id is required for SHIFT_BASED bookings' });
+    if (reschedule_id) {
+        const rescheduleCheck = await client.query(
+            `SELECT reschedule_id FROM shift_reschedules WHERE reschedule_id = $1 AND booking_id = $2 AND status = 'ACTIVE'`,
+            [reschedule_id, booking_id]
+        );
+        if (rescheduleCheck.rows.length === 0) {
+            const err = new Error('Reschedule not found for this booking');
+            err.statusCode = 404;
+            throw err;
         }
-        if (booking.service_model !== 'SHIFT_BASED' && shift_slot_id) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ status: 'error', message: 'shift_slot_id must not be provided for this booking type' });
-        }
+    }
 
-        if (shift_slot_id) {
-            const slotCheck = await client.query(
-                `SELECT s.shift_slot_id FROM booking_shift_slots s
-                 JOIN booking_shift_patterns p ON s.pattern_id = p.pattern_id
-                 WHERE s.shift_slot_id = $1 AND p.booking_id = $2`,
-                [shift_slot_id, booking_id]
-            );
-            if (slotCheck.rows.length === 0) {
-                await client.query('ROLLBACK');
-                return res.status(404).json({ status: 'error', message: 'Shift slot not found for this booking' });
-            }
-        }
-
-        if (reschedule_id) {
-            const rescheduleCheck = await client.query(
-                `SELECT reschedule_id FROM shift_reschedules WHERE reschedule_id = $1 AND booking_id = $2 AND status = 'ACTIVE'`,
-                [reschedule_id, booking_id]
-            );
-            if (rescheduleCheck.rows.length === 0) {
-                await client.query('ROLLBACK');
-                return res.status(404).json({ status: 'error', message: 'Reschedule not found for this booking' });
-            }
-        }
-
-        const existing = reschedule_id
+    const existing = reschedule_id
+        ? await client.query(
+            `SELECT * FROM booking_daily_invoices WHERE reschedule_id = $1 FOR UPDATE`,
+            [reschedule_id]
+        )
+        : shift_slot_id
             ? await client.query(
-                `SELECT * FROM booking_daily_invoices WHERE reschedule_id = $1 FOR UPDATE`,
-                [reschedule_id]
+                `SELECT * FROM booking_daily_invoices WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id = $3 AND reschedule_id IS NULL FOR UPDATE`,
+                [booking_id, service_date, shift_slot_id]
             )
-            : shift_slot_id
-                ? await client.query(
-                    `SELECT * FROM booking_daily_invoices WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id = $3 AND reschedule_id IS NULL FOR UPDATE`,
-                    [booking_id, service_date, shift_slot_id]
-                )
-                : await client.query(
-                    `SELECT * FROM booking_daily_invoices WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id IS NULL AND reschedule_id IS NULL FOR UPDATE`,
-                    [booking_id, service_date]
-                );
+            : await client.query(
+                `SELECT * FROM booking_daily_invoices WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id IS NULL AND reschedule_id IS NULL FOR UPDATE`,
+                [booking_id, service_date]
+            );
 
-        if (existing.rows.length > 0 && existing.rows[0].status !== 'PENDING') {
-            await client.query('ROLLBACK');
-            return res.status(409).json({ status: 'error', message: 'This day has already been decided' });
+    if (existing.rows.length > 0 && existing.rows[0].status !== 'PENDING') {
+        const err = new Error('This day has already been decided');
+        err.statusCode = 409;
+        throw err;
+    }
+
+    let transactionId = null;
+    let finalAmount = null;
+
+    if (approve) {
+        if (amount !== undefined && amount !== null && amount !== '') {
+            finalAmount = parseFloat(amount);
+        } else if (shift_slot_id) {
+            finalAmount = calculateShiftSlotCharge(booking).amount;
+        } else {
+            finalAmount = parseFloat(booking.daily_rate);
         }
 
-        const decidedByName = await getActorName(req.user?.user_id);
-
-        let transactionId = null;
-        let finalAmount = null;
-
-        if (approve) {
-            if (amount !== undefined && amount !== null && amount !== '') {
-                finalAmount = parseFloat(amount);
-            } else if (shift_slot_id) {
-                finalAmount = calculateShiftSlotCharge(booking).amount;
-            } else {
-                finalAmount = parseFloat(booking.daily_rate);
-            }
-
-            if (Number.isNaN(finalAmount) || finalAmount <= 0) {
-                await client.query('ROLLBACK');
-                return res.status(400).json({ status: 'error', message: 'amount must be a positive number' });
-            }
-
-            transactionId = await createServiceInvoice(client, {
-                booking_id,
-                client_id: booking.client_id,
-                amount: finalAmount,
-                notes: `Manually confirmed ${shift_slot_id ? 'shift' : 'daily'} charge for ${service_date}`
-            });
-
-            await checkAndFlagBookingOverdue(client, booking_id);
+        if (Number.isNaN(finalAmount) || finalAmount <= 0) {
+            const err = new Error('amount must be a positive number');
+            err.statusCode = 400;
+            throw err;
         }
 
-        const result = reschedule_id
+        transactionId = await createServiceInvoice(client, {
+            booking_id,
+            client_id: booking.client_id,
+            amount: finalAmount,
+            notes: `Manually confirmed ${shift_slot_id ? 'shift' : 'daily'} charge for ${service_date}`
+        });
+
+        await checkAndFlagBookingOverdue(client, booking_id);
+    }
+
+    const result = reschedule_id
+        ? await client.query(
+            `INSERT INTO booking_daily_invoices (
+                booking_id, service_date, entry_mode, status, amount, transaction_id,
+                decided_by_user_id, decided_by_name, decided_at, shift_slot_id, reschedule_id
+            ) VALUES ($1, $2, 'MANUAL', $3, $4, $5, $6, $7, NOW(), $8, $9)
+            ON CONFLICT (reschedule_id) WHERE reschedule_id IS NOT NULL
+            DO UPDATE SET status = EXCLUDED.status,
+                          amount = EXCLUDED.amount,
+                          transaction_id = EXCLUDED.transaction_id,
+                          decided_by_user_id = EXCLUDED.decided_by_user_id,
+                          decided_by_name = EXCLUDED.decided_by_name,
+                          decided_at = NOW(),
+                          updated_at = NOW()
+            RETURNING *`,
+            [booking_id, service_date, approve ? 'INVOICED' : 'SKIPPED', finalAmount, transactionId, deciderUserId || null, deciderName, shift_slot_id, reschedule_id]
+        )
+        : shift_slot_id
             ? await client.query(
                 `INSERT INTO booking_daily_invoices (
                     booking_id, service_date, entry_mode, status, amount, transaction_id,
-                    decided_by_user_id, decided_by_name, decided_at, shift_slot_id, reschedule_id
-                ) VALUES ($1, $2, 'MANUAL', $3, $4, $5, $6, $7, NOW(), $8, $9)
-                ON CONFLICT (reschedule_id) WHERE reschedule_id IS NOT NULL
+                    decided_by_user_id, decided_by_name, decided_at, shift_slot_id
+                ) VALUES ($1, $2, 'MANUAL', $3, $4, $5, $6, $7, NOW(), $8)
+                ON CONFLICT (booking_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL AND reschedule_id IS NULL
                 DO UPDATE SET status = EXCLUDED.status,
                               amount = EXCLUDED.amount,
                               transaction_id = EXCLUDED.transaction_id,
@@ -1845,41 +1868,42 @@ exports.confirmDailyInvoice = async (req, res) => {
                               decided_at = NOW(),
                               updated_at = NOW()
                 RETURNING *`,
-                [booking_id, service_date, approve ? 'INVOICED' : 'SKIPPED', finalAmount, transactionId, req.user?.user_id || null, decidedByName, shift_slot_id, reschedule_id]
+                [booking_id, service_date, approve ? 'INVOICED' : 'SKIPPED', finalAmount, transactionId, deciderUserId || null, deciderName, shift_slot_id]
             )
-            : shift_slot_id
-                ? await client.query(
-                    `INSERT INTO booking_daily_invoices (
-                        booking_id, service_date, entry_mode, status, amount, transaction_id,
-                        decided_by_user_id, decided_by_name, decided_at, shift_slot_id
-                    ) VALUES ($1, $2, 'MANUAL', $3, $4, $5, $6, $7, NOW(), $8)
-                    ON CONFLICT (booking_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL AND reschedule_id IS NULL
-                    DO UPDATE SET status = EXCLUDED.status,
-                                  amount = EXCLUDED.amount,
-                                  transaction_id = EXCLUDED.transaction_id,
-                                  decided_by_user_id = EXCLUDED.decided_by_user_id,
-                                  decided_by_name = EXCLUDED.decided_by_name,
-                                  decided_at = NOW(),
-                                  updated_at = NOW()
-                    RETURNING *`,
-                    [booking_id, service_date, approve ? 'INVOICED' : 'SKIPPED', finalAmount, transactionId, req.user?.user_id || null, decidedByName, shift_slot_id]
-                )
-                : await client.query(
-                    `INSERT INTO booking_daily_invoices (
-                        booking_id, service_date, entry_mode, status, amount, transaction_id,
-                        decided_by_user_id, decided_by_name, decided_at
-                    ) VALUES ($1, $2, 'MANUAL', $3, $4, $5, $6, $7, NOW())
-                    ON CONFLICT (booking_id, service_date) WHERE shift_slot_id IS NULL
-                    DO UPDATE SET status = EXCLUDED.status,
-                                  amount = EXCLUDED.amount,
-                                  transaction_id = EXCLUDED.transaction_id,
-                                  decided_by_user_id = EXCLUDED.decided_by_user_id,
-                                  decided_by_name = EXCLUDED.decided_by_name,
-                                  decided_at = NOW(),
-                                  updated_at = NOW()
-                    RETURNING *`,
-                    [booking_id, service_date, approve ? 'INVOICED' : 'SKIPPED', finalAmount, transactionId, req.user?.user_id || null, decidedByName]
-                );
+            : await client.query(
+                `INSERT INTO booking_daily_invoices (
+                    booking_id, service_date, entry_mode, status, amount, transaction_id,
+                    decided_by_user_id, decided_by_name, decided_at
+                ) VALUES ($1, $2, 'MANUAL', $3, $4, $5, $6, $7, NOW())
+                ON CONFLICT (booking_id, service_date) WHERE shift_slot_id IS NULL
+                DO UPDATE SET status = EXCLUDED.status,
+                              amount = EXCLUDED.amount,
+                              transaction_id = EXCLUDED.transaction_id,
+                              decided_by_user_id = EXCLUDED.decided_by_user_id,
+                              decided_by_name = EXCLUDED.decided_by_name,
+                              decided_at = NOW(),
+                              updated_at = NOW()
+                RETURNING *`,
+                [booking_id, service_date, approve ? 'INVOICED' : 'SKIPPED', finalAmount, transactionId, deciderUserId || null, deciderName]
+            );
+
+    return { invoice: result.rows[0], finalAmount };
+}
+
+exports.confirmDailyInvoice = async (req, res) => {
+    const { booking_id } = req.params;
+    const { service_date, approve, amount, shift_slot_id, reschedule_id } = req.body;
+
+    const client = await db.pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        const decidedByName = await getActorName(req.user?.user_id);
+        const { invoice, finalAmount } = await applyInvoiceDecision(client, {
+            booking_id, service_date, approve, amount, shift_slot_id, reschedule_id,
+            deciderUserId: req.user?.user_id, deciderName: decidedByName
+        });
 
         // A VISITING booking's one-time visit may now be fully decided (salary + invoice)
         // — auto-complete it rather than leaving it ACTIVE for a manual close-out.
@@ -1899,9 +1923,12 @@ exports.confirmDailyInvoice = async (req, res) => {
             details: { service_date, amount: finalAmount, shift_slot_id: shift_slot_id || null },
         }).catch(err => console.error('Activity log failed:', err));
 
-        res.status(200).json({ status: 'success', data: result.rows[0] });
+        res.status(200).json({ status: 'success', data: invoice });
     } catch (error) {
         await client.query('ROLLBACK');
+        if (error.statusCode) {
+            return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        }
         console.error('Confirm daily invoice error:', error);
         res.status(500).json({ status: 'error', message: 'Failed to confirm daily invoice decision' });
     } finally {
@@ -2088,83 +2115,104 @@ exports.getShiftSchedule = async (req, res) => {
  * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
  * @body    service_date, shift_slot_id, assignment_id, reschedule_id (optional), reason (optional)
  */
+/**
+ * Core validation + upsert for waiving a shift occurrence (skip both the
+ * client charge and the staff pay atomically). MUST be called within an open
+ * transaction on `client` — shared by the single-shot `waiveShiftOccurrence`
+ * endpoint and the day-draft confirm flow.
+ */
+async function applyWaiveDecision(client, { booking_id, service_date, shift_slot_id, assignment_id, reschedule_id, reason, deciderUserId, deciderName }) {
+    if (!service_date || !shift_slot_id || !assignment_id) {
+        const err = new Error('service_date, shift_slot_id and assignment_id are required');
+        err.statusCode = 400;
+        throw err;
+    }
+
+    const bookingRes = await client.query(
+        `SELECT booking_id, client_id, service_model FROM bookings WHERE booking_id = $1`,
+        [booking_id]
+    );
+    if (bookingRes.rows.length === 0) {
+        const err = new Error('Booking not found');
+        err.statusCode = 404;
+        throw err;
+    }
+    if (bookingRes.rows[0].service_model !== 'SHIFT_BASED') {
+        const err = new Error('Waiving individual shifts only applies to SHIFT_BASED bookings');
+        err.statusCode = 400;
+        throw err;
+    }
+
+    const assignmentRes = await client.query(
+        `SELECT staff_profile_id FROM booking_staff_assignments WHERE assignment_id = $1 AND booking_id = $2`,
+        [assignment_id, booking_id]
+    );
+    if (assignmentRes.rows.length === 0) {
+        const err = new Error('Assignment not found for this booking');
+        err.statusCode = 404;
+        throw err;
+    }
+    const staff_profile_id = assignmentRes.rows[0].staff_profile_id;
+
+    const existingInvoice = reschedule_id
+        ? await client.query(`SELECT status FROM booking_daily_invoices WHERE reschedule_id = $1 FOR UPDATE`, [reschedule_id])
+        : await client.query(`SELECT status FROM booking_daily_invoices WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id = $3 AND reschedule_id IS NULL FOR UPDATE`, [booking_id, service_date, shift_slot_id]);
+    if (existingInvoice.rows.length > 0 && existingInvoice.rows[0].status !== 'PENDING') {
+        const err = new Error('This shift has already been decided');
+        err.statusCode = 409;
+        throw err;
+    }
+
+    const notes = reason ? `Shift waived — ${reason}` : 'Shift waived by admin';
+
+    if (reschedule_id) {
+        await client.query(
+            `INSERT INTO booking_daily_invoices (booking_id, service_date, entry_mode, status, shift_slot_id, reschedule_id, decided_by_user_id, decided_by_name, decided_at, notes)
+             VALUES ($1, $2, 'MANUAL', 'SKIPPED', $3, $4, $5, $6, NOW(), $7)
+             ON CONFLICT (reschedule_id) WHERE reschedule_id IS NOT NULL
+             DO UPDATE SET status = 'SKIPPED', decided_by_user_id = EXCLUDED.decided_by_user_id, decided_by_name = EXCLUDED.decided_by_name, decided_at = NOW(), notes = EXCLUDED.notes, updated_at = NOW()`,
+            [booking_id, service_date, shift_slot_id, reschedule_id, deciderUserId || null, deciderName, notes]
+        );
+        await client.query(
+            `INSERT INTO staff_daily_attendance (booking_id, assignment_id, staff_profile_id, service_date, entry_mode, salary_status, shift_slot_id, reschedule_id, decided_by_user_id, decided_by_name, decided_at, notes)
+             VALUES ($1, $2, $3, $4, 'MANUAL', 'SKIPPED', $5, $6, $7, $8, NOW(), $9)
+             ON CONFLICT (reschedule_id) WHERE reschedule_id IS NOT NULL
+             DO UPDATE SET salary_status = 'SKIPPED', decided_by_user_id = EXCLUDED.decided_by_user_id, decided_by_name = EXCLUDED.decided_by_name, decided_at = NOW(), notes = EXCLUDED.notes, updated_at = NOW()`,
+            [booking_id, assignment_id, staff_profile_id, service_date, shift_slot_id, reschedule_id, deciderUserId || null, deciderName, notes]
+        );
+    } else {
+        await client.query(
+            `INSERT INTO booking_daily_invoices (booking_id, service_date, entry_mode, status, shift_slot_id, decided_by_user_id, decided_by_name, decided_at, notes)
+             VALUES ($1, $2, 'MANUAL', 'SKIPPED', $3, $4, $5, NOW(), $6)
+             ON CONFLICT (booking_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL AND reschedule_id IS NULL
+             DO UPDATE SET status = 'SKIPPED', decided_by_user_id = EXCLUDED.decided_by_user_id, decided_by_name = EXCLUDED.decided_by_name, decided_at = NOW(), notes = EXCLUDED.notes, updated_at = NOW()`,
+            [booking_id, service_date, shift_slot_id, deciderUserId || null, deciderName, notes]
+        );
+        await client.query(
+            `INSERT INTO staff_daily_attendance (booking_id, assignment_id, staff_profile_id, service_date, entry_mode, salary_status, shift_slot_id, decided_by_user_id, decided_by_name, decided_at, notes)
+             VALUES ($1, $2, $3, $4, 'MANUAL', 'SKIPPED', $5, $6, $7, NOW(), $8)
+             ON CONFLICT (assignment_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL
+             DO UPDATE SET salary_status = 'SKIPPED', decided_by_user_id = EXCLUDED.decided_by_user_id, decided_by_name = EXCLUDED.decided_by_name, decided_at = NOW(), notes = EXCLUDED.notes, updated_at = NOW()`,
+            [booking_id, assignment_id, staff_profile_id, service_date, shift_slot_id, deciderUserId || null, deciderName, notes]
+        );
+    }
+
+    return { notes };
+}
+
 exports.waiveShiftOccurrence = async (req, res) => {
     const { booking_id } = req.params;
     const { service_date, shift_slot_id, assignment_id, reschedule_id, reason } = req.body;
-
-    if (!service_date || !shift_slot_id || !assignment_id) {
-        return res.status(400).json({ status: 'error', message: 'service_date, shift_slot_id and assignment_id are required' });
-    }
 
     const client = await db.pool.connect();
     try {
         await client.query('BEGIN');
 
-        const bookingRes = await client.query(
-            `SELECT booking_id, client_id, service_model FROM bookings WHERE booking_id = $1`,
-            [booking_id]
-        );
-        if (bookingRes.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ status: 'error', message: 'Booking not found' });
-        }
-        if (bookingRes.rows[0].service_model !== 'SHIFT_BASED') {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ status: 'error', message: 'Waiving individual shifts only applies to SHIFT_BASED bookings' });
-        }
-
-        const assignmentRes = await client.query(
-            `SELECT staff_profile_id FROM booking_staff_assignments WHERE assignment_id = $1 AND booking_id = $2`,
-            [assignment_id, booking_id]
-        );
-        if (assignmentRes.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ status: 'error', message: 'Assignment not found for this booking' });
-        }
-        const staff_profile_id = assignmentRes.rows[0].staff_profile_id;
         const decidedByName = await getActorName(req.user?.user_id);
-
-        const existingInvoice = reschedule_id
-            ? await client.query(`SELECT status FROM booking_daily_invoices WHERE reschedule_id = $1 FOR UPDATE`, [reschedule_id])
-            : await client.query(`SELECT status FROM booking_daily_invoices WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id = $3 AND reschedule_id IS NULL FOR UPDATE`, [booking_id, service_date, shift_slot_id]);
-        if (existingInvoice.rows.length > 0 && existingInvoice.rows[0].status !== 'PENDING') {
-            await client.query('ROLLBACK');
-            return res.status(409).json({ status: 'error', message: 'This shift has already been decided' });
-        }
-
-        const notes = reason ? `Shift waived — ${reason}` : 'Shift waived by admin';
-
-        if (reschedule_id) {
-            await client.query(
-                `INSERT INTO booking_daily_invoices (booking_id, service_date, entry_mode, status, shift_slot_id, reschedule_id, decided_by_user_id, decided_by_name, decided_at, notes)
-                 VALUES ($1, $2, 'MANUAL', 'SKIPPED', $3, $4, $5, $6, NOW(), $7)
-                 ON CONFLICT (reschedule_id) WHERE reschedule_id IS NOT NULL
-                 DO UPDATE SET status = 'SKIPPED', decided_by_user_id = EXCLUDED.decided_by_user_id, decided_by_name = EXCLUDED.decided_by_name, decided_at = NOW(), notes = EXCLUDED.notes, updated_at = NOW()`,
-                [booking_id, service_date, shift_slot_id, reschedule_id, req.user?.user_id || null, decidedByName, notes]
-            );
-            await client.query(
-                `INSERT INTO staff_daily_attendance (booking_id, assignment_id, staff_profile_id, service_date, entry_mode, salary_status, shift_slot_id, reschedule_id, decided_by_user_id, decided_by_name, decided_at, notes)
-                 VALUES ($1, $2, $3, $4, 'MANUAL', 'SKIPPED', $5, $6, $7, $8, NOW(), $9)
-                 ON CONFLICT (reschedule_id) WHERE reschedule_id IS NOT NULL
-                 DO UPDATE SET salary_status = 'SKIPPED', decided_by_user_id = EXCLUDED.decided_by_user_id, decided_by_name = EXCLUDED.decided_by_name, decided_at = NOW(), notes = EXCLUDED.notes, updated_at = NOW()`,
-                [booking_id, assignment_id, staff_profile_id, service_date, shift_slot_id, reschedule_id, req.user?.user_id || null, decidedByName, notes]
-            );
-        } else {
-            await client.query(
-                `INSERT INTO booking_daily_invoices (booking_id, service_date, entry_mode, status, shift_slot_id, decided_by_user_id, decided_by_name, decided_at, notes)
-                 VALUES ($1, $2, 'MANUAL', 'SKIPPED', $3, $4, $5, NOW(), $6)
-                 ON CONFLICT (booking_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL AND reschedule_id IS NULL
-                 DO UPDATE SET status = 'SKIPPED', decided_by_user_id = EXCLUDED.decided_by_user_id, decided_by_name = EXCLUDED.decided_by_name, decided_at = NOW(), notes = EXCLUDED.notes, updated_at = NOW()`,
-                [booking_id, service_date, shift_slot_id, req.user?.user_id || null, decidedByName, notes]
-            );
-            await client.query(
-                `INSERT INTO staff_daily_attendance (booking_id, assignment_id, staff_profile_id, service_date, entry_mode, salary_status, shift_slot_id, decided_by_user_id, decided_by_name, decided_at, notes)
-                 VALUES ($1, $2, $3, $4, 'MANUAL', 'SKIPPED', $5, $6, $7, NOW(), $8)
-                 ON CONFLICT (assignment_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL
-                 DO UPDATE SET salary_status = 'SKIPPED', decided_by_user_id = EXCLUDED.decided_by_user_id, decided_by_name = EXCLUDED.decided_by_name, decided_at = NOW(), notes = EXCLUDED.notes, updated_at = NOW()`,
-                [booking_id, assignment_id, staff_profile_id, service_date, shift_slot_id, req.user?.user_id || null, decidedByName, notes]
-            );
-        }
+        const { notes } = await applyWaiveDecision(client, {
+            booking_id, service_date, shift_slot_id, assignment_id, reschedule_id, reason,
+            deciderUserId: req.user?.user_id, deciderName: decidedByName
+        });
 
         await client.query('COMMIT');
 
@@ -2180,6 +2228,9 @@ exports.waiveShiftOccurrence = async (req, res) => {
         res.status(200).json({ status: 'success', message: 'Shift waived — no charge and no pay recorded' });
     } catch (error) {
         await client.query('ROLLBACK');
+        if (error.statusCode) {
+            return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        }
         console.error('Waive shift occurrence error:', error);
         res.status(500).json({ status: 'error', message: 'Failed to waive shift' });
     } finally {
@@ -4343,4 +4394,12 @@ exports.adminDirectBooking = async (req, res) => {
     } finally {
         dbClient.release();
     }
+};
+
+// Internal helpers reused by dailyDraftController.js's day-draft confirm flow —
+// not HTTP handlers themselves, see the doc comments above each for contract details.
+exports._internal = {
+    applyInvoiceDecision,
+    applyWaiveDecision,
+    getActorName,
 };

@@ -2286,6 +2286,35 @@ async function runMigration() {
   `);
 
   // =========================================================
+  // DAY DRAFTS
+  // Backend-persisted staging area for the Day Detail modal: an admin's
+  // in-progress attendance/salary/invoice entries for one booking+date,
+  // cached here until explicitly confirmed (dailyDraftController.confirmDay),
+  // at which point they're applied to staff_daily_attendance /
+  // booking_daily_invoices and this row is deleted. Nothing here ever
+  // moves money — see dailyDraftController.js.
+  // =========================================================
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS booking_day_drafts (
+      draft_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      booking_id UUID NOT NULL REFERENCES bookings(booking_id),
+      service_date DATE NOT NULL,
+      payload JSONB NOT NULL,
+      updated_by_user_id UUID REFERENCES users(user_id),
+      updated_by_name VARCHAR(255),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (booking_id, service_date)
+    );
+  `);
+
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_booking_day_drafts_booking_id
+    ON booking_day_drafts(booking_id);
+  `);
+
+  // =========================================================
   // PAYMENT RECEIPTS
   // One receipt per recorded client payment (unified client payment,
   // direct booking payment, or quote payment). The PDF is stored on

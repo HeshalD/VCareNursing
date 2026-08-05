@@ -70,6 +70,12 @@ const ATTENDANCE_HISTORY_ACTION_TYPES = [
     'STAFF_SALARY_CONFIRMED',
     'STAFF_SALARY_SKIPPED',
     'DAY_REVOKED',
+    'DAILY_INVOICE_CONFIRMED',
+    'DAILY_INVOICE_SKIPPED',
+    'SHIFT_INVOICE_CONFIRMED',
+    'SHIFT_INVOICE_SKIPPED',
+    'SHIFT_OCCURRENCE_WAIVED',
+    'DAY_CONFIRMED',
 ];
 
 exports.getAttendanceHistory = async (req, res) => {
@@ -92,6 +98,139 @@ exports.getAttendanceHistory = async (req, res) => {
 };
 
 /**
+ * Core validation + upsert for logging a staff member's in/out time on a given
+ * day/shift. Shared by the single-shot `upsertAttendance` endpoint and the
+ * day-draft confirm flow (dailyDraftController.js) — `client` may be either
+ * the plain `db` module (no surrounding transaction) or a checked-out
+ * transaction client. Throws an Error with `.statusCode` set on validation
+ * failure/conflict so callers can translate it to the right HTTP response.
+ */
+async function applyAttendanceTime(client, { booking_id, assignment_id, service_date, in_time, out_time, notes, shift_slot_id, reschedule_id }) {
+    if (!assignment_id || !service_date || !in_time || !out_time) {
+        const err = new Error('assignment_id, service_date, in_time and out_time are required');
+        err.statusCode = 400;
+        throw err;
+    }
+
+    const inDate = new Date(in_time);
+    const outDate = new Date(out_time);
+
+    if (Number.isNaN(inDate.getTime()) || Number.isNaN(outDate.getTime()) || outDate <= inDate) {
+        const err = new Error('out_time must be a valid timestamp after in_time');
+        err.statusCode = 400;
+        throw err;
+    }
+
+    const hoursServed = (outDate - inDate) / (1000 * 60 * 60);
+
+    const assignmentCheck = await client.query(
+        `SELECT assignment_id, staff_profile_id, shift_slot_id FROM booking_staff_assignments
+         WHERE assignment_id = $1 AND booking_id = $2`,
+        [assignment_id, booking_id]
+    );
+
+    if (assignmentCheck.rows.length === 0) {
+        const err = new Error('Assignment not found for this booking');
+        err.statusCode = 404;
+        throw err;
+    }
+
+    const assignmentShiftSlotId = assignmentCheck.rows[0].shift_slot_id;
+
+    if (assignmentShiftSlotId) {
+        if (!shift_slot_id) {
+            const err = new Error('shift_slot_id is required for shift-based attendance');
+            err.statusCode = 400;
+            throw err;
+        }
+        if (shift_slot_id !== assignmentShiftSlotId) {
+            const err = new Error("shift_slot_id does not match this assignment's shift");
+            err.statusCode = 400;
+            throw err;
+        }
+    } else if (shift_slot_id) {
+        const err = new Error('This assignment is not shift-based; shift_slot_id must not be provided');
+        err.statusCode = 400;
+        throw err;
+    }
+
+    if (reschedule_id) {
+        const rescheduleCheck = await client.query(
+            `SELECT reschedule_id FROM shift_reschedules WHERE reschedule_id = $1 AND booking_id = $2 AND status = 'ACTIVE'`,
+            [reschedule_id, booking_id]
+        );
+        if (rescheduleCheck.rows.length === 0) {
+            const err = new Error('Reschedule not found for this booking');
+            err.statusCode = 404;
+            throw err;
+        }
+    }
+
+    const existing = reschedule_id
+        ? await client.query(`SELECT attendance_id, salary_status FROM staff_daily_attendance WHERE reschedule_id = $1`, [reschedule_id])
+        : await client.query(
+            `SELECT attendance_id, salary_status FROM staff_daily_attendance
+             WHERE assignment_id = $1 AND service_date = $2 AND reschedule_id IS NULL`,
+            [assignment_id, service_date]
+        );
+
+    if (existing.rows.length > 0 && existing.rows[0].salary_status !== 'PENDING') {
+        const err = new Error('This day has already been decided and cannot be edited');
+        err.statusCode = 409;
+        throw err;
+    }
+
+    const staffProfileId = assignmentCheck.rows[0].staff_profile_id;
+
+    const result = reschedule_id
+        ? await client.query(
+            `INSERT INTO staff_daily_attendance (
+                booking_id, assignment_id, staff_profile_id, service_date,
+                in_time, out_time, hours_served, entry_mode, notes, shift_slot_id, reschedule_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'MANUAL', $8, $9, $10)
+            ON CONFLICT (reschedule_id) WHERE reschedule_id IS NOT NULL
+            DO UPDATE SET in_time = EXCLUDED.in_time,
+                          out_time = EXCLUDED.out_time,
+                          hours_served = EXCLUDED.hours_served,
+                          notes = EXCLUDED.notes,
+                          updated_at = NOW()
+            RETURNING *`,
+            [booking_id, assignment_id, staffProfileId, service_date, in_time, out_time, hoursServed.toFixed(2), notes || null, assignmentShiftSlotId, reschedule_id]
+        )
+        : assignmentShiftSlotId
+            ? await client.query(
+                `INSERT INTO staff_daily_attendance (
+                    booking_id, assignment_id, staff_profile_id, service_date,
+                    in_time, out_time, hours_served, entry_mode, notes, shift_slot_id
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'MANUAL', $8, $9)
+                ON CONFLICT (assignment_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL
+                DO UPDATE SET in_time = EXCLUDED.in_time,
+                              out_time = EXCLUDED.out_time,
+                              hours_served = EXCLUDED.hours_served,
+                              notes = EXCLUDED.notes,
+                              updated_at = NOW()
+                RETURNING *`,
+                [booking_id, assignment_id, staffProfileId, service_date, in_time, out_time, hoursServed.toFixed(2), notes || null, assignmentShiftSlotId]
+            )
+            : await client.query(
+                `INSERT INTO staff_daily_attendance (
+                    booking_id, assignment_id, staff_profile_id, service_date,
+                    in_time, out_time, hours_served, entry_mode, notes
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'MANUAL', $8)
+                ON CONFLICT (assignment_id, service_date) WHERE shift_slot_id IS NULL
+                DO UPDATE SET in_time = EXCLUDED.in_time,
+                              out_time = EXCLUDED.out_time,
+                              hours_served = EXCLUDED.hours_served,
+                              notes = EXCLUDED.notes,
+                              updated_at = NOW()
+                RETURNING *`,
+                [booking_id, assignment_id, staffProfileId, service_date, in_time, out_time, hoursServed.toFixed(2), notes || null]
+            );
+
+    return { attendance: result.rows[0], hoursServed };
+}
+
+/**
  * @route   POST /api/bookings/:booking_id/attendance
  * @desc    Log/update a staff member's in/out time for a given day on a booking.
  *          Computes hours_served from the two timestamps (handles overnight shifts
@@ -103,120 +242,10 @@ exports.upsertAttendance = async (req, res) => {
     const { booking_id } = req.params;
     const { assignment_id, service_date, in_time, out_time, notes, shift_slot_id, reschedule_id } = req.body;
 
-    if (!assignment_id || !service_date || !in_time || !out_time) {
-        return res.status(400).json({
-            status: 'error',
-            message: 'assignment_id, service_date, in_time and out_time are required'
-        });
-    }
-
-    const inDate = new Date(in_time);
-    const outDate = new Date(out_time);
-
-    if (Number.isNaN(inDate.getTime()) || Number.isNaN(outDate.getTime()) || outDate <= inDate) {
-        return res.status(400).json({
-            status: 'error',
-            message: 'out_time must be a valid timestamp after in_time'
-        });
-    }
-
-    const hoursServed = (outDate - inDate) / (1000 * 60 * 60);
-
     try {
-        const assignmentCheck = await db.query(
-            `SELECT assignment_id, staff_profile_id, shift_slot_id FROM booking_staff_assignments
-             WHERE assignment_id = $1 AND booking_id = $2`,
-            [assignment_id, booking_id]
-        );
-
-        if (assignmentCheck.rows.length === 0) {
-            return res.status(404).json({ status: 'error', message: 'Assignment not found for this booking' });
-        }
-
-        const assignmentShiftSlotId = assignmentCheck.rows[0].shift_slot_id;
-
-        if (assignmentShiftSlotId) {
-            if (!shift_slot_id) {
-                return res.status(400).json({ status: 'error', message: 'shift_slot_id is required for shift-based attendance' });
-            }
-            if (shift_slot_id !== assignmentShiftSlotId) {
-                return res.status(400).json({ status: 'error', message: 'shift_slot_id does not match this assignment\'s shift' });
-            }
-        } else if (shift_slot_id) {
-            return res.status(400).json({ status: 'error', message: 'This assignment is not shift-based; shift_slot_id must not be provided' });
-        }
-
-        if (reschedule_id) {
-            const rescheduleCheck = await db.query(
-                `SELECT reschedule_id FROM shift_reschedules WHERE reschedule_id = $1 AND booking_id = $2 AND status = 'ACTIVE'`,
-                [reschedule_id, booking_id]
-            );
-            if (rescheduleCheck.rows.length === 0) {
-                return res.status(404).json({ status: 'error', message: 'Reschedule not found for this booking' });
-            }
-        }
-
-        const existing = reschedule_id
-            ? await db.query(`SELECT attendance_id, salary_status FROM staff_daily_attendance WHERE reschedule_id = $1`, [reschedule_id])
-            : await db.query(
-                `SELECT attendance_id, salary_status FROM staff_daily_attendance
-                 WHERE assignment_id = $1 AND service_date = $2 AND reschedule_id IS NULL`,
-                [assignment_id, service_date]
-            );
-
-        if (existing.rows.length > 0 && existing.rows[0].salary_status !== 'PENDING') {
-            return res.status(409).json({
-                status: 'error',
-                message: 'This day has already been decided and cannot be edited'
-            });
-        }
-
-        const staffProfileId = assignmentCheck.rows[0].staff_profile_id;
-
-        const result = reschedule_id
-            ? await db.query(
-                `INSERT INTO staff_daily_attendance (
-                    booking_id, assignment_id, staff_profile_id, service_date,
-                    in_time, out_time, hours_served, entry_mode, notes, shift_slot_id, reschedule_id
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'MANUAL', $8, $9, $10)
-                ON CONFLICT (reschedule_id) WHERE reschedule_id IS NOT NULL
-                DO UPDATE SET in_time = EXCLUDED.in_time,
-                              out_time = EXCLUDED.out_time,
-                              hours_served = EXCLUDED.hours_served,
-                              notes = EXCLUDED.notes,
-                              updated_at = NOW()
-                RETURNING *`,
-                [booking_id, assignment_id, staffProfileId, service_date, in_time, out_time, hoursServed.toFixed(2), notes || null, assignmentShiftSlotId, reschedule_id]
-            )
-            : assignmentShiftSlotId
-                ? await db.query(
-                    `INSERT INTO staff_daily_attendance (
-                        booking_id, assignment_id, staff_profile_id, service_date,
-                        in_time, out_time, hours_served, entry_mode, notes, shift_slot_id
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'MANUAL', $8, $9)
-                    ON CONFLICT (assignment_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL
-                    DO UPDATE SET in_time = EXCLUDED.in_time,
-                                  out_time = EXCLUDED.out_time,
-                                  hours_served = EXCLUDED.hours_served,
-                                  notes = EXCLUDED.notes,
-                                  updated_at = NOW()
-                    RETURNING *`,
-                    [booking_id, assignment_id, staffProfileId, service_date, in_time, out_time, hoursServed.toFixed(2), notes || null, assignmentShiftSlotId]
-                )
-                : await db.query(
-                    `INSERT INTO staff_daily_attendance (
-                        booking_id, assignment_id, staff_profile_id, service_date,
-                        in_time, out_time, hours_served, entry_mode, notes
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'MANUAL', $8)
-                    ON CONFLICT (assignment_id, service_date) WHERE shift_slot_id IS NULL
-                    DO UPDATE SET in_time = EXCLUDED.in_time,
-                                  out_time = EXCLUDED.out_time,
-                                  hours_served = EXCLUDED.hours_served,
-                                  notes = EXCLUDED.notes,
-                                  updated_at = NOW()
-                    RETURNING *`,
-                    [booking_id, assignment_id, staffProfileId, service_date, in_time, out_time, hoursServed.toFixed(2), notes || null]
-                );
+        const { attendance, hoursServed } = await applyAttendanceTime(db, {
+            booking_id, assignment_id, service_date, in_time, out_time, notes, shift_slot_id, reschedule_id
+        });
 
         logActivity({
             actorUserId: req.user?.user_id,
@@ -227,8 +256,11 @@ exports.upsertAttendance = async (req, res) => {
             details: { assignment_id, service_date, hours_served: hoursServed.toFixed(2) },
         }).catch(err => console.error('Activity log failed:', err));
 
-        res.status(200).json({ status: 'success', data: result.rows[0] });
+        res.status(200).json({ status: 'success', data: attendance });
     } catch (error) {
+        if (error.statusCode) {
+            return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        }
         console.error('Upsert attendance error:', error);
         res.status(500).json({ status: 'error', message: 'Failed to save attendance' });
     }
@@ -243,99 +275,119 @@ exports.upsertAttendance = async (req, res) => {
  * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
  * @body    assignment_id, service_date, shift_slot_id (optional), notes (optional)
  */
+/**
+ * Core validation + upsert for marking a no-show. Shared by the single-shot
+ * `markAbsent` endpoint and the day-draft confirm flow. See applyAttendanceTime
+ * above for the `client`/error-throwing conventions.
+ */
+async function applyAttendanceAbsent(client, { booking_id, assignment_id, service_date, shift_slot_id, notes, deciderUserId, deciderName }) {
+    if (!assignment_id || !service_date) {
+        const err = new Error('assignment_id and service_date are required');
+        err.statusCode = 400;
+        throw err;
+    }
+
+    const assignmentCheck = await client.query(
+        `SELECT assignment_id, staff_profile_id, shift_slot_id FROM booking_staff_assignments
+         WHERE assignment_id = $1 AND booking_id = $2`,
+        [assignment_id, booking_id]
+    );
+
+    if (assignmentCheck.rows.length === 0) {
+        const err = new Error('Assignment not found for this booking');
+        err.statusCode = 404;
+        throw err;
+    }
+
+    const assignmentShiftSlotId = assignmentCheck.rows[0].shift_slot_id;
+
+    if (assignmentShiftSlotId) {
+        if (!shift_slot_id) {
+            const err = new Error('shift_slot_id is required for shift-based attendance');
+            err.statusCode = 400;
+            throw err;
+        }
+        if (shift_slot_id !== assignmentShiftSlotId) {
+            const err = new Error("shift_slot_id does not match this assignment's shift");
+            err.statusCode = 400;
+            throw err;
+        }
+    } else if (shift_slot_id) {
+        const err = new Error('This assignment is not shift-based; shift_slot_id must not be provided');
+        err.statusCode = 400;
+        throw err;
+    }
+
+    const existing = await client.query(
+        `SELECT attendance_id, salary_status FROM staff_daily_attendance
+         WHERE assignment_id = $1 AND service_date = $2 AND reschedule_id IS NULL`,
+        [assignment_id, service_date]
+    );
+
+    if (existing.rows.length > 0 && existing.rows[0].salary_status !== 'PENDING') {
+        const err = new Error('This day has already been decided and cannot be edited');
+        err.statusCode = 409;
+        throw err;
+    }
+
+    const staffProfileId = assignmentCheck.rows[0].staff_profile_id;
+    const absentNotes = notes || 'Marked absent — no-show';
+
+    const result = assignmentShiftSlotId
+        ? await client.query(
+            `INSERT INTO staff_daily_attendance (
+                booking_id, assignment_id, staff_profile_id, service_date,
+                entry_mode, salary_status, decided_by_user_id, decided_by_name, decided_at, notes, shift_slot_id
+            ) VALUES ($1, $2, $3, $4, 'MANUAL', 'SKIPPED', $5, $6, NOW(), $7, $8)
+            ON CONFLICT (assignment_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL
+            DO UPDATE SET in_time = NULL,
+                          out_time = NULL,
+                          hours_served = NULL,
+                          salary_status = 'SKIPPED',
+                          salary_amount = NULL,
+                          salary_transaction_id = NULL,
+                          decided_by_user_id = EXCLUDED.decided_by_user_id,
+                          decided_by_name = EXCLUDED.decided_by_name,
+                          decided_at = NOW(),
+                          notes = EXCLUDED.notes,
+                          updated_at = NOW()
+            RETURNING *`,
+            [booking_id, assignment_id, staffProfileId, service_date, deciderUserId || null, deciderName, absentNotes, assignmentShiftSlotId]
+        )
+        : await client.query(
+            `INSERT INTO staff_daily_attendance (
+                booking_id, assignment_id, staff_profile_id, service_date,
+                entry_mode, salary_status, decided_by_user_id, decided_by_name, decided_at, notes
+            ) VALUES ($1, $2, $3, $4, 'MANUAL', 'SKIPPED', $5, $6, NOW(), $7)
+            ON CONFLICT (assignment_id, service_date) WHERE shift_slot_id IS NULL
+            DO UPDATE SET in_time = NULL,
+                          out_time = NULL,
+                          hours_served = NULL,
+                          salary_status = 'SKIPPED',
+                          salary_amount = NULL,
+                          salary_transaction_id = NULL,
+                          decided_by_user_id = EXCLUDED.decided_by_user_id,
+                          decided_by_name = EXCLUDED.decided_by_name,
+                          decided_at = NOW(),
+                          notes = EXCLUDED.notes,
+                          updated_at = NOW()
+            RETURNING *`,
+            [booking_id, assignment_id, staffProfileId, service_date, deciderUserId || null, deciderName, absentNotes]
+        );
+
+    return { attendance: result.rows[0], absentNotes };
+}
+
 exports.markAbsent = async (req, res) => {
     const { booking_id } = req.params;
     const { assignment_id, service_date, shift_slot_id, notes } = req.body;
 
-    if (!assignment_id || !service_date) {
-        return res.status(400).json({
-            status: 'error',
-            message: 'assignment_id and service_date are required'
-        });
-    }
-
     try {
-        const assignmentCheck = await db.query(
-            `SELECT assignment_id, staff_profile_id, shift_slot_id FROM booking_staff_assignments
-             WHERE assignment_id = $1 AND booking_id = $2`,
-            [assignment_id, booking_id]
-        );
-
-        if (assignmentCheck.rows.length === 0) {
-            return res.status(404).json({ status: 'error', message: 'Assignment not found for this booking' });
-        }
-
-        const assignmentShiftSlotId = assignmentCheck.rows[0].shift_slot_id;
-
-        if (assignmentShiftSlotId) {
-            if (!shift_slot_id) {
-                return res.status(400).json({ status: 'error', message: 'shift_slot_id is required for shift-based attendance' });
-            }
-            if (shift_slot_id !== assignmentShiftSlotId) {
-                return res.status(400).json({ status: 'error', message: 'shift_slot_id does not match this assignment\'s shift' });
-            }
-        } else if (shift_slot_id) {
-            return res.status(400).json({ status: 'error', message: 'This assignment is not shift-based; shift_slot_id must not be provided' });
-        }
-
-        const existing = await db.query(
-            `SELECT attendance_id, salary_status FROM staff_daily_attendance
-             WHERE assignment_id = $1 AND service_date = $2 AND reschedule_id IS NULL`,
-            [assignment_id, service_date]
-        );
-
-        if (existing.rows.length > 0 && existing.rows[0].salary_status !== 'PENDING') {
-            return res.status(409).json({
-                status: 'error',
-                message: 'This day has already been decided and cannot be edited'
-            });
-        }
-
-        const staffProfileId = assignmentCheck.rows[0].staff_profile_id;
         const decidedByName = await getDeciderName(req.user?.user_id);
-        const absentNotes = notes || 'Marked absent — no-show';
-
-        const result = assignmentShiftSlotId
-            ? await db.query(
-                `INSERT INTO staff_daily_attendance (
-                    booking_id, assignment_id, staff_profile_id, service_date,
-                    entry_mode, salary_status, decided_by_user_id, decided_by_name, decided_at, notes, shift_slot_id
-                ) VALUES ($1, $2, $3, $4, 'MANUAL', 'SKIPPED', $5, $6, NOW(), $7, $8)
-                ON CONFLICT (assignment_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL
-                DO UPDATE SET in_time = NULL,
-                              out_time = NULL,
-                              hours_served = NULL,
-                              salary_status = 'SKIPPED',
-                              salary_amount = NULL,
-                              salary_transaction_id = NULL,
-                              decided_by_user_id = EXCLUDED.decided_by_user_id,
-                              decided_by_name = EXCLUDED.decided_by_name,
-                              decided_at = NOW(),
-                              notes = EXCLUDED.notes,
-                              updated_at = NOW()
-                RETURNING *`,
-                [booking_id, assignment_id, staffProfileId, service_date, req.user?.user_id || null, decidedByName, absentNotes, assignmentShiftSlotId]
-            )
-            : await db.query(
-                `INSERT INTO staff_daily_attendance (
-                    booking_id, assignment_id, staff_profile_id, service_date,
-                    entry_mode, salary_status, decided_by_user_id, decided_by_name, decided_at, notes
-                ) VALUES ($1, $2, $3, $4, 'MANUAL', 'SKIPPED', $5, $6, NOW(), $7)
-                ON CONFLICT (assignment_id, service_date) WHERE shift_slot_id IS NULL
-                DO UPDATE SET in_time = NULL,
-                              out_time = NULL,
-                              hours_served = NULL,
-                              salary_status = 'SKIPPED',
-                              salary_amount = NULL,
-                              salary_transaction_id = NULL,
-                              decided_by_user_id = EXCLUDED.decided_by_user_id,
-                              decided_by_name = EXCLUDED.decided_by_name,
-                              decided_at = NOW(),
-                              notes = EXCLUDED.notes,
-                              updated_at = NOW()
-                RETURNING *`,
-                [booking_id, assignment_id, staffProfileId, service_date, req.user?.user_id || null, decidedByName, absentNotes]
-            );
+        const { attendance, absentNotes } = await applyAttendanceAbsent(db, {
+            booking_id, assignment_id, service_date, shift_slot_id, notes,
+            deciderUserId: req.user?.user_id, deciderName: decidedByName
+        });
 
         // Marking absent still "decides" the day (salary_status -> SKIPPED) — a VISITING
         // booking's one-time visit may now be fully decided (salary + invoice), in which
@@ -361,12 +413,97 @@ exports.markAbsent = async (req, res) => {
             details: { assignment_id, service_date, notes: absentNotes },
         }).catch(err => console.error('Activity log failed:', err));
 
-        res.status(200).json({ status: 'success', data: result.rows[0] });
+        res.status(200).json({ status: 'success', data: attendance });
     } catch (error) {
+        if (error.statusCode) {
+            return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        }
         console.error('Mark attendance absent error:', error);
         res.status(500).json({ status: 'error', message: 'Failed to mark absent' });
     }
 };
+
+/**
+ * Core logic for deciding a logged day's salary. MUST be called within an
+ * open transaction on `client` (it locks the attendance row FOR UPDATE and,
+ * on approve, calls creditStaffSalary) — shared by the single-shot
+ * `confirmSalary` endpoint and the day-draft confirm flow.
+ */
+async function applySalaryDecision(client, { attendance_id, approve, amount, deciderUserId, deciderName }) {
+    if (typeof approve !== 'boolean') {
+        const err = new Error('approve (boolean) is required');
+        err.statusCode = 400;
+        throw err;
+    }
+
+    const attendanceRes = await client.query(
+        `SELECT * FROM staff_daily_attendance WHERE attendance_id = $1 FOR UPDATE`,
+        [attendance_id]
+    );
+
+    if (attendanceRes.rows.length === 0) {
+        const err = new Error('Attendance record not found');
+        err.statusCode = 404;
+        throw err;
+    }
+
+    const attendance = attendanceRes.rows[0];
+
+    if (attendance.salary_status !== 'PENDING') {
+        const err = new Error('This day has already been decided');
+        err.statusCode = 409;
+        throw err;
+    }
+
+    if (attendance.hours_served === null) {
+        const err = new Error('In/out time must be logged before confirming salary');
+        err.statusCode = 400;
+        throw err;
+    }
+
+    let salaryTransactionId = null;
+    let salaryAmount = null;
+
+    if (approve) {
+        if (amount !== undefined && amount !== null && amount !== '') {
+            salaryAmount = parseFloat(amount);
+            if (Number.isNaN(salaryAmount) || salaryAmount <= 0) {
+                const err = new Error('amount must be a positive number');
+                err.statusCode = 400;
+                throw err;
+            }
+        } else {
+            const assignmentRes = await client.query(
+                `SELECT daily_rate FROM booking_staff_assignments WHERE assignment_id = $1`,
+                [attendance.assignment_id]
+            );
+            salaryAmount = parseFloat(assignmentRes.rows[0].daily_rate);
+        }
+
+        salaryTransactionId = await creditStaffSalary(client, {
+            staff_profile_id: attendance.staff_profile_id,
+            booking_id: attendance.booking_id,
+            amount: salaryAmount,
+            notes: `Daily earnings for ${attendance.service_date} (${attendance.hours_served}h served) — manually confirmed`
+        });
+    }
+
+    const updated = await client.query(
+        `UPDATE staff_daily_attendance
+         SET salary_status = $1,
+             salary_amount = $2,
+             salary_transaction_id = $3,
+             decided_by_user_id = $4,
+             decided_by_name = $5,
+             decided_at = NOW(),
+             updated_at = NOW()
+         WHERE attendance_id = $6
+         RETURNING *`,
+        [approve ? 'PAID' : 'SKIPPED', salaryAmount, salaryTransactionId, deciderUserId || null, deciderName, attendance_id]
+    );
+
+    return { attendance: updated.rows[0], booking_id: attendance.booking_id, salaryAmount };
+}
 
 /**
  * @route   POST /api/attendance/:attendance_id/confirm-salary
@@ -380,81 +517,19 @@ exports.confirmSalary = async (req, res) => {
     const { attendance_id } = req.params;
     const { approve, amount } = req.body;
 
-    if (typeof approve !== 'boolean') {
-        return res.status(400).json({ status: 'error', message: 'approve (boolean) is required' });
-    }
-
     const client = await db.pool.connect();
 
     try {
         await client.query('BEGIN');
 
-        const attendanceRes = await client.query(
-            `SELECT * FROM staff_daily_attendance WHERE attendance_id = $1 FOR UPDATE`,
-            [attendance_id]
-        );
-
-        if (attendanceRes.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ status: 'error', message: 'Attendance record not found' });
-        }
-
-        const attendance = attendanceRes.rows[0];
-
-        if (attendance.salary_status !== 'PENDING') {
-            await client.query('ROLLBACK');
-            return res.status(409).json({ status: 'error', message: 'This day has already been decided' });
-        }
-
-        if (attendance.hours_served === null) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ status: 'error', message: 'In/out time must be logged before confirming salary' });
-        }
-
         const decidedByName = await getDeciderName(req.user?.user_id);
-        let salaryTransactionId = null;
-        let salaryAmount = null;
-
-        if (approve) {
-            if (amount !== undefined && amount !== null && amount !== '') {
-                salaryAmount = parseFloat(amount);
-                if (Number.isNaN(salaryAmount) || salaryAmount <= 0) {
-                    await client.query('ROLLBACK');
-                    return res.status(400).json({ status: 'error', message: 'amount must be a positive number' });
-                }
-            } else {
-                const assignmentRes = await client.query(
-                    `SELECT daily_rate FROM booking_staff_assignments WHERE assignment_id = $1`,
-                    [attendance.assignment_id]
-                );
-                salaryAmount = parseFloat(assignmentRes.rows[0].daily_rate);
-            }
-
-            salaryTransactionId = await creditStaffSalary(client, {
-                staff_profile_id: attendance.staff_profile_id,
-                booking_id: attendance.booking_id,
-                amount: salaryAmount,
-                notes: `Daily earnings for ${attendance.service_date} (${attendance.hours_served}h served) — manually confirmed`
-            });
-        }
-
-        const updated = await client.query(
-            `UPDATE staff_daily_attendance
-             SET salary_status = $1,
-                 salary_amount = $2,
-                 salary_transaction_id = $3,
-                 decided_by_user_id = $4,
-                 decided_by_name = $5,
-                 decided_at = NOW(),
-                 updated_at = NOW()
-             WHERE attendance_id = $6
-             RETURNING *`,
-            [approve ? 'PAID' : 'SKIPPED', salaryAmount, salaryTransactionId, req.user?.user_id || null, decidedByName, attendance_id]
-        );
+        const { attendance, booking_id, salaryAmount } = await applySalaryDecision(client, {
+            attendance_id, approve, amount, deciderUserId: req.user?.user_id, deciderName: decidedByName
+        });
 
         // A VISITING booking's one-time visit may now be fully decided (salary + invoice)
         // — auto-complete it rather than leaving it ACTIVE for a manual close-out.
-        await maybeAutoCompleteVisitingBooking(client, attendance.booking_id);
+        await maybeAutoCompleteVisitingBooking(client, booking_id);
 
         await client.query('COMMIT');
 
@@ -463,13 +538,16 @@ exports.confirmSalary = async (req, res) => {
             actorRole: req.user?.role,
             actionType: approve ? 'STAFF_SALARY_CONFIRMED' : 'STAFF_SALARY_SKIPPED',
             entityType: 'BOOKING',
-            entityId: String(attendance.booking_id),
+            entityId: String(booking_id),
             details: { attendance_id, service_date: attendance.service_date, amount: salaryAmount },
         }).catch(err => console.error('Activity log failed:', err));
 
-        res.status(200).json({ status: 'success', data: updated.rows[0] });
+        res.status(200).json({ status: 'success', data: attendance });
     } catch (error) {
         await client.query('ROLLBACK');
+        if (error.statusCode) {
+            return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        }
         console.error('Confirm salary error:', error);
         res.status(500).json({ status: 'error', message: 'Failed to confirm salary decision' });
     } finally {
@@ -645,4 +723,13 @@ exports.revokeDays = async (req, res) => {
     } finally {
         client.release();
     }
+};
+
+// Internal helpers reused by dailyDraftController.js's day-draft confirm flow —
+// not HTTP handlers themselves, see the doc comments above each for contract details.
+exports._internal = {
+    applyAttendanceTime,
+    applyAttendanceAbsent,
+    applySalaryDecision,
+    getDeciderName,
 };

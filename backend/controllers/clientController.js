@@ -1361,22 +1361,104 @@ exports.proxyCreateClient = async (req, res) => {
   }
 };
 
-// 5. Get all clients
+// 5. Get all clients (paginated — see getAllStaff in staffController.js for the same pattern)
 exports.getAllClients = async (req, res) => {
   try {
     const salespersonId = req.user?.salesperson_id;
-    const salesFilter = salespersonId
-      ? 'WHERE cp.client_profile_id IN (SELECT client_id FROM client_salesperson_assignments WHERE salesperson_id = $1)'
-      : '';
-    const clientsRes = await db.query(
-      `SELECT cp.*, u.email, u.mobile_number, u.created_at as user_created_at FROM client_profiles cp JOIN users u ON cp.user_id = u.user_id ${salesFilter} ORDER BY cp.created_at DESC`,
-      salespersonId ? [salespersonId] : []
+    const {
+      page = 1,
+      limit = 50,
+      search = '',
+      status = '',
+      pending_migration = '',
+      contact_pending = '',
+    } = req.query;
+
+    const scopeClause = salespersonId
+      ? 'cp.client_profile_id IN (SELECT client_id FROM client_salesperson_assignments WHERE salesperson_id = $1)'
+      : null;
+    const scopeParams = salespersonId ? [salespersonId] : [];
+
+    // Tab/badge counts always reflect the full (sales-scoped) dataset, independent of the
+    // current search/status/toggle filters — matches the previous client-side behavior.
+    const countsRes = await db.query(
+      `SELECT
+         COUNT(*) AS all_count,
+         COUNT(*) FILTER (WHERE COALESCE(cp.reg_fee_status, 'PENDING') = 'PENDING') AS pending_count,
+         COUNT(*) FILTER (WHERE COALESCE(cp.reg_fee_status, 'PENDING') = 'INVOICED') AS invoiced_count,
+         COUNT(*) FILTER (WHERE COALESCE(cp.reg_fee_status, 'PENDING') = 'RECEIPT_UPLOADED') AS receipt_uploaded_count,
+         COUNT(*) FILTER (WHERE COALESCE(cp.reg_fee_status, 'PENDING') = 'PAID') AS paid_count,
+         COUNT(*) FILTER (WHERE COALESCE(cp.reg_fee_status, 'PENDING') = 'WAIVED') AS waived_count,
+         COUNT(*) FILTER (WHERE COALESCE(cp.reg_fee_status, 'PENDING') = 'EXPIRED') AS expired_count,
+         COUNT(*) FILTER (WHERE cp.onboarding_status = 'PENDING_MIGRATION') AS pending_migration_count,
+         COUNT(*) FILTER (WHERE cp.onboarding_status = 'CONTACT_PENDING') AS contact_pending_count
+       FROM client_profiles cp
+       JOIN users u ON cp.user_id = u.user_id
+       ${scopeClause ? `WHERE ${scopeClause}` : ''}`,
+      scopeParams
     );
 
+    const filters = scopeClause ? [scopeClause] : [];
+    const params = [...scopeParams];
+
+    if (status) {
+      params.push(status);
+      filters.push(`COALESCE(cp.reg_fee_status, 'PENDING') = $${params.length}`);
+    }
+    if (pending_migration === 'true') filters.push(`cp.onboarding_status = 'PENDING_MIGRATION'`);
+    if (contact_pending === 'true') filters.push(`cp.onboarding_status = 'CONTACT_PENDING'`);
+    if (search) {
+      params.push(`%${search}%`);
+      const idx = params.length;
+      filters.push(`(cp.full_name ILIKE $${idx} OR u.email ILIKE $${idx} OR u.mobile_number ILIKE $${idx} OR cp.client_code ILIKE $${idx} OR cp.primary_address ILIKE $${idx})`);
+    }
+
+    const whereSQL = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+
+    const totalRes = await db.query(
+      `SELECT COUNT(*) AS total_count FROM client_profiles cp JOIN users u ON cp.user_id = u.user_id ${whereSQL}`,
+      params
+    );
+    const totalCount = parseInt(totalRes.rows[0].total_count, 10);
+    const perPage = parseInt(limit, 10) || 50;
+    const currentPage = parseInt(page, 10) || 1;
+    const offset = (currentPage - 1) * perPage;
+    const totalPages = Math.max(1, Math.ceil(totalCount / perPage));
+
+    const dataParams = [...params, perPage, offset];
+    const dataRes = await db.query(
+      `SELECT cp.*, u.email, u.mobile_number, u.created_at as user_created_at
+       FROM client_profiles cp
+       JOIN users u ON cp.user_id = u.user_id
+       ${whereSQL}
+       ORDER BY cp.created_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      dataParams
+    );
+
+    const c = countsRes.rows[0];
     res.status(200).json({
       status: 'success',
-      results: clientsRes.rows.length,
-      data: clientsRes.rows
+      data: dataRes.rows,
+      pagination: {
+        current_page: currentPage,
+        total_pages: totalPages,
+        total_count: totalCount,
+        per_page: perPage,
+        has_next: currentPage < totalPages,
+        has_prev: currentPage > 1,
+      },
+      counts: {
+        All: parseInt(c.all_count, 10),
+        Pending: parseInt(c.pending_count, 10),
+        Invoiced: parseInt(c.invoiced_count, 10),
+        'Receipt Submitted': parseInt(c.receipt_uploaded_count, 10),
+        Paid: parseInt(c.paid_count, 10),
+        Waived: parseInt(c.waived_count, 10),
+        Expired: parseInt(c.expired_count, 10),
+        pending_migration: parseInt(c.pending_migration_count, 10),
+        contact_pending: parseInt(c.contact_pending_count, 10),
+      },
     });
   } catch (error) {
     console.error(error);

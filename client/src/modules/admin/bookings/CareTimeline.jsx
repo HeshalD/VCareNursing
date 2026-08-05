@@ -30,7 +30,7 @@ const PILL = {
   overdue:  { bg: 'rgba(194,72,60,.24)',  color: '#C2483C', label: 'Overdue' },
   upcoming: { bg: 'rgba(213,207,196,.5)', color: '#8A8478', label: 'Upcoming' },
 };
-const META_COLOR = { PENDING: '#C98A2E', PAID: '#2F8A5B', INVOICED: '#2F8A5B', SKIPPED: '#B4AEA3', REVOKED: '#8A8478' };
+const META_COLOR = { PENDING: '#C98A2E', PAID: '#2F8A5B', INVOICED: '#2F8A5B', SKIPPED: '#B4AEA3', REVOKED: '#8A8478', DRAFT: '#3F77B5' };
 
 // Event type config — colour dot + tooltip icon + label
 const EVENT_CFG = {
@@ -54,6 +54,7 @@ const MODEL_CHIP = {
 
 const metaLabel = (meta, doneWord) => {
   if (!meta) return '';
+  if (meta.status === 'DRAFT') return 'Draft — not confirmed';
   if (meta.status === 'PENDING') return 'Action needed';
   if (meta.status === 'SKIPPED') return 'Skipped';
   if (meta.status === 'REVOKED') return 'Revoked';
@@ -106,6 +107,7 @@ const CareTimeline = ({
   onDayClick,
   attendanceRecords = [],
   dailyInvoiceRecords = [],
+  draftDates = new Set(), // Set<dateISO> — days with a cached-but-unconfirmed booking_day_drafts row
   reschedules = [],      // [{ reschedule_id, shift_slot_id, original_date, new_date, new_start_time, assignment_id, makeup_staff_name, shift_number, shift_label }]
   manualSalaryDay = false,
   manualInvoiceDay = false,
@@ -567,6 +569,16 @@ const CareTimeline = ({
     } else if (manualInvoiceDay) {
       invoice = { status: 'PENDING', decidedBy: null, amount: 0 };
     }
+
+    // A cached-but-unconfirmed booking_day_drafts row exists for this day and
+    // nothing real has been written yet — surface it as its own DRAFT status
+    // (distinct from "needs attention" PENDING) so the admin can tell "in
+    // progress" apart from "not started" or "done" at a glance.
+    if (draftDates.has(dateISO)) {
+      if (salaryRecs.length === 0) salary = { status: 'DRAFT', decidedBy: null, amount: 0 };
+      if (!invRec) invoice = { status: 'DRAFT', decidedBy: null, amount: 0 };
+    }
+
     return { salary, invoice };
   };
 
@@ -786,7 +798,7 @@ const CareTimeline = ({
       calRows: rows,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clampedMonthIdx, bookingMonths, start, displayDays, plannedDays, paidDays, servedDays, nurseColorMap, attendanceByDate, invoiceByDate, manualSalaryDay, manualInvoiceDay, shiftSlots, eventsByDate, staffAssignments, reschedules, movedOrigins, assignmentByIdForReschedule, naturalEndDayNum, partialLastDay, pauseWindows, hospitalizedRanges]);
+  }, [clampedMonthIdx, bookingMonths, start, displayDays, plannedDays, paidDays, servedDays, nurseColorMap, attendanceByDate, invoiceByDate, draftDates, manualSalaryDay, manualInvoiceDay, shiftSlots, eventsByDate, staffAssignments, reschedules, movedOrigins, assignmentByIdForReschedule, naturalEndDayNum, partialLastDay, pauseWindows, hospitalizedRanges]);
 
   const activeCell = useMemo(() => {
     if (hoveredDay == null) return null;
@@ -1598,6 +1610,9 @@ const CareTimeline = ({
               <span className="flex items-center gap-1"><Receipt style={{ width: 11, height: 11 }} /> Invoice</span>
               <span className="flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full inline-block" style={{ background: META_COLOR.PENDING }} /> Action needed
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full inline-block" style={{ background: META_COLOR.DRAFT }} /> Draft
               </span>
             </div>
           </>

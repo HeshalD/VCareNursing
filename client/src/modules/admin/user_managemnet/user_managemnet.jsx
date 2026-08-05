@@ -1,10 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, UserCircle, ChevronRight, Loader2, Plus, X } from 'lucide-react';
+import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, X } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
+import useDebouncedValue from '../../../hooks/useDebouncedValue';
 import PhoneInput from '../../../components/common/PhoneInput';
+
+const PAGE_SIZE = 50;
 
 const REG_TABS = ['All', 'Pending', 'Invoiced', 'Receipt Submitted', 'Paid', 'Waived', 'Expired'];
 
@@ -75,8 +78,12 @@ const ClientManagement = () => {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('All');
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebouncedValue(search, 400);
   const [pendingMigrationOnly, setPendingMigrationOnly] = useState(false);
   const [contactPendingOnly, setContactPendingOnly] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState(null);
+  const [counts, setCounts] = useState({ All: 0 });
 
   const [showDrawer, setShowDrawer] = useState(false);
   const [formData, setFormData] = useState(BLANK_FORM);
@@ -86,14 +93,28 @@ const ClientManagement = () => {
   const [formSuccess, setFormSuccess] = useState(null);
   const [credentialsSent, setCredentialsSent] = useState(false);
 
-  useEffect(() => { fetchClients(); }, []);
+  // Reset back to page 1 whenever a filter/search changes underneath the current page.
+  useEffect(() => { setPage(1); }, [activeTab, debouncedSearch, pendingMigrationOnly, contactPendingOnly]);
+
+  useEffect(() => { fetchClients(); }, [activeTab, debouncedSearch, pendingMigrationOnly, contactPendingOnly, page]);
+
+  const buildFilters = () => ({
+    page,
+    limit: PAGE_SIZE,
+    ...(activeTab !== 'All' ? { status: TAB_TO_STATUS[activeTab] } : {}),
+    ...(debouncedSearch ? { search: debouncedSearch } : {}),
+    ...(pendingMigrationOnly ? { pending_migration: 'true' } : {}),
+    ...(contactPendingOnly ? { contact_pending: 'true' } : {}),
+  });
 
   const fetchClients = async ({ silent = false } = {}) => {
     try {
       if (!silent) setLoading(true);
       if (!silent) setError(null);
-      const response = await apiClient.getAllClients();
+      const response = await apiClient.getAllClients(buildFilters());
       setClients(response.data || []);
+      setPagination(response.pagination || null);
+      if (response.counts) setCounts(response.counts);
     } catch (err) {
       if (!silent) setError('Failed to load clients');
       else console.error('ClientManagement silent refresh error:', err);
@@ -182,29 +203,12 @@ const ClientManagement = () => {
     }
   };
 
-  const pendingMigrationCount = clients.filter(c => c.onboarding_status === 'PENDING_MIGRATION').length;
-  const contactPendingCount = clients.filter(c => c.onboarding_status === 'CONTACT_PENDING').length;
-
-  const filtered = clients.filter(c => {
-    const status = c.reg_fee_status || 'PENDING';
-    const matchTab = activeTab === 'All' || status === TAB_TO_STATUS[activeTab];
-    const matchPendingMigration = !pendingMigrationOnly || c.onboarding_status === 'PENDING_MIGRATION';
-    const matchContactPending = !contactPendingOnly || c.onboarding_status === 'CONTACT_PENDING';
-    const q = search.toLowerCase();
-    const matchSearch = !q || [c.full_name, c.email, c.mobile_number, c.client_code, c.primary_address]
-      .some(v => v?.toLowerCase().includes(q));
-    return matchTab && matchPendingMigration && matchContactPending && matchSearch;
-  });
-
-  const counts = {
-    All: clients.length,
-    ...Object.fromEntries(
-      REG_TABS.filter(t => t !== 'All').map(tab => [
-        tab,
-        clients.filter(c => (c.reg_fee_status || 'PENDING') === TAB_TO_STATUS[tab]).length,
-      ])
-    ),
-  };
+  const pendingMigrationCount = counts.pending_migration || 0;
+  const contactPendingCount = counts.contact_pending || 0;
+  const totalCount = pagination?.total_count ?? clients.length;
+  const totalPages = pagination?.total_pages ?? 1;
+  const rangeStart = totalCount === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const rangeEnd = totalCount === 0 ? 0 : Math.min(page * PAGE_SIZE, totalCount);
 
   if (loading) {
     return (
@@ -252,7 +256,7 @@ const ClientManagement = () => {
               }`}
             >
               {tab}
-              <span className="ml-1.5 tabular-nums text-slate-400">{counts[tab]}</span>
+              <span className="ml-1.5 tabular-nums text-slate-400">{counts[tab] ?? 0}</span>
             </button>
           ))}
         </div>
@@ -308,13 +312,13 @@ const ClientManagement = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filtered.length === 0 ? (
+              {clients.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="text-center py-16 text-slate-400 text-sm">
                     No clients match your filters.
                   </td>
                 </tr>
-              ) : filtered.map(client => (
+              ) : clients.map(client => (
                 <tr
                   key={client.client_profile_id}
                   onClick={() => navigate(`/admin/users/${client.client_profile_id}/detail`)}
@@ -376,9 +380,28 @@ const ClientManagement = () => {
           </table>
         </div>
 
-        {filtered.length > 0 && (
-          <div className="border-t border-slate-100 px-4 py-2.5 text-xs text-slate-400">
-            Showing {filtered.length} of {clients.length} client{clients.length !== 1 ? 's' : ''}
+        {clients.length > 0 && (
+          <div className="flex items-center justify-between border-t border-slate-100 px-4 py-2.5 text-xs text-slate-400">
+            <span>
+              Showing {rangeStart}-{rangeEnd} of {totalCount} client{totalCount !== 1 ? 's' : ''}
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={!pagination?.has_prev}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" /> Prev
+              </button>
+              <span className="px-2 tabular-nums">Page {page} of {totalPages}</span>
+              <button
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={!pagination?.has_next}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+              >
+                Next <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         )}
       </div>

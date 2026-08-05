@@ -333,12 +333,25 @@ const BookingDetailPageV2 = () => {
   const [reschedulesError, setReschedulesError]     = useState('');
   const [dayModal, setDayModal]                     = useState(null); // { dateISO, dayNum }
   const [dayModalError, setDayModalError]           = useState('');
-  const [dayModalBusy, setDayModalBusy]              = useState('');
   const [attendanceInputs, setAttendanceInputs]      = useState({}); // assignment_id -> { in_time, out_time }
   const [editingAttendanceIds, setEditingAttendanceIds] = useState(() => new Set()); // assignment_ids re-opened for correction after saving, pre-salary-decision
   const [invoiceAmountInput, setInvoiceAmountInput]  = useState('');
   const [invoiceAmountInputsBySlot, setInvoiceAmountInputsBySlot] = useState({}); // shift_slot_id -> amount string
-  const [salaryAmountInputs, setSalaryAmountInputs] = useState({}); // attendance_id -> amount string
+  const [salaryAmountInputs, setSalaryAmountInputs] = useState({}); // assignment_id -> amount string
+
+  // Day-draft staging (Draft -> Preview -> Confirm): everything entered in the Day
+  // Detail modal below is cached into these local maps + a backend-persisted
+  // booking_day_drafts row (see dailyDraftController.js) — nothing here is a real
+  // staff_daily_attendance/booking_daily_invoices row, no wallet/invoice transaction
+  // exists, until confirmDay() is called.
+  const [dayModalStep, setDayModalStep] = useState('edit'); // 'edit' | 'preview'
+  const [draftTimeSaved, setDraftTimeSaved] = useState({}); // assignment_id -> { service_date, in_time (ISO), out_time (ISO), hours_served, shift_slot_id, reschedule_id }
+  const [draftAbsent, setDraftAbsent] = useState({}); // assignment_id -> { shift_slot_id, reschedule_id, notes }
+  const [draftSalaryDecisions, setDraftSalaryDecisions] = useState({}); // assignment_id -> { approve, amount }
+  const [draftInvoiceDecisions, setDraftInvoiceDecisions] = useState({}); // key ('day' | shift_slot_id) -> { approve, amount, shift_slot_id, reschedule_id }
+  const [draftWaives, setDraftWaives] = useState({}); // shift_slot_id -> { assignment_id, reschedule_id }
+  const [confirmDayBusy, setConfirmDayBusy] = useState(false);
+  const [draftDates, setDraftDates] = useState(() => new Set()); // service_date strings on this booking with an unconfirmed draft (CareTimeline badge)
   const [invoicingModeSaving, setInvoicingModeSaving] = useState(false);
   const [hospitalizationSaving, setHospitalizationSaving] = useState(false);
   const [hospitalNameDraft, setHospitalNameDraft] = useState('');
@@ -761,16 +774,18 @@ const BookingDetailPageV2 = () => {
       // Always fetched (not gated on isShiftBased) — bookingSummary may not have
       // resolved yet on the very first call, and this query is a cheap no-op
       // for non-shift bookings anyway (no shift_slot_id rows to match).
-      const [attRes, invRes, rescheduleRes, historyRes] = await Promise.all([
+      const [attRes, invRes, rescheduleRes, historyRes, draftsRes] = await Promise.all([
         apiClient.getBookingAttendance(bookingId),
         apiClient.getBookingDailyInvoices(bookingId),
         apiClient.getBookingShiftReschedules(bookingId),
         apiClient.getAttendanceHistory(bookingId),
+        apiClient.getBookingDayDrafts(bookingId),
       ]);
       setAttendanceRecords(Array.isArray(attRes?.data) ? attRes.data : []);
       setDailyInvoiceRecords(Array.isArray(invRes?.data) ? invRes.data : []);
       setShiftReschedules(Array.isArray(rescheduleRes?.data) ? rescheduleRes.data : []);
       setAttendanceHistory(Array.isArray(historyRes?.data) ? historyRes.data : []);
+      setDraftDates(new Set((Array.isArray(draftsRes?.data) ? draftsRes.data : []).map(d => d.service_date)));
     } catch {
       // non-fatal — the timeline still renders without these
     }
@@ -833,7 +848,7 @@ const BookingDetailPageV2 = () => {
     });
   };
 
-  const openDayModal = (dateISO, dayNum) => {
+  const openDayModal = async (dateISO, dayNum) => {
     const assignments = getAssignmentsForDate(dateISO);
     const inputs = {};
     const invoiceInputs = {};
@@ -859,9 +874,97 @@ const BookingDetailPageV2 = () => {
     setInvoiceAmountInputsBySlot(invoiceInputs);
     setInvoiceAmountInput(String(dailyRate || ''));
     setDayModalError('');
+    setDayModalStep('edit');
+    setEditingAttendanceIds(new Set());
+    setDraftTimeSaved({});
+    setDraftAbsent({});
+    setDraftSalaryDecisions({});
+    setDraftInvoiceDecisions({});
+    setDraftWaives({});
     setDayModal({ dateISO, dayNum, assignments });
+
+    // Rehydrate any cached-but-unconfirmed draft for this day (backend-persisted —
+    // survives refresh/navigation, see dailyDraftController.js).
+    try {
+      apiClient.setToken(adminToken);
+      const res = await apiClient.getDayDraft(bookingId, dateISO);
+      const payload = res?.data?.payload;
+      if (!payload) return;
+
+      const timeSaved = {}, absent = {}, salaryDecisions = {}, waives = {};
+      (payload.staff || []).forEach(entry => {
+        if (entry.action === 'TIME') {
+          timeSaved[entry.assignment_id] = {
+            service_date: dateISO, in_time: entry.in_time, out_time: entry.out_time,
+            hours_served: (new Date(entry.out_time) - new Date(entry.in_time)) / (1000 * 60 * 60),
+            shift_slot_id: entry.shift_slot_id || null, reschedule_id: entry.reschedule_id || null,
+          };
+          if (entry.salary_decision) salaryDecisions[entry.assignment_id] = entry.salary_decision;
+        } else if (entry.action === 'ABSENT') {
+          absent[entry.assignment_id] = { shift_slot_id: entry.shift_slot_id || null, reschedule_id: entry.reschedule_id || null, notes: entry.notes };
+        } else if (entry.action === 'WAIVE') {
+          waives[entry.shift_slot_id] = { assignment_id: entry.assignment_id, reschedule_id: entry.reschedule_id || null };
+        }
+      });
+      const invoiceDecisions = {};
+      (payload.invoices || []).forEach(entry => {
+        const key = entry.shift_slot_id || 'day';
+        invoiceDecisions[key] = { approve: entry.approve, amount: entry.amount, shift_slot_id: entry.shift_slot_id || null, reschedule_id: entry.reschedule_id || null };
+      });
+      setDraftTimeSaved(timeSaved);
+      setDraftAbsent(absent);
+      setDraftSalaryDecisions(salaryDecisions);
+      setDraftInvoiceDecisions(invoiceDecisions);
+      setDraftWaives(waives);
+    } catch {
+      // no draft yet, or fetch failed — the modal just starts blank
+    }
   };
-  const closeDayModal = () => { setDayModal(null); setDayModalError(''); setAttendanceInputs({}); setInvoiceAmountInput(''); setInvoiceAmountInputsBySlot({}); setEditingAttendanceIds(new Set()); };
+  const closeDayModal = () => {
+    setDayModal(null); setDayModalError(''); setAttendanceInputs({}); setInvoiceAmountInput(''); setInvoiceAmountInputsBySlot({});
+    setEditingAttendanceIds(new Set()); setDayModalStep('edit');
+    setDraftTimeSaved({}); setDraftAbsent({}); setDraftSalaryDecisions({}); setDraftInvoiceDecisions({}); setDraftWaives({});
+  };
+
+  // Persists the day's cached draft to the backend (booking_day_drafts) — pure cache
+  // write, never touches staff_daily_attendance/booking_daily_invoices/wallets.
+  // Accepts overrides for maps that just changed (state setters are async, so the
+  // caller passes the just-computed next value rather than relying on stale state).
+  const persistDraftWith = (overrides = {}) => {
+    if (!dayModal) return;
+    const timeSaved = overrides.timeSaved ?? draftTimeSaved;
+    const absent = overrides.absent ?? draftAbsent;
+    const salaryDecisions = overrides.salaryDecisions ?? draftSalaryDecisions;
+    const invoiceDecisions = overrides.invoiceDecisions ?? draftInvoiceDecisions;
+    const waives = overrides.waives ?? draftWaives;
+
+    const staff = [];
+    Object.entries(timeSaved).forEach(([assignmentId, t]) => {
+      if (t.shift_slot_id && waives[t.shift_slot_id]) return;
+      staff.push({
+        assignment_id: assignmentId, shift_slot_id: t.shift_slot_id || null, reschedule_id: t.reschedule_id || null,
+        action: 'TIME', in_time: t.in_time, out_time: t.out_time,
+        salary_decision: salaryDecisions[assignmentId] || null,
+      });
+    });
+    Object.entries(absent).forEach(([assignmentId, info]) => {
+      if (info.shift_slot_id && waives[info.shift_slot_id]) return;
+      staff.push({ assignment_id: assignmentId, shift_slot_id: info.shift_slot_id || null, reschedule_id: info.reschedule_id || null, action: 'ABSENT', notes: info.notes });
+    });
+    Object.entries(waives).forEach(([slotId, w]) => {
+      staff.push({ assignment_id: w.assignment_id, shift_slot_id: slotId, reschedule_id: w.reschedule_id || null, action: 'WAIVE' });
+    });
+
+    const invoices = Object.values(invoiceDecisions).map(dec => ({
+      shift_slot_id: dec.shift_slot_id || null, reschedule_id: dec.reschedule_id || null,
+      action: 'DECIDE', approve: dec.approve, amount: dec.approve ? dec.amount : undefined,
+    }));
+
+    apiClient.setToken(adminToken);
+    apiClient.upsertDayDraft(bookingId, { service_date: dayModal.dateISO, payload: { staff, invoices } })
+      .then(() => setDraftDates(prev => new Set(prev).add(dayModal.dateISO)))
+      .catch(err => setDayModalError(err?.message || 'Failed to save draft'));
+  };
 
   // LIVE_IN staff stay with the patient continuously until the booking ends (or they're
   // swapped) — so only the booking's first day needs a start time and only its last day
@@ -880,7 +983,9 @@ const BookingDetailPageV2 = () => {
     return { onlyStart: isFirstDay && !isLastDay, onlyEnd: isLastDay && !isFirstDay };
   };
 
-  const saveAttendanceTimes = async (assignment) => {
+  // Validates the typed in/out time and caches it into the day's draft — does NOT
+  // write staff_daily_attendance. Nothing is real until confirmDay().
+  const saveAttendanceTimes = (assignment) => {
     const assignmentId = assignment.assignment_id;
     const inputs = attendanceInputs[assignmentId] || {};
     const dateISO = inputs.date || dayModal.dateISO;
@@ -895,35 +1000,38 @@ const BookingDetailPageV2 = () => {
     const outDateISO = effectiveOutTime < effectiveInTime
       ? (() => { const d = new Date(`${dateISO}T12:00:00`); d.setDate(d.getDate() + 1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })()
       : dateISO;
-    try {
-      setDayModalBusy(`save-${assignmentId}`); setDayModalError('');
-      apiClient.setToken(adminToken);
-      await apiClient.upsertBookingAttendance(bookingId, {
-        assignment_id: assignmentId,
-        service_date: dateISO,
-        in_time: new Date(`${dateISO}T${effectiveInTime}`).toISOString(),
-        out_time: new Date(`${outDateISO}T${effectiveOutTime}`).toISOString(),
-        shift_slot_id: assignment.shift_slot_id || undefined,
-      });
-      await fetchDailyRecords();
-      setEditingAttendanceIds(prev => { const next = new Set(prev); next.delete(assignmentId); return next; });
-    } catch (err) { setDayModalError(err?.message || 'Failed to save attendance times'); }
-    finally { setDayModalBusy(''); }
+
+    const in_time = new Date(`${dateISO}T${effectiveInTime}`).toISOString();
+    const out_time = new Date(`${outDateISO}T${effectiveOutTime}`).toISOString();
+    const hoursServed = (new Date(out_time) - new Date(in_time)) / (1000 * 60 * 60);
+
+    setDayModalError('');
+    const nextTimeSaved = {
+      ...draftTimeSaved,
+      [assignmentId]: {
+        service_date: dateISO, in_time, out_time, hours_served: hoursServed,
+        shift_slot_id: assignment.shift_slot_id || null, reschedule_id: assignment.reschedule_id || null,
+      },
+    };
+    const nextAbsent = { ...draftAbsent }; delete nextAbsent[assignmentId];
+    setDraftTimeSaved(nextTimeSaved);
+    setDraftAbsent(nextAbsent);
+    setEditingAttendanceIds(prev => { const next = new Set(prev); next.delete(assignmentId); return next; });
+    persistDraftWith({ timeSaved: nextTimeSaved, absent: nextAbsent });
   };
 
-  // Re-opens a saved-but-not-yet-decided in/out time for correction. The backend
-  // upsert (see upsertAttendance) happily overwrites an existing PENDING row, so
-  // this just needs to get the row back into edit mode with the current values
-  // pre-filled — nothing new to persist until Save is pressed again.
-  const editAttendanceTimes = (assignment, record) => {
+  // Re-opens a cached-but-not-yet-decided in/out time for correction — nothing new
+  // to persist until Save is pressed again.
+  const editAttendanceTimes = (assignment) => {
     const assignmentId = assignment.assignment_id;
+    const saved = draftTimeSaved[assignmentId];
     const toLocalHM = (ts) => ts ? new Date(ts).toTimeString().slice(0, 5) : '';
     setAttendanceInputs(p => ({
       ...p,
       [assignmentId]: {
-        date: record.service_date?.slice(0, 10) || dayModal.dateISO,
-        in_time: toLocalHM(record.in_time),
-        out_time: toLocalHM(record.out_time),
+        date: saved?.service_date || dayModal.dateISO,
+        in_time: toLocalHM(saved?.in_time),
+        out_time: toLocalHM(saved?.out_time),
         autoFilled: false,
       },
     }));
@@ -934,80 +1042,111 @@ const BookingDetailPageV2 = () => {
     setEditingAttendanceIds(prev => { const next = new Set(prev); next.delete(assignmentId); return next; });
   };
 
-  // No-show in one step — no in/out time needed. Skips this staff member's salary
-  // only; the client invoice for the day/shift is untouched (decide it separately,
-  // or use Waive/Cover Shift if the whole shift needs the same treatment).
-  const markAbsent = async (assignment) => {
+  // No-show in one step — no in/out time needed. Cached as a draft entry (skips this
+  // staff member's salary only, once confirmed); freely undoable before Confirm Day.
+  const markAbsent = (assignment) => {
     const assignmentId = assignment.assignment_id;
-    const inputs = attendanceInputs[assignmentId] || {};
-    const dateISO = inputs.date || dayModal.dateISO;
-    if (!window.confirm('Mark this staff member absent for this day? No salary will be recorded for them.')) return;
-    try {
-      setDayModalBusy(`absent-${assignmentId}`); setDayModalError('');
-      apiClient.setToken(adminToken);
-      await apiClient.markAttendanceAbsent(bookingId, {
-        assignment_id: assignmentId,
-        service_date: dateISO,
-        shift_slot_id: assignment.shift_slot_id || undefined,
-      });
-      await fetchDailyRecords();
-    } catch (err) { setDayModalError(err?.message || 'Failed to mark absent'); }
-    finally { setDayModalBusy(''); }
+    const nextAbsent = { ...draftAbsent, [assignmentId]: { shift_slot_id: assignment.shift_slot_id || null, reschedule_id: assignment.reschedule_id || null } };
+    const nextTimeSaved = { ...draftTimeSaved }; delete nextTimeSaved[assignmentId];
+    const nextSalary = { ...draftSalaryDecisions }; delete nextSalary[assignmentId];
+    setDayModalError('');
+    setDraftAbsent(nextAbsent);
+    setDraftTimeSaved(nextTimeSaved);
+    setDraftSalaryDecisions(nextSalary);
+    setEditingAttendanceIds(prev => { const next = new Set(prev); next.delete(assignmentId); return next; });
+    persistDraftWith({ absent: nextAbsent, timeSaved: nextTimeSaved, salaryDecisions: nextSalary });
   };
 
-  const decideSalary = async (attendanceId, approve, defaultAmount) => {
-    try {
-      setDayModalBusy(`salary-${attendanceId}`); setDayModalError('');
-      apiClient.setToken(adminToken);
-      const overrideAmt = salaryAmountInputs[attendanceId];
-      const amount = approve ? parseFloat(overrideAmt !== undefined && overrideAmt !== '' ? overrideAmt : defaultAmount) : undefined;
-      await apiClient.confirmAttendanceSalary(attendanceId, approve, amount);
-      await fetchDailyRecords();
-    } catch (err) { setDayModalError(err?.message || 'Failed to confirm salary decision'); }
-    finally { setDayModalBusy(''); }
+  const undoAbsent = (assignmentId) => {
+    const nextAbsent = { ...draftAbsent }; delete nextAbsent[assignmentId];
+    setDraftAbsent(nextAbsent);
+    persistDraftWith({ absent: nextAbsent });
   };
 
-  const decideInvoice = async (approve, shiftSlotId) => {
-    const busyKey = shiftSlotId ? `invoice-${shiftSlotId}` : 'invoice';
+  // Caches the salary approve/skip + amount decision for an already-logged day —
+  // no wallet credit happens until Confirm Day.
+  const decideSalary = (assignmentId, approve, defaultAmount) => {
+    const overrideAmt = salaryAmountInputs[assignmentId];
+    const amount = approve ? parseFloat(overrideAmt !== undefined && overrideAmt !== '' ? overrideAmt : defaultAmount) : null;
+    const nextSalary = { ...draftSalaryDecisions, [assignmentId]: { approve, amount } };
+    setDraftSalaryDecisions(nextSalary);
+    persistDraftWith({ salaryDecisions: nextSalary });
+  };
+
+  const undoSalaryDecision = (assignmentId) => {
+    const nextSalary = { ...draftSalaryDecisions }; delete nextSalary[assignmentId];
+    setDraftSalaryDecisions(nextSalary);
+    persistDraftWith({ salaryDecisions: nextSalary });
+  };
+
+  // Caches the client-invoice approve/skip + amount decision — no invoice
+  // transaction is created until Confirm Day.
+  const decideInvoice = (approve, shiftSlotId) => {
+    const key = shiftSlotId || 'day';
     // A shift covered same-day by a different staff member (via the reschedule
     // mechanism, new_date === original_date) has its own reschedule-scoped invoice
     // row — must be targeted explicitly or this would collide with the slot's
     // standing (now-unused) invoice row for the same date.
     const slotAssignment = shiftSlotId ? dayModal.assignments.find(a => a.shift_slot_id === shiftSlotId) : null;
-    try {
-      setDayModalBusy(busyKey); setDayModalError('');
-      apiClient.setToken(adminToken);
-      await apiClient.confirmBookingDailyInvoice(bookingId, {
-        service_date: dayModal.dateISO,
-        approve,
-        amount: approve ? parseFloat(shiftSlotId ? invoiceAmountInputsBySlot[shiftSlotId] : invoiceAmountInput) : undefined,
-        shift_slot_id: shiftSlotId || undefined,
-        reschedule_id: slotAssignment?.reschedule_id || undefined,
-      });
-      await Promise.all([fetchDailyRecords(), fetchDetail()]);
-    } catch (err) { setDayModalError(err?.message || 'Failed to confirm invoice decision'); }
-    finally { setDayModalBusy(''); }
+    const amount = approve ? parseFloat(shiftSlotId ? invoiceAmountInputsBySlot[shiftSlotId] : invoiceAmountInput) : null;
+    const nextInvoiceDecisions = {
+      ...draftInvoiceDecisions,
+      [key]: { approve, amount, shift_slot_id: shiftSlotId || null, reschedule_id: slotAssignment?.reschedule_id || null },
+    };
+    setDraftInvoiceDecisions(nextInvoiceDecisions);
+    persistDraftWith({ invoiceDecisions: nextInvoiceDecisions });
   };
 
-  // Waives a shift occurrence — skips BOTH the client invoice and the staff's
-  // pay for it in one atomic action (no charge, no pay), unlike the separate
-  // invoice-Skip/salary-Skip buttons above which only cover one side each.
-  const waiveShift = async (slotId) => {
-    const busyKey = `waive-${slotId}`;
+  const undoInvoiceDecision = (key) => {
+    const next = { ...draftInvoiceDecisions }; delete next[key];
+    setDraftInvoiceDecisions(next);
+    persistDraftWith({ invoiceDecisions: next });
+  };
+
+  // Caches a shift-occurrence waive — skips BOTH the client invoice and the staff's
+  // pay for it once confirmed, unlike the separate invoice-Skip/salary-Skip
+  // decisions above which only cover one side each.
+  const waiveShift = (slotId) => {
     const slotAssignment = dayModal.assignments.find(a => a.shift_slot_id === slotId);
     if (!slotAssignment) return;
+    const nextWaives = { ...draftWaives, [slotId]: { assignment_id: slotAssignment.assignment_id, reschedule_id: slotAssignment.reschedule_id || null } };
+    const nextInvoiceDecisions = { ...draftInvoiceDecisions }; delete nextInvoiceDecisions[slotId];
+    setDraftWaives(nextWaives);
+    setDraftInvoiceDecisions(nextInvoiceDecisions);
+    persistDraftWith({ waives: nextWaives, invoiceDecisions: nextInvoiceDecisions });
+  };
+
+  const undoWaive = (slotId) => {
+    const next = { ...draftWaives }; delete next[slotId];
+    setDraftWaives(next);
+    persistDraftWith({ waives: next });
+  };
+
+  // Throws away everything cached for this day without applying anything.
+  const discardDayDraft = async () => {
+    if (!window.confirm('Discard everything entered for this day? This cannot be undone.')) return;
     try {
-      setDayModalBusy(busyKey); setDayModalError('');
       apiClient.setToken(adminToken);
-      await apiClient.waiveShiftOccurrence(bookingId, {
-        service_date: dayModal.dateISO,
-        shift_slot_id: slotId,
-        assignment_id: slotAssignment.assignment_id,
-        reschedule_id: slotAssignment.reschedule_id || undefined,
-      });
+      await apiClient.discardDayDraft(bookingId, dayModal.dateISO);
+      setDraftDates(prev => { const next = new Set(prev); next.delete(dayModal.dateISO); return next; });
+      setDraftTimeSaved({}); setDraftAbsent({}); setDraftSalaryDecisions({}); setDraftInvoiceDecisions({}); setDraftWaives({});
+      setAttendanceInputs({}); setEditingAttendanceIds(new Set());
+      setDayModalStep('edit');
+    } catch (err) { setDayModalError(err?.message || 'Failed to discard draft'); }
+  };
+
+  // The only action in this modal that actually moves money / writes a terminal
+  // status — applies every cached entry for the day atomically (dailyDraftController.confirmDayDraft).
+  const confirmDayDraft = async () => {
+    try {
+      setConfirmDayBusy(true); setDayModalError('');
+      apiClient.setToken(adminToken);
+      await apiClient.confirmDayDraft(bookingId, dayModal.dateISO);
+      setDraftDates(prev => { const next = new Set(prev); next.delete(dayModal.dateISO); return next; });
       await Promise.all([fetchDailyRecords(), fetchDetail()]);
-    } catch (err) { setDayModalError(err?.message || 'Failed to waive shift'); }
-    finally { setDayModalBusy(''); }
+      closeDayModal();
+    } catch (err) { setDayModalError(err?.message || 'Failed to confirm day'); }
+    finally { setConfirmDayBusy(false); }
   };
 
   // Opens the reschedule modal for one shift occurrence — defaults the new
@@ -2046,6 +2185,7 @@ const BookingDetailPageV2 = () => {
                 onDayClick={dayClickEnabled ? openDayModal : undefined}
                 attendanceRecords={attendanceRecords}
                 dailyInvoiceRecords={dailyInvoiceRecords}
+                draftDates={draftDates}
                 reschedules={shiftReschedules}
                 manualSalaryDay={manualSalaryDay}
                 manualInvoiceDay={manualInvoiceDay}
@@ -3858,6 +3998,8 @@ const BookingDetailPageV2 = () => {
         const fmtTime = (ts) => ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
         const thCls = 'px-3 py-2 text-left text-[10.5px] font-semibold uppercase tracking-wider text-gray-400';
         const tdCls = 'px-3 py-3 text-sm text-gray-700 align-middle';
+        const hasDraftContent = Object.keys(draftTimeSaved).length > 0 || Object.keys(draftAbsent).length > 0
+          || Object.keys(draftInvoiceDecisions).length > 0 || Object.keys(draftWaives).length > 0;
 
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
@@ -3867,7 +4009,11 @@ const BookingDetailPageV2 = () => {
               <div className="flex items-center justify-between px-6 py-4 shrink-0" style={{ borderBottom: '1px solid #e5e7eb' }}>
                 <div>
                   <h2 className="text-base font-semibold text-gray-900">Day {dayModal.dayNum} &mdash; {formatDate(dayModal.dateISO)}</h2>
-                  <p className="text-xs text-gray-400 mt-0.5">Log attendance and confirm daily charges</p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {dayModalStep === 'preview'
+                      ? 'Review everything below — nothing is final until you confirm.'
+                      : 'Enter attendance and invoicing — nothing is saved for real until you confirm.'}
+                  </p>
                 </div>
                 <button onClick={closeDayModal} className="p-1.5 rounded-lg hover:bg-gray-100 transition ml-4">
                   <XCircle className="h-5 w-5 text-gray-400" />
@@ -3879,6 +4025,103 @@ const BookingDetailPageV2 = () => {
                   <div className="mx-6 mt-4 rounded-lg bg-red-50 border border-red-200 px-4 py-2.5 text-xs text-red-700">{dayModalError}</div>
                 )}
 
+              {dayModalStep === 'preview' ? (() => {
+                // Preview is computed purely from local draft state (attendanceInputs/
+                // draftTimeSaved/draftAbsent/draftSalaryDecisions/draftInvoiceDecisions/
+                // draftWaives) — no backend round-trip needed, it's just a read-only
+                // summary of what Confirm Day is about to apply.
+                const staffPreviewRows = dayModal.assignments.map(a => {
+                  const staffName = a.full_name || a.staff_name || 'Staff';
+                  if (draftWaives[a.shift_slot_id]) return { assignmentId: a.assignment_id, staffName, kind: 'WAIVED' };
+                  if (draftAbsent[a.assignment_id]) return { assignmentId: a.assignment_id, staffName, kind: 'ABSENT' };
+                  const saved = draftTimeSaved[a.assignment_id];
+                  if (saved) {
+                    const decision = draftSalaryDecisions[a.assignment_id];
+                    return { assignmentId: a.assignment_id, staffName, kind: 'TIME', saved, decision };
+                  }
+                  return null;
+                }).filter(Boolean);
+
+                const invoicePreviewRows = Object.entries(draftInvoiceDecisions).map(([key, dec]) => {
+                  const slotAssignment = dec.shift_slot_id ? dayModal.assignments.find(a => a.shift_slot_id === dec.shift_slot_id) : null;
+                  const label = dec.shift_slot_id
+                    ? (slotAssignment?.shift_label || (slotAssignment?.shift_number ? `Shift ${slotAssignment.shift_number}` : 'Shift'))
+                    : `Day ${dayModal.dayNum}`;
+                  return { key, label, dec };
+                });
+                const waivedSlotIds = Object.keys(draftWaives);
+
+                const totalSalary = staffPreviewRows.reduce((sum, r) => sum + (r.kind === 'TIME' && r.decision?.approve ? Number(r.decision.amount || 0) : 0), 0);
+                const totalInvoice = invoicePreviewRows.reduce((sum, r) => sum + (r.dec.approve ? Number(r.dec.amount || 0) : 0), 0);
+                const nothingToConfirm = staffPreviewRows.length === 0 && invoicePreviewRows.length === 0 && waivedSlotIds.length === 0;
+
+                return (
+                  <div className="px-6 py-5 space-y-5">
+                    {nothingToConfirm ? (
+                      <p className="text-sm text-gray-400 py-6 text-center">Nothing entered for this day yet — go back and log attendance or an invoice decision first.</p>
+                    ) : (
+                      <>
+                        {staffPreviewRows.length > 0 && (
+                          <div>
+                            <p className="text-[10.5px] font-semibold uppercase tracking-widest text-gray-400 mb-2">Staff Attendance</p>
+                            <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+                              {staffPreviewRows.map((r, idx) => (
+                                <div key={r.assignmentId} className="flex items-center justify-between px-4 py-2.5 text-sm" style={idx > 0 ? { borderTop: '1px solid #f3f4f6' } : {}}>
+                                  <span className="font-medium text-gray-900">{r.staffName}</span>
+                                  {r.kind === 'WAIVED' && <span className="text-xs text-amber-700">Waived — no pay</span>}
+                                  {r.kind === 'ABSENT' && <span className="text-xs text-red-700">Absent — no pay</span>}
+                                  {r.kind === 'TIME' && (
+                                    <span className="text-xs text-gray-600">
+                                      {Number(r.saved.hours_served).toFixed(1)}h served —{' '}
+                                      {r.decision
+                                        ? (r.decision.approve ? `Rs.${Number(r.decision.amount).toLocaleString()} salary` : 'salary skipped')
+                                        : 'salary not yet decided'}
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {(invoicePreviewRows.length > 0 || waivedSlotIds.length > 0) && (
+                          <div>
+                            <p className="text-[10.5px] font-semibold uppercase tracking-widest text-gray-400 mb-2">Client Invoice</p>
+                            <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
+                              {invoicePreviewRows.map((r, idx) => (
+                                <div key={r.key} className="flex items-center justify-between px-4 py-2.5 text-sm" style={idx > 0 ? { borderTop: '1px solid #f3f4f6' } : {}}>
+                                  <span className="font-medium text-gray-900">{r.label}</span>
+                                  <span className="text-xs text-gray-600">{r.dec.approve ? `Rs.${Number(r.dec.amount).toLocaleString()}` : 'Skipped'}</span>
+                                </div>
+                              ))}
+                              {waivedSlotIds.map((slotId, idx) => {
+                                const slotAssignment = dayModal.assignments.find(a => a.shift_slot_id === slotId);
+                                const label = slotAssignment?.shift_label || (slotAssignment?.shift_number ? `Shift ${slotAssignment.shift_number}` : 'Shift');
+                                return (
+                                  <div key={slotId} className="flex items-center justify-between px-4 py-2.5 text-sm" style={(invoicePreviewRows.length + idx) > 0 ? { borderTop: '1px solid #f3f4f6' } : {}}>
+                                    <span className="font-medium text-gray-900">{label}</span>
+                                    <span className="text-xs text-amber-700">Waived — no charge</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 flex items-center justify-between text-sm">
+                          <span className="text-gray-500">Total salary payout</span>
+                          <span className="font-semibold text-gray-900">Rs.{totalSalary.toLocaleString()}</span>
+                        </div>
+                        <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 flex items-center justify-between text-sm">
+                          <span className="text-gray-500">Total client charge</span>
+                          <span className="font-semibold text-gray-900">Rs.{totalInvoice.toLocaleString()}</span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })() : (
+              <>
                 {/* Shifts moved away from this date, or covered same-day by someone else — explains why fewer/different rows show below */}
                 {shiftReschedules.filter(r => r.original_date?.slice(0, 10) === dayModal.dateISO).map(r => {
                   const isSameDayCover = r.new_date?.slice(0, 10) === r.original_date?.slice(0, 10);
@@ -3920,6 +4163,9 @@ const BookingDetailPageV2 = () => {
                               const inputs = attendanceInputs[a.assignment_id] || { date: dayModal.dateISO, in_time: '', out_time: '' };
                               const rowBorder = idx > 0 ? { borderTop: '1px solid #f3f4f6' } : {};
                               const isEditing = editingAttendanceIds.has(a.assignment_id);
+                              const draftSaved = draftTimeSaved[a.assignment_id];
+                              const draftAbsentInfo = draftAbsent[a.assignment_id];
+                              const draftWaiveInfo = a.shift_slot_id ? draftWaives[a.shift_slot_id] : null;
 
                               // Assigned reference — shift start/duration for SHIFT_BASED, else the
                               // assignment's own service_start_time/assigned_hours (VISITING/LIVE_IN).
@@ -3937,6 +4183,9 @@ const BookingDetailPageV2 = () => {
                                 </td>
                               );
 
+                              // CONFIRMED — a real, terminal staff_daily_attendance row from a past
+                              // Confirm Day. Nothing here is undoable except via the SUPER_ADMIN
+                              // password-gated Revoke flow.
                               if (record && record.salary_status !== 'PENDING') {
                                 const paid = record.salary_status === 'PAID';
                                 const revoked = record.salary_status === 'REVOKED';
@@ -3976,7 +4225,8 @@ const BookingDetailPageV2 = () => {
                                 );
                               }
 
-                              if (record && record.hours_served !== null && !isEditing) {
+                              // DRAFT — WAIVED: cached, not yet confirmed. Undoable.
+                              if (draftWaiveInfo) {
                                 return (
                                   <tr key={a.assignment_id} style={rowBorder}>
                                     <td className={tdCls}>
@@ -3984,23 +4234,88 @@ const BookingDetailPageV2 = () => {
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     {assignedCell}
-                                    <td className={tdCls + ' text-gray-500 text-xs'}>{record.service_date?.slice(0, 10)}</td>
-                                    <td className={tdCls + ' tabular-nums'}>{fmtTime(record.in_time)}</td>
-                                    <td className={tdCls + ' tabular-nums'}>{fmtTime(record.out_time)}</td>
-                                    <td className={tdCls}><HoursBadge served={Number(record.hours_served)} assigned={assignedHours} /></td>
+                                    <td className={tdCls} colSpan={3}>
+                                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-amber-50 text-amber-700">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                                        Waived (draft) — no charge, no pay
+                                      </span>
+                                    </td>
+                                    <td className={tdCls}>
+                                      <button onClick={() => undoWaive(a.shift_slot_id)} className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition">Undo</button>
+                                    </td>
+                                  </tr>
+                                );
+                              }
+
+                              // DRAFT — ABSENT: cached, not yet confirmed. Cover Shift is offered
+                              // right away since it creates a real reschedule regardless of draft state.
+                              if (draftAbsentInfo) {
+                                const alreadyCovered = a.shift_slot_id && dayModal.assignments.some(other => other.shift_slot_id === a.shift_slot_id && other.reschedule_id);
+                                const canCover = a.shift_slot_id && !alreadyCovered;
+                                return (
+                                  <tr key={a.assignment_id} style={{ ...rowBorder, background: '#fffaf0' }}>
+                                    <td className={tdCls}>
+                                      <span className="font-medium text-gray-900">{staffName}</span>
+                                      {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
+                                    </td>
+                                    {assignedCell}
+                                    <td className={tdCls} colSpan={3}>
+                                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-red-50 text-red-700">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                                        Absent (draft)
+                                      </span>
+                                    </td>
                                     <td className={tdCls}>
                                       <div className="flex items-center gap-1.5 flex-wrap">
-                                        <input
-                                          type="number" min="0" step="0.01"
-                                          value={salaryAmountInputs[record.attendance_id] ?? (a.daily_rate ?? '')}
-                                          onChange={e => setSalaryAmountInputs(p => ({ ...p, [record.attendance_id]: e.target.value }))}
-                                          className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-24"
-                                          placeholder="0.00"
-                                        />
-                                        <button onClick={() => decideSalary(record.attendance_id, true, a.daily_rate)} disabled={dayModalBusy === `salary-${record.attendance_id}`} title="Calculates their earnings for this shift — actual payout is handled separately on the Staff Salaries page" className="px-2.5 py-1 text-[11px] font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded transition disabled:opacity-50">Calculate Salary</button>
-                                        <button onClick={() => decideSalary(record.attendance_id, false)} disabled={dayModalBusy === `salary-${record.attendance_id}`} className="px-2.5 py-1 text-[11px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded transition disabled:opacity-50">Skip</button>
-                                        <button onClick={() => editAttendanceTimes(a, record)} title="Correct the logged in/out time before deciding salary" className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition">Edit Time</button>
+                                        <button onClick={() => undoAbsent(a.assignment_id)} className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition">Undo</button>
+                                        {canCover && (
+                                          <button onClick={() => openRescheduleModal(a.shift_slot_id, true)} title="Hand today's shift to a different staff member — client still billed normally, that staff member's salary is calculated instead" className="px-2.5 py-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded transition">Cover Shift</button>
+                                        )}
                                       </div>
+                                    </td>
+                                  </tr>
+                                );
+                              }
+
+                              // DRAFT — TIME SAVED: cached in/out time, salary decision (if any) also
+                              // cached — nothing here is real until Confirm Day.
+                              if (draftSaved && !isEditing) {
+                                const salaryDecision = draftSalaryDecisions[a.assignment_id];
+                                return (
+                                  <tr key={a.assignment_id} style={rowBorder}>
+                                    <td className={tdCls}>
+                                      <span className="font-medium text-gray-900">{staffName}</span>
+                                      {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
+                                    </td>
+                                    {assignedCell}
+                                    <td className={tdCls + ' text-gray-500 text-xs'}>{draftSaved.service_date}</td>
+                                    <td className={tdCls + ' tabular-nums'}>{fmtTime(draftSaved.in_time)}</td>
+                                    <td className={tdCls + ' tabular-nums'}>{fmtTime(draftSaved.out_time)}</td>
+                                    <td className={tdCls}><HoursBadge served={Number(draftSaved.hours_served)} assigned={assignedHours} /></td>
+                                    <td className={tdCls}>
+                                      {salaryDecision ? (
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${salaryDecision.approve ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+                                            <span className={`w-1.5 h-1.5 rounded-full ${salaryDecision.approve ? 'bg-blue-400' : 'bg-gray-400'}`} />
+                                            {salaryDecision.approve ? `Salary (draft) · Rs.${Number(salaryDecision.amount).toLocaleString()}` : 'Salary Skipped (draft)'}
+                                          </span>
+                                          <button onClick={() => undoSalaryDecision(a.assignment_id)} className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition">Undo</button>
+                                          <button onClick={() => editAttendanceTimes(a)} title="Correct the logged in/out time" className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition">Edit Time</button>
+                                        </div>
+                                      ) : (
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <input
+                                            type="number" min="0" step="0.01"
+                                            value={salaryAmountInputs[a.assignment_id] ?? (a.daily_rate ?? '')}
+                                            onChange={e => setSalaryAmountInputs(p => ({ ...p, [a.assignment_id]: e.target.value }))}
+                                            className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-24"
+                                            placeholder="0.00"
+                                          />
+                                          <button onClick={() => decideSalary(a.assignment_id, true, a.daily_rate)} title="Calculates their earnings for this shift — actual payout is handled separately on the Staff Salaries page" className="px-2.5 py-1 text-[11px] font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded transition">Calculate Salary</button>
+                                          <button onClick={() => decideSalary(a.assignment_id, false)} className="px-2.5 py-1 text-[11px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded transition">Skip</button>
+                                          <button onClick={() => editAttendanceTimes(a)} title="Correct the logged in/out time before deciding salary" className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition">Edit Time</button>
+                                        </div>
+                                      )}
                                     </td>
                                   </tr>
                                 );
@@ -4044,11 +4359,11 @@ const BookingDetailPageV2 = () => {
                                   <td className={tdCls}><HoursBadge served={onlyStart ? null : livePreviewHours} assigned={assignedHours} /></td>
                                   <td className={tdCls}>
                                     <div className="flex items-center gap-1.5">
-                                      <button onClick={() => saveAttendanceTimes(a)} disabled={dayModalBusy === `save-${a.assignment_id}`} className="px-3 py-1 text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded transition disabled:opacity-50">Save</button>
+                                      <button onClick={() => saveAttendanceTimes(a)} className="px-3 py-1 text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded transition">Save</button>
                                       {isEditing ? (
                                         <button onClick={() => cancelEditAttendance(a.assignment_id)} className="px-3 py-1 text-[11px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded transition">Cancel</button>
                                       ) : (
-                                        <button onClick={() => markAbsent(a)} disabled={dayModalBusy === `absent-${a.assignment_id}`} title="No-show — skips their salary only, no in/out time needed" className="px-3 py-1 text-[11px] font-semibold text-red-700 bg-red-50 hover:bg-red-100 rounded transition disabled:opacity-50">Absent</button>
+                                        <button onClick={() => markAbsent(a)} title="No-show — skips their salary only, no in/out time needed" className="px-3 py-1 text-[11px] font-semibold text-red-700 bg-red-50 hover:bg-red-100 rounded transition">Absent</button>
                                       )}
                                     </div>
                                   </td>
@@ -4088,8 +4403,9 @@ const BookingDetailPageV2 = () => {
                             const slotAssignment = dayModal.assignments.find(a => a.shift_slot_id === slotId);
                             const shiftLabel = slotAssignment?.shift_label || (slotAssignment?.shift_number ? `Shift ${slotAssignment.shift_number}` : 'Shift');
                             const slotInvoiceRecord = dateInvoiceRecords.find(r => r.shift_slot_id === slotId);
-                            const busyKey = `invoice-${slotId}`;
                             const rowBorder = idx > 0 ? { borderTop: '1px solid #f3f4f6' } : {};
+                            const draftWaiveInfo = draftWaives[slotId];
+                            const draftDecision = draftInvoiceDecisions[slotId];
                             if (slotInvoiceRecord && slotInvoiceRecord.status !== 'PENDING') {
                               const invoiced = slotInvoiceRecord.status === 'INVOICED';
                               return (
@@ -4105,6 +4421,40 @@ const BookingDetailPageV2 = () => {
                                 </tr>
                               );
                             }
+                            if (draftWaiveInfo) {
+                              return (
+                                <tr key={slotId} style={rowBorder}>
+                                  <td className={tdCls + ' font-medium text-gray-900'}>{shiftLabel}</td>
+                                  <td className={tdCls}>—</td>
+                                  <td className={tdCls}>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-amber-50 text-amber-700">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                                        Waived (draft)
+                                      </span>
+                                      <button onClick={() => undoWaive(slotId)} className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition">Undo</button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            }
+                            if (draftDecision) {
+                              return (
+                                <tr key={slotId} style={rowBorder}>
+                                  <td className={tdCls + ' font-medium text-gray-900'}>{shiftLabel}</td>
+                                  <td className={tdCls + ' tabular-nums'}>{draftDecision.approve ? `Rs.${Number(draftDecision.amount).toLocaleString()}` : '—'}</td>
+                                  <td className={tdCls}>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${draftDecision.approve ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+                                        <span className={`w-1.5 h-1.5 rounded-full ${draftDecision.approve ? 'bg-blue-400' : 'bg-gray-400'}`} />
+                                        {draftDecision.approve ? 'Invoiced (draft)' : 'Skipped (draft)'}
+                                      </span>
+                                      <button onClick={() => undoInvoiceDecision(slotId)} className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition">Undo</button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            }
                             return (
                               <tr key={slotId} style={{ ...rowBorder, background: '#fafafa' }}>
                                 <td className={tdCls + ' font-medium text-gray-900'}>{shiftLabel}</td>
@@ -4113,9 +4463,9 @@ const BookingDetailPageV2 = () => {
                                 </td>
                                 <td className={tdCls}>
                                   <div className="flex flex-wrap gap-1.5">
-                                    <button onClick={() => decideInvoice(true, slotId)} disabled={dayModalBusy === busyKey || !invoiceAmountInputsBySlot[slotId]} className="px-2.5 py-1 text-[11px] font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded transition disabled:opacity-50">Confirm</button>
-                                    <button onClick={() => waiveShift(slotId)} disabled={dayModalBusy === `waive-${slotId}`} title="No one covered this shift — skips both the client charge and the staff's pay" className="px-2.5 py-1 text-[11px] font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 rounded transition disabled:opacity-50">Waive</button>
-                                    <button onClick={() => openRescheduleModal(slotId)} title="Move this shift to a different date" className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition disabled:opacity-50">Reschedule</button>
+                                    <button onClick={() => decideInvoice(true, slotId)} disabled={!invoiceAmountInputsBySlot[slotId]} className="px-2.5 py-1 text-[11px] font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded transition disabled:opacity-50">Confirm</button>
+                                    <button onClick={() => waiveShift(slotId)} title="No one covered this shift — skips both the client charge and the staff's pay" className="px-2.5 py-1 text-[11px] font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 rounded transition">Waive</button>
+                                    <button onClick={() => openRescheduleModal(slotId)} title="Move this shift to a different date" className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition">Reschedule</button>
                                   </div>
                                 </td>
                               </tr>
@@ -4136,6 +4486,19 @@ const BookingDetailPageV2 = () => {
                                     </span>
                                   </td>
                                 </>
+                              ) : draftInvoiceDecisions.day ? (
+                                <>
+                                  <td className={tdCls + ' tabular-nums'}>{draftInvoiceDecisions.day.approve ? `Rs.${Number(draftInvoiceDecisions.day.amount).toLocaleString()}` : '—'}</td>
+                                  <td className={tdCls}>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${draftInvoiceDecisions.day.approve ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+                                        <span className={`w-1.5 h-1.5 rounded-full ${draftInvoiceDecisions.day.approve ? 'bg-blue-400' : 'bg-gray-400'}`} />
+                                        {draftInvoiceDecisions.day.approve ? 'Invoiced (draft)' : 'Skipped (draft)'}
+                                      </span>
+                                      <button onClick={() => undoInvoiceDecision('day')} className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition">Undo</button>
+                                    </div>
+                                  </td>
+                                </>
                               ) : (
                                 <>
                                   <td className={tdCls} style={{ background: '#fafafa' }}>
@@ -4143,8 +4506,8 @@ const BookingDetailPageV2 = () => {
                                   </td>
                                   <td className={tdCls} style={{ background: '#fafafa' }}>
                                     <div className="flex gap-1.5">
-                                      <button onClick={() => decideInvoice(true)} disabled={dayModalBusy === 'invoice' || !invoiceAmountInput} className="px-2.5 py-1 text-[11px] font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded transition disabled:opacity-50">Confirm</button>
-                                      <button onClick={() => decideInvoice(false)} disabled={dayModalBusy === 'invoice'} className="px-2.5 py-1 text-[11px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded transition disabled:opacity-50">Skip</button>
+                                      <button onClick={() => decideInvoice(true)} disabled={!invoiceAmountInput} className="px-2.5 py-1 text-[11px] font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded transition disabled:opacity-50">Confirm</button>
+                                      <button onClick={() => decideInvoice(false)} className="px-2.5 py-1 text-[11px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded transition">Skip</button>
                                     </div>
                                   </td>
                                 </>
@@ -4196,7 +4559,34 @@ const BookingDetailPageV2 = () => {
                     </div>
                   </div>
                 )}
+              </>
+              )}
 
+              </div>
+
+              {/* Footer — Draft -> Preview -> Confirm controls. Nothing above this
+                  line is a real staff_daily_attendance/booking_daily_invoices row
+                  until Confirm Day is pressed. */}
+              <div className="shrink-0 flex items-center justify-between gap-3 px-6 py-4" style={{ borderTop: '1px solid #e5e7eb' }}>
+                <div>
+                  {hasDraftContent && (
+                    <button onClick={discardDayDraft} className="px-3 py-2 text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 rounded-lg transition">Discard Draft</button>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {dayModalStep === 'preview' ? (
+                    <>
+                      <button onClick={() => setDayModalStep('edit')} className="px-4 py-2 text-xs font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition">&larr; Back to Edit</button>
+                      <button onClick={confirmDayDraft} disabled={confirmDayBusy || !hasDraftContent} className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition disabled:opacity-50">
+                        {confirmDayBusy ? 'Confirming…' : 'Confirm Day'}
+                      </button>
+                    </>
+                  ) : (
+                    <button onClick={() => setDayModalStep('preview')} disabled={!hasDraftContent} className="px-4 py-2 text-xs font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-lg transition disabled:opacity-50">
+                      Review &amp; Confirm Day &rarr;
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>

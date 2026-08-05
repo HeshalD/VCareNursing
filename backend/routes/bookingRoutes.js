@@ -4,6 +4,7 @@ const bookingController = require('../controllers/bookingController');
 const paymentTrackingController = require('../controllers/paymentTrackingController');
 const bookingNotesController = require('../controllers/bookingNotesController');
 const dailyAttendanceController = require('../controllers/dailyAttendanceController');
+const dailyDraftController = require('../controllers/dailyDraftController');
 const shiftPatternController = require('../controllers/shiftPatternController');
 const { protect, restrictTo, attachSalesScope, requireOwnSalesRecord, requirePermission } = require('../middleware/authMiddleware');
 const { upload } = require('../config/cloudinaryConfig');
@@ -189,6 +190,14 @@ router.post('/:booking_id/attendance/absent', protect, requirePermission('ATTEND
 router.post('/attendance/:attendance_id/confirm-salary', protect, requirePermission('ATTENDANCE_CONFIRM_SALARY'), dailyAttendanceController.confirmSalary);
 // Revoke a wrongly auto-paid/invoiced LIVE_IN day.
 router.post('/:booking_id/attendance/revoke', protect, requirePermission('ATTENDANCE_REVOKE'), dailyAttendanceController.revokeDays);
+
+// Day-draft staging (Draft -> Preview -> Confirm): everything entered in the Day
+// Detail modal is cached here until explicitly confirmed — see dailyDraftController.js.
+router.get('/:booking_id/day-drafts', protect, requirePermission('VIEW_BOOKINGS'), dailyDraftController.listDayDrafts);
+router.get('/:booking_id/day-draft', protect, requirePermission('VIEW_BOOKINGS'), dailyDraftController.getDayDraft);
+router.put('/:booking_id/day-draft', protect, requirePermission('ATTENDANCE_RECORD'), dailyDraftController.upsertDayDraft);
+router.delete('/:booking_id/day-draft', protect, requirePermission('ATTENDANCE_RECORD'), dailyDraftController.discardDayDraft);
+router.post('/:booking_id/day-draft/confirm', protect, requirePermission('ATTENDANCE_CONFIRM_DAY'), dailyDraftController.confirmDayDraft);
 
 // Shift patterns + per-shift staff assignment (SHIFT_BASED only)
 router.get('/:booking_id/shift-pattern', protect, requirePermission('VIEW_BOOKINGS'), shiftPatternController.getShiftPattern);

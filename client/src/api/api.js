@@ -278,10 +278,10 @@ class ApiClient {
 
 
 
-  async getAllClients() {
-
-    return this.request('/client');
-
+  async getAllClients(filters = {}) {
+    const queryParams = new URLSearchParams(filters).toString();
+    const url = queryParams ? `/client?${queryParams}` : '/client';
+    return this.request(url);
   }
 
   async createClientProfile(data) {
@@ -1486,6 +1486,38 @@ class ApiClient {
     return this.request(`/bookings/${bookingId}/attendance/revoke`, {
       method: 'POST',
       body: JSON.stringify({ service_dates, reason, password }),
+    });
+  }
+
+  // ── Day drafts (Draft -> Preview -> Confirm staging for the Day Detail modal) ──
+
+  async getBookingDayDrafts(bookingId) {
+    return this.request(`/bookings/${bookingId}/day-drafts`);
+  }
+
+  async getDayDraft(bookingId, serviceDate) {
+    const qs = new URLSearchParams({ service_date: serviceDate }).toString();
+    return this.request(`/bookings/${bookingId}/day-draft?${qs}`);
+  }
+
+  async upsertDayDraft(bookingId, { service_date, payload }) {
+    return this.request(`/bookings/${bookingId}/day-draft`, {
+      method: 'PUT',
+      body: JSON.stringify({ service_date, payload }),
+    });
+  }
+
+  async discardDayDraft(bookingId, service_date) {
+    return this.request(`/bookings/${bookingId}/day-draft`, {
+      method: 'DELETE',
+      body: JSON.stringify({ service_date }),
+    });
+  }
+
+  async confirmDayDraft(bookingId, service_date) {
+    return this.request(`/bookings/${bookingId}/day-draft/confirm`, {
+      method: 'POST',
+      body: JSON.stringify({ service_date }),
     });
   }
 

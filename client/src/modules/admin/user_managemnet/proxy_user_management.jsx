@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, UserCircle, FileText, Plus, Edit2, Trash2, X, Upload, Shield, LogOut, ExternalLink, CheckCircle2 } from 'lucide-react';
+import { Search, UserCircle, FileText, Plus, Edit2, Trash2, X, Upload, Shield, LogOut, ExternalLink, CheckCircle2, ChevronLeft, ChevronRight } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import ImageCropModal from '../../../components/common/ImageCropModal';
 import DateInput from '../../../components/common/DateInput';
 import PhoneInput from '../../../components/common/PhoneInput';
 import apiClient from '../../../api/api';
+import useDebouncedValue from '../../../hooks/useDebouncedValue';
+
+const PAGE_SIZE = 50;
 
 const ROLE_LABELS = {
   CARETAKER: 'Caretaker',
@@ -156,6 +159,9 @@ const ProxyUserManagement = () => {
   const [selectedWorker, setSelectedWorker] = useState(null);
   const [profilePictureToCrop, setProfilePictureToCrop] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const debouncedSearchTerm = useDebouncedValue(searchTerm, 400);
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState(null);
 
   const [formData, setFormData] = useState({
     user_id: '', full_name: '', email: '', mobile_number: '',
@@ -184,14 +190,22 @@ const ProxyUserManagement = () => {
   const [deletePasswordError, setDeletePasswordError] = useState('');
   const [deleteConfirmWorker, setDeleteConfirmWorker] = useState(null);
 
-  useEffect(() => { fetchWorkers(); }, []);
+  // Reset back to page 1 whenever the search term changes underneath the current page.
+  useEffect(() => { setPage(1); }, [debouncedSearchTerm]);
+
+  useEffect(() => { fetchWorkers(); }, [debouncedSearchTerm, page]);
 
   const fetchWorkers = async () => {
     try {
       setLoading(true);
       setError(null);
-      const response = await apiClient.getAllStaff({ limit: 1000 });
+      const response = await apiClient.getAllStaff({
+        page,
+        limit: PAGE_SIZE,
+        ...(debouncedSearchTerm ? { search: debouncedSearchTerm } : {}),
+      });
       setWorkers(response.data || []);
+      setPagination(response.pagination || null);
     } catch (err) {
       setError('Failed to load workers');
     } finally {
@@ -439,13 +453,11 @@ const ProxyUserManagement = () => {
     user_id: staff.user_id
   });
 
-  const displayData = workers
-    .map(formatStaffData)
-    .filter(w => {
-      if (!searchTerm) return true;
-      const q = searchTerm.toLowerCase();
-      return [w.name, w.email, w.phone, w.staff_code, w.designation].some(v => v?.toLowerCase().includes(q));
-    });
+  const displayData = workers.map(formatStaffData);
+  const totalCount = pagination?.total_count ?? displayData.length;
+  const totalPages = pagination?.total_pages ?? 1;
+  const rangeStart = totalCount === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const rangeEnd = totalCount === 0 ? 0 : Math.min(page * PAGE_SIZE, totalCount);
 
   return (
     <AdminLayout
@@ -571,8 +583,27 @@ const ProxyUserManagement = () => {
           </table>
         </div>
         {displayData.length > 0 && (
-          <div className="border-t border-slate-100 px-4 py-2.5 text-xs text-slate-400">
-            Showing {displayData.length} of {workers.length} staff member{workers.length !== 1 ? 's' : ''}
+          <div className="flex items-center justify-between border-t border-slate-100 px-4 py-2.5 text-xs text-slate-400">
+            <span>
+              Showing {rangeStart}-{rangeEnd} of {totalCount} staff member{totalCount !== 1 ? 's' : ''}
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={!pagination?.has_prev}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" /> Prev
+              </button>
+              <span className="px-2 tabular-nums">Page {page} of {totalPages}</span>
+              <button
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={!pagination?.has_next}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-200 text-slate-500 hover:text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+              >
+                Next <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         )}
       </div>
