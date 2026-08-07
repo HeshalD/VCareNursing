@@ -398,13 +398,13 @@ const ProxyUserManagement = () => {
     setFormError(null);
     try {
       if (!isEditMode) {
-        if (!formData.full_name || !formData.mobile_number || !formData.designation || !formData.gender || !formData.date_of_birth || !formData.nic_number || !formData.nic_front || !formData.nic_back || !formData.staff_code || !formData.admin_remarks) {
-          setFormError('Please fill in all required fields including Mobile Number, NIC photos, Staff Code, and Admin Remarks.');
+        if (!formData.full_name || !formData.mobile_number || !formData.gender || !formData.staff_code || !formData.admin_remarks) {
+          setFormError('Please fill in all required fields including Mobile Number, Staff Code, and Admin Remarks.');
           setFormLoading(false);
           return;
         }
       } else {
-        if (!formData.full_name || !formData.designation || !formData.gender || !formData.date_of_birth || !formData.nic_number) {
+        if (!formData.full_name || !formData.gender) {
           setFormError('Please fill in all required fields.');
           setFormLoading(false);
           return;
@@ -669,20 +669,20 @@ const ProxyUserManagement = () => {
                     <option value="OTHER">Other</option>
                   </select>
                 </Field>
-                <Field label="Date of Birth" required>
+                <Field label="Date of Birth">
                   <DateInput name="date_of_birth"
                     value={formData.date_of_birth}
                     onChange={e => setFormData(p => ({ ...p, date_of_birth: e.target.value }))}
                     max={new Date().toISOString().slice(0, 10)}
-                    required className={inputCls(false)} />
+                    className={inputCls(false)} />
                 </Field>
               </div>
 
               {/* Role & Experience */}
               <SectionHeader title="Role & Experience" />
               <div className="px-5 pt-4 pb-2 space-y-3">
-                <Field label="Designation" required>
-                  <input type="text" name="designation" value={formData.designation} onChange={handleInputChange} required
+                <Field label="Designation">
+                  <input type="text" name="designation" value={formData.designation} onChange={handleInputChange}
                     className={inputCls(false)} />
                 </Field>
                 <div>
@@ -747,19 +747,19 @@ const ProxyUserManagement = () => {
                       required={!isEditMode} placeholder="e.g. VC-0042"
                       className={inputCls(!!fieldConflicts.staff_code)} />
                   </Field>
-                  <Field label="NIC Number" required>
+                  <Field label="NIC Number">
                     <input type="text" name="nic_number" value={formData.nic_number} onChange={handleInputChange}
-                      required placeholder="e.g. 123456789V" className={inputCls(false)} />
+                      placeholder="e.g. 123456789V" className={inputCls(false)} />
                   </Field>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="NIC Front Photo" required={!isEditMode}>
+                  <Field label="NIC Front Photo">
                     {nicFrontPreview
                       ? <ImagePreview src={nicFrontPreview} onDelete={() => { setNicFrontPreview(''); setFormData(p => ({ ...p, nic_front: null })); }}
                           onChangeId="nic-front-change" onChangeHandler={handleNicFrontChange} changeLabel="Change" />
                       : <FileDropZone id="nic-front-upload" label="NIC Front" hint="JPG, PNG" onChange={handleNicFrontChange} />}
                   </Field>
-                  <Field label="NIC Back Photo" required={!isEditMode}>
+                  <Field label="NIC Back Photo">
                     {nicBackPreview
                       ? <ImagePreview src={nicBackPreview} onDelete={() => { setNicBackPreview(''); setFormData(p => ({ ...p, nic_back: null })); }}
                           onChangeId="nic-back-change" onChangeHandler={handleNicBackChange} changeLabel="Change" />

@@ -2920,10 +2920,10 @@ exports.createStaffProfile = async (req, res) => {
 
     try {
         // Validate required fields
-        if (!full_name || !designation || !gender || !date_of_birth || !nic_number || !uploadedNicFront || !uploadedNicBack) {
+        if (!full_name || !gender) {
             return res.status(400).json({
                 status: 'error',
-                message: 'Missing required fields: full_name, designation, gender, date_of_birth, nic_number, nic_front, nic_back'
+                message: 'Missing required fields: full_name, gender'
             });
         }
 
@@ -3017,9 +3017,9 @@ exports.createStaffProfile = async (req, res) => {
             });
         }
 
-        // Validate date format
+        // Validate date format, if provided
         const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-        if (!dateRegex.test(date_of_birth)) {
+        if (date_of_birth && !dateRegex.test(date_of_birth)) {
             return res.status(400).json({
                 status: 'error',
                 message: 'Invalid date format. Use YYYY-MM-DD'
@@ -3095,18 +3095,18 @@ exports.createStaffProfile = async (req, res) => {
         const insertValues = [
             finalUserId,
             full_name,
-            designation,
+            designation || null,
             qualifications || null,
             finalDocumentUrls.length > 0 ? finalDocumentUrls : null,
             home_address || null,
             location || null,
             uploadedProfilePicture || null,
-            nic_number,
-            uploadedNicFront,
-            uploadedNicBack,
+            nic_number || null,
+            uploadedNicFront || null,
+            uploadedNicBack || null,
             gender.toUpperCase(),
             willing_to_live_in || false,
-            date_of_birth,
+            date_of_birth || null,
             staff_code ? String(staff_code).trim() : null,
             experience_level || null,
             admin_remarks || null,

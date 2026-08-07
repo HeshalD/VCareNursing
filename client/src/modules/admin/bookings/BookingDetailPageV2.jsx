@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle, ArrowLeft, CheckCircle, Download, DollarSign,
-  Loader2, MessageCircle, Phone, RefreshCw, Repeat2, Search, SendHorizontal, ShieldCheck,
+  Activity, AlertTriangle, ArrowLeft, CalendarDays, CheckCircle, Download, DollarSign,
+  LayoutGrid, Loader2, Menu, MessageCircle, Phone, RefreshCw, Repeat2, Search, SendHorizontal, ShieldCheck,
   Upload, User, UserPlus, Users, Wallet, X, XCircle, Briefcase, History, Pause, Play, Building2,
 } from 'lucide-react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -10,6 +10,7 @@ import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import CareTimeline from './CareTimeline';
 import StaffScheduleTimeline from '../components/StaffScheduleTimeline';
+import BookingSwitcherSidebar from './BookingSwitcherSidebar';
 import vcareLogo from '../../../assets/Logo/VCareLogo.png';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
 import { computeVisitingStatus, VISITING_STATUS, VISITING_STATUS_META } from '../../../utils/visitingBookingStatus';
@@ -189,9 +190,10 @@ const BookingDetailPageV2 = () => {
   const [simDate, setSimDate]         = useState(null);
   const [bankAccounts, setBankAccounts]   = useState([]);
   const [availableStaff, setAvailableStaff] = useState([]);
+  const [mobileBookingSidebarOpen, setMobileBookingSidebarOpen] = useState(false);
 
   // nav
-  const [activeSection, setActiveSection] = useState(searchParams.get('section') || 'overview');
+  const [activeSection, setActiveSection] = useState(searchParams.get('section') || 'care-timeline');
 
   // payment form
   const [paymentForm, setPaymentForm]         = useState(initialPaymentForm);
@@ -1772,14 +1774,15 @@ const BookingDetailPageV2 = () => {
   const isCheque          = paymentForm.payment_method === 'CHEQUE';
 
   const tabs = [
-    { id: 'overview',    label: 'Overview' },
-    { id: 'payments',    label: 'Payments' },
-    { id: 'staff',       label: 'Staff & Swaps' },
-    ...(isShiftBased ? [{ id: 'reschedules', label: 'Reschedules' }] : []),
-    { id: 'salesperson', label: 'Salesperson' },
-    { id: 'client',      label: 'Client & Care' },
-    { id: 'settlement',  label: 'Settlement' },
-    { id: 'termination', label: 'Termination' },
+    { id: 'care-timeline', label: 'Care Timeline', icon: CalendarDays },
+    { id: 'overview',    label: 'Overview',      icon: LayoutGrid },
+    { id: 'payments',    label: 'Payments',       icon: DollarSign },
+    { id: 'staff',       label: 'Staff & Swaps',  icon: Users },
+    ...(isShiftBased ? [{ id: 'reschedules', label: 'Reschedules', icon: Repeat2 }] : []),
+    { id: 'salesperson', label: 'Salesperson',    icon: Briefcase },
+    { id: 'client',      label: 'Client & Care',  icon: User },
+    { id: 'settlement',  label: 'Settlement',     icon: CheckCircle },
+    { id: 'termination', label: 'Termination',    icon: AlertTriangle },
   ];
 
   const heroName    = patientDetails.patient_name || clientDetails.client_name || 'Booking';
@@ -1793,10 +1796,18 @@ const BookingDetailPageV2 = () => {
   if (loading) {
     return (
       <AdminLayout>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '50vh' }}>
-          <div style={{ textAlign: 'center' }}>
-            <Loader2 style={{ width: 48, height: 48, color: '#137A6B', animation: 'spin 1s linear infinite', margin: '0 auto 16px' }} />
-            <p style={{ color: '#9A9488', fontSize: 14 }}>Loading booking details…</p>
+        <div className="flex items-start gap-4">
+          <aside className="sticky top-6 hidden h-[calc(100vh-8rem)] w-64 shrink-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white lg:flex">
+            <div className="border-b border-gray-100 px-4 py-2.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">All Bookings</p>
+            </div>
+            <BookingSwitcherSidebar activeBookingId={bookingId} />
+          </aside>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '50vh' }} className="flex-1">
+            <div style={{ textAlign: 'center' }}>
+              <Loader2 style={{ width: 48, height: 48, color: '#137A6B', animation: 'spin 1s linear infinite', margin: '0 auto 16px' }} />
+              <p style={{ color: '#9A9488', fontSize: 14 }}>Loading booking details…</p>
+            </div>
           </div>
         </div>
       </AdminLayout>
@@ -1806,15 +1817,23 @@ const BookingDetailPageV2 = () => {
   if (!detail && error) {
     return (
       <AdminLayout>
-        <div style={{ border: '1px solid #F5C9C5', background: '#FDF2F1', borderRadius: 16, padding: 24 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
-            <div style={{ background: '#F7E6E3', borderRadius: '50%', padding: 8 }}><XCircle style={{ width: 24, height: 24, color: '#BC4338' }} /></div>
-            <div>
-              <h3 style={{ margin: '0 0 4px', fontSize: 17, fontWeight: 700, color: '#2A2722' }}>Unable to load booking</h3>
-              <p style={{ margin: '0 0 16px', fontSize: 14, color: '#BC4338' }}>{error}</p>
-              <button onClick={fetchDetail} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: '#BC4338', border: 'none', borderRadius: 10, padding: '9px 16px', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
-                <RefreshCw style={{ width: 14, height: 14 }} /> Retry
-              </button>
+        <div className="flex items-start gap-4">
+          <aside className="sticky top-6 hidden h-[calc(100vh-8rem)] w-64 shrink-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white lg:flex">
+            <div className="border-b border-gray-100 px-4 py-2.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">All Bookings</p>
+            </div>
+            <BookingSwitcherSidebar activeBookingId={bookingId} />
+          </aside>
+          <div style={{ border: '1px solid #F5C9C5', background: '#FDF2F1', borderRadius: 16, padding: 24 }} className="flex-1">
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
+              <div style={{ background: '#F7E6E3', borderRadius: '50%', padding: 8 }}><XCircle style={{ width: 24, height: 24, color: '#BC4338' }} /></div>
+              <div>
+                <h3 style={{ margin: '0 0 4px', fontSize: 17, fontWeight: 700, color: '#2A2722' }}>Unable to load booking</h3>
+                <p style={{ margin: '0 0 16px', fontSize: 14, color: '#BC4338' }}>{error}</p>
+                <button onClick={fetchDetail} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: '#BC4338', border: 'none', borderRadius: 10, padding: '9px 16px', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                  <RefreshCw style={{ width: 14, height: 14 }} /> Retry
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1829,7 +1848,39 @@ const BookingDetailPageV2 = () => {
   return (
     <AdminLayout>
       <div className="-m-4 md:-m-8 px-3 sm:px-6 pt-6 pb-14" style={{ background: '#f8fafc', minHeight: '100vh', fontFamily: "'Hanken Grotesk',system-ui,sans-serif" }}>
-        <div style={{ maxWidth: 1180, margin: '0 auto' }}>
+        <div className="flex items-start gap-4">
+          {/* Booking switcher sidebar (desktop) */}
+          <aside className="sticky top-6 hidden h-[calc(100vh-8rem)] w-64 shrink-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white lg:flex">
+            <div className="border-b border-gray-100 px-4 py-2.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">All Bookings</p>
+            </div>
+            <BookingSwitcherSidebar activeBookingId={bookingId} />
+          </aside>
+
+          {/* Booking switcher sidebar (mobile drawer) */}
+          {mobileBookingSidebarOpen && (
+            <div className="fixed inset-0 z-50 flex lg:hidden">
+              <div className="absolute inset-0 bg-black/40" onClick={() => setMobileBookingSidebarOpen(false)} />
+              <div className="relative flex h-full w-72 max-w-[85vw] flex-col bg-white shadow-2xl">
+                <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+                  <p className="text-[13px] font-semibold text-gray-700">All Bookings</p>
+                  <button
+                    type="button"
+                    onClick={() => setMobileBookingSidebarOpen(false)}
+                    className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <BookingSwitcherSidebar
+                  activeBookingId={bookingId}
+                  onNavigate={() => setMobileBookingSidebarOpen(false)}
+                />
+              </div>
+            </div>
+          )}
+
+        <div className="min-w-0 flex-1" style={{ maxWidth: 1180, margin: '0 auto' }}>
 
           {/* ── Error banner ── */}
           {error && (
@@ -1844,6 +1895,14 @@ const BookingDetailPageV2 = () => {
           ══════════════════════════════════════════════════════ */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 22 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <button
+                onClick={() => setMobileBookingSidebarOpen(true)}
+                className="lg:hidden"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 9px', fontFamily: 'inherit', cursor: 'pointer' }}
+                aria-label="Browse bookings"
+              >
+                <Menu style={{ width: 14, height: 14 }} />
+              </button>
               <button
                 onClick={() => navigate('/admin/bookings')}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 13px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#374151', cursor: 'pointer' }}
@@ -1888,50 +1947,87 @@ const BookingDetailPageV2 = () => {
           )}
 
           {/* ══════════════════════════════════════════════════════
-              HERO
+              HERO — identity + hospitalization, one card (mirrors
+              StaffDetailPageV2's hero card)
           ══════════════════════════════════════════════════════ */}
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap', marginBottom: 20 }}>
-            <div style={{ width: 56, height: 56, borderRadius: 12, background: '#e5e7eb', color: '#374151', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 800, flexShrink: 0 }}>
-              {heroInitials}
-            </div>
-            <div style={{ flex: 1, minWidth: 260 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 5 }}>
-                <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, letterSpacing: '-0.02em', lineHeight: 1.2, color: '#111827' }}>
-                  {heroName}
-                  {bookingSummary.service_type ? ` · ${bookingSummary.service_type}` : ''}
-                </h1>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: sm.bg, color: sm.col, borderRadius: 999, padding: '4px 10px', fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap' }}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: sm.dot }} />
-                  {bookingSummary.status || 'Unknown'}
-                </span>
-                {isVisiting && visitingStatus && visitingStatus !== VISITING_STATUS.COMPLETED && (() => {
-                  const vm = VISITING_STATUS_META[visitingStatus];
-                  return (
-                    <span
-                      title={visitingStatus === VISITING_STATUS.AWAITING_FINALIZATION ? 'The visit date has passed — log attendance and decide the invoice to close this booking out.' : undefined}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: vm.bg, color: vm.col, borderRadius: 999, padding: '4px 10px', fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap' }}
-                    >
-                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: vm.dot }} />
-                      {vm.label}
+          <div className="mb-5 overflow-hidden rounded-lg border border-gray-200 bg-white">
+            <div className="flex flex-wrap items-center gap-4 px-6 py-4">
+              <div className="h-14 w-14 shrink-0 overflow-hidden rounded-full bg-gray-100 text-gray-700 flex items-center justify-center text-lg font-bold">
+                {heroInitials}
+              </div>
+              <div className="min-w-[260px] flex-1">
+                <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                  <h1 className="text-[17px] font-semibold text-gray-900">
+                    {heroName}
+                    {bookingSummary.service_type ? ` · ${bookingSummary.service_type}` : ''}
+                  </h1>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: sm.bg, color: sm.col, borderRadius: 999, padding: '4px 10px', fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: sm.dot }} />
+                    {bookingSummary.status || 'Unknown'}
+                  </span>
+                  {isVisiting && visitingStatus && visitingStatus !== VISITING_STATUS.COMPLETED && (() => {
+                    const vm = VISITING_STATUS_META[visitingStatus];
+                    return (
+                      <span
+                        title={visitingStatus === VISITING_STATUS.AWAITING_FINALIZATION ? 'The visit date has passed — log attendance and decide the invoice to close this booking out.' : undefined}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: vm.bg, color: vm.col, borderRadius: 999, padding: '4px 10px', fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap' }}
+                      >
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: vm.dot }} />
+                        {vm.label}
+                      </span>
+                    );
+                  })()}
+                  {isHospitalized && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-semibold whitespace-nowrap" style={{ background: '#FDF2F2', color: '#BC4338' }}>
+                      <Building2 className="h-3 w-3" /> Hospitalized
                     </span>
-                  );
-                })()}
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[13px] text-gray-500">
+                  <span className="flex items-center gap-1.5"><Activity className="h-3.5 w-3.5" />{bookingSummary.service_model || '—'}</span>
+                  <span className="flex items-center gap-1.5"><Briefcase className="h-3.5 w-3.5" />{salesData?.current?.salesperson_name || 'Unassigned'}</span>
+                  <span className="font-mono">{bookingSummary.booking_code || '—'}</span>
+                  {clientDetails.client_name && (
+                    <span className="flex items-center gap-1.5"><User className="h-3.5 w-3.5" />{clientDetails.client_name}</span>
+                  )}
+                  {bookingSummary.start_date && (
+                    <span className="flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5" />Started {formatDate(bookingSummary.start_date)}</span>
+                  )}
+                </div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>{bookingSummary.service_model || '—'}</span>
-                <span style={{ color: '#d1d5db' }}>·</span>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#f3f4f6', color: '#374151', borderRadius: 6, padding: '3px 9px', fontSize: 11.5, fontWeight: 600 }}>
-                  <Briefcase style={{ width: 11, height: 11 }} />
-                  {salesData?.current?.salesperson_name || 'Unassigned'}
+            </div>
+
+            {/* Hospitalization strip — always visible, part of the same card */}
+            <div
+              className="flex flex-wrap items-center justify-between gap-3 border-t px-6 py-3"
+              style={{ borderColor: isHospitalized ? '#F5C9C5' : '#f3f4f6', background: isHospitalized ? '#FDF2F2' : '#f8fafc' }}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <Building2 className="h-4 w-4 flex-shrink-0" style={{ color: isHospitalized ? '#BC4338' : '#9ca3af' }} />
+                <span className="text-[13px] font-medium truncate" style={{ color: isHospitalized ? '#BC4338' : '#6b7280' }}>
+                  {isHospitalized
+                    ? (hospitalName ? `Hospitalized at ${hospitalName}` : 'Currently hospitalized')
+                    : 'Not hospitalized'}
                 </span>
               </div>
-              <p style={{ margin: 0, fontSize: 13, color: '#6b7280' }}>
-                {[
-                  bookingSummary.booking_code,
-                  clientDetails.client_name && `for ${clientDetails.client_name}`,
-                  bookingSummary.start_date && `Started ${formatDate(bookingSummary.start_date)}`,
-                ].filter(Boolean).join(' · ') || '—'}
-              </p>
+              <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
+                {!isHospitalized && (
+                  <input
+                    type="text"
+                    placeholder="Hospital name (optional)"
+                    value={hospitalNameDraft}
+                    onChange={(e) => { setHospitalNameDraft(e.target.value); setHospitalNameDraftTouched(true); }}
+                    style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '7px 10px', fontFamily: 'inherit', fontSize: 12.5, color: '#374151', outline: 'none' }}
+                  />
+                )}
+                <button
+                  onClick={toggleHospitalization}
+                  disabled={hospitalizationSaving}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '7px 12px', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#374151', cursor: hospitalizationSaving ? 'wait' : 'pointer', opacity: hospitalizationSaving ? 0.6 : 1 }}
+                >
+                  {hospitalizationSaving ? 'Saving…' : isHospitalized ? 'Mark as not hospitalized' : 'Mark as hospitalized'}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1985,236 +2081,196 @@ const BookingDetailPageV2 = () => {
           })()}
 
           {/* ══════════════════════════════════════════════════════
-              HOSPITALIZATION BANNER — all service models, toggle anytime
+              TABS — icon-only, tooltip on hover
           ══════════════════════════════════════════════════════ */}
-          <div
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap',
-              marginBottom: 18, padding: '14px 18px', borderRadius: 10,
-              background: isHospitalized ? '#FDF2F2' : '#f8fafc',
-              border: `1px solid ${isHospitalized ? '#F5C9C5' : '#e5e7eb'}`,
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{ width: 34, height: 34, borderRadius: 8, background: isHospitalized ? '#F5C9C5' : '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <Building2 style={{ width: 16, height: 16, color: isHospitalized ? '#BC4338' : '#374151' }} />
-              </div>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 13.5, fontWeight: 700, color: '#111827' }}>Hospitalization status</span>
-                  <span style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 7px', borderRadius: 4, background: isHospitalized ? '#F5C9C5' : '#e5e7eb', color: isHospitalized ? '#BC4338' : '#374151', letterSpacing: '.03em' }}>
-                    {isHospitalized ? 'HOSPITALIZED' : 'NOT HOSPITALIZED'}
-                  </span>
+          <div className="flex gap-1 mb-4 bg-slate-100 p-1 rounded-lg w-fit">
+            {tabs.map(tab => {
+              const Icon = tab.icon;
+              return (
+                <div key={tab.id} className="relative group">
+                  <button
+                    type="button"
+                    onClick={() => setActiveSection(tab.id)}
+                    aria-label={tab.label}
+                    className={`flex items-center justify-center w-9 h-9 rounded-md transition-all ${
+                      activeSection === tab.id
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" />
+                  </button>
+                  <div className="pointer-events-none absolute left-1/2 top-full z-20 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[11px] font-medium text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100">
+                    {tab.label}
+                  </div>
                 </div>
-                <div style={{ fontSize: 12.5, color: '#6b7280', marginTop: 2 }}>
-                  {isHospitalized
-                    ? (hospitalName ? `Currently admitted at ${hospitalName}.` : 'Currently hospitalized — no hospital name recorded.')
-                    : 'Patient is not currently marked as hospitalized.'}
-                </div>
-              </div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
-              {!isHospitalized && (
-                <input
-                  type="text"
-                  placeholder="Hospital name (optional)"
-                  value={hospitalNameDraft}
-                  onChange={(e) => { setHospitalNameDraft(e.target.value); setHospitalNameDraftTouched(true); }}
-                  style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 10px', fontFamily: 'inherit', fontSize: 13, color: '#374151', outline: 'none' }}
-                />
-              )}
-              <button
-                onClick={toggleHospitalization}
-                disabled={hospitalizationSaving}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 14px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#374151', cursor: hospitalizationSaving ? 'wait' : 'pointer', opacity: hospitalizationSaving ? 0.6 : 1 }}
-              >
-                {hospitalizationSaving ? 'Saving…' : isHospitalized ? 'Mark as not hospitalized' : 'Mark as hospitalized'}
-              </button>
-            </div>
+              );
+            })}
           </div>
 
           {/* ══════════════════════════════════════════════════════
-              INVOICING MODE BANNER — LIVE_IN only, always visible, toggle anytime
+              TAB: CARE TIMELINE — hospitalization/invoicing/finalization
+              banners, shift bank, and the care timeline calendar
           ══════════════════════════════════════════════════════ */}
-          {isLiveIn && (
-            <div
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap',
-                marginBottom: 18, padding: '14px 18px', borderRadius: 10,
-                background: '#f8fafc', border: '1px solid #e5e7eb',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ width: 34, height: 34, borderRadius: 8, background: '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <Wallet style={{ width: 16, height: 16, color: '#374151' }} />
-                </div>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 13.5, fontWeight: 700, color: '#111827' }}>Daily client invoicing</span>
-                    <span style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 7px', borderRadius: 4, background: '#e5e7eb', color: '#374151', letterSpacing: '.03em' }}>
-                      {invoicingMode}
-                    </span>
+          {activeSection === 'care-timeline' && (
+            <>
+              {/* ── INVOICING MODE BANNER — LIVE_IN only, always visible, toggle anytime ── */}
+              {isLiveIn && (
+                <div
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap',
+                    marginBottom: 18, padding: '14px 18px', borderRadius: 10,
+                    background: '#f8fafc', border: '1px solid #e5e7eb',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ width: 34, height: 34, borderRadius: 8, background: '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <Wallet style={{ width: 16, height: 16, color: '#374151' }} />
+                    </div>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 13.5, fontWeight: 700, color: '#111827' }}>Daily client invoicing</span>
+                        <span style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 7px', borderRadius: 4, background: '#e5e7eb', color: '#374151', letterSpacing: '.03em' }}>
+                          {invoicingMode}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 12.5, color: '#6b7280', marginTop: 2 }}>
+                        {invoicingMode === 'AUTO'
+                          ? 'Billed automatically every night at 23:59. Staff salary is always automatic for LIVE_IN bookings.'
+                          : 'Confirm each day\'s client charge from the care timeline below. Staff salary stays automatic either way.'}
+                      </div>
+                    </div>
                   </div>
-                  <div style={{ fontSize: 12.5, color: '#6b7280', marginTop: 2 }}>
-                    {invoicingMode === 'AUTO'
-                      ? 'Billed automatically every night at 23:59. Staff salary is always automatic for LIVE_IN bookings.'
-                      : 'Confirm each day\'s client charge from the care timeline below. Staff salary stays automatic either way.'}
-                  </div>
-                </div>
-              </div>
-              <button
-                onClick={toggleInvoicingMode}
-                disabled={invoicingModeSaving}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 14px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#374151', cursor: invoicingModeSaving ? 'wait' : 'pointer', opacity: invoicingModeSaving ? 0.6 : 1, flexShrink: 0 }}
-              >
-                {invoicingModeSaving ? 'Saving…' : invoicingMode === 'AUTO' ? 'Switch to Manual' : 'Switch to Auto'}
-              </button>
-            </div>
-          )}
-
-          {/* ══════════════════════════════════════════════════════
-              SCHEDULED COMPLETION / TERMINATION NOTICE
-          ══════════════════════════════════════════════════════ */}
-          {scheduledFinalization && (
-            <div
-              style={{
-                display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 18,
-                padding: '14px 18px', borderRadius: 10,
-                background: scheduledTermination ? '#FDF2F2' : '#F0F9F4',
-                border: `1px solid ${scheduledTermination ? '#F5C9C5' : '#BCE0CC'}`,
-              }}
-            >
-              <AlertTriangle style={{ width: 18, height: 18, color: scheduledTermination ? '#BC4338' : '#1F8B4C', flexShrink: 0, marginTop: 1 }} />
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>
-                  {scheduledTermination ? 'Termination scheduled' : 'Completion scheduled'} for {formatDate(scheduledFinalization.effective_date)}
-                </div>
-                <div style={{ fontSize: 12.5, color: '#6F6A60', marginTop: 2 }}>
-                  This booking stays active and billed as normal until then
-                  {scheduledFinalization.reason ? ` — ${scheduledFinalization.reason}` : ''}.
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ══════════════════════════════════════════════════════
-              SHIFT BANK — SHIFT_BASED only: shifts paid vs delivered
-          ══════════════════════════════════════════════════════ */}
-          {isShiftBased && shiftBank && (
-            <div style={{ marginBottom: 18, padding: '14px 18px', borderRadius: 10, background: shiftBank.remaining < 0 ? '#FDF2F2' : '#FBF9F4', border: `1px solid ${shiftBank.remaining < 0 ? '#F5C9C5' : '#EFEAE0'}` }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                <div style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>Shift bank</div>
-                {shiftRate > 0 && <div style={{ fontSize: 12, color: '#6F6A60' }}>Rs {shiftRate.toLocaleString('en-US')} / shift</div>}
-              </div>
-              <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginTop: 8 }}>
-                {[
-                  { label: 'Paid for', value: shiftBank.paid, color: '#2A2722' },
-                  { label: 'Delivered', value: shiftBank.used, color: '#2F8A5B' },
-                  { label: 'Waived', value: shiftBank.waived, color: '#9A9488' },
-                  { label: 'Remaining', value: shiftBank.remaining, color: shiftBank.remaining < 0 ? '#C2483C' : '#2A2722' },
-                ].map(({ label, value, color }) => (
-                  <div key={label}>
-                    <div style={{ fontSize: 18, fontWeight: 800, color }}>{value}</div>
-                    <div style={{ fontSize: 11, color: '#8A8478', fontWeight: 600 }}>{label}</div>
-                  </div>
-                ))}
-              </div>
-              {shiftBank.remaining < 0 && (
-                <div style={{ fontSize: 12, color: '#C2483C', fontWeight: 600, marginTop: 8 }}>
-                  {Math.abs(shiftBank.remaining)} shift{Math.abs(shiftBank.remaining) !== 1 ? 's' : ''} delivered beyond what's been paid for — record a payment or waive outstanding shifts.
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ── Manual overdue modal — SHIFT_BASED only ─────────────────── */}
-          {showOverdueModal && (
-            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60 }}>
-              <div style={{ background: '#fff', borderRadius: 12, padding: 20, width: 380, maxWidth: '90vw' }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: '#2A2722', marginBottom: 4 }}>Mark booking overdue</div>
-                <div style={{ fontSize: 12.5, color: '#6F6A60', marginBottom: 14 }}>
-                  Pick the date shifts delivered first exceeded what the client has paid for.
-                </div>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>Overdue as of</label>
-                <input
-                  type="date"
-                  value={overdueModalDate}
-                  onChange={(e) => setOverdueModalDate(e.target.value)}
-                  style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 10px', fontSize: 13, fontFamily: 'inherit', marginBottom: 12 }}
-                />
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>Reason (optional)</label>
-                <textarea
-                  value={overdueModalReason}
-                  onChange={(e) => setOverdueModalReason(e.target.value)}
-                  rows={3}
-                  style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 10px', fontSize: 13, fontFamily: 'inherit', resize: 'vertical' }}
-                />
-                {overdueModalError && <div style={{ fontSize: 12.5, color: '#C2483C', marginTop: 10 }}>{overdueModalError}</div>}
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
-                  <button onClick={closeOverdueModal} disabled={overdueModalSubmitting} style={{ border: '1px solid #e5e7eb', background: '#fff', color: '#374151', borderRadius: 8, padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
-                  <button onClick={confirmMarkOverdue} disabled={overdueModalSubmitting} style={{ border: 'none', background: '#C2483C', color: '#fff', borderRadius: 8, padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: overdueModalSubmitting ? 'default' : 'pointer', fontFamily: 'inherit', opacity: overdueModalSubmitting ? 0.6 : 1 }}>
-                    {overdueModalSubmitting ? 'Marking…' : 'Mark overdue'}
+                  <button
+                    onClick={toggleInvoicingMode}
+                    disabled={invoicingModeSaving}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 14px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#374151', cursor: invoicingModeSaving ? 'wait' : 'pointer', opacity: invoicingModeSaving ? 0.6 : 1, flexShrink: 0 }}
+                  >
+                    {invoicingModeSaving ? 'Saving…' : invoicingMode === 'AUTO' ? 'Switch to Manual' : 'Switch to Auto'}
                   </button>
                 </div>
-              </div>
-            </div>
-          )}
+              )}
 
-          {/* ══════════════════════════════════════════════════════
-              CARE TIMELINE
-          ══════════════════════════════════════════════════════ */}
-          {bookingSummary.start_date && (
-            <div style={{ marginBottom: 18 }}>
-              <CareTimeline
-                startDate={bookingSummary.start_date}
-                plannedDays={plannedDays}
-                dailyRate={dailyRate}
-                shiftRate={shiftRate}
-                totalPaid={totalPaid}
-                staffAssignments={staffHistory}
-                serviceModel={bookingSummary.service_model}
-                shiftSlots={shiftSlots}
-                scheduledActions={bookingScheduledActions}
-                terminationRequests={terminationReqs}
-                shiftPatternScheduled={shiftPattern?.scheduled || null}
-                bookingStatus={bookingSummary.status}
-                completionDate={bookingSummary.actual_end_time}
-                scheduledEndDate={bookingSummary.scheduled_end_time}
-                simDate={simDate}
-                onSimDateChange={setSimDate}
-                onDayClick={dayClickEnabled ? openDayModal : undefined}
-                attendanceRecords={attendanceRecords}
-                dailyInvoiceRecords={dailyInvoiceRecords}
-                draftDates={draftDates}
-                reschedules={shiftReschedules}
-                manualSalaryDay={manualSalaryDay}
-                manualInvoiceDay={manualInvoiceDay}
-                pauses={bookingPauses}
-                revokeEnabled={revokeEnabled}
-                onRevokeDays={revokeDays}
-                hospitalizationPeriods={hospitalizationPeriods}
-              />
-            </div>
-          )}
+              {/* ── SCHEDULED COMPLETION / TERMINATION NOTICE ── */}
+              {scheduledFinalization && (
+                <div
+                  style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 18,
+                    padding: '14px 18px', borderRadius: 10,
+                    background: scheduledTermination ? '#FDF2F2' : '#F0F9F4',
+                    border: `1px solid ${scheduledTermination ? '#F5C9C5' : '#BCE0CC'}`,
+                  }}
+                >
+                  <AlertTriangle style={{ width: 18, height: 18, color: scheduledTermination ? '#BC4338' : '#1F8B4C', flexShrink: 0, marginTop: 1 }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>
+                      {scheduledTermination ? 'Termination scheduled' : 'Completion scheduled'} for {formatDate(scheduledFinalization.effective_date)}
+                    </div>
+                    <div style={{ fontSize: 12.5, color: '#6F6A60', marginTop: 2 }}>
+                      This booking stays active and billed as normal until then
+                      {scheduledFinalization.reason ? ` — ${scheduledFinalization.reason}` : ''}.
+                    </div>
+                  </div>
+                </div>
+              )}
 
-          {/* ══════════════════════════════════════════════════════
-              TABS
-          ══════════════════════════════════════════════════════ */}
-          <div style={{ display: 'flex', gap: 3, marginBottom: 16, background: '#f1f5f9', padding: 4, borderRadius: 10, width: 'fit-content', maxWidth: '100%', flexWrap: 'wrap' }}>
-            {tabs.map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveSection(tab.id)}
-                style={{
-                  border: 'none', borderRadius: 7, padding: '8px 14px', fontFamily: 'inherit',
-                  fontSize: 12.5, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
-                  background: activeSection === tab.id ? '#fff' : 'transparent',
-                  color: activeSection === tab.id ? '#111827' : '#64748b',
-                  boxShadow: activeSection === tab.id ? '0 1px 3px rgba(0,0,0,.08)' : 'none',
-                }}
-              >{tab.label}</button>
-            ))}
-          </div>
+              {/* ── SHIFT BANK — SHIFT_BASED only: shifts paid vs delivered ── */}
+              {isShiftBased && shiftBank && (
+                <div style={{ marginBottom: 18, padding: '14px 18px', borderRadius: 10, background: shiftBank.remaining < 0 ? '#FDF2F2' : '#FBF9F4', border: `1px solid ${shiftBank.remaining < 0 ? '#F5C9C5' : '#EFEAE0'}` }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>Shift bank</div>
+                    {shiftRate > 0 && <div style={{ fontSize: 12, color: '#6F6A60' }}>Rs {shiftRate.toLocaleString('en-US')} / shift</div>}
+                  </div>
+                  <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginTop: 8 }}>
+                    {[
+                      { label: 'Paid for', value: shiftBank.paid, color: '#2A2722' },
+                      { label: 'Delivered', value: shiftBank.used, color: '#2F8A5B' },
+                      { label: 'Waived', value: shiftBank.waived, color: '#9A9488' },
+                      { label: 'Remaining', value: shiftBank.remaining, color: shiftBank.remaining < 0 ? '#C2483C' : '#2A2722' },
+                    ].map(({ label, value, color }) => (
+                      <div key={label}>
+                        <div style={{ fontSize: 18, fontWeight: 800, color }}>{value}</div>
+                        <div style={{ fontSize: 11, color: '#8A8478', fontWeight: 600 }}>{label}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {shiftBank.remaining < 0 && (
+                    <div style={{ fontSize: 12, color: '#C2483C', fontWeight: 600, marginTop: 8 }}>
+                      {Math.abs(shiftBank.remaining)} shift{Math.abs(shiftBank.remaining) !== 1 ? 's' : ''} delivered beyond what's been paid for — record a payment or waive outstanding shifts.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── Manual overdue modal — SHIFT_BASED only ── */}
+              {showOverdueModal && (
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60 }}>
+                  <div style={{ background: '#fff', borderRadius: 12, padding: 20, width: 380, maxWidth: '90vw' }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: '#2A2722', marginBottom: 4 }}>Mark booking overdue</div>
+                    <div style={{ fontSize: 12.5, color: '#6F6A60', marginBottom: 14 }}>
+                      Pick the date shifts delivered first exceeded what the client has paid for.
+                    </div>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>Overdue as of</label>
+                    <input
+                      type="date"
+                      value={overdueModalDate}
+                      onChange={(e) => setOverdueModalDate(e.target.value)}
+                      style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 10px', fontSize: 13, fontFamily: 'inherit', marginBottom: 12 }}
+                    />
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 4 }}>Reason (optional)</label>
+                    <textarea
+                      value={overdueModalReason}
+                      onChange={(e) => setOverdueModalReason(e.target.value)}
+                      rows={3}
+                      style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 10px', fontSize: 13, fontFamily: 'inherit', resize: 'vertical' }}
+                    />
+                    {overdueModalError && <div style={{ fontSize: 12.5, color: '#C2483C', marginTop: 10 }}>{overdueModalError}</div>}
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+                      <button onClick={closeOverdueModal} disabled={overdueModalSubmitting} style={{ border: '1px solid #e5e7eb', background: '#fff', color: '#374151', borderRadius: 8, padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
+                      <button onClick={confirmMarkOverdue} disabled={overdueModalSubmitting} style={{ border: 'none', background: '#C2483C', color: '#fff', borderRadius: 8, padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: overdueModalSubmitting ? 'default' : 'pointer', fontFamily: 'inherit', opacity: overdueModalSubmitting ? 0.6 : 1 }}>
+                        {overdueModalSubmitting ? 'Marking…' : 'Mark overdue'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ── CARE TIMELINE ── */}
+              {bookingSummary.start_date && (
+                <div style={{ marginBottom: 18 }}>
+                  <CareTimeline
+                    startDate={bookingSummary.start_date}
+                    plannedDays={plannedDays}
+                    dailyRate={dailyRate}
+                    shiftRate={shiftRate}
+                    totalPaid={totalPaid}
+                    staffAssignments={staffHistory}
+                    serviceModel={bookingSummary.service_model}
+                    shiftSlots={shiftSlots}
+                    scheduledActions={bookingScheduledActions}
+                    terminationRequests={terminationReqs}
+                    shiftPatternScheduled={shiftPattern?.scheduled || null}
+                    bookingStatus={bookingSummary.status}
+                    completionDate={bookingSummary.actual_end_time}
+                    scheduledEndDate={bookingSummary.scheduled_end_time}
+                    simDate={simDate}
+                    onSimDateChange={setSimDate}
+                    onDayClick={dayClickEnabled ? openDayModal : undefined}
+                    attendanceRecords={attendanceRecords}
+                    dailyInvoiceRecords={dailyInvoiceRecords}
+                    draftDates={draftDates}
+                    reschedules={shiftReschedules}
+                    manualSalaryDay={manualSalaryDay}
+                    manualInvoiceDay={manualInvoiceDay}
+                    pauses={bookingPauses}
+                    revokeEnabled={revokeEnabled}
+                    onRevokeDays={revokeDays}
+                    hospitalizationPeriods={hospitalizationPeriods}
+                  />
+                </div>
+              )}
+            </>
+          )}
 
           {/* ══════════════════════════════════════════════════════
               TAB: OVERVIEW
@@ -3176,6 +3232,7 @@ const BookingDetailPageV2 = () => {
             </Card>
           )}
 
+        </div>
         </div>
       </div>
 
