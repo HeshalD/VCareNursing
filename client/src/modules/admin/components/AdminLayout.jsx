@@ -22,6 +22,11 @@ const ROLE_LABELS = {
 // `permKey` gates both sidebar visibility and direct-navigation access (see EXTRA_ROUTE_PERMISSIONS
 // below) — access is decided purely by staff_permissions via the Permissions page; SUPER_ADMIN
 // bypasses every check automatically (see hasPermission in AdminAuthContext).
+// Staff roster/assignment sub-pages live under /admin/bookings/:id/... but are
+// conceptually part of fulfilling a service request, not the bookings list —
+// so they highlight "Service Requests" in the sidebar instead of "Bookings".
+const STAFF_ROSTER_OR_ASSIGNMENT_PATH = /^\/admin\/bookings\/[^/]+\/(staff-roster|staff-assignment)$/;
+
 const NAV_SECTIONS = [
   {
     section: null,
@@ -53,12 +58,23 @@ const NAV_SECTIONS = [
         icon: SendHorizontal, label: 'Service Requests', path: '/admin/service-requests',
         match: (p) => p === '/admin/service-requests' || p.startsWith('/admin/service-requests/')
           || p === '/admin/proxy-service-requests' || p.startsWith('/admin/quote-builder') || p.startsWith('/admin/modular-quote-builder'),
+        // Sidebar highlighting only — staff-roster/staff-assignment pages still require
+        // VIEW_BOOKINGS (via Bookings' `match` below), they just read as "Service
+        // Requests" work to the admin, so that's what lights up in the sidebar.
+        highlightMatch: (p) => p === '/admin/service-requests' || p.startsWith('/admin/service-requests/')
+          || p === '/admin/proxy-service-requests' || p.startsWith('/admin/quote-builder') || p.startsWith('/admin/modular-quote-builder')
+          || STAFF_ROSTER_OR_ASSIGNMENT_PATH.test(p),
         permKey: 'VIEW_SERVICE_REQUESTS',
       },
       { icon: AlertTriangle, label: 'Termination Requests', path: '/admin/termination-requests', permKey: 'VIEW_TERMINATION_REQUESTS' },
       { icon: CalendarOff, label: 'Leave Requests', path: '/admin/leave-requests', permKey: 'VIEW_STAFF_LEAVES' },
       { icon: CalendarClock, label: 'Upcoming Events', path: '/admin/upcoming-events', permKey: 'VIEW_UPCOMING_EVENTS' },
-      { icon: CalendarDays, label: 'Bookings', path: '/admin/bookings', match: (p) => p === '/admin/bookings' || p.startsWith('/admin/bookings/'), permKey: 'VIEW_BOOKINGS' },
+      {
+        icon: CalendarDays, label: 'Bookings', path: '/admin/bookings',
+        match: (p) => p === '/admin/bookings' || p.startsWith('/admin/bookings/'),
+        highlightMatch: (p) => (p === '/admin/bookings' || p.startsWith('/admin/bookings/')) && !STAFF_ROSTER_OR_ASSIGNMENT_PATH.test(p),
+        permKey: 'VIEW_BOOKINGS',
+      },
     ],
   },
   {
@@ -179,7 +195,10 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
     };
   }, [adminToken]);
 
-  const itemActive = (item) => (item.match ? item.match(location.pathname) : location.pathname === item.path);
+  const itemActive = (item) => {
+    const test = item.highlightMatch || item.match;
+    return test ? test(location.pathname) : location.pathname === item.path;
+  };
   const canAccess = (item) => hasPermission(item.permKey);
 
   // Hide sidebar items/sections the current user has no permission for; SUPER_ADMIN sees everything.

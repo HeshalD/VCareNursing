@@ -15,6 +15,7 @@ import PaymentAllocationModal from '../service_quotes/PaymentAllocationModal';
 import ReceiptSendPopup from '../service_quotes/ReceiptSendPopup';
 import InvoiceSendPopup from '../service_quotes/InvoiceSendPopup';
 import ServiceRequestSwitcherSidebar from './ServiceRequestSwitcherSidebar';
+import RequestPipelineStepper from '../components/RequestPipelineStepper';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -36,13 +37,25 @@ const SERVICE_MODEL_OPTIONS = ['LIVE_IN', 'SHIFT_BASED', 'VISITING'];
 const GENDER_OPTIONS        = ['ANY', 'MALE', 'FEMALE'];
 
 const REQUEST_STATUS_CONFIG = {
-  NEW_LEAD:  { dot: 'bg-purple-400', text: 'text-purple-700', bg: 'bg-purple-50', border: 'border-purple-200', label: 'New Lead' },
-  PENDING:   { dot: 'bg-amber-400',  text: 'text-amber-700',  bg: 'bg-amber-50',  border: 'border-amber-200',  label: 'Pending' },
-  CONTACTED: { dot: 'bg-blue-400',   text: 'text-blue-700',   bg: 'bg-blue-50',   border: 'border-blue-200',   label: 'Contacted' },
-  CONFIRMED: { dot: 'bg-emerald-500',text: 'text-emerald-700',bg: 'bg-emerald-50',border: 'border-emerald-200',label: 'Confirmed' },
-  ASSIGNED:  { dot: 'bg-indigo-400', text: 'text-indigo-700', bg: 'bg-indigo-50', border: 'border-indigo-200', label: 'Assigned' },
-  COMPLETED: { dot: 'bg-slate-400',  text: 'text-slate-600',  bg: 'bg-slate-100', border: 'border-slate-200',  label: 'Completed' },
-  CANCELLED: { dot: 'bg-red-400',    text: 'text-red-700',    bg: 'bg-red-50',    border: 'border-red-200',    label: 'Cancelled' },
+  NEW_LEAD:        { dot: 'bg-purple-400',  text: 'text-purple-700',  bg: 'bg-purple-50',  border: 'border-purple-200',  label: 'New Lead',          icon: FileText },
+  PENDING:         { dot: 'bg-amber-400',   text: 'text-amber-700',   bg: 'bg-amber-50',   border: 'border-amber-200',   label: 'Pending',           icon: Loader2 },
+  CONTACTED:       { dot: 'bg-blue-400',    text: 'text-blue-700',    bg: 'bg-blue-50',    border: 'border-blue-200',    label: 'Client Contacted',  icon: Phone },
+  CONFIRMED:       { dot: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-emerald-50', border: 'border-emerald-200', label: 'Confirmed by Client', icon: CheckCircle2 },
+  BOOKING_CREATED: { dot: 'bg-indigo-500',  text: 'text-indigo-700',  bg: 'bg-indigo-50',  border: 'border-indigo-200',  label: 'Booking Created',   icon: BadgeCheck },
+  ASSIGNED:        { dot: 'bg-indigo-400',  text: 'text-indigo-700',  bg: 'bg-indigo-50',  border: 'border-indigo-200',  label: 'Staff Assigned',    icon: UserCheck },
+  COMPLETED:       { dot: 'bg-slate-400',   text: 'text-slate-600',   bg: 'bg-slate-100',  border: 'border-slate-200',   label: 'Completed',         icon: Check },
+  CANCELLED:       { dot: 'bg-red-400',     text: 'text-red-700',     bg: 'bg-red-50',     border: 'border-red-200',     label: 'Cancelled',         icon: X },
+};
+
+// Explains, in the status card, what each stage means / what happens next.
+const REQUEST_STATUS_DESCRIPTIONS = {
+  NEW_LEAD:        'Just came in — no contact or quotation activity yet.',
+  CONTACTED:       'Admin has reached out to the client.',
+  CONFIRMED:       'Client has confirmed their interest and requirements.',
+  BOOKING_CREATED: 'A booking has been created for this request.',
+  ASSIGNED:        'Staff have been assigned to fulfil the booking.',
+  COMPLETED:       'This request has been fully completed.',
+  CANCELLED:       'This request was cancelled.',
 };
 
 const REQUEST_STATUS_OPTIONS = ['NEW_LEAD', 'PENDING', 'CONTACTED', 'CONFIRMED', 'ASSIGNED', 'COMPLETED', 'CANCELLED'];
@@ -65,14 +78,6 @@ const TABS = [
   { key: 'details',    label: 'Details' },
   { key: 'quotations', label: 'Quotations' },
   { key: 'payment',    label: 'Payment' },
-];
-
-const PIPELINE_STEPS = [
-  { key: 'new_lead',        label: 'New Lead',         icon: FileText,        description: 'Request was received and logged as a new lead.' },
-  { key: 'quotation_sent',  label: 'Quotation Sent',   icon: Send,            description: 'A quotation was sent to the client for review.' },
-  { key: 'payment_made',    label: 'Payment Made',     icon: CircleDollarSign,description: 'At least one payment has been recorded against a quotation.' },
-  { key: 'booking_created', label: 'Booking Created',  icon: BadgeCheck,      description: 'A booking has been created from an accepted quotation.' },
-  { key: 'staff_assigned',  label: 'Staff Assigned',   icon: UserCheck,       description: 'Staff have been assigned to fulfil this booking.' },
 ];
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -186,57 +191,62 @@ const InfoRow = ({ label, value }) => (
   </div>
 );
 
-// Horizontal 5-phase pipeline tracker shown at the top of the page. `completedCount`
-// is how many of PIPELINE_STEPS are done (in order) — steps beyond it are upcoming,
-// the one right after the last completed step is treated as "current" (in progress).
-const PipelineStepper = ({ completedCount }) => (
-  <div className="bg-white rounded-xl border border-slate-200 px-5 py-5 mb-4">
-    <div className="flex items-start">
-      {PIPELINE_STEPS.map((step, i) => {
-        const StepIcon = step.icon;
-        const done = i < completedCount;
-        const isCurrent = i === completedCount;
-        const isLast = i === PIPELINE_STEPS.length - 1;
-        return (
-          <div key={step.key} className="relative flex-1">
-            {!isLast && (
-              <div className={`absolute top-[18px] left-1/2 h-0.5 w-full ${done ? 'bg-emerald-500' : 'bg-slate-200'}`} />
-            )}
-            <div className="group relative flex flex-col items-center">
-              <div
-                className={`relative flex h-9 w-9 items-center justify-center rounded-full border-2 transition-colors ${
-                  done
-                    ? 'border-emerald-500 bg-emerald-500 text-white'
-                    : isCurrent
-                    ? 'border-blue-500 bg-blue-50 text-blue-600'
-                    : 'border-slate-200 bg-white text-slate-300'
-                }`}
-              >
-                {done ? <Check className="h-4 w-4" /> : <StepIcon className="h-4 w-4" />}
-              </div>
-              <p className={`mt-1.5 whitespace-nowrap text-[11px] font-semibold ${
-                done ? 'text-emerald-700' : isCurrent ? 'text-blue-700' : 'text-slate-400'
-              }`}>
-                Phase 0{i + 1}
-              </p>
-              <p className={`whitespace-nowrap text-[11px] ${
-                done || isCurrent ? 'text-slate-600' : 'text-slate-400'
-              }`}>
-                {step.label}
-              </p>
+// Replaces the old inline status pill — a dedicated card showing the current
+// stage, why it's in that stage (for PENDING), and the Contacted/Confirmed
+// quick-action buttons when relevant to this stage.
+const StatusCard = ({ status, pendingReason, bookingCreatedReason, onSetStatus, actionLoading }) => {
+  const cfg = REQUEST_STATUS_CONFIG[status] || REQUEST_STATUS_CONFIG.PENDING;
+  const StatusIcon = cfg.icon || Loader2;
+  const description =
+    status === 'PENDING' && pendingReason ? pendingReason
+    : status === 'BOOKING_CREATED' && bookingCreatedReason ? bookingCreatedReason
+    : REQUEST_STATUS_DESCRIPTIONS[status] || '';
 
-              {/* Hover tooltip with description */}
-              <div className="pointer-events-none absolute top-full z-10 mt-1.5 w-48 -translate-x-1/2 left-1/2 rounded-lg bg-slate-900 px-3 py-2 text-center text-[11px] text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100">
-                {step.description}
-                <div className="absolute -top-1 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 bg-slate-900" />
-              </div>
-            </div>
-          </div>
-        );
-      })}
+  const showContactButton = status === 'NEW_LEAD' || status === 'PENDING';
+  const showConfirmButton = status === 'CONTACTED';
+
+  return (
+    <div className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3 ${cfg.bg} ${cfg.border}`}>
+      <div className="flex items-center gap-3 min-w-0">
+        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white border ${cfg.border}`}>
+          <StatusIcon className={`h-4 w-4 ${cfg.text}`} />
+        </div>
+        <div className="min-w-0">
+          <p className={`text-sm font-semibold ${cfg.text}`}>
+            {cfg.label}{description ? ` — ${description}` : ''}
+          </p>
+        </div>
+      </div>
+
+      {(showContactButton || showConfirmButton) && (
+        <div className="flex shrink-0 items-center gap-2">
+          {showContactButton && (
+            <button
+              type="button"
+              onClick={() => onSetStatus('CONTACTED')}
+              disabled={!!actionLoading}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {actionLoading === 'CONTACTED' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Phone className="h-3.5 w-3.5" />}
+              Client Contacted
+            </button>
+          )}
+          {showConfirmButton && (
+            <button
+              type="button"
+              onClick={() => onSetStatus('CONFIRMED')}
+              disabled={!!actionLoading}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {actionLoading === 'CONFIRMED' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+              Confirmed by Client
+            </button>
+          )}
+        </div>
+      )}
     </div>
-  </div>
-);
+  );
+};
 
 const inputCls  = 'w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 bg-white placeholder:text-slate-400';
 const labelCls  = 'block text-xs font-medium text-slate-500 mb-1.5';
@@ -270,6 +280,9 @@ const ServiceRequestSummaryPage = () => {
   const [sendingInvoiceQuoteId, setSendingInvoiceQuoteId] = useState('');
   const [invoiceSentQuoteId, setInvoiceSentQuoteId] = useState('');
   const [mobileRequestSidebarOpen, setMobileRequestSidebarOpen] = useState(false);
+  const [sentCandidates, setSentCandidates]         = useState([]);
+  const [statusActionLoading, setStatusActionLoading] = useState('');
+  const [bookingStaffAssignments, setBookingStaffAssignments] = useState([]);
 
   const selectedQuote = useMemo(
     () => quotes.find(q => q.quote_id === selectedQuoteId) || quotes[0] || null,
@@ -277,30 +290,72 @@ const ServiceRequestSummaryPage = () => {
   );
   const selectedQuoteStatus = selectedQuote ? getQuoteStatus(selectedQuote) : 'UNPAID';
 
+  // A booking exists once any quote has a booking_id, or the request's own
+  // status has flipped to BOOKING_CREATED (see bookingController.js — set
+  // the moment convertToBooking runs) — checked both ways since the status
+  // field can lag behind (e.g. right after handleProceed navigates away).
+  const isBookingCreated = useMemo(
+    () => quotes.some(q => !!q.booking_id) || request?.status === 'BOOKING_CREATED',
+    [request, quotes]
+  );
+
+  // A staff member has been assigned to the booking the moment a non-cancelled
+  // booking_staff_assignments row exists — even if its service_start_date is
+  // still in the future (SCHEDULED), since bookings.status/assigned_staff_id
+  // don't reflect that until the assignment actually activates.
+  const hasAssignedStaff = useMemo(
+    () => bookingStaffAssignments.some(a => a.status !== 'CANCELLED'),
+    [bookingStaffAssignments]
+  );
+
   // Determines how many of PIPELINE_STEPS are complete, in order — used to
   // render the phase tracker at the top of the page.
   const pipelineCompletedCount = useMemo(() => {
     if (!request) return 0;
     const quotationSent = quotes.some(q => q.status && q.status !== 'DRAFT');
     const paymentMade = quotes.some(q => (parseFloat(q.total_paid) || 0) > 0);
-    const bookingCreated = quotes.some(q => !!q.booking_id) || request.status === 'BOOKING_CREATED';
-    const staffAssigned = request.status === 'ASSIGNED' || request.status === 'COMPLETED';
+    const staffAssigned = request.status === 'ASSIGNED' || request.status === 'COMPLETED' || hasAssignedStaff;
     let count = 1; // New Lead is always true once a request exists
     if (quotationSent) count = 2;
     if (paymentMade) count = 3;
-    if (bookingCreated) count = 4;
+    if (isBookingCreated) count = 4;
     if (staffAssigned) count = 5;
     return count;
-  }, [request, quotes]);
+  }, [request, quotes, isBookingCreated, hasAssignedStaff]);
+
+  // Sub-reason shown when status is PENDING — mirrors pipelineCompletedCount's
+  // logic but folds in whether staff candidates have been sent to the client
+  // yet (service_request_sent_candidates), since PENDING alone doesn't say
+  // why the request is stuck.
+  const pendingReason = useMemo(() => {
+    if (!request || request.status !== 'PENDING') return null;
+    if (quotes.length === 0) return 'Quotation not created';
+    const stillOwed = quotes.some(q => (parseFloat(q.remaining_amount) || 0) > 0.01);
+    if (stillOwed) return 'Payment pending';
+    if (sentCandidates.length === 0) return 'Assignment pending';
+    return null;
+  }, [request, quotes, sentCandidates]);
+
+  // Sub-reason shown once a booking exists — tells the admin whether staff
+  // candidates still need to be sent to the client, whether they've been sent
+  // and a final assignment is still pending, or whether staff are already
+  // assigned (even if their start date is still in the future).
+  const bookingCreatedReason = useMemo(() => {
+    if (!request || !isBookingCreated) return null;
+    if (hasAssignedStaff) return 'Staff assigned';
+    return sentCandidates.length === 0 ? 'Staff candidates not sent' : 'Staff assignment pending';
+  }, [request, isBookingCreated, sentCandidates, hasAssignedStaff]);
 
   const fetchData = async () => {
     try {
       setLoading(true);
       setError('');
-      const [reqRes, quoteRes] = await Promise.all([
+      const [reqRes, quoteRes, candidatesRes] = await Promise.all([
         apiClient.getServiceRequestById(requestId),
         apiClient.getServiceRequestQuoteList(requestId),
+        apiClient.getSentCandidates(requestId).catch(() => ({ data: [] })),
       ]);
+      setSentCandidates(candidatesRes?.data || []);
       setRequest(reqRes.data || null);
       const baseQuotes = (quoteRes.data || []).map(q => ({
         ...q,
@@ -365,6 +420,23 @@ const ServiceRequestSummaryPage = () => {
         })
       );
       setQuotes(withLineItems);
+
+      // Staff can be SCHEDULED against a booking whose service_start_date is in
+      // the future — bookings.status (and bookings.assigned_staff_id) don't
+      // reflect that until the assignment actually activates, so check
+      // booking_staff_assignments directly rather than trusting booking status.
+      const bookingId = withLineItems.find(q => q.booking_id)?.booking_id;
+      if (bookingId) {
+        try {
+          const assignRes = await apiClient.getBookingAssignments(bookingId);
+          setBookingStaffAssignments(assignRes?.data?.assignments || assignRes?.data || []);
+        } catch {
+          setBookingStaffAssignments([]);
+        }
+      } else {
+        setBookingStaffAssignments([]);
+      }
+
       return withLineItems;
     } catch (err) {
       setError(err.message || 'Failed to load service request');
@@ -420,6 +492,24 @@ const ServiceRequestSummaryPage = () => {
   // Looks up the payment_receipts row (if any) sent for a given quote payment.
   const receiptForPayment = (paymentId) =>
     clientReceipts.find(r => r.source_type === 'QUOTE_PAYMENT' && r.source_id === paymentId);
+
+  // Drives the "Client Contacted" / "Confirmed by Client" quick-action
+  // buttons on the status card — hits the dedicated status endpoint rather
+  // than the full updateServiceRequest form submission.
+  const handleSetStatus = async (newStatus) => {
+    setStatusActionLoading(newStatus);
+    setError('');
+    try {
+      const res = await apiClient.updateServiceRequestStatus(requestId, newStatus);
+      // RETURNING * doesn't include the client_code join getServiceRequestById
+      // adds, so merge onto the existing request rather than replacing it.
+      setRequest(prev => ({ ...prev, ...res.data }));
+    } catch (err) {
+      setError(err.message || 'Failed to update status');
+    } finally {
+      setStatusActionLoading('');
+    }
+  };
 
   const openEdit = () => {
     setEditForm({
@@ -647,9 +737,6 @@ const ServiceRequestSummaryPage = () => {
     );
   }
 
-  const reqStatus = editMode ? editForm.status : request.status;
-  const reqStatusCfg = REQUEST_STATUS_CONFIG[reqStatus] || REQUEST_STATUS_CONFIG.PENDING;
-
   // ── main render ───────────────────────────────────────────────────────────
 
   return (
@@ -706,7 +793,7 @@ const ServiceRequestSummaryPage = () => {
 
         <div className="min-w-0 flex-1 space-y-4">
 
-        <PipelineStepper completedCount={pipelineCompletedCount} />
+        <RequestPipelineStepper completedCount={pipelineCompletedCount} />
 
         {/* ── HERO CARD ─────────────────────────────────────────────────────── */}
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -720,10 +807,6 @@ const ServiceRequestSummaryPage = () => {
                 <h2 className="text-lg font-bold text-slate-900 truncate">
                   {editMode ? editForm.payer_name || '—' : request.payer_name}
                 </h2>
-                <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${reqStatusCfg.bg} ${reqStatusCfg.text} ${reqStatusCfg.border}`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${reqStatusCfg.dot}`} />
-                  {reqStatusCfg.label}
-                </span>
               </div>
               <p className="text-xs text-slate-400">
                 {request.service_request_code || `Request #${requestId}`} &middot; Created {fmt(request.created_at)}
@@ -764,6 +847,18 @@ const ServiceRequestSummaryPage = () => {
             <div className="mx-6 mb-3 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               <AlertCircle className="h-4 w-4 flex-shrink-0" />
               {saveError}
+            </div>
+          )}
+
+          {!editMode && (
+            <div className="px-6 pb-4">
+              <StatusCard
+                status={request.status}
+                pendingReason={pendingReason}
+                bookingCreatedReason={bookingCreatedReason}
+                onSetStatus={handleSetStatus}
+                actionLoading={statusActionLoading}
+              />
             </div>
           )}
 
@@ -1353,51 +1448,60 @@ const ServiceRequestSummaryPage = () => {
                         )}
                       </div>
 
-                      {/* Proceed to Booking — always available */}
-                      <div className="px-5 pb-5">
-                        <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-medium text-slate-800">Proceed to Booking</p>
-                            <p className="text-xs text-slate-400 mt-0.5">Create a booking for this service request — payment is not required to proceed.</p>
+                      {/* Proceed to Booking — hidden once staff are already assigned, since
+                          there's nothing left to proceed to at that point. */}
+                      {!(isBookingCreated && hasAssignedStaff) && (
+                        <div className="px-5 pb-5">
+                          <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-medium text-slate-800">{isBookingCreated ? 'Proceed to Assignment' : 'Proceed to Booking'}</p>
+                              <p className="text-xs text-slate-400 mt-0.5">
+                                {isBookingCreated
+                                  ? 'A booking already exists for this request — continue to staff selection.'
+                                  : 'Create a booking for this service request — payment is not required to proceed.'}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleProceed()}
+                              disabled={proceeding}
+                              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50 transition-colors"
+                            >
+                              {proceeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRight className="h-3.5 w-3.5" />}
+                              {proceeding ? 'Creating booking…' : isBookingCreated ? 'Proceed to Assignment' : 'Create A Booking'}
+                            </button>
                           </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* ── Make Payment — hidden once staff are already assigned ── */}
+                    {!(isBookingCreated && hasAssignedStaff) && (
+                      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                        <div className="px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Make Payment</p>
+                          <p className="text-xs text-slate-400 mt-0.5">Record a payment against {selectedQuote.estimate_number}</p>
+                        </div>
+
+                        {paymentSuccess && (
+                          <div className="mx-5 mt-4 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                            <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+                            {paymentSuccess}
+                          </div>
+                        )}
+
+                        <div className="px-5 pb-5 pt-4">
                           <button
                             type="button"
-                            onClick={() => handleProceed()}
-                            disabled={proceeding}
-                            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50 transition-colors"
+                            onClick={() => { setPaymentSuccess(''); setShowPaymentModal(true); }}
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
                           >
-                            {proceeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRight className="h-3.5 w-3.5" />}
-                            {proceeding ? 'Creating booking…' : 'Create A Booking'}
+                            <CircleDollarSign className="h-4 w-4" />
+                            Record Payment
                           </button>
                         </div>
                       </div>
-                    </div>
-
-                    {/* ── Make Payment ── */}
-                    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                      <div className="px-5 py-3.5 border-b border-slate-100 bg-slate-50">
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Make Payment</p>
-                        <p className="text-xs text-slate-400 mt-0.5">Record a payment against {selectedQuote.estimate_number}</p>
-                      </div>
-
-                      {paymentSuccess && (
-                        <div className="mx-5 mt-4 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                          <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
-                          {paymentSuccess}
-                        </div>
-                      )}
-
-                      <div className="px-5 pb-5 pt-4">
-                        <button
-                          type="button"
-                          onClick={() => { setPaymentSuccess(''); setShowPaymentModal(true); }}
-                          className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
-                        >
-                          <CircleDollarSign className="h-4 w-4" />
-                          Record Payment
-                        </button>
-                      </div>
-                    </div>
+                    )}
 
                     {/* ── Payment history ── */}
                     <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -1518,20 +1622,28 @@ const ServiceRequestSummaryPage = () => {
                   <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-0.5">Actions</p>
                   <p className="text-xs text-slate-400">{selectedQuote?.estimate_number}</p>
                 </div>
-                <button
-                  onClick={() => handleProceed()}
-                  disabled={proceeding}
-                  className="inline-flex items-center gap-1.5 w-full justify-center rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50 transition-colors"
-                >
-                  {proceeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRight className="h-3.5 w-3.5" />}
-                  {proceeding ? 'Creating booking…' : 'Create A Booking'}
-                </button>
-                <button
-                  onClick={() => setActiveTab('payment')}
-                  className="inline-flex items-center gap-1.5 w-full justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-                >
-                  <CircleDollarSign className="h-3.5 w-3.5" /> Record Payment
-                </button>
+                {isBookingCreated && hasAssignedStaff ? (
+                  <p className="flex items-center gap-1.5 text-xs font-medium text-emerald-700">
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Booking created and staff assigned
+                  </p>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => handleProceed()}
+                      disabled={proceeding}
+                      className="inline-flex items-center gap-1.5 w-full justify-center rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50 transition-colors"
+                    >
+                      {proceeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRight className="h-3.5 w-3.5" />}
+                      {proceeding ? 'Creating booking…' : isBookingCreated ? 'Proceed to Assignment' : 'Create A Booking'}
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('payment')}
+                      className="inline-flex items-center gap-1.5 w-full justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                    >
+                      <CircleDollarSign className="h-3.5 w-3.5" /> Record Payment
+                    </button>
+                  </>
+                )}
               </div>
             )}
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -18,7 +18,7 @@ import PhoneInput from '../../components/common/PhoneInput';
 const SERVICE_MODELS = [
   {
     value: 'VISITING',
-    label: 'Visiting',
+    label: 'Visit',
     icon: Calendar,
     description: 'Short scheduled visits for feeding, play, or nap-time check-ins.'
   },
@@ -59,6 +59,7 @@ const BabyCareBookingPage = () => {
   const [patientsLoading, setPatientsLoading] = useState(false);
   const [staffSearch, setStaffSearch] = useState('');
   const [selectedPatientId, setSelectedPatientId] = useState(null);
+  const [ownClientProfile, setOwnClientProfile] = useState(null);
   const isPatientLocked = !!selectedPatientId;
 
   const [formData, setFormData] = useState({
@@ -155,15 +156,18 @@ const BabyCareBookingPage = () => {
         console.log('Client profile response:', clientProfileResponse);
         
         if (clientProfileResponse.data?.client_profile_id) {
+          setOwnClientProfile(clientProfileResponse.data);
           const response = await apiClient.getPatientsByClient(clientProfileResponse.data.client_profile_id);
           console.log('Patients response:', response);
           setPatients(response.data || []);
         } else {
           console.log('No client profile found for user');
+          setOwnClientProfile(null);
           setPatients([]);
         }
       } catch (error) {
         console.error('Error fetching patients:', error);
+        setOwnClientProfile(null);
         setPatients([]);
       } finally {
         setPatientsLoading(false);
@@ -172,6 +176,31 @@ const BabyCareBookingPage = () => {
 
     fetchPatients();
   }, [isAuthenticated, user?.id]);
+
+  // When booking for "Self" as a registered client, lock the care profile
+  // fields to the client's own registered details.
+  const isSelfLocked = isAuthenticated && !!ownClientProfile && !selectedPatientId && formData.relationship === 'Self';
+
+  useEffect(() => {
+    if (!isSelfLocked) return;
+    setFormData(prev => ({
+      ...prev,
+      patient_name: ownClientProfile.full_name || prev.patient_name,
+      patient_gender: ownClientProfile.gender || prev.patient_gender,
+      home_address: ownClientProfile.primary_address || prev.home_address
+    }));
+  }, [isSelfLocked, ownClientProfile]);
+
+  // Clear the auto-filled details once the client moves off "Self" so a
+  // different relationship never inherits the client's own name/gender.
+  // Home address is left as-is since it's editable and not identity-locked.
+  const wasSelfLockedRef = useRef(isSelfLocked);
+  useEffect(() => {
+    if (wasSelfLockedRef.current && !isSelfLocked && !selectedPatientId) {
+      setFormData(prev => ({ ...prev, patient_name: '', patient_gender: '' }));
+    }
+    wasSelfLockedRef.current = isSelfLocked;
+  }, [isSelfLocked, selectedPatientId]);
 
   // Handle patient selection from dropdown
   const handlePatientSelection = (patientId) => {
@@ -580,6 +609,13 @@ const BabyCareBookingPage = () => {
                       </div>
                     )}
 
+                    {isSelfLocked && (
+                      <div className="md:col-span-2 mb-4 flex items-start gap-2 text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-3">
+                        <ShieldCheck className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
+                        <span>You're booking for yourself — your registered name and gender are locked in automatically, and your home address is pre-filled but editable. Change "Relationship to Client" if this is for someone else.</span>
+                      </div>
+                    )}
+
                     <div className="grid md:grid-cols-2 gap-6">
                       <div className="md:col-span-2">
                         <label className="text-sm font-semibold text-slate-600 block mb-1">
@@ -596,7 +632,7 @@ const BabyCareBookingPage = () => {
                           onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
                           placeholder="e.g. Emma Johnson"
                           required={!isAuthenticated || patients.length === 0}
-                          disabled={isPatientLocked}
+                          disabled={isPatientLocked || isSelfLocked}
                         />
                       </div>
                       <div>
@@ -619,7 +655,7 @@ const BabyCareBookingPage = () => {
                           value={formData.patient_gender}
                           onChange={e => setFormData({ ...formData, patient_gender: e.target.value })}
                           onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
-                          disabled={isPatientLocked}
+                          disabled={isPatientLocked || isSelfLocked}
                         >
                           <option value="">— Select —</option>
                           <option value="MALE">Male</option>

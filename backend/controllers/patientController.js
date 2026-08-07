@@ -102,7 +102,7 @@ exports.getAllPatients = async (req, res) => {
 
     try {
         const baseWhere = searchParam
-            ? `WHERE (p.full_name ILIKE $1 OR c.full_name ILIKE $1 OR p.medical_condition ILIKE $1 OR p.residential_address ILIKE $1)`
+            ? `WHERE (p.full_name ILIKE $1 OR c.full_name ILIKE $1 OR u.mobile_number ILIKE $1 OR p.medical_condition ILIKE $1 OR p.residential_address ILIKE $1)`
             : '';
 
         const dataParams = searchParam
@@ -132,6 +132,7 @@ exports.getAllPatients = async (req, res) => {
             db.query(
                 `SELECT COUNT(*) FROM patient_profiles p
                  LEFT JOIN client_profiles c ON p.client_id = c.client_profile_id
+                 LEFT JOIN users u ON c.user_id = u.user_id
                  ${baseWhere}`,
                 countParams
             )

@@ -48,7 +48,7 @@ const EVENT_CFG = {
 // Per-service-model badge colours
 const MODEL_CHIP = {
   LIVE_IN:     { bg: '#DCFCE7', color: '#166534', label: '24h Live-In' },
-  VISITING:    { bg: '#FEF3C7', color: '#92400E', label: 'Visiting' },
+  VISITING:    { bg: '#FEF3C7', color: '#92400E', label: 'Visit' },
   SHIFT_BASED: { bg: '#EDE9FE', color: '#4C1D95', label: 'Shift-Based' },
 };
 

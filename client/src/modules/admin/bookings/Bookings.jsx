@@ -21,7 +21,7 @@ const STATUS_TABS = [
 const TYPE_TABS = [
   { key: 'ALL',        label: 'All Types' },
   { key: 'SHIFT_BASED', label: 'Shift Based' },
-  { key: 'VISITING',   label: 'Visiting' },
+  { key: 'VISITING',   label: 'Visit' },
   { key: 'LIVE_IN',    label: 'Live-In' },
 ];
 
@@ -36,7 +36,7 @@ const STATUS_CONFIG = {
 
 const BOOKING_TYPE_LABEL = {
   SHIFT_BASED: 'Shift Based',
-  VISITING:    'Visiting',
+  VISITING:    'Visit',
   LIVE_IN:     'Live-In',
 };
 

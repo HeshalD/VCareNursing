@@ -85,6 +85,72 @@ const ProxyModeToggle = ({ active, onToggle }) => (
   </div>
 );
 
+// ─── Searchable client combobox (used in Add Care Profile) ──────────────────
+
+const ClientCombobox = ({ clients, value, onChange, hasError }) => {
+  const selected = clients.find((c) => String(c.client_profile_id) === String(value));
+  const [query, setQuery] = useState(selected ? selected.full_name : '');
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    const match = clients.find((c) => String(c.client_profile_id) === String(value));
+    setQuery(match ? match.full_name : '');
+  }, [value, clients]);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const filtered = clients.filter((c) =>
+    (c.full_name || '').toLowerCase().includes(query.trim().toLowerCase())
+  );
+
+  return (
+    <div className="relative" ref={wrapRef}>
+      <input
+        type="text"
+        value={query}
+        placeholder="Search client by name…"
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setOpen(true);
+          if (value) onChange('');
+        }}
+        onFocus={() => setOpen(true)}
+        className={inputCls(hasError)}
+      />
+      {open && filtered.length > 0 && (
+        <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg">
+          {filtered.map((c) => (
+            <button
+              type="button"
+              key={c.client_profile_id}
+              onClick={() => {
+                onChange(c.client_profile_id);
+                setQuery(c.full_name);
+                setOpen(false);
+              }}
+              className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-blue-50 transition-colors"
+            >
+              {c.full_name}
+            </button>
+          ))}
+        </div>
+      )}
+      {open && query.trim() && filtered.length === 0 && (
+        <div className="absolute z-10 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg px-3 py-2 text-sm text-slate-400">
+          No clients match "{query}"
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ─── Add / Edit Care Profile drawer ──────────────────────────────────────────
 
 const PatientDrawer = ({ mode, initial, clients, onClose, onSave, saving }) => {
@@ -131,16 +197,12 @@ const PatientDrawer = ({ mode, initial, clients, onClose, onSave, saving }) => {
               <SectionHeader title="Client" />
               <div className="px-5 pt-4 pb-2">
                 <Field label="Client (Payer)" required error={errors.client_id}>
-                  <select
+                  <ClientCombobox
+                    clients={clients}
                     value={form.client_id}
-                    onChange={(e) => set('client_id', e.target.value)}
-                    className={inputCls(!!errors.client_id)}
-                  >
-                    <option value="">— Select client —</option>
-                    {clients.map((c) => (
-                      <option key={c.client_profile_id} value={c.client_profile_id}>{c.full_name}</option>
-                    ))}
-                  </select>
+                    onChange={(v) => set('client_id', v)}
+                    hasError={!!errors.client_id}
+                  />
                 </Field>
               </div>
             </>
@@ -608,7 +670,7 @@ export default function PatientsPage() {
         <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
         <input
           type="text"
-          placeholder="Search by care profile name, client, condition, or address…"
+          placeholder="Search by mobile number, patient name, or client name…"
           value={searchInput}
           onChange={(e) => handleSearchChange(e.target.value)}
           className={`${inputCls(false)} pl-8 max-w-md`}

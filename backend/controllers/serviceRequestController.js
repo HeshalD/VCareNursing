@@ -152,7 +152,15 @@ exports.submitServiceRequest = async (req, res) => {
 exports.getAllLeads = async (req, res) => {
     try {
         const result = await db.query(`
-            SELECT sr.*, b.status AS booking_status, b.booking_id
+            SELECT sr.*,
+                   CASE
+                     WHEN EXISTS (
+                       SELECT 1 FROM booking_staff_assignments bsa
+                       WHERE bsa.booking_id = b.booking_id AND bsa.status <> 'CANCELLED'
+                     ) THEN 'ACTIVE'
+                     ELSE b.status
+                   END AS booking_status,
+                   b.booking_id
             FROM service_requests sr
             LEFT JOIN bookings b ON b.request_id = sr.request_id
             ORDER BY sr.created_at DESC

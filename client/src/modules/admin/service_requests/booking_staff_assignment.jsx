@@ -8,6 +8,7 @@ import {
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import StaffScheduleTimeline from '../components/StaffScheduleTimeline';
+import RequestPipelineStepper from '../components/RequestPipelineStepper';
 
 const money = (value) =>
   `LKR ${parseFloat(value || 0).toLocaleString('en-LK', {
@@ -355,6 +356,24 @@ const BookingStaffAssignmentPage = () => {
   const startEdit  = (note) => { setEditingNoteId(note.note_id); setEditNoteText(note.note_text); setEditNoteType(note.note_type); };
   const cancelEdit = ()     => { setEditingNoteId(null); setEditNoteText(''); setEditNoteType('GENERAL'); };
 
+  // Same 5-phase pipeline shown on ServiceRequestSummaryPage / BookingStaffRosterPage
+  // — this page is reached once a booking already exists, so it's normally sitting
+  // at "Booking Created" (4) while the form is filled in, moving to "Staff Assigned"
+  // (5) once submission flips the booking's status to ACTIVE.
+  const pipelineCompletedCount = useMemo(() => {
+    const booking = formData?.booking;
+    if (!booking) return 4;
+    const quotationSent = Boolean(booking.request_id) || Boolean(booking.quote_id);
+    const paymentMade = (parseFloat(booking.amount_paid) || 0) > 0;
+    const staffAssigned = booking.booking_status === 'ACTIVE';
+    let count = 1; // New Lead is always true once a request exists
+    if (quotationSent) count = 2;
+    if (paymentMade) count = 3;
+    count = Math.max(count, 4); // a booking already exists on this page
+    if (staffAssigned) count = 5;
+    return count;
+  }, [formData]);
+
   const handleSaveEdit = async (noteId) => {
     if (!editNoteText.trim()) return;
     try {
@@ -383,6 +402,8 @@ const BookingStaffAssignmentPage = () => {
         </button>
       }
     >
+      <RequestPipelineStepper completedCount={pipelineCompletedCount} />
+
       {/* ── Toasts ── */}
       {error && (
         <div className="mb-4 flex items-center gap-2 rounded-md border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700">
@@ -716,6 +737,148 @@ const BookingStaffAssignmentPage = () => {
                   </p>
                 </div>
 
+                {/* Client & Booking Notes */}
+                <div className="border-t border-gray-100 pt-5">
+                  <div className="flex items-center gap-2 mb-1">
+                    <StickyNote className="h-4 w-4 text-gray-400" />
+                    <h3 className="text-sm font-semibold text-gray-800">Client &amp; Booking Notes</h3>
+                  </div>
+                  <p className="text-xs text-gray-400 mb-4">
+                    Notes are attached to this booking and also stored against the client's full history.
+                  </p>
+
+                  {noteError && (
+                    <div className="mb-3 flex items-center gap-2 rounded-md border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700">
+                      <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
+                      {noteError}
+                    </div>
+                  )}
+
+                  {/* Add note form */}
+                  <div className="rounded-md border border-gray-200 bg-gray-50 p-4 space-y-3 mb-4">
+                    <textarea
+                      rows={3}
+                      value={noteText}
+                      onChange={(e) => setNoteText(e.target.value)}
+                      placeholder="Write a note about this client or booking…"
+                      className="w-full resize-none rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    />
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={noteType}
+                        onChange={(e) => setNoteType(e.target.value)}
+                        className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-600 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      >
+                        <option value="GENERAL">General</option>
+                        <option value="MEDICAL">Medical</option>
+                        <option value="BILLING">Billing</option>
+                        <option value="URGENT">Urgent</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={handleAddNote}
+                        disabled={noteSubmitting || !noteText.trim()}
+                        className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300 transition-colors"
+                      >
+                        <Plus className="h-4 w-4" />
+                        {noteSubmitting ? 'Adding…' : 'Add Note'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Notes list */}
+                  <div className="space-y-2">
+                    {notesLoading ? (
+                      <p className="text-sm text-gray-400">Loading notes…</p>
+                    ) : notes.length === 0 ? (
+                      <p className="text-sm text-gray-400">No notes yet for this booking.</p>
+                    ) : (
+                      notes.map((note) => {
+                        const isEditing = editingNoteId === note.note_id;
+                        return (
+                          <div key={note.note_id} className="rounded-md border border-gray-200 bg-white p-4">
+                            {isEditing ? (
+                              <div className="space-y-3">
+                                <textarea
+                                  rows={3}
+                                  value={editNoteText}
+                                  onChange={(e) => setEditNoteText(e.target.value)}
+                                  className="w-full resize-none rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                />
+                                <div className="flex items-center gap-2">
+                                  <select
+                                    value={editNoteType}
+                                    onChange={(e) => setEditNoteType(e.target.value)}
+                                    className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                  >
+                                    <option value="GENERAL">General</option>
+                                    <option value="MEDICAL">Medical</option>
+                                    <option value="BILLING">Billing</option>
+                                    <option value="URGENT">Urgent</option>
+                                  </select>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSaveEdit(note.note_id)}
+                                    className="inline-flex items-center gap-1 rounded-md bg-gray-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-gray-900 transition-colors"
+                                  >
+                                    <Check className="h-3.5 w-3.5" /> Save
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={cancelEdit}
+                                    className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+                                  >
+                                    <X className="h-3.5 w-3.5" /> Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="flex items-start justify-between gap-3">
+                                  <p className="text-sm text-gray-800 leading-relaxed">{note.note_text}</p>
+                                  <div className="flex shrink-0 items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => startEdit(note)}
+                                      className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+                                      title="Edit note"
+                                    >
+                                      <Pencil className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteNote(note.note_id)}
+                                      className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+                                      title="Delete note"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                                  <span className="rounded bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">
+                                    {NOTE_TYPE_LABEL[note.note_type] || note.note_type}
+                                  </span>
+                                  <span className="text-xs text-gray-400">
+                                    {note.created_by_name} &middot;{' '}
+                                    {new Date(note.created_at).toLocaleString('en-LK', {
+                                      dateStyle: 'medium',
+                                      timeStyle: 'short',
+                                    })}
+                                  </span>
+                                  {note.updated_at !== note.created_at && (
+                                    <span className="text-xs text-gray-400 italic">(edited)</span>
+                                  )}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
                 <button
                   type="submit"
                   disabled={submitting}
@@ -783,148 +946,6 @@ const BookingStaffAssignmentPage = () => {
                   </div>
                 </div>
               </div>
-            </div>
-          </div>
-
-          {/* ── Booking Notes ── */}
-          <div className="rounded-lg border border-gray-200 bg-white p-5">
-            <div className="flex items-center gap-2 mb-1">
-              <StickyNote className="h-4 w-4 text-gray-400" />
-              <h3 className="text-sm font-semibold text-gray-800">Client &amp; Booking Notes</h3>
-            </div>
-            <p className="text-xs text-gray-400 mb-4">
-              Notes are attached to this booking and also stored against the client's full history.
-            </p>
-
-            {noteError && (
-              <div className="mb-3 flex items-center gap-2 rounded-md border border-gray-200 bg-white px-4 py-3 text-sm text-gray-700">
-                <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
-                {noteError}
-              </div>
-            )}
-
-            {/* Add note form */}
-            <div className="rounded-md border border-gray-200 bg-gray-50 p-4 space-y-3 mb-4">
-              <textarea
-                rows={3}
-                value={noteText}
-                onChange={(e) => setNoteText(e.target.value)}
-                placeholder="Write a note about this client or booking…"
-                className="w-full resize-none rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              />
-              <div className="flex items-center gap-2">
-                <select
-                  value={noteType}
-                  onChange={(e) => setNoteType(e.target.value)}
-                  className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-600 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                >
-                  <option value="GENERAL">General</option>
-                  <option value="MEDICAL">Medical</option>
-                  <option value="BILLING">Billing</option>
-                  <option value="URGENT">Urgent</option>
-                </select>
-                <button
-                  type="button"
-                  onClick={handleAddNote}
-                  disabled={noteSubmitting || !noteText.trim()}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300 transition-colors"
-                >
-                  <Plus className="h-4 w-4" />
-                  {noteSubmitting ? 'Adding…' : 'Add Note'}
-                </button>
-              </div>
-            </div>
-
-            {/* Notes list */}
-            <div className="space-y-2">
-              {notesLoading ? (
-                <p className="text-sm text-gray-400">Loading notes…</p>
-              ) : notes.length === 0 ? (
-                <p className="text-sm text-gray-400">No notes yet for this booking.</p>
-              ) : (
-                notes.map((note) => {
-                  const isEditing = editingNoteId === note.note_id;
-                  return (
-                    <div key={note.note_id} className="rounded-md border border-gray-200 bg-white p-4">
-                      {isEditing ? (
-                        <div className="space-y-3">
-                          <textarea
-                            rows={3}
-                            value={editNoteText}
-                            onChange={(e) => setEditNoteText(e.target.value)}
-                            className="w-full resize-none rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                          />
-                          <div className="flex items-center gap-2">
-                            <select
-                              value={editNoteType}
-                              onChange={(e) => setEditNoteType(e.target.value)}
-                              className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                            >
-                              <option value="GENERAL">General</option>
-                              <option value="MEDICAL">Medical</option>
-                              <option value="BILLING">Billing</option>
-                              <option value="URGENT">Urgent</option>
-                            </select>
-                            <button
-                              type="button"
-                              onClick={() => handleSaveEdit(note.note_id)}
-                              className="inline-flex items-center gap-1 rounded-md bg-gray-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-gray-900 transition-colors"
-                            >
-                              <Check className="h-3.5 w-3.5" /> Save
-                            </button>
-                            <button
-                              type="button"
-                              onClick={cancelEdit}
-                              className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors"
-                            >
-                              <X className="h-3.5 w-3.5" /> Cancel
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <>
-                          <div className="flex items-start justify-between gap-3">
-                            <p className="text-sm text-gray-800 leading-relaxed">{note.note_text}</p>
-                            <div className="flex shrink-0 items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => startEdit(note)}
-                                className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
-                                title="Edit note"
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteNote(note.note_id)}
-                                className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
-                                title="Delete note"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          </div>
-                          <div className="mt-2 flex items-center gap-2 flex-wrap">
-                            <span className="rounded bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">
-                              {NOTE_TYPE_LABEL[note.note_type] || note.note_type}
-                            </span>
-                            <span className="text-xs text-gray-400">
-                              {note.created_by_name} &middot;{' '}
-                              {new Date(note.created_at).toLocaleString('en-LK', {
-                                dateStyle: 'medium',
-                                timeStyle: 'short',
-                              })}
-                            </span>
-                            {note.updated_at !== note.created_at && (
-                              <span className="text-xs text-gray-400 italic">(edited)</span>
-                            )}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  );
-                })
-              )}
             </div>
           </div>
         </div>

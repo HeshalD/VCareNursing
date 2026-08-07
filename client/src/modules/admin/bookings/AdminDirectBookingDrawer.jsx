@@ -43,7 +43,7 @@ const SERVICE_TYPES = [
 const SERVICE_MODELS = [
   { label: 'Live-In', value: 'LIVE_IN' },
   { label: 'Shift Based', value: 'SHIFT_BASED' },
-  { label: 'Visiting', value: 'VISITING' },
+  { label: 'Visit', value: 'VISITING' },
 ];
 
 const GENDER_PREFS = [

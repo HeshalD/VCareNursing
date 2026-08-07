@@ -9,6 +9,7 @@ import {
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import StaffScheduleTimeline from '../components/StaffScheduleTimeline';
+import RequestPipelineStepper from '../components/RequestPipelineStepper';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -237,6 +238,26 @@ const BookingStaffRosterPage = () => {
   const reqStatus    = request?.status           || booking?.status;
   const requestCode  = request?.service_request_code || request?.request_code || null;
 
+  // Same 5-phase pipeline shown on ServiceRequestSummaryPage — this page is
+  // reached once a booking already exists, so it's normally sitting at
+  // "Booking Created" (4) while staff are picked, moving to "Staff Assigned"
+  // (5) once the request/booking status reflects that.
+  const pipelineCompletedCount = useMemo(() => {
+    const quotationSent = Boolean(quote) || (request?.status && request.status !== 'NEW_LEAD');
+    const paymentMade =
+      (parseFloat(quote?.total_paid) || 0) > 0 ||
+      (parseFloat(booking?.amount_paid) || 0) > 0;
+    const bookingCreated = Boolean(booking) || request?.status === 'BOOKING_CREATED';
+    const staffAssigned =
+      request?.status === 'ASSIGNED' || request?.status === 'COMPLETED' || booking?.status === 'ACTIVE';
+    let count = 1; // New Lead is always true once a request exists
+    if (quotationSent) count = 2;
+    if (paymentMade) count = 3;
+    if (bookingCreated) count = 4;
+    if (staffAssigned) count = 5;
+    return count;
+  }, [request, booking, quote]);
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
@@ -252,6 +273,8 @@ const BookingStaffRosterPage = () => {
         </button>
       }
     >
+
+      <RequestPipelineStepper completedCount={pipelineCompletedCount} />
 
       {/* ── Toasts ── */}
       {error && (

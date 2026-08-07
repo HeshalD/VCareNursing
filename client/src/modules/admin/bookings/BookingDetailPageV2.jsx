@@ -3,6 +3,7 @@ import {
   Activity, AlertTriangle, ArrowLeft, CalendarDays, CheckCircle, Download, DollarSign,
   LayoutGrid, Loader2, Menu, MessageCircle, Phone, RefreshCw, Repeat2, Search, SendHorizontal, ShieldCheck,
   Upload, User, UserPlus, Users, Wallet, X, XCircle, Briefcase, History, Pause, Play, Building2,
+  StickyNote, Plus, Trash2, Pencil, Check,
 } from 'lucide-react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
@@ -191,6 +192,18 @@ const BookingDetailPageV2 = () => {
   const [bankAccounts, setBankAccounts]   = useState([]);
   const [availableStaff, setAvailableStaff] = useState([]);
   const [mobileBookingSidebarOpen, setMobileBookingSidebarOpen] = useState(false);
+
+  // booking notes (client_notes rows scoped to this booking — same table fed by the
+  // "Client & Booking Notes" section on the staff-assignment page, see bookingNotesController)
+  const [bookingNotes, setBookingNotes]           = useState([]);
+  const [bookingNotesLoading, setBookingNotesLoading] = useState(false);
+  const [noteText, setNoteText]                   = useState('');
+  const [noteType, setNoteType]                   = useState('GENERAL');
+  const [noteSubmitting, setNoteSubmitting]       = useState(false);
+  const [noteError, setNoteError]                 = useState('');
+  const [editingNoteId, setEditingNoteId]         = useState(null);
+  const [editNoteText, setEditNoteText]           = useState('');
+  const [editNoteType, setEditNoteType]           = useState('GENERAL');
 
   // nav
   const [activeSection, setActiveSection] = useState(searchParams.get('section') || 'care-timeline');
@@ -609,7 +622,7 @@ const BookingDetailPageV2 = () => {
 
   // ── effects ──────────────────────────────────────────────────────────────
 
-  useEffect(() => { if (adminToken && bookingId) { fetchDetail(); fetchDailyRecords(); fetchSalesperson(); fetchReceipts(); } }, [adminToken, bookingId]);
+  useEffect(() => { if (adminToken && bookingId) { fetchDetail(); fetchDailyRecords(); fetchSalesperson(); fetchReceipts(); fetchBookingNotes(); } }, [adminToken, bookingId]);
   // Re-run after any action that can create/cancel a scheduled_actions row (complete,
   // terminate, shift pattern change, staff swap/reassign) — not just on mount — otherwise
   // a newly scheduled event (e.g. a future completion date) never reaches CareTimeline
@@ -725,6 +738,59 @@ const BookingDetailPageV2 = () => {
       else setError(payload?.message || 'Failed to load booking detail');
     } catch (err) { setError(err?.message || 'Unable to load booking detail'); }
     finally { setLoading(false); }
+  };
+
+  const fetchBookingNotes = async () => {
+    try {
+      setBookingNotesLoading(true);
+      apiClient.setToken(adminToken);
+      const res = await apiClient.getBookingNotes(bookingId);
+      setBookingNotes(res.data || []);
+    } catch {
+      // non-fatal
+    } finally {
+      setBookingNotesLoading(false);
+    }
+  };
+
+  const handleAddBookingNote = async () => {
+    if (!noteText.trim()) return;
+    try {
+      setNoteSubmitting(true); setNoteError('');
+      apiClient.setToken(adminToken);
+      const res = await apiClient.addBookingNote(bookingId, { note_text: noteText, note_type: noteType });
+      setBookingNotes((prev) => [res.data, ...prev]);
+      setNoteText(''); setNoteType('GENERAL');
+    } catch (err) {
+      setNoteError(err.message || 'Failed to add note');
+    } finally {
+      setNoteSubmitting(false);
+    }
+  };
+
+  const handleDeleteBookingNote = async (noteId) => {
+    try {
+      apiClient.setToken(adminToken);
+      await apiClient.deleteBookingNote(bookingId, noteId);
+      setBookingNotes((prev) => prev.filter((n) => n.note_id !== noteId));
+    } catch (err) {
+      setNoteError(err.message || 'Failed to delete note');
+    }
+  };
+
+  const startEditBookingNote  = (note) => { setEditingNoteId(note.note_id); setEditNoteText(note.note_text); setEditNoteType(note.note_type); };
+  const cancelEditBookingNote = ()     => { setEditingNoteId(null); setEditNoteText(''); setEditNoteType('GENERAL'); };
+
+  const handleSaveBookingNoteEdit = async (noteId) => {
+    if (!editNoteText.trim()) return;
+    try {
+      apiClient.setToken(adminToken);
+      const res = await apiClient.updateBookingNote(bookingId, noteId, { note_text: editNoteText, note_type: editNoteType });
+      setBookingNotes((prev) => prev.map((n) => (n.note_id === noteId ? res.data : n)));
+      cancelEditBookingNote();
+    } catch (err) {
+      setNoteError(err.message || 'Failed to update note');
+    }
   };
 
   const fetchReceipts = async () => {
@@ -2955,6 +3021,125 @@ const BookingDetailPageV2 = () => {
                   <Field label="Mobility"     value={patientDetails.mobility || '-'} />
                   <div style={{ gridColumn: '1/-1' }}><Field label="Medical condition" value={patientDetails.medical_condition || '-'} /></div>
                 </div>
+              </Card>
+
+              {/* Booking notes — same client_notes rows entered from the staff-assignment
+                  page during roster setup (bookingNotesController), shown here too so
+                  they're visible on the booking that was created from the request. */}
+              <Card style={{ gridColumn: '1/-1' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+                  <div style={{ width: 38, height: 38, borderRadius: 10, background: '#FEF3C7', color: '#92400E', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <StickyNote style={{ width: 17, height: 17 }} />
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: 15.5, fontWeight: 700 }}>Client &amp; Booking Notes</h3>
+                    <p style={{ margin: 0, fontSize: 12, color: '#9ca3af' }}>Also visible on the client's full note history.</p>
+                  </div>
+                </div>
+
+                {noteError && (
+                  <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8, border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', padding: '10px 14px', fontSize: 13, color: '#374151' }}>
+                    <AlertTriangle style={{ width: 15, height: 15, color: '#dc2626', flexShrink: 0 }} />
+                    {noteError}
+                  </div>
+                )}
+
+                <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, background: '#f9fafb', padding: 14, marginBottom: 14 }}>
+                  <textarea
+                    rows={3}
+                    value={noteText}
+                    onChange={(e) => setNoteText(e.target.value)}
+                    placeholder="Write a note about this client or booking…"
+                    style={{ width: '100%', resize: 'none', border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', padding: '8px 10px', fontSize: 13, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }}
+                  />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+                    <select
+                      value={noteType}
+                      onChange={(e) => setNoteType(e.target.value)}
+                      style={{ border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', padding: '7px 10px', fontSize: 13, color: '#374151', outline: 'none' }}
+                    >
+                      <option value="GENERAL">General</option>
+                      <option value="MEDICAL">Medical</option>
+                      <option value="BILLING">Billing</option>
+                      <option value="URGENT">Urgent</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={handleAddBookingNote}
+                      disabled={noteSubmitting || !noteText.trim()}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, borderRadius: 8, background: noteSubmitting || !noteText.trim() ? '#d1d5db' : '#2563eb', border: 'none', padding: '8px 16px', fontSize: 13, fontWeight: 700, color: '#fff', cursor: noteSubmitting || !noteText.trim() ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}
+                    >
+                      <Plus style={{ width: 14, height: 14 }} />
+                      {noteSubmitting ? 'Adding…' : 'Add Note'}
+                    </button>
+                  </div>
+                </div>
+
+                {bookingNotesLoading ? (
+                  <p style={{ fontSize: 13, color: '#9ca3af' }}>Loading notes…</p>
+                ) : bookingNotes.length === 0 ? (
+                  <p style={{ fontSize: 13, color: '#9ca3af' }}>No notes yet for this booking.</p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {bookingNotes.map((note) => {
+                      const isEditing = editingNoteId === note.note_id;
+                      return (
+                        <div key={note.note_id} style={{ border: '1px solid #e5e7eb', borderRadius: 8, background: '#fff', padding: 14 }}>
+                          {isEditing ? (
+                            <div>
+                              <textarea
+                                rows={3}
+                                value={editNoteText}
+                                onChange={(e) => setEditNoteText(e.target.value)}
+                                style={{ width: '100%', resize: 'none', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 10px', fontSize: 13, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }}
+                              />
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                                <select
+                                  value={editNoteType}
+                                  onChange={(e) => setEditNoteType(e.target.value)}
+                                  style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: '6px 10px', fontSize: 13, outline: 'none' }}
+                                >
+                                  <option value="GENERAL">General</option>
+                                  <option value="MEDICAL">Medical</option>
+                                  <option value="BILLING">Billing</option>
+                                  <option value="URGENT">Urgent</option>
+                                </select>
+                                <button type="button" onClick={() => handleSaveBookingNoteEdit(note.note_id)} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, borderRadius: 8, background: '#1e293b', border: 'none', padding: '6px 12px', fontSize: 12, fontWeight: 700, color: '#fff', cursor: 'pointer', fontFamily: 'inherit' }}>
+                                  <Check style={{ width: 13, height: 13 }} /> Save
+                                </button>
+                                <button type="button" onClick={cancelEditBookingNote} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', padding: '6px 12px', fontSize: 12, fontWeight: 600, color: '#374151', cursor: 'pointer', fontFamily: 'inherit' }}>
+                                  <X style={{ width: 13, height: 13 }} /> Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+                                <p style={{ margin: 0, fontSize: 13.5, color: '#1f2937', lineHeight: 1.5 }}>{note.note_text}</p>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                                  <button type="button" onClick={() => startEditBookingNote(note)} title="Edit note" style={{ border: 'none', background: 'transparent', borderRadius: 6, padding: 6, color: '#9ca3af', cursor: 'pointer' }}>
+                                    <Pencil style={{ width: 13.5, height: 13.5 }} />
+                                  </button>
+                                  <button type="button" onClick={() => handleDeleteBookingNote(note.note_id)} title="Delete note" style={{ border: 'none', background: 'transparent', borderRadius: 6, padding: 6, color: '#9ca3af', cursor: 'pointer' }}>
+                                    <Trash2 style={{ width: 13.5, height: 13.5 }} />
+                                  </button>
+                                </div>
+                              </div>
+                              <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                <Pill>{note.note_type === 'GENERAL' ? 'General' : note.note_type === 'MEDICAL' ? 'Medical' : note.note_type === 'BILLING' ? 'Billing' : note.note_type === 'URGENT' ? 'Urgent' : note.note_type}</Pill>
+                                <span style={{ fontSize: 11.5, color: '#9ca3af' }}>
+                                  {note.created_by_name}
+                                  {note.created_at && ` · ${new Date(note.created_at).toLocaleString('en-LK', { dateStyle: 'medium', timeStyle: 'short' })}`}
+                                  {note.updated_at !== note.created_at && ' (edited)'}
+                                </span>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </Card>
             </div>
           )}
