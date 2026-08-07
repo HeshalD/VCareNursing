@@ -490,11 +490,13 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                         <label className="mb-1 block text-[11px] font-medium text-slate-500">Bank Account</label>
                         <select value={bankAccountId} onChange={(e) => setBankAccountId(e.target.value)} className={inputCls}>
                           <option value="">Select bank account</option>
-                          {bankAccounts.map((a) => (
-                            <option key={a.account_id} value={a.account_id}>
-                              {a.account_nickname} ({a.bank_name || a.account_number})
-                            </option>
-                          ))}
+                          {bankAccounts
+                            .filter((a) => !(paymentMethod === 'BANK_TRANSFER' && a.is_petty_cash))
+                            .map((a) => (
+                              <option key={a.account_id} value={a.account_id}>
+                                {a.account_nickname} ({a.bank_name || a.account_number})
+                              </option>
+                            ))}
                         </select>
                       </div>
                     )}
@@ -668,9 +670,11 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                                     className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-blue-500"
                                   >
                                     <option value="">Select bank account…</option>
-                                    {bankAccounts.map((b) => (
-                                      <option key={b.account_id} value={b.account_id}>{b.account_nickname} — {b.bank_name}</option>
-                                    ))}
+                                    {bankAccounts
+                                      .filter((b) => !(d.payment_method === 'BANK_TRANSFER' && b.is_petty_cash))
+                                      .map((b) => (
+                                        <option key={b.account_id} value={b.account_id}>{b.account_nickname} — {b.bank_name}</option>
+                                      ))}
                                   </select>
                                 )}
 

@@ -204,12 +204,12 @@ const PipelineStepper = ({ completedCount }) => (
             )}
             <div className="group relative flex flex-col items-center">
               <div
-                className={`relative flex h-9 w-9 items-center justify-center rounded-full border-2 bg-white transition-colors ${
+                className={`relative flex h-9 w-9 items-center justify-center rounded-full border-2 transition-colors ${
                   done
                     ? 'border-emerald-500 bg-emerald-500 text-white'
                     : isCurrent
                     ? 'border-blue-500 bg-blue-50 text-blue-600'
-                    : 'border-slate-200 text-slate-300'
+                    : 'border-slate-200 bg-white text-slate-300'
                 }`}
               >
                 {done ? <Check className="h-4 w-4" /> : <StepIcon className="h-4 w-4" />}
@@ -261,6 +261,7 @@ const ServiceRequestSummaryPage = () => {
   const [quoteActionLoading, setQuoteActionLoading] = useState({});
   const [paymentHistory, setPaymentHistory]         = useState([]);
   const [paymentHistoryLoading, setPaymentHistoryLoading] = useState(false);
+  const [clientReceipts, setClientReceipts]         = useState([]);
   const [paymentSuccess, setPaymentSuccess]         = useState('');
   const [showPaymentModal, setShowPaymentModal]     = useState(false);
   const [showReceiptPopup, setShowReceiptPopup]     = useState(false);
@@ -396,11 +397,29 @@ const ServiceRequestSummaryPage = () => {
     }
   };
 
+  // Powers the "sent" badges on each payment row — payment_receipts rows for
+  // this client are matched back to a payment via source_type/source_id (see
+  // receiptController.getClientReceipts), so no extra backend work is needed.
+  const fetchClientReceipts = async (clientId) => {
+    if (!clientId) { setClientReceipts([]); return; }
+    try {
+      const res = await apiClient.getClientReceipts(clientId);
+      setClientReceipts(res.receipts || []);
+    } catch {
+      setClientReceipts([]);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'payment' && selectedQuote?.quote_id) {
       fetchPaymentHistory(selectedQuote.quote_id);
+      fetchClientReceipts(request?.client_id);
     }
-  }, [activeTab, selectedQuote?.quote_id]);
+  }, [activeTab, selectedQuote?.quote_id, request?.client_id]);
+
+  // Looks up the payment_receipts row (if any) sent for a given quote payment.
+  const receiptForPayment = (paymentId) =>
+    clientReceipts.find(r => r.source_type === 'QUOTE_PAYMENT' && r.source_id === paymentId);
 
   const openEdit = () => {
     setEditForm({
@@ -456,6 +475,27 @@ const ServiceRequestSummaryPage = () => {
         : null
     );
     setShowReceiptPopup(true);
+  };
+
+  // Manually triggered from the Payment tab (unlike handlePaymentAllocated's
+  // auto-prompt right after recording a payment) — lets the admin re-send the
+  // latest receipt on its own, independent of the invoice.
+  const openManualReceiptPopup = () => {
+    setInvoiceTarget(null); // don't chain into the invoice popup — receipt-only
+    setShowReceiptPopup(true);
+  };
+
+  // Invoice is only ever generated once the quote is fully paid (see
+  // ensureCombinedInvoice — invoice_code is only set then), so this is only
+  // reachable when selectedQuote.invoice_code already exists.
+  const openManualInvoicePopup = () => {
+    if (!selectedQuote?.invoice_code) return;
+    setInvoiceTarget({
+      quoteId: selectedQuote.quote_id,
+      payerName: selectedQuote.payer_name || request?.payer_name,
+      payerMobile: selectedQuote.payer_mobile || request?.payer_mobile,
+    });
+    setShowInvoicePopup(true);
   };
 
   const handleSendInvoice = async (quoteId) => {
@@ -963,15 +1003,15 @@ const ServiceRequestSummaryPage = () => {
                         <InfoRow label="Preferred Gender" value={request.preferred_gender || 'Any'} />
                         <InfoRow label="Start Date" value={fmt(request.start_date)} />
                       </div>
+                      {request.remarks && (
+                        <div className="border-t border-slate-100 p-4">
+                          <p className="text-xs text-slate-400 mb-1">Additional Remarks</p>
+                          <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5">
+                            <p className="text-sm text-slate-700 leading-relaxed">{request.remarks}</p>
+                          </div>
+                        </div>
+                      )}
                     </div>
-
-                    {/* Remarks */}
-                    {request.remarks && (
-                      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-amber-600 mb-1">Remarks</p>
-                        <p className="text-sm leading-relaxed text-amber-900">{request.remarks}</p>
-                      </div>
-                    )}
                   </div>
                 )}
               </>
@@ -1282,6 +1322,16 @@ const ServiceRequestSummaryPage = () => {
                             <span className="text-xs font-medium text-slate-500">
                               Invoice <span className="font-mono text-slate-700">{selectedQuote.invoice_code}</span>
                             </span>
+                            {selectedQuote.invoice_whatsapp_sent_at ? (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                                <CheckCircle2 className="h-3 w-3" />
+                                Sent {new Date(selectedQuote.invoice_whatsapp_sent_at).toLocaleDateString('en-LK', { day: '2-digit', month: 'short', year: 'numeric' })}
+                              </span>
+                            ) : (
+                              <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-400">
+                                Not sent yet
+                              </span>
+                            )}
                             <a
                               href={selectedQuote.invoice_pdf_url}
                               target="_blank"
@@ -1317,7 +1367,7 @@ const ServiceRequestSummaryPage = () => {
                             className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50 transition-colors"
                           >
                             {proceeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRight className="h-3.5 w-3.5" />}
-                            {proceeding ? 'Creating booking…' : 'Proceed to Staff Roster'}
+                            {proceeding ? 'Creating booking…' : 'Create A Booking'}
                           </button>
                         </div>
                       </div>
@@ -1351,9 +1401,32 @@ const ServiceRequestSummaryPage = () => {
 
                     {/* ── Payment history ── */}
                     <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                      <div className="px-5 py-3.5 border-b border-slate-100 bg-slate-50">
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Payment History</p>
-                        <p className="text-xs text-slate-400 mt-0.5">All payments recorded against {selectedQuote.estimate_number}</p>
+                      <div className="px-5 py-3.5 border-b border-slate-100 bg-slate-50 flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Payment History</p>
+                          <p className="text-xs text-slate-400 mt-0.5">All payments recorded against {selectedQuote.estimate_number}</p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={openManualReceiptPopup}
+                            disabled={paymentHistory.length === 0}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            <Send className="h-3.5 w-3.5" />
+                            Send Receipt
+                          </button>
+                          <button
+                            type="button"
+                            onClick={openManualInvoicePopup}
+                            disabled={!selectedQuote.invoice_code}
+                            title={!selectedQuote.invoice_code ? 'Invoice is generated once this quote is fully paid' : undefined}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            <Send className="h-3.5 w-3.5" />
+                            Send Invoice
+                          </button>
+                        </div>
                       </div>
 
                       {paymentHistoryLoading ? (
@@ -1380,6 +1453,7 @@ const ServiceRequestSummaryPage = () => {
                               REJECTED: { cls: 'bg-red-50 text-red-600 border-red-200',            label: 'Rejected' },
                               PENDING:  { cls: 'bg-slate-50 text-slate-500 border-slate-200',      label: 'Pending' },
                             }[p.status] || { cls: 'bg-slate-50 text-slate-500 border-slate-200', label: p.status || 'Pending' };
+                            const receipt = receiptForPayment(p.payment_id);
                             return (
                               <div key={p.payment_id || i} className="px-5 py-3.5 flex flex-wrap items-start justify-between gap-3">
                                 <div>
@@ -1398,9 +1472,18 @@ const ServiceRequestSummaryPage = () => {
                                     {p.notes && ` · ${p.notes}`}
                                   </p>
                                 </div>
-                                <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${statusCfg.cls}`}>
-                                  {statusCfg.label}
-                                </span>
+                                <div className="flex flex-col items-end gap-1">
+                                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${statusCfg.cls}`}>
+                                    {statusCfg.label}
+                                  </span>
+                                  {receipt?.whatsapp_sent ? (
+                                    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600">
+                                      <CheckCircle2 className="h-3 w-3" /> Receipt sent
+                                    </span>
+                                  ) : (
+                                    <span className="text-[11px] font-medium text-slate-400">Receipt not sent</span>
+                                  )}
+                                </div>
                               </div>
                             );
                           })}
@@ -1441,7 +1524,7 @@ const ServiceRequestSummaryPage = () => {
                   className="inline-flex items-center gap-1.5 w-full justify-center rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50 transition-colors"
                 >
                   {proceeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRight className="h-3.5 w-3.5" />}
-                  {proceeding ? 'Creating booking…' : 'Proceed to Booking'}
+                  {proceeding ? 'Creating booking…' : 'Create A Booking'}
                 </button>
                 <button
                   onClick={() => setActiveTab('payment')}
@@ -1518,6 +1601,7 @@ const ServiceRequestSummaryPage = () => {
         payerMobile={request?.payer_mobile}
         onClose={() => {
           setShowReceiptPopup(false);
+          fetchClientReceipts(request?.client_id);
           if (invoiceTarget) setShowInvoicePopup(true);
         }}
       />
@@ -1527,7 +1611,10 @@ const ServiceRequestSummaryPage = () => {
         quoteId={invoiceTarget?.quoteId}
         payerName={invoiceTarget?.payerName}
         payerMobile={invoiceTarget?.payerMobile}
-        onClose={() => setShowInvoicePopup(false)}
+        onClose={() => {
+          setShowInvoicePopup(false);
+          fetchData();
+        }}
       />
     </AdminLayout>
   );
