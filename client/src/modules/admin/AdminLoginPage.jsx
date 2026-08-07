@@ -57,11 +57,13 @@ const AdminLoginPage = () => {
             // Remove curly braces if present
             userRole = userRole.replace(/[{}]/g, '');
           }
-          
+
           console.log('Processed user role:', userRole);
-          
+
           const ADMIN_ROLES = ['SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'SALES', 'CUSTOM_ROLE', 'RECRUITER'];
-          if (ADMIN_ROLES.includes(userRole)) {
+          // Staff can have multiple roles (comma-separated from a Postgres array), so check if any of them is an admin role
+          const userRoles = String(userRole).split(',').map((r) => r.trim());
+          if (userRoles.some((r) => ADMIN_ROLES.includes(r))) {
             adminLogin(response.token, response.user);
             navigate('/admin/dashboard');
           } else {

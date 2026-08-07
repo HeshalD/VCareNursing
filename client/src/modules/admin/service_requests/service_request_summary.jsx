@@ -5,7 +5,7 @@ import {
   ExternalLink, Pencil, X, Save, User, Stethoscope,
   BadgeCheck, MapPin, CheckCircle2, Plus, Phone, Calendar,
   Heart, Loader2, AlertCircle, Download, ThumbsUp, ThumbsDown, Send,
-  BadgeDollarSign,
+  BadgeDollarSign, Menu, UserCheck, Check,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -14,6 +14,7 @@ import PhoneInput from '../../../components/common/PhoneInput';
 import PaymentAllocationModal from '../service_quotes/PaymentAllocationModal';
 import ReceiptSendPopup from '../service_quotes/ReceiptSendPopup';
 import InvoiceSendPopup from '../service_quotes/InvoiceSendPopup';
+import ServiceRequestSwitcherSidebar from './ServiceRequestSwitcherSidebar';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -64,6 +65,14 @@ const TABS = [
   { key: 'details',    label: 'Details' },
   { key: 'quotations', label: 'Quotations' },
   { key: 'payment',    label: 'Payment' },
+];
+
+const PIPELINE_STEPS = [
+  { key: 'new_lead',        label: 'New Lead',         icon: FileText,        description: 'Request was received and logged as a new lead.' },
+  { key: 'quotation_sent',  label: 'Quotation Sent',   icon: Send,            description: 'A quotation was sent to the client for review.' },
+  { key: 'payment_made',    label: 'Payment Made',     icon: CircleDollarSign,description: 'At least one payment has been recorded against a quotation.' },
+  { key: 'booking_created', label: 'Booking Created',  icon: BadgeCheck,      description: 'A booking has been created from an accepted quotation.' },
+  { key: 'staff_assigned',  label: 'Staff Assigned',   icon: UserCheck,       description: 'Staff have been assigned to fulfil this booking.' },
 ];
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -177,6 +186,58 @@ const InfoRow = ({ label, value }) => (
   </div>
 );
 
+// Horizontal 5-phase pipeline tracker shown at the top of the page. `completedCount`
+// is how many of PIPELINE_STEPS are done (in order) — steps beyond it are upcoming,
+// the one right after the last completed step is treated as "current" (in progress).
+const PipelineStepper = ({ completedCount }) => (
+  <div className="bg-white rounded-xl border border-slate-200 px-5 py-5 mb-4">
+    <div className="flex items-start">
+      {PIPELINE_STEPS.map((step, i) => {
+        const StepIcon = step.icon;
+        const done = i < completedCount;
+        const isCurrent = i === completedCount;
+        const isLast = i === PIPELINE_STEPS.length - 1;
+        return (
+          <div key={step.key} className="relative flex-1">
+            {!isLast && (
+              <div className={`absolute top-[18px] left-1/2 h-0.5 w-full ${done ? 'bg-emerald-500' : 'bg-slate-200'}`} />
+            )}
+            <div className="group relative flex flex-col items-center">
+              <div
+                className={`relative flex h-9 w-9 items-center justify-center rounded-full border-2 bg-white transition-colors ${
+                  done
+                    ? 'border-emerald-500 bg-emerald-500 text-white'
+                    : isCurrent
+                    ? 'border-blue-500 bg-blue-50 text-blue-600'
+                    : 'border-slate-200 text-slate-300'
+                }`}
+              >
+                {done ? <Check className="h-4 w-4" /> : <StepIcon className="h-4 w-4" />}
+              </div>
+              <p className={`mt-1.5 whitespace-nowrap text-[11px] font-semibold ${
+                done ? 'text-emerald-700' : isCurrent ? 'text-blue-700' : 'text-slate-400'
+              }`}>
+                Phase 0{i + 1}
+              </p>
+              <p className={`whitespace-nowrap text-[11px] ${
+                done || isCurrent ? 'text-slate-600' : 'text-slate-400'
+              }`}>
+                {step.label}
+              </p>
+
+              {/* Hover tooltip with description */}
+              <div className="pointer-events-none absolute top-full z-10 mt-1.5 w-48 -translate-x-1/2 left-1/2 rounded-lg bg-slate-900 px-3 py-2 text-center text-[11px] text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100">
+                {step.description}
+                <div className="absolute -top-1 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 bg-slate-900" />
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  </div>
+);
+
 const inputCls  = 'w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 bg-white placeholder:text-slate-400';
 const labelCls  = 'block text-xs font-medium text-slate-500 mb-1.5';
 
@@ -207,12 +268,29 @@ const ServiceRequestSummaryPage = () => {
   const [invoiceTarget, setInvoiceTarget]           = useState(null); // { quoteId, payerName, payerMobile }
   const [sendingInvoiceQuoteId, setSendingInvoiceQuoteId] = useState('');
   const [invoiceSentQuoteId, setInvoiceSentQuoteId] = useState('');
+  const [mobileRequestSidebarOpen, setMobileRequestSidebarOpen] = useState(false);
 
   const selectedQuote = useMemo(
     () => quotes.find(q => q.quote_id === selectedQuoteId) || quotes[0] || null,
     [quotes, selectedQuoteId]
   );
   const selectedQuoteStatus = selectedQuote ? getQuoteStatus(selectedQuote) : 'UNPAID';
+
+  // Determines how many of PIPELINE_STEPS are complete, in order — used to
+  // render the phase tracker at the top of the page.
+  const pipelineCompletedCount = useMemo(() => {
+    if (!request) return 0;
+    const quotationSent = quotes.some(q => q.status && q.status !== 'DRAFT');
+    const paymentMade = quotes.some(q => (parseFloat(q.total_paid) || 0) > 0);
+    const bookingCreated = quotes.some(q => !!q.booking_id) || request.status === 'BOOKING_CREATED';
+    const staffAssigned = request.status === 'ASSIGNED' || request.status === 'COMPLETED';
+    let count = 1; // New Lead is always true once a request exists
+    if (quotationSent) count = 2;
+    if (paymentMade) count = 3;
+    if (bookingCreated) count = 4;
+    if (staffAssigned) count = 5;
+    return count;
+  }, [request, quotes]);
 
   const fetchData = async () => {
     try {
@@ -498,8 +576,13 @@ const ServiceRequestSummaryPage = () => {
   if (loading) {
     return (
       <AdminLayout title="Service Request" subtitle="Loading…">
-        <div className="flex items-center justify-center h-64">
-          <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+        <div className="flex items-start gap-4">
+          <aside className="sticky top-6 hidden h-[calc(100vh-8rem)] w-64 shrink-0 rounded-xl border border-gray-200 bg-white lg:flex">
+            <ServiceRequestSwitcherSidebar activeRequestId={requestId} />
+          </aside>
+          <div className="flex flex-1 items-center justify-center h-64">
+            <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+          </div>
         </div>
       </AdminLayout>
     );
@@ -508,12 +591,17 @@ const ServiceRequestSummaryPage = () => {
   if (!request) {
     return (
       <AdminLayout title="Service Request">
-        <div className="bg-white border border-slate-200 rounded-xl p-12 text-center">
-          <FileText className="w-10 h-10 text-slate-200 mx-auto mb-3" />
-          <p className="text-sm text-slate-500">Service request not found.</p>
-          <button onClick={() => navigate('/admin/service-requests')} className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-blue-600 hover:text-blue-700 font-medium">
-            <ArrowLeft className="w-3.5 h-3.5" /> Back to list
-          </button>
+        <div className="flex items-start gap-4">
+          <aside className="sticky top-6 hidden h-[calc(100vh-8rem)] w-64 shrink-0 rounded-xl border border-gray-200 bg-white lg:flex">
+            <ServiceRequestSwitcherSidebar activeRequestId={requestId} />
+          </aside>
+          <div className="flex-1 bg-white border border-slate-200 rounded-xl p-12 text-center">
+            <FileText className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+            <p className="text-sm text-slate-500">Service request not found.</p>
+            <button onClick={() => navigate('/admin/service-requests')} className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 text-sm text-blue-600 hover:text-blue-700 font-medium">
+              <ArrowLeft className="w-3.5 h-3.5" /> Back to list
+            </button>
+          </div>
         </div>
       </AdminLayout>
     );
@@ -530,6 +618,12 @@ const ServiceRequestSummaryPage = () => {
       subtitle={request.service_request_code || `#${requestId}`}
       actions={
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setMobileRequestSidebarOpen(true)}
+            className="lg:hidden inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white p-1.5 text-slate-700 hover:bg-slate-50 transition-colors"
+          >
+            <Menu className="h-3.5 w-3.5" />
+          </button>
           <button
             onClick={() => navigate('/admin/service-requests')}
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
@@ -553,7 +647,26 @@ const ServiceRequestSummaryPage = () => {
         </div>
       )}
 
-      <div className="space-y-4">
+      <div className="flex items-start gap-4">
+        <aside className="sticky top-6 hidden h-[calc(100vh-8rem)] w-64 shrink-0 rounded-xl border border-gray-200 bg-white lg:flex">
+          <ServiceRequestSwitcherSidebar activeRequestId={requestId} />
+        </aside>
+
+        {mobileRequestSidebarOpen && (
+          <div className="fixed inset-0 z-40 lg:hidden">
+            <div className="absolute inset-0 bg-black/30" onClick={() => setMobileRequestSidebarOpen(false)} />
+            <div className="absolute left-0 top-0 h-full w-72 bg-white shadow-xl">
+              <ServiceRequestSwitcherSidebar
+                activeRequestId={requestId}
+                onNavigate={() => setMobileRequestSidebarOpen(false)}
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="min-w-0 flex-1 space-y-4">
+
+        <PipelineStepper completedCount={pipelineCompletedCount} />
 
         {/* ── HERO CARD ─────────────────────────────────────────────────────── */}
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -1387,6 +1500,7 @@ const ServiceRequestSummaryPage = () => {
             </div>
 
           </div>
+        </div>
         </div>
       </div>
       {showPaymentModal && selectedQuote && (
