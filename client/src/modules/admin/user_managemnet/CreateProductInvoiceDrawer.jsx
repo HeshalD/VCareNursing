@@ -295,6 +295,7 @@ const CreateProductInvoiceDrawer = ({ open, onClose, clientId, clientProfile, on
                               placeholder="Amount"
                               value={it.unit_price}
                               onChange={(e) => updateLine(idx, { unit_price: e.target.value })}
+                              onWheel={(e) => e.target.blur()}
                               className="w-28 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
                             />
                             {lineItems.length > 1 && (
@@ -337,6 +338,7 @@ const CreateProductInvoiceDrawer = ({ open, onClose, clientId, clientProfile, on
                             placeholder="Qty"
                             value={it.quantity}
                             onChange={(e) => updateLine(idx, { quantity: e.target.value })}
+                            onWheel={(e) => e.target.blur()}
                             className="w-16 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
                           />
                           <input
@@ -346,6 +348,7 @@ const CreateProductInvoiceDrawer = ({ open, onClose, clientId, clientProfile, on
                             placeholder="Unit price"
                             value={it.unit_price}
                             onChange={(e) => updateLine(idx, { unit_price: e.target.value })}
+                            onWheel={(e) => e.target.blur()}
                             className="w-28 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
                           />
                           {lineItems.length > 1 && (
@@ -414,6 +417,7 @@ const CreateProductInvoiceDrawer = ({ open, onClose, clientId, clientProfile, on
                                 placeholder="0.00"
                                 value={it.deposit_amount}
                                 onChange={(e) => updateLine(idx, { deposit_amount: e.target.value })}
+                                onWheel={(e) => e.target.blur()}
                                 className="w-40 rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2 py-1 text-xs outline-none focus:border-blue-500"
                               />
                             </div>

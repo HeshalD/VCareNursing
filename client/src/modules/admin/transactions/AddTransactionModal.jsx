@@ -210,6 +210,7 @@ const AddTransactionModal = ({ onClose, onSuccess }) => {
                 className={inputCls}
                 value={form.amount}
                 onChange={e => updateField('amount', e.target.value)}
+                onWheel={e => e.target.blur()}
               />
             </div>
 

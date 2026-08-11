@@ -53,6 +53,7 @@ const RateLineItemRow = ({ item, index, onUpdate, onDelete, labelOverride }) => 
           min="0"
           value={item.quantity ?? 1}
           onChange={(e) => set('quantity', e.target.value)}
+          onWheel={(e) => e.target.blur()}
           className="w-full text-sm text-gray-800 bg-transparent border-0 outline-none focus:ring-0 text-right p-0 tabular-nums"
         />
         <span className="block text-[10px] text-gray-400 text-right">{meta.qtyLabel}</span>
@@ -65,6 +66,7 @@ const RateLineItemRow = ({ item, index, onUpdate, onDelete, labelOverride }) => 
           step="0.01"
           value={item.unit_price ?? 0}
           onChange={(e) => set('unit_price', e.target.value)}
+          onWheel={(e) => e.target.blur()}
           className="w-full text-sm text-gray-800 bg-transparent border-0 outline-none focus:ring-0 text-right p-0 tabular-nums"
         />
       </td>

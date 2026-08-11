@@ -80,6 +80,7 @@ const AllocationRow = ({ row, index, bookings, patients, onChange, onRemove, can
             className={inputCls}
             value={row.amount}
             onChange={e => update('amount', e.target.value)}
+            onWheel={e => e.target.blur()}
           />
         </div>
       </div>
@@ -173,6 +174,7 @@ const AllocationRow = ({ row, index, bookings, patients, onChange, onRemove, can
                 className={inputCls}
                 value={row.new_booking.daily_rate}
                 onChange={e => updateNewBooking('daily_rate', e.target.value)}
+                onWheel={e => e.target.blur()}
               />
             </div>
 
@@ -186,6 +188,7 @@ const AllocationRow = ({ row, index, bookings, patients, onChange, onRemove, can
                 className={inputCls}
                 value={row.new_booking.amount_quotated}
                 onChange={e => updateNewBooking('amount_quotated', e.target.value)}
+                onWheel={e => e.target.blur()}
               />
             </div>
           </div>
@@ -332,6 +335,7 @@ const RecordClientPaymentModal = ({ clientId, bookings, patients, onClose, onSuc
                   className={inputCls}
                   value={form.total_amount}
                   onChange={e => updateField('total_amount', e.target.value)}
+                  onWheel={e => e.target.blur()}
                 />
               </div>
 

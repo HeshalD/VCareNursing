@@ -2669,6 +2669,10 @@ async function runMigration() {
   await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_receipt_token_expires_at TIMESTAMPTZ`);
   await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_receipt_url TEXT`);
 
+  // Additional contact numbers beyond the primary (users.mobile_number) — e.g. a
+  // family member's or caregiver's number. Stored as E.164 strings, admin-managed.
+  await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS secondary_phone_numbers TEXT[] NOT NULL DEFAULT '{}'`);
+
   // Phase 3: 365-day membership expiry. reg_fee_paid_at anchors the countdown
   // (set whenever reg_fee_status transitions to PAID); reg_fee_expires_at is the
   // denormalized paid_at + 365 days, kept alongside it purely so the expiry cron

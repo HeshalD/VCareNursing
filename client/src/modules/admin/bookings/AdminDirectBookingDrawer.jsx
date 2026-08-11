@@ -59,7 +59,7 @@ const GENDERS = [
 ];
 
 const RELATIONSHIPS = [
-  'Parent', 'Child', 'Sibling', 'Spouse / Partner',
+  'Self', 'Parent', 'Child', 'Sibling', 'Spouse / Partner',
   'Guardian', 'Caregiver', 'Friend', 'Neighbor', 'Other',
 ];
 
@@ -152,6 +152,8 @@ const AdminDirectBookingDrawer = ({
   onSuccess,
   preselectedClientId = null,
   preselectedClientName = null,
+  preselectedPatientId = null,
+  preselectedPatientName = null,
 }) => {
   const navigate = useNavigate();
 
@@ -164,7 +166,7 @@ const AdminDirectBookingDrawer = ({
   const [patientMode, setPatientMode] = useState('existing'); // 'existing' | 'new'
   const [patients, setPatients] = useState([]);
   const [patientsLoading, setPatientsLoading] = useState(false);
-  const [selectedPatientId, setSelectedPatientId] = useState('');
+  const [selectedPatientId, setSelectedPatientId] = useState(preselectedPatientId || '');
 
   // New patient form
   const [npFullName, setNpFullName] = useState('');
@@ -193,6 +195,10 @@ const AdminDirectBookingDrawer = ({
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState({});
 
+  // Self-as-patient
+  const [selfLoading, setSelfLoading] = useState(false);
+  const [isSelfPatient, setIsSelfPatient] = useState(false);
+
   // ── Sync preselectedClientId when prop changes ───────────────────────────
   useEffect(() => {
     setSelectedClientId(preselectedClientId || '');
@@ -204,29 +210,31 @@ const AdminDirectBookingDrawer = ({
       setSelectedClientId(preselectedClientId || '');
       setPatientMode('existing');
       setPatients([]);
-      setSelectedPatientId('');
+      setSelectedPatientId(preselectedPatientId || '');
       setNpFullName(''); setNpAge(''); setNpGender(''); setNpRelationship('');
       setNpMedicalCondition(''); setNpResidentialAddress('');
       setNpEmergencyContacts([{ name: '', number: '' }]);
       setServiceType(''); setServiceModel(''); setPreferredGender('ANY');
       setStartDate(''); setScheduledEndDate(''); setDailyRate('');
       setAdminNotes('');
+      setIsSelfPatient(false);
       setErrors({});
     }
-  }, [open, preselectedClientId]);
+  }, [open, preselectedClientId, preselectedPatientId]);
 
   // ── Fetch clients (only when no preselected client) ──────────────────────
   useEffect(() => {
     if (!open || preselectedClientId) return;
     setClientsLoading(true);
-    apiClient.getAllClients()
+    apiClient.getAllClients({ limit: 10000 })
       .then((res) => setClients(res?.data || []))
       .catch(() => setClients([]))
       .finally(() => setClientsLoading(false));
   }, [open, preselectedClientId]);
 
-  // ── Fetch patients when client changes ───────────────────────────────────
+  // ── Fetch patients when client changes (skipped when patient is preselected/locked) ──
   useEffect(() => {
+    if (preselectedPatientId) return;
     if (!selectedClientId) { setPatients([]); setSelectedPatientId(''); return; }
     setPatientsLoading(true);
     setSelectedPatientId('');
@@ -234,7 +242,29 @@ const AdminDirectBookingDrawer = ({
       .then((res) => setPatients(res?.data || []))
       .catch(() => setPatients([]))
       .finally(() => setPatientsLoading(false));
-  }, [selectedClientId]);
+  }, [selectedClientId, preselectedPatientId]);
+
+  // ── Use the client's own details as the patient (self-booking) ───────────
+  const handleUseSelfAsPatient = async () => {
+    if (!selectedClientId || selfLoading) return;
+    setPatientMode('new');
+    setIsSelfPatient(true);
+    setErrors((e) => ({ ...e, patient: undefined, npFullName: undefined }));
+    setSelfLoading(true);
+    try {
+      const res = await apiClient.getClientProfile(selectedClientId);
+      const profile = res?.data || {};
+      setNpFullName(profile.full_name || preselectedClientName || '');
+      setNpGender(profile.gender || '');
+      setNpRelationship('Self');
+      setNpResidentialAddress(profile.primary_address || '');
+    } catch {
+      setNpFullName(preselectedClientName || '');
+      setNpRelationship('Self');
+    } finally {
+      setSelfLoading(false);
+    }
+  };
 
   // ── New-patient emergency contacts (one or more) ─────────────────────────
   const updateEmergencyContact = (idx, key, value) =>
@@ -392,13 +422,21 @@ const AdminDirectBookingDrawer = ({
             {/* ── Section 2: Patient ────────────────────────────────────── */}
             <SectionHeader title="Patient" />
             <div className="px-5 py-4 space-y-4">
+              {preselectedPatientId ? (
+                <Field label="Patient">
+                  <p className="px-3 py-2 text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-lg">
+                    {preselectedPatientName || 'Selected care profile'}
+                  </p>
+                </Field>
+              ) : (
+                <>
               {/* Mode toggle */}
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 {[{ key: 'existing', label: 'Existing Patient' }, { key: 'new', label: 'New Patient' }].map(({ key, label }) => (
                   <button
                     key={key}
                     type="button"
-                    onClick={() => { setPatientMode(key); setErrors((e) => ({ ...e, patient: undefined, npFullName: undefined })); }}
+                    onClick={() => { setPatientMode(key); setIsSelfPatient(false); setErrors((e) => ({ ...e, patient: undefined, npFullName: undefined })); }}
                     className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
                       patientMode === key
                         ? 'bg-blue-600 text-white shadow-sm'
@@ -408,6 +446,20 @@ const AdminDirectBookingDrawer = ({
                     {label}
                   </button>
                 ))}
+                <button
+                  type="button"
+                  onClick={handleUseSelfAsPatient}
+                  disabled={!selectedClientId || selfLoading}
+                  title={!selectedClientId ? 'Select a client first' : "Fill patient details with the client's own information"}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all border ${
+                    isSelfPatient
+                      ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                      : 'bg-white text-emerald-700 border-emerald-200 hover:bg-emerald-50'
+                  } disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white`}
+                >
+                  {selfLoading && <Loader2 className="w-3 h-3 animate-spin" />}
+                  Client is the Patient (Self)
+                </button>
               </div>
 
               {patientMode === 'existing' ? (
@@ -436,12 +488,18 @@ const AdminDirectBookingDrawer = ({
                 </Field>
               ) : (
                 <div className="space-y-3">
+                  {isSelfPatient && (
+                    <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                      Using the client's own details as the patient. Name, gender, relationship and address are locked — switch off "Client is the Patient (Self)" above to edit them.
+                    </p>
+                  )}
                   <Field label="Full Name" required error={errors.npFullName}>
                     <input
                       type="text"
                       value={npFullName}
                       onChange={(e) => { setNpFullName(e.target.value); setErrors((err) => ({ ...err, npFullName: undefined })); }}
-                      className={inputCls(!!errors.npFullName)}
+                      disabled={isSelfPatient}
+                      className={inputCls(!!errors.npFullName) + (isSelfPatient ? ' bg-slate-50 text-slate-500 cursor-not-allowed' : '')}
                       placeholder="Patient's full name"
                     />
                   </Field>
@@ -459,14 +517,24 @@ const AdminDirectBookingDrawer = ({
                       />
                     </Field>
                     <Field label="Gender">
-                      <select value={npGender} onChange={(e) => setNpGender(e.target.value)} className={inputCls(false)}>
+                      <select
+                        value={npGender}
+                        onChange={(e) => setNpGender(e.target.value)}
+                        disabled={isSelfPatient}
+                        className={inputCls(false) + (isSelfPatient ? ' bg-slate-50 text-slate-500 cursor-not-allowed' : '')}
+                      >
                         <option value="">Select…</option>
                         {GENDERS.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
                       </select>
                     </Field>
                   </div>
                   <Field label="Relationship with Client">
-                    <select value={npRelationship} onChange={(e) => setNpRelationship(e.target.value)} className={inputCls(false)}>
+                    <select
+                      value={npRelationship}
+                      onChange={(e) => setNpRelationship(e.target.value)}
+                      disabled={isSelfPatient}
+                      className={inputCls(false) + (isSelfPatient ? ' bg-slate-50 text-slate-500 cursor-not-allowed' : '')}
+                    >
                       <option value="">Select…</option>
                       {RELATIONSHIPS.map((r) => <option key={r} value={r}>{r}</option>)}
                     </select>
@@ -485,7 +553,8 @@ const AdminDirectBookingDrawer = ({
                       type="text"
                       value={npResidentialAddress}
                       onChange={(e) => setNpResidentialAddress(e.target.value)}
-                      className={inputCls(false)}
+                      disabled={isSelfPatient}
+                      className={inputCls(false) + (isSelfPatient ? ' bg-slate-50 text-slate-500 cursor-not-allowed' : '')}
                       placeholder="Patient's residential address"
                     />
                   </Field>
@@ -531,6 +600,8 @@ const AdminDirectBookingDrawer = ({
                     </div>
                   </div>
                 </div>
+              )}
+                </>
               )}
             </div>
 

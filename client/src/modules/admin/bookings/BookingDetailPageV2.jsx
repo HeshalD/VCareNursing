@@ -2536,7 +2536,7 @@ const BookingDetailPageV2 = () => {
                   <form onSubmit={handleSubmitPayment} style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
                     <div>
                       <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Amount</label>
-                      <input required type="number" min="0" step="0.01" placeholder="0.00" value={paymentForm.amount_received} onChange={e => setPaymentForm({ ...paymentForm, amount_received: e.target.value })} style={inp} />
+                      <input required type="number" min="0" step="0.01" placeholder="0.00" value={paymentForm.amount_received} onChange={e => setPaymentForm({ ...paymentForm, amount_received: e.target.value })} onWheel={e => e.currentTarget.blur()} style={inp} />
                     </div>
                     <div>
                       <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Method</label>
@@ -2608,7 +2608,7 @@ const BookingDetailPageV2 = () => {
                       ))}
                     </div>
                     <div style={{ display: 'flex', gap: 8 }}>
-                      <input required type="number" min="0.01" max={maxPayoff.toFixed(2)} step="0.01" placeholder="Amount to pay off" value={walletPayoffAmount} onChange={e => setWalletPayoffAmount(e.target.value)} style={{ ...inp, flex: 1 }} />
+                      <input required type="number" min="0.01" max={maxPayoff.toFixed(2)} step="0.01" placeholder="Amount to pay off" value={walletPayoffAmount} onChange={e => setWalletPayoffAmount(e.target.value)} onWheel={e => e.currentTarget.blur()} style={{ ...inp, flex: 1 }} />
                       <button type="button" onClick={() => setWalletPayoffAmount(maxPayoff.toFixed(2))} style={{ border: '1px solid #E2DCD0', borderRadius: 10, padding: '10px 14px', fontSize: 12, fontWeight: 600, color: '#5A554B', background: '#FCFBF8', cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }}>Max</button>
                     </div>
                     <textarea rows={2} placeholder="Notes (optional)" value={walletPayoffNotes} onChange={e => setWalletPayoffNotes(e.target.value)} style={{ ...inp, resize: 'none' }} />
@@ -4126,7 +4126,7 @@ const BookingDetailPageV2 = () => {
               )}
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Number of shifts per day</label>
-                <input type="number" min="1" max="6" value={patternModalShiftCount} onChange={e => handlePatternShiftCountChange(Math.max(1, parseInt(e.target.value) || 1))} className="w-32 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                <input type="number" min="1" max="6" value={patternModalShiftCount} onChange={e => handlePatternShiftCountChange(Math.max(1, parseInt(e.target.value) || 1))} onWheel={e => e.currentTarget.blur()} className="w-32 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
                 <p className="text-xs text-slate-400 mt-1.5">Adding shifts creates new, unassigned slots below — assign staff to them just like any other shift.</p>
               </div>
               <div className="space-y-3">
@@ -4144,7 +4144,7 @@ const BookingDetailPageV2 = () => {
                         </div>
                         <div className="col-span-3">
                           <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Duration (h)</label>
-                          <input type="number" min="0.5" step="0.5" value={s.duration_hours} onChange={e => updatePatternSlot(idx, 'duration_hours', e.target.value)} className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500" />
+                          <input type="number" min="0.5" step="0.5" value={s.duration_hours} onChange={e => updatePatternSlot(idx, 'duration_hours', e.target.value)} onWheel={e => e.currentTarget.blur()} className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500" />
                         </div>
                         <div className="col-span-4">
                           <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Label</label>
@@ -4550,6 +4550,7 @@ const BookingDetailPageV2 = () => {
                                             type="number" min="0" step="0.01"
                                             value={salaryAmountInputs[a.assignment_id] ?? (a.daily_rate ?? '')}
                                             onChange={e => setSalaryAmountInputs(p => ({ ...p, [a.assignment_id]: e.target.value }))}
+                                            onWheel={e => e.currentTarget.blur()}
                                             className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-24"
                                             placeholder="0.00"
                                           />
@@ -4701,7 +4702,7 @@ const BookingDetailPageV2 = () => {
                               <tr key={slotId} style={{ ...rowBorder, background: '#fafafa' }}>
                                 <td className={tdCls + ' font-medium text-gray-900'}>{shiftLabel}</td>
                                 <td className={tdCls}>
-                                  <input type="number" min="0" step="0.01" value={invoiceAmountInputsBySlot[slotId] || ''} onChange={e => setInvoiceAmountInputsBySlot(p => ({ ...p, [slotId]: e.target.value }))} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-32" placeholder="0.00" />
+                                  <input type="number" min="0" step="0.01" value={invoiceAmountInputsBySlot[slotId] || ''} onChange={e => setInvoiceAmountInputsBySlot(p => ({ ...p, [slotId]: e.target.value }))} onWheel={e => e.currentTarget.blur()} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-32" placeholder="0.00" />
                                 </td>
                                 <td className={tdCls}>
                                   <div className="flex flex-wrap gap-1.5">
@@ -4744,7 +4745,7 @@ const BookingDetailPageV2 = () => {
                               ) : (
                                 <>
                                   <td className={tdCls} style={{ background: '#fafafa' }}>
-                                    <input type="number" min="0" step="0.01" value={invoiceAmountInput} onChange={e => setInvoiceAmountInput(e.target.value)} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-32" placeholder="0.00" />
+                                    <input type="number" min="0" step="0.01" value={invoiceAmountInput} onChange={e => setInvoiceAmountInput(e.target.value)} onWheel={e => e.currentTarget.blur()} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-32" placeholder="0.00" />
                                   </td>
                                   <td className={tdCls} style={{ background: '#fafafa' }}>
                                     <div className="flex gap-1.5">

@@ -462,7 +462,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                     </div>
                     <div>
                       <label className={labelCls}>Age <span className="text-red-500">*</span></label>
-                      <input type="number" name="patient_age" value={formData.patient_age} onChange={handleInputChange} className={inputCls} placeholder="Age" min="1" />
+                      <input type="number" name="patient_age" value={formData.patient_age} onChange={handleInputChange} onWheel={(e) => e.target.blur()} className={inputCls} placeholder="Age" min="1" />
                     </div>
                     <div>
                       <label className={labelCls}>Relationship to Client</label>

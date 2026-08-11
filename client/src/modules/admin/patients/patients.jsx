@@ -224,6 +224,7 @@ const PatientDrawer = ({ mode, initial, clients, onClose, onSave, saving }) => {
                   type="number" min="0" max="150"
                   value={form.age}
                   onChange={(e) => set('age', e.target.value)}
+                  onWheel={(e) => e.target.blur()}
                   className={inputCls(!!errors.age)}
                 />
               </Field>
@@ -364,7 +365,7 @@ const DeleteModal = ({ patient, onClose, onConfirm, deleting }) => {
 
 // ─── Nested table: client row → care-profile sub-table ──────────────────────
 
-const ClientRow = ({ clientName, clientMobile, patients, proxyMode, onEdit, onDelete, onView, colSpan }) => {
+const ClientRow = ({ clientName, clientMobile, patients, proxyMode, selectMode, selectedIds, onToggleSelect, onEdit, onDelete, onView, colSpan }) => {
   const [open, setOpen] = useState(false);
 
   return (
@@ -390,6 +391,7 @@ const ClientRow = ({ clientName, clientMobile, patients, proxyMode, onEdit, onDe
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50">
+                    {proxyMode && selectMode && <th className="px-4 py-2.5 w-8" />}
                     <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Care Profile</th>
                     <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Age / Gender</th>
                     <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Relationship</th>
@@ -401,7 +403,21 @@ const ClientRow = ({ clientName, clientMobile, patients, proxyMode, onEdit, onDe
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {patients.map((p) => (
-                    <tr key={p.patient_id} className="hover:bg-slate-50 transition-colors">
+                    <tr
+                      key={p.patient_id}
+                      onClick={proxyMode && selectMode ? () => onToggleSelect(p.patient_id) : undefined}
+                      className={`hover:bg-slate-50 transition-colors ${proxyMode && selectMode ? 'cursor-pointer' : ''}`}
+                    >
+                      {proxyMode && selectMode && (
+                        <td className="px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(p.patient_id)}
+                            onChange={() => onToggleSelect(p.patient_id)}
+                            className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                          />
+                        </td>
+                      )}
                       <td className="px-4 py-2.5">
                         <p className="font-medium text-slate-900 leading-tight">{p.full_name}</p>
                         {p.patient_code && <p className="text-xs text-slate-400 font-mono">{p.patient_code}</p>}
@@ -448,6 +464,68 @@ const ClientRow = ({ clientName, clientMobile, patients, proxyMode, onEdit, onDe
         </tr>
       )}
     </>
+  );
+};
+
+// ─── Bulk Delete Confirm Modal ───────────────────────────────────────────────
+
+const BulkDeleteModal = ({ count, onClose, onConfirm, deleting, error }) => {
+  const [confirmText, setConfirmText] = useState('');
+  const matches = confirmText.trim().toLowerCase() === 'confirm';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center flex-shrink-0">
+            <Trash2 className="w-5 h-5 text-red-600" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">Delete {count} care profile{count !== 1 ? 's' : ''}?</h2>
+            <p className="text-xs text-slate-500 mt-0.5">This action cannot be undone.</p>
+          </div>
+        </div>
+        <p className="text-sm text-slate-600 mb-4">
+          This permanently deletes the selected care profile{count !== 1 ? 's' : ''}.
+          Care Profiles with active bookings cannot be deleted.
+        </p>
+
+        {error && (
+          <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg">
+            {error}
+          </div>
+        )}
+
+        <label className="block text-xs font-medium text-slate-600 mb-1.5">
+          Type <span className="font-semibold text-slate-800">confirm</span> to proceed
+        </label>
+        <input
+          type="text"
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+          placeholder="confirm"
+          autoFocus
+          className={`${inputCls(false)} mb-6`}
+        />
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            disabled={deleting}
+            className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={deleting || !matches}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
   );
 };
 
@@ -537,6 +615,12 @@ export default function PatientsPage() {
   const [deleting, setDeleting] = useState(false);
   const [toast, setToast] = useState(null);
 
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkDeleteError, setBulkDeleteError] = useState(null);
+
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3500);
@@ -559,6 +643,13 @@ export default function PatientsPage() {
   }, [page, search]);
 
   useEffect(() => { loadPatients(page, search); }, [page, search]);
+
+  // Clear selection whenever the underlying list changes to avoid acting on stale rows.
+  useEffect(() => { setSelectedIds(new Set()); }, [page, search, patients]);
+
+  useEffect(() => {
+    if (!proxyMode) { setSelectMode(false); setSelectedIds(new Set()); }
+  }, [proxyMode]);
 
   // Debounce search input — reset to page 1 when query changes
   const handleSearchChange = (val) => {
@@ -634,6 +725,59 @@ export default function PatientsPage() {
     }
   };
 
+  const toggleSelectMode = () => {
+    setSelectMode((v) => !v);
+    setSelectedIds(new Set());
+  };
+
+  const toggleSelect = (patientId) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(patientId)) next.delete(patientId);
+      else next.add(patientId);
+      return next;
+    });
+  };
+
+  const openBulkDeleteConfirm = () => {
+    setBulkDeleteError(null);
+    setShowBulkDeleteConfirm(true);
+  };
+
+  const closeBulkDeleteConfirm = () => {
+    if (bulkDeleting) return;
+    setShowBulkDeleteConfirm(false);
+    setBulkDeleteError(null);
+  };
+
+  const handleBulkDelete = async () => {
+    setBulkDeleting(true);
+    setBulkDeleteError(null);
+    try {
+      const ids = Array.from(selectedIds);
+      const results = await Promise.allSettled(ids.map((id) => apiClient.deletePatient(id)));
+      const failed = results.filter((r) => r.status === 'rejected');
+      if (failed.length > 0) {
+        setBulkDeleteError(
+          failed.length === ids.length
+            ? (failed[0].reason?.message || 'Failed to delete selected care profile(s).')
+            : `${failed.length} of ${ids.length} care profile(s) could not be deleted. They may have active bookings.`
+        );
+      } else {
+        showToast(`${ids.length} care profile${ids.length !== 1 ? 's' : ''} deleted`);
+      }
+      setSelectedIds(new Set());
+      loadPatients(page, search);
+      if (failed.length === 0) {
+        setShowBulkDeleteConfirm(false);
+      }
+    } catch (err) {
+      setBulkDeleteError(err.message || 'Failed to delete selected care profile(s).');
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <AdminLayout
@@ -643,6 +787,27 @@ export default function PatientsPage() {
         canProxy && (
           <div className="flex items-center gap-2">
             <ProxyModeToggle active={proxyMode} onToggle={() => setProxyMode((v) => !v)} />
+            {proxyMode && selectMode && selectedIds.size > 0 && (
+              <button
+                onClick={openBulkDeleteConfirm}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-500 transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete Selected ({selectedIds.size})
+              </button>
+            )}
+            {proxyMode && (
+              <button
+                onClick={toggleSelectMode}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors ${
+                  selectMode
+                    ? 'bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200'
+                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                {selectMode ? 'Cancel' : 'Select'}
+              </button>
+            )}
             {proxyMode && (
               <button onClick={() => setAddDrawer(true)} className={primaryBtnCls}>
                 <Plus className="w-4 h-4" />
@@ -716,6 +881,9 @@ export default function PatientsPage() {
                       clientMobile={group.clientMobile}
                       patients={group.patients}
                       proxyMode={proxyMode}
+                      selectMode={selectMode}
+                      selectedIds={selectedIds}
+                      onToggleSelect={toggleSelect}
                       onEdit={(p) => setEditTarget(p)}
                       onDelete={(p) => setDeleteTarget(p)}
                       onView={(p) => navigate(`/admin/patients/${p.patient_id}/detail`)}
@@ -769,6 +937,17 @@ export default function PatientsPage() {
           onClose={() => setDeleteTarget(null)}
           onConfirm={handleDelete}
           deleting={deleting}
+        />
+      )}
+
+      {/* Bulk Delete Modal */}
+      {showBulkDeleteConfirm && (
+        <BulkDeleteModal
+          count={selectedIds.size}
+          onClose={closeBulkDeleteConfirm}
+          onConfirm={handleBulkDelete}
+          deleting={bulkDeleting}
+          error={bulkDeleteError}
         />
       )}
     </AdminLayout>

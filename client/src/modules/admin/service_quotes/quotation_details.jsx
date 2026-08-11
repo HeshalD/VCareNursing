@@ -567,6 +567,7 @@ const QuotationDetailsPage = () => {
                           type="number"
                           value={row.quantity}
                           onChange={(e) => updateEditRow(idx, { quantity: e.target.value })}
+                          onWheel={(e) => e.target.blur()}
                           placeholder="Qty"
                           className="w-20 rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         />
@@ -574,6 +575,7 @@ const QuotationDetailsPage = () => {
                           type="number"
                           value={row.unit_price}
                           onChange={(e) => updateEditRow(idx, { unit_price: e.target.value })}
+                          onWheel={(e) => e.target.blur()}
                           placeholder="Unit Price"
                           className="w-32 rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         />

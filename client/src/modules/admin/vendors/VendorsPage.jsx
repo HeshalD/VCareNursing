@@ -616,6 +616,7 @@ const VendorsPage = () => {
 										min="0.01"
 										value={billForm.amount}
 										onChange={(e) => setBillForm({ ...billForm, amount: e.target.value })}
+										onWheel={(e) => e.target.blur()}
 										className={inputCls}
 									/>
 								</Field>
@@ -740,6 +741,7 @@ function PayVendorBillModal({ bill, onClose, onPaid }) {
 							min="0.01"
 							value={amount}
 							onChange={(e) => setAmount(e.target.value)}
+							onWheel={(e) => e.target.blur()}
 							className={inputCls}
 						/>
 					</Field>

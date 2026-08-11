@@ -893,6 +893,7 @@ const BookingDetailPage = () => {
                       required type="number" min="0" step="0.01"
                       value={paymentForm.amount_received}
                       onChange={(e) => setPaymentForm({ ...paymentForm, amount_received: e.target.value })}
+                      onWheel={(e) => e.target.blur()}
                       placeholder="0.00"
                       className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm text-[#2A2722] outline-none focus:border-[#137A6B] bg-[#FCFBF8]"
                     />
@@ -1027,6 +1028,7 @@ const BookingDetailPage = () => {
                     <input
                       required type="number" min="0.01" max={maxPayoff.toFixed(2)} step="0.01"
                       value={walletPayoffAmount} onChange={(e) => setWalletPayoffAmount(e.target.value)}
+                      onWheel={(e) => e.target.blur()}
                       placeholder="Amount to pay off"
                       className="flex-1 border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-violet-500 bg-[#FCFBF8]"
                     />

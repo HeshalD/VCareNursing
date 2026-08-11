@@ -836,6 +836,7 @@ const QuotationsPage = () => {
                                         type="number"
                                         value={row.quantity}
                                         onChange={(e) => updateEditRow(idx, { quantity: e.target.value })}
+                                        onWheel={(e) => e.target.blur()}
                                         placeholder="Qty"
                                         className={`${inputCls} py-1.5 text-xs w-16`}
                                       />
@@ -843,6 +844,7 @@ const QuotationsPage = () => {
                                         type="number"
                                         value={row.unit_price}
                                         onChange={(e) => updateEditRow(idx, { unit_price: e.target.value })}
+                                        onWheel={(e) => e.target.blur()}
                                         placeholder="Unit Price"
                                         className={`${inputCls} py-1.5 text-xs flex-1`}
                                       />

@@ -209,6 +209,21 @@ const ClientProfile = () => {
               icon={<Phone size={15} style={styles.fieldIcon} />}
               display={formatPhoneNumberIntl(profile?.mobile_number || '') || profile?.mobile_number}
             />
+            {!!profile?.secondary_phone_numbers?.length && (
+              <div style={{ gridColumn: '1 / -1' }}>
+                <div style={styles.fieldWrap}>
+                  <label style={styles.fieldLabel}>Secondary Phone Numbers</label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {profile.secondary_phone_numbers.map((phone, idx) => (
+                      <div key={idx} style={styles.displayField}>
+                        <Phone size={15} style={styles.fieldIcon} />
+                        <span style={styles.displayValue}>{formatPhoneNumberIntl(phone) || phone}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
             <Field
               label="Email Address"
               icon={<Mail size={15} style={styles.fieldIcon} />}

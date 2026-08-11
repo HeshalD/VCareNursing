@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, X } from 'lucide-react';
+import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, X, Trash2 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
@@ -33,7 +33,7 @@ const HONORIFICS = ['Mr.', 'Mrs.', 'Ms.', 'Dr.', 'Prof.', 'Rev.'];
 const CLIENT_TYPES = ['INDIVIDUAL', 'CORPORATE_PROXY'];
 
 const BLANK_FORM = {
-  full_name: '', email: '', mobile_number: '',
+  full_name: '', email: '', mobile_number: '', secondary_phone_numbers: [],
   gender: '', primary_address: '', client_type: 'INDIVIDUAL',
   honorific: '', company_name: '', display_name_source: 'FULL_NAME',
 };
@@ -93,10 +93,20 @@ const ClientManagement = () => {
   const [formSuccess, setFormSuccess] = useState(null);
   const [credentialsSent, setCredentialsSent] = useState(false);
 
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
+
   // Reset back to page 1 whenever a filter/search changes underneath the current page.
   useEffect(() => { setPage(1); }, [activeTab, debouncedSearch, pendingMigrationOnly, contactPendingOnly]);
 
   useEffect(() => { fetchClients(); }, [activeTab, debouncedSearch, pendingMigrationOnly, contactPendingOnly, page]);
+
+  // Clear selection whenever the underlying list changes to avoid acting on stale rows.
+  useEffect(() => { setSelectedIds(new Set()); }, [activeTab, debouncedSearch, pendingMigrationOnly, contactPendingOnly, page]);
 
   const buildFilters = () => ({
     page,
@@ -145,6 +155,67 @@ const ClientManagement = () => {
     setCredentialsSent(false);
   };
 
+  const toggleSelectMode = () => {
+    setSelectMode(v => !v);
+    setSelectedIds(new Set());
+  };
+
+  const toggleSelect = (clientId) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(clientId)) next.delete(clientId);
+      else next.add(clientId);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedIds(prev =>
+      prev.size === clients.length ? new Set() : new Set(clients.map(c => c.client_profile_id))
+    );
+  };
+
+  const openDeleteConfirm = () => {
+    setDeleteConfirmText('');
+    setDeleteError(null);
+    setShowDeleteConfirm(true);
+  };
+
+  const closeDeleteConfirm = () => {
+    if (deleteLoading) return;
+    setShowDeleteConfirm(false);
+    setDeleteConfirmText('');
+    setDeleteError(null);
+  };
+
+  const handleDeleteConfirmed = async () => {
+    if (deleteConfirmText.trim().toLowerCase() !== 'confirm') return;
+    setDeleteLoading(true);
+    setDeleteError(null);
+    try {
+      const ids = Array.from(selectedIds);
+      const results = await Promise.allSettled(ids.map(id => apiClient.deleteClientProfile(id)));
+      const failed = results.filter(r => r.status === 'rejected');
+      if (failed.length > 0) {
+        setDeleteError(
+          failed.length === ids.length
+            ? (failed[0].reason?.message || 'Failed to delete selected client(s).')
+            : `${failed.length} of ${ids.length} client(s) could not be deleted. They may have existing bookings or invoices.`
+        );
+      }
+      setSelectedIds(new Set());
+      await fetchClients();
+      if (failed.length === 0) {
+        setShowDeleteConfirm(false);
+        setDeleteConfirmText('');
+      }
+    } catch (err) {
+      setDeleteError(err.message || 'Failed to delete selected client(s).');
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
   const handleInput = (e) => {
     const { name, value } = e.target;
     const genderFromHonorific = name === 'honorific'
@@ -157,6 +228,22 @@ const ClientManagement = () => {
       ...(name === 'client_type' && value !== 'CORPORATE_PROXY' ? { company_name: '', display_name_source: 'FULL_NAME' } : {}),
       ...(name === 'company_name' && !value ? { display_name_source: 'FULL_NAME' } : {}),
     }));
+  };
+
+  const handleSecondaryPhoneChange = (index, value) => {
+    setFormData(p => {
+      const next = [...p.secondary_phone_numbers];
+      next[index] = value;
+      return { ...p, secondary_phone_numbers: next };
+    });
+  };
+
+  const addSecondaryPhone = () => {
+    setFormData(p => ({ ...p, secondary_phone_numbers: [...p.secondary_phone_numbers, ''] }));
+  };
+
+  const removeSecondaryPhone = (index) => {
+    setFormData(p => ({ ...p, secondary_phone_numbers: p.secondary_phone_numbers.filter((_, i) => i !== index) }));
   };
 
   const handleSubmit = async (e) => {
@@ -179,6 +266,7 @@ const ClientManagement = () => {
         full_name: formData.full_name || undefined,
         email: formData.email || undefined,
         mobile_number: formData.mobile_number || undefined,
+        secondary_phone_numbers: formData.secondary_phone_numbers.filter(Boolean),
         gender: formData.gender || undefined,
         primary_address: formData.primary_address || undefined,
         client_type: formData.client_type || 'INDIVIDUAL',
@@ -233,13 +321,34 @@ const ClientManagement = () => {
       title="Client Management"
       subtitle="View and manage all registered clients."
       actions={
-        <button
-          onClick={openAdd}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-500 transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-          Add Client
-        </button>
+        <div className="flex items-center gap-2">
+          {selectMode && selectedIds.size > 0 && (
+            <button
+              onClick={openDeleteConfirm}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-500 transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete Selected ({selectedIds.size})
+            </button>
+          )}
+          <button
+            onClick={toggleSelectMode}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors ${
+              selectMode
+                ? 'bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200'
+                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            {selectMode ? 'Cancel' : 'Select'}
+          </button>
+          <button
+            onClick={openAdd}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-500 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Add Client
+          </button>
+        </div>
       }
     >
       {/* Toolbar */}
@@ -304,6 +413,16 @@ const ClientManagement = () => {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50">
+                {selectMode && (
+                  <th className="px-4 py-3 w-10">
+                    <input
+                      type="checkbox"
+                      checked={clients.length > 0 && selectedIds.size === clients.length}
+                      onChange={toggleSelectAll}
+                      className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    />
+                  </th>
+                )}
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Client</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Contact</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Location</th>
@@ -314,16 +433,30 @@ const ClientManagement = () => {
             <tbody className="divide-y divide-slate-100">
               {clients.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="text-center py-16 text-slate-400 text-sm">
+                  <td colSpan={selectMode ? 6 : 5} className="text-center py-16 text-slate-400 text-sm">
                     No clients match your filters.
                   </td>
                 </tr>
               ) : clients.map(client => (
                 <tr
                   key={client.client_profile_id}
-                  onClick={() => navigate(`/admin/users/${client.client_profile_id}/detail`)}
+                  onClick={() => selectMode
+                    ? toggleSelect(client.client_profile_id)
+                    : navigate(`/admin/users/${client.client_profile_id}/detail`)}
                   className="hover:bg-slate-50 cursor-pointer transition-colors"
                 >
+                  {/* Select */}
+                  {selectMode && (
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(client.client_profile_id)}
+                        onChange={() => toggleSelect(client.client_profile_id)}
+                        className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                      />
+                    </td>
+                  )}
+
                   {/* Client */}
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2.5 min-w-[180px]">
@@ -528,6 +661,35 @@ const ClientManagement = () => {
                   <PhoneInput name="mobile_number" value={formData.mobile_number} onChange={handleInput}
                     placeholder="e.g. 0771234567" />
                 </Field>
+                <Field label="Secondary Phone Numbers">
+                  <div className="space-y-2">
+                    {formData.secondary_phone_numbers.map((phone, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <div className="flex-1">
+                          <PhoneInput
+                            value={phone}
+                            onChange={(e) => handleSecondaryPhoneChange(idx, e.target.value)}
+                            placeholder="e.g. 0771234567"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeSecondaryPhone(idx)}
+                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors flex-shrink-0"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={addSecondaryPhone}
+                      className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Add phone number
+                    </button>
+                  </div>
+                </Field>
               </div>
 
               {/* Address */}
@@ -555,6 +717,59 @@ const ClientManagement = () => {
                   {formLoading ? 'Creating…' : 'Create Client'}
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/30" onClick={closeDeleteConfirm} />
+          <div className="relative w-full max-w-sm bg-white rounded-xl shadow-2xl p-5">
+            <h2 className="text-sm font-semibold text-slate-900 mb-1.5">
+              Delete {selectedIds.size} client{selectedIds.size !== 1 ? 's' : ''}?
+            </h2>
+            <p className="text-xs text-slate-500 mb-4">
+              This permanently deletes the selected client profile{selectedIds.size !== 1 ? 's' : ''} and login account{selectedIds.size !== 1 ? 's' : ''}.
+              This action cannot be undone. Clients with existing bookings or invoices cannot be deleted.
+            </p>
+
+            {deleteError && (
+              <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg">
+                {deleteError}
+              </div>
+            )}
+
+            <label className="block text-xs font-medium text-slate-600 mb-1">
+              Type <span className="font-semibold text-slate-800">confirm</span> to proceed
+            </label>
+            <input
+              type="text"
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              placeholder="confirm"
+              autoFocus
+              className={inputCls(false)}
+            />
+
+            <div className="flex items-center gap-2 mt-4">
+              <button
+                type="button"
+                onClick={closeDeleteConfirm}
+                disabled={deleteLoading}
+                className="flex-1 px-4 py-2 border border-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-100 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteConfirmed}
+                disabled={deleteLoading || deleteConfirmText.trim().toLowerCase() !== 'confirm'}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {deleteLoading ? 'Deleting…' : 'Delete'}
+              </button>
             </div>
           </div>
         </div>

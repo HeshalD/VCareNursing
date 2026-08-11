@@ -1029,6 +1029,7 @@ function ProductModal({ product, categories, vendors, onClose, onSaved }) {
                   step="0.01"
                   value={form.price}
                   onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
+                  onWheel={(e) => e.target.blur()}
                   className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 />
               </div>
@@ -1042,6 +1043,7 @@ function ProductModal({ product, categories, vendors, onClose, onSaved }) {
                 step="0.01"
                 value={form.cost_price}
                 onChange={(e) => setForm((f) => ({ ...f, cost_price: e.target.value }))}
+                onWheel={(e) => e.target.blur()}
                 className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               />
               <p className="mt-1 text-[10px] text-slate-400">What this item costs the business — used for the Profit &amp; Loss report's COGS.</p>
@@ -1087,6 +1089,7 @@ function ProductModal({ product, categories, vendors, onClose, onSaved }) {
                   min="0"
                   value={form.stock_quantity}
                   onChange={(e) => setForm((f) => ({ ...f, stock_quantity: e.target.value }))}
+                  onWheel={(e) => e.target.blur()}
                   className="w-40 rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 />
               </div>
@@ -1757,6 +1760,7 @@ function VendorPaymentPromptModal({ quote, submitting, onClose, onConfirm }) {
                     step="0.01"
                     value={d.amount}
                     onChange={(e) => updateDecision(li.line_item_id, { amount: e.target.value })}
+                    onWheel={(e) => e.target.blur()}
                     className="w-32 rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1 text-sm outline-none focus:border-blue-500"
                   />
                 </div>
@@ -2261,6 +2265,7 @@ function NewProductQuoteModal({ onClose, onCreated }) {
                           placeholder="Amount"
                           value={it.unit_price}
                           onChange={(e) => updateLineItem(idx, { unit_price: e.target.value })}
+                          onWheel={(e) => e.target.blur()}
                           className="w-28 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
                         />
                         {lineItems.length > 1 && (
@@ -2303,6 +2308,7 @@ function NewProductQuoteModal({ onClose, onCreated }) {
                         placeholder="Qty"
                         value={it.quantity}
                         onChange={(e) => updateLineItem(idx, { quantity: e.target.value })}
+                        onWheel={(e) => e.target.blur()}
                         className="w-16 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
                       />
                       <input
@@ -2312,6 +2318,7 @@ function NewProductQuoteModal({ onClose, onCreated }) {
                         placeholder="Unit price"
                         value={it.unit_price}
                         onChange={(e) => updateLineItem(idx, { unit_price: e.target.value })}
+                        onWheel={(e) => e.target.blur()}
                         className="w-28 rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
                       />
                       {lineItems.length > 1 && (
@@ -2380,6 +2387,7 @@ function NewProductQuoteModal({ onClose, onCreated }) {
                             placeholder="0.00"
                             value={it.deposit_amount}
                             onChange={(e) => updateLineItem(idx, { deposit_amount: e.target.value })}
+                            onWheel={(e) => e.target.blur()}
                             className="w-40 rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2 py-1 text-xs outline-none focus:border-blue-500"
                           />
                         </div>
@@ -2669,6 +2677,7 @@ export function RefundDepositModal({ deposit, onClose, onRefunded }) {
               step="0.01"
               value={refundAmount}
               onChange={(e) => setRefundAmount(e.target.value)}
+              onWheel={(e) => e.target.blur()}
               className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
             />
             {isPartial && (
@@ -2813,6 +2822,7 @@ export function ForfeitDepositModal({ deposit, onClose, onForfeited }) {
               step="0.01"
               value={forfeitAmount}
               onChange={(e) => setForfeitAmount(e.target.value)}
+              onWheel={(e) => e.target.blur()}
               className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
             />
             <p className="mt-1 text-[11px] text-slate-500">
@@ -3438,6 +3448,7 @@ function NewRentalAgreementModal({ rentalProducts, onClose, onCreated }) {
                 step="0.01"
                 value={rate}
                 onChange={(e) => setRate(e.target.value)}
+                onWheel={(e) => e.target.blur()}
                 className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
               />
             </div>
@@ -3478,6 +3489,7 @@ function NewRentalAgreementModal({ rentalProducts, onClose, onCreated }) {
                   step="0.01"
                   value={vendorAmount}
                   onChange={(e) => setVendorAmount(e.target.value)}
+                  onWheel={(e) => e.target.blur()}
                   className="w-32 rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1 text-sm outline-none focus:border-blue-500"
                 />
               </div>
@@ -3556,6 +3568,7 @@ function NewRentalAgreementModal({ rentalProducts, onClose, onCreated }) {
               placeholder="0.00"
               value={depositAmount}
               onChange={(e) => setDepositAmount(e.target.value)}
+              onWheel={(e) => e.target.blur()}
               className="w-48 rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
             />
             <p className="mt-1 text-[11px] text-slate-400">Bundled into the first invoice and held once that invoice is paid.</p>

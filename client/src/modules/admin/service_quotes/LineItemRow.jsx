@@ -46,6 +46,7 @@ const LineItemRow = ({ item, index, isFirst, isLast, onUpdate, onDelete, onMoveU
           min="0"
           value={item.quantity ?? 1}
           onChange={(e) => set('quantity', e.target.value)}
+          onWheel={(e) => e.target.blur()}
           className="w-full text-sm text-gray-800 bg-transparent border-0 outline-none focus:ring-0 text-right p-0 tabular-nums"
         />
       </td>
@@ -57,6 +58,7 @@ const LineItemRow = ({ item, index, isFirst, isLast, onUpdate, onDelete, onMoveU
           min="0"
           value={item.unit_price ?? 0}
           onChange={(e) => set('unit_price', e.target.value)}
+          onWheel={(e) => e.target.blur()}
           className="w-full text-sm text-gray-800 bg-transparent border-0 outline-none focus:ring-0 text-right p-0 tabular-nums"
         />
       </td>

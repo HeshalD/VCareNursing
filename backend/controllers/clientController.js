@@ -9,6 +9,7 @@ const html_to_pdf = require('html-pdf-node');
 const dailyInvoiceTemplate = require('../templates/dailyInvoiceTemplate');
 const { uploadBufferToS3 } = require('../config/s3Config');
 const { toE164, isValidPhone } = require('../utils/phone');
+const { userHasPermission } = require('../middleware/authMiddleware');
 
 async function getActorName(userId) {
   const result = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [userId]);
@@ -261,6 +262,51 @@ exports.reactivateClientProfile = async (req, res) => {
   } catch (error) {
     console.error('Error reactivating client profile:', error);
     res.status(500).json({ message: 'Error reactivating client profile' });
+  }
+};
+
+// Admin: permanently delete a client profile (and its login account)
+exports.deleteClientProfile = async (req, res) => {
+  const { client_id } = req.params;
+
+  try {
+    const clientAccount = await getClientUserAccount(client_id);
+
+    if (!clientAccount) {
+      return res.status(404).json({ message: 'Client profile not found' });
+    }
+
+    // client_profiles.user_id has ON DELETE CASCADE, so removing the user
+    // row cascades to the client profile as well.
+    await db.query('DELETE FROM users WHERE user_id = $1', [clientAccount.user_id]);
+
+    try {
+      const actorName = await getActorName(req.user.user_id);
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName,
+        actorRole: extractActorRole(req.user?.role),
+        actionType: 'CLIENT_ACCOUNT_DELETED',
+        entityType: 'CLIENT',
+        entityId: String(client_id),
+        details: { client_name: clientAccount.full_name },
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (deleteClientProfile):', logErr.message);
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Client profile deleted successfully',
+    });
+  } catch (error) {
+    if (error.code === '23503') {
+      return res.status(409).json({
+        message: 'This client has existing bookings, invoices or other records and cannot be deleted. Deactivate the account instead.',
+      });
+    }
+    console.error('Error deleting client profile:', error);
+    res.status(500).json({ message: 'Error deleting client profile' });
   }
 };
 
@@ -816,6 +862,17 @@ exports.updateClientProfile = async (req, res) => {
     return res.status(400).json({ message: 'Please enter a valid email address.' });
   }
 
+  const rawSecondaryPhones = Array.isArray(req.body.secondary_phone_numbers) ? req.body.secondary_phone_numbers : [];
+  const secondaryPhones = [];
+  for (const raw of rawSecondaryPhones) {
+    const trimmed = String(raw || '').trim();
+    if (!trimmed) continue;
+    if (!isValidPhone(trimmed)) {
+      return res.status(400).json({ message: 'One of the secondary phone numbers is invalid.' });
+    }
+    secondaryPhones.push(toE164(trimmed));
+  }
+
   const dbClient = await db.pool.connect();
   try {
     await dbClient.query('BEGIN');
@@ -833,13 +890,14 @@ exports.updateClientProfile = async (req, res) => {
     await dbClient.query(
       `UPDATE client_profiles
        SET full_name = $1, primary_address = $2, gender = $3::gender_enum, updated_at = NOW(),
+           secondary_phone_numbers = $5,
            onboarding_status = CASE
                WHEN onboarding_status = 'CONTACT_PENDING' THEN 'ACTIVE'
                WHEN onboarding_status = 'PENDING_MIGRATION' AND $2 IS NOT NULL AND $3 IS NOT NULL THEN 'ACTIVE'
                ELSE onboarding_status
            END
        WHERE client_profile_id = $4`,
-      [full_name.trim(), primary_address?.trim() || null, gender || null, client_id]
+      [full_name.trim(), primary_address?.trim() || null, gender || null, client_id, secondaryPhones]
     );
 
     await dbClient.query(
@@ -1235,6 +1293,17 @@ exports.proxyCreateClient = async (req, res) => {
   const isCorporateProxy = resolvedClientType === 'CORPORATE_PROXY';
 
   const rawMobile = String(req.body.mobile_number || '').trim();
+
+  const rawSecondaryPhones = Array.isArray(req.body.secondary_phone_numbers) ? req.body.secondary_phone_numbers : [];
+  const secondaryPhones = [];
+  for (const raw of rawSecondaryPhones) {
+    const trimmed = String(raw || '').trim();
+    if (!trimmed) continue;
+    if (!isValidPhone(trimmed)) {
+      return res.status(400).json({ message: 'One of the secondary phone numbers is invalid.' });
+    }
+    secondaryPhones.push(toE164(trimmed));
+  }
   // A corporate client's contact person may not be known yet — company_name
   // anchors the record instead. If any contact-person field is being entered,
   // still require gender alongside it for data consistency.
@@ -1294,12 +1363,13 @@ exports.proxyCreateClient = async (req, res) => {
     const userId = userRes.rows[0].user_id;
 
     const profileRes = await dbClient.query(
-      `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address, company_name, honorific, display_name_source, onboarding_status)
-       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8, $9) RETURNING client_profile_id`,
+      `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address, company_name, honorific, display_name_source, onboarding_status, secondary_phone_numbers)
+       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8, $9, $10) RETURNING client_profile_id`,
       [
         userId, resolvedFullName, resolvedClientType,
         gender ? gender.toUpperCase() : null, primary_address || null,
         company_name || null, honorific || null, resolvedDisplayNameSource, onboardingStatus,
+        secondaryPhones,
       ]
     );
     const clientProfileId = profileRes.rows[0].client_profile_id;
@@ -1807,6 +1877,10 @@ exports.updateRegFeeStatus = async (req, res) => {
   const allowed = ['PENDING', 'PAID', 'WAIVED'];
   if (!allowed.includes(status)) {
     return res.status(400).json({ message: `Status must be one of: ${allowed.join(', ')}.` });
+  }
+
+  if (status === 'WAIVED' && !(await userHasPermission(req.user, 'CLIENT_WAIVE_REG_FEE'))) {
+    return res.status(403).json({ message: 'Permission Denied: You do not have access to waive registration fees.' });
   }
 
   try {

@@ -1800,7 +1800,7 @@ const StaffDetailPageV2 = () => {
             <form onSubmit={submitPayout} className="flex flex-col gap-3">
               <div>
                 <label className="block text-xs font-semibold text-slate-500 mb-1">Amount</label>
-                <input type="number" min="0" step="0.01" value={payoutForm.amount} onChange={handlePayoutFieldChange('amount')} placeholder="0.00" className={inputCls} required />
+                <input type="number" min="0" step="0.01" value={payoutForm.amount} onChange={handlePayoutFieldChange('amount')} onWheel={(e) => e.target.blur()} placeholder="0.00" className={inputCls} required />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-500 mb-1">Company bank account</label>
@@ -1883,6 +1883,7 @@ const StaffDetailPageV2 = () => {
                   <input
                     type="number" min="0.01" step="0.01" value={deductionForm.amount}
                     onChange={e => { setDeductionForm(f => ({ ...f, amount: e.target.value })); setDeductionError(''); setDeductionSuccess(''); }}
+                    onWheel={e => e.target.blur()}
                     placeholder="0.00" className={inputCls} required
                   />
                 </div>

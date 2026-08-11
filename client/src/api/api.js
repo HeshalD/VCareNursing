@@ -284,6 +284,12 @@ class ApiClient {
     return this.request(url);
   }
 
+  async deleteClientProfile(clientId) {
+    return this.request(`/client/${clientId}`, {
+      method: 'DELETE',
+    });
+  }
+
   async createClientProfile(data) {
     return this.request('/client/proxy-create', {
       method: 'POST',
@@ -310,10 +316,10 @@ class ApiClient {
     });
   }
 
-  async updateClientProfile(clientId, { full_name, mobile_number, email, primary_address, gender }) {
+  async updateClientProfile(clientId, { full_name, mobile_number, email, primary_address, gender, secondary_phone_numbers }) {
     return this.request(`/client/${clientId}/profile`, {
       method: 'PATCH',
-      body: JSON.stringify({ full_name, mobile_number, email, primary_address, gender }),
+      body: JSON.stringify({ full_name, mobile_number, email, primary_address, gender, secondary_phone_numbers }),
     });
   }
 

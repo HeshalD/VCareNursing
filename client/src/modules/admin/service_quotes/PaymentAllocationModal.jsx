@@ -463,6 +463,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                       autoFocus
                       value={amountReceived}
                       onChange={(e) => setAmountReceived(e.target.value)}
+                      onWheel={(e) => e.target.blur()}
                       placeholder="0.00"
                       className="w-full bg-transparent text-2xl font-semibold text-slate-900 outline-none placeholder-slate-300"
                     />
@@ -628,6 +629,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                                 step="0.01"
                                 value={d.amount}
                                 onChange={(e) => updateVendorDecision(li.line_item_id, { amount: e.target.value })}
+                                onWheel={(e) => e.target.blur()}
                                 className="w-28 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-blue-500"
                               />
                             </div>
@@ -844,6 +846,7 @@ const BucketRow = ({ meta, icon: Icon, due, settled, value, disabled, onChange }
           value={value}
           disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
+          onWheel={(e) => e.target.blur()}
           placeholder="0.00"
           className="w-28 rounded-md border border-slate-300 px-2 py-1 text-right text-sm outline-none focus:border-blue-500 disabled:bg-slate-100 disabled:text-slate-400"
         />

@@ -1,13 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, ArrowRight, Pencil, Loader2, AlertCircle, HeartPulse,
   User, Phone, MapPin, Stethoscope, CalendarDays, Users, Briefcase,
-  Activity, CheckCircle, Clock, ChevronDown, Check,
+  Activity, CheckCircle, Clock, ChevronDown, Check, Trash2, X,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
+import AdminDirectBookingDrawer from '../bookings/AdminDirectBookingDrawer';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -132,6 +133,25 @@ export default function PatientDetailPage() {
   const [profileError, setProfileError] = useState('');
   const [toast, setToast] = useState(null);
 
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const actionsDropdownRef = useRef(null);
+
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+
+  const [showDirectBooking, setShowDirectBooking] = useState(false);
+
+  useEffect(() => {
+    if (!actionsOpen) return;
+    const handler = (e) => {
+      if (actionsDropdownRef.current && !actionsDropdownRef.current.contains(e.target)) setActionsOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [actionsOpen]);
+
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3500);
@@ -181,6 +201,25 @@ export default function PatientDetailPage() {
       setProfileError(err.message || 'Failed to update care profile');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const closeDeleteModal = () => {
+    setDeleteModalOpen(false);
+    setDeleteConfirmText('');
+    setDeleteError('');
+  };
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await apiClient.deletePatient(patientId);
+      navigate('/admin/patients');
+    } catch (err) {
+      setDeleteError(err.message || 'Failed to delete care profile');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -251,7 +290,7 @@ export default function PatientDetailPage() {
               </div>
               <div>
                 <label className={labelCls}>Age <span className="text-red-500">*</span></label>
-                <input type="number" min="0" max="150" className={inputCls} value={profileForm.age} onChange={(e) => setProfileForm((f) => ({ ...f, age: e.target.value }))} />
+                <input type="number" min="0" max="150" className={inputCls} value={profileForm.age} onChange={(e) => setProfileForm((f) => ({ ...f, age: e.target.value }))} onWheel={(e) => e.target.blur()} />
               </div>
               <div>
                 <label className={labelCls}>Gender</label>
@@ -480,13 +519,34 @@ export default function PatientDetailPage() {
             <ArrowLeft className="h-4 w-4" /> Back
           </button>
           {canEdit && (
-            <button
-              type="button"
-              onClick={() => { setActiveSection('overview'); openEditProfile(); }}
-              className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-4 py-1.5 text-[13px] font-semibold text-white hover:bg-blue-700"
-            >
-              <Pencil className="h-4 w-4" /> Edit Care Profile
-            </button>
+            <div className="relative" ref={actionsDropdownRef}>
+              <button
+                type="button"
+                onClick={() => setActionsOpen((v) => !v)}
+                className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-4 py-1.5 text-[13px] font-semibold text-white hover:bg-blue-700"
+              >
+                Actions <ChevronDown className="h-4 w-4" />
+              </button>
+
+              {actionsOpen && (
+                <div className="absolute right-0 top-full z-30 mt-1 w-52 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+                  {[
+                    { label: 'Edit Profile', action: () => { setActiveSection('overview'); openEditProfile(); setActionsOpen(false); } },
+                    { label: 'Create Booking', action: () => { setShowDirectBooking(true); setActionsOpen(false); } },
+                    { label: 'Delete Profile', danger: true, action: () => { setDeleteModalOpen(true); setActionsOpen(false); } },
+                  ].map(({ label, action, danger }) => (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={action}
+                      className={`w-full px-4 py-2 text-left text-[13px] hover:bg-gray-50 ${danger ? 'text-red-600' : 'text-gray-700'}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -571,6 +631,79 @@ export default function PatientDetailPage() {
           </div>
         </div>
       </div>
+
+      <AdminDirectBookingDrawer
+        open={showDirectBooking}
+        onClose={() => setShowDirectBooking(false)}
+        onSuccess={() => load()}
+        preselectedClientId={patient.client_id}
+        preselectedClientName={patient.client_name}
+        preselectedPatientId={patient.patient_id}
+        preselectedPatientName={patient.full_name}
+      />
+
+      {deleteModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-red-100">
+                  <Trash2 className="h-4 w-4 text-red-600" />
+                </div>
+                <h3 className="text-sm font-semibold text-gray-900">Delete Care Profile</h3>
+              </div>
+              <button
+                type="button"
+                onClick={closeDeleteModal}
+                className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="px-5 py-4">
+              {deleteError && (
+                <div className="mb-3 flex items-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {deleteError}
+                </div>
+              )}
+              <p className="text-sm text-gray-600">
+                Are you sure you want to delete{' '}
+                <span className="font-semibold text-gray-900">{patient.full_name || 'this care profile'}</span>?
+                This action cannot be undone. Care Profiles with active bookings cannot be deleted.
+              </p>
+              <label className="mt-4 block text-xs font-medium text-gray-600">
+                Type <span className="font-semibold text-gray-900">{patient.full_name}</span> to confirm
+              </label>
+              <input
+                type="text"
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                placeholder={patient.full_name}
+                autoFocus
+                className="mt-1.5 w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-gray-100 px-5 py-3">
+              <button
+                type="button"
+                onClick={closeDeleteModal}
+                className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={deleting || deleteConfirmText.trim() !== (patient.full_name || '').trim()}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {deleting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AdminLayout>
   );
 }

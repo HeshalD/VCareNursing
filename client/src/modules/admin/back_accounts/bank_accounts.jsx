@@ -894,6 +894,7 @@ const BankAccounts = () => {
 												step="0.01"
 												value={formData.opening_balance}
 												onChange={(e) => setFormData({ ...formData, opening_balance: e.target.value })}
+												onWheel={(e) => e.target.blur()}
 												className={inputCls}
 											/>
 										</Field>
@@ -980,6 +981,7 @@ const BankAccounts = () => {
 										min="0.01"
 										value={pettyCashForm.amount}
 										onChange={(e) => setPettyCashForm({ ...pettyCashForm, amount: e.target.value })}
+										onWheel={(e) => e.target.blur()}
 										className={inputCls}
 									/>
 								</Field>
@@ -1120,6 +1122,7 @@ const BankAccounts = () => {
 										step="0.01"
 										value={transferForm.amount}
 										onChange={(e) => setTransferForm({ ...transferForm, amount: e.target.value })}
+										onWheel={(e) => e.target.blur()}
 										placeholder="0.00"
 										className="w-full bg-transparent text-2xl font-semibold text-slate-900 outline-none placeholder-slate-300"
 									/>

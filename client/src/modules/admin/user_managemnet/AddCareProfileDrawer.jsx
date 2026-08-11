@@ -126,6 +126,7 @@ export default function AddCareProfileDrawer({ open, clientProfileId, onClose, o
                   type="number"
                   value={form.age}
                   onChange={e => updateField('age', e.target.value)}
+                  onWheel={e => e.target.blur()}
                   className={inputCls}
                   placeholder="e.g. 65"
                   min="0"

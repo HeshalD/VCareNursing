@@ -971,7 +971,7 @@ const ServiceRequestSummaryPage = () => {
                           </div>
                           <div>
                             <label className={labelCls}>Age</label>
-                            <input type="number" value={editForm.patient_age} onChange={e => set('patient_age')(e.target.value)} className={inputCls} min="1" />
+                            <input type="number" value={editForm.patient_age} onChange={e => set('patient_age')(e.target.value)} onWheel={(e) => e.target.blur()} className={inputCls} min="1" />
                           </div>
                           <div>
                             <label className={labelCls}>Relationship to Client</label>

@@ -718,6 +718,7 @@ const InternalStaffPage = () => {
                       placeholder="0.00"
                       value={form.base_salary}
                       onChange={set('base_salary')}
+                      onWheel={(e) => e.target.blur()}
                     />
                   </Field>
                 </div>

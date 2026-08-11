@@ -372,6 +372,7 @@ const PresetManager = ({ isOpen, onClose, onSave }) => {
                     onChange={e =>
                       setEditingPreset({ ...editingPreset, default_quantity: parseFloat(e.target.value) || 1 })
                     }
+                    onWheel={e => e.target.blur()}
                     min="0"
                     step="0.01"
                     style={inputStyle}
@@ -386,6 +387,7 @@ const PresetManager = ({ isOpen, onClose, onSave }) => {
                     onChange={e =>
                       setEditingPreset({ ...editingPreset, default_unit_price: parseFloat(e.target.value) || 0 })
                     }
+                    onWheel={e => e.target.blur()}
                     min="0"
                     step="0.01"
                     style={inputStyle}

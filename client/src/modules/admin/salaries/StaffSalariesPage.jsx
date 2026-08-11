@@ -483,6 +483,7 @@ const BulkPayModal = ({ staffList, companyAccounts, onClose, onSuccess }) => {
                         type="number" min="0.01" max={parseFloat(s.current_earnings || 0)} step="0.01" required
                         value={amounts[s.staff_profile_id]}
                         onChange={e => setAmounts(p => ({ ...p, [s.staff_profile_id]: e.target.value }))}
+                        onWheel={e => e.target.blur()}
                         className="w-36 border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-[#137A6B] bg-white text-right"
                       />
                     </div>
@@ -812,6 +813,7 @@ const SinglePayModal = ({ staff, companyAccounts, onClose, onSuccess }) => {
                     <input
                       type="number" min="0.01" max={parseFloat(staff.current_earnings || 0)} step="0.01" required
                       value={amount} onChange={e => setAmount(e.target.value)}
+                      onWheel={e => e.target.blur()}
                       className="w-40 border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-[#137A6B] bg-white text-right"
                     />
                   </div>

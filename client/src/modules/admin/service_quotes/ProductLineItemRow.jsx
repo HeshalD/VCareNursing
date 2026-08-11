@@ -45,6 +45,7 @@ const ProductLineItemRow = ({ item, index, products, rentalUnits, canDelete, onU
             step="0.01"
             value={item.unit_price}
             onChange={(e) => set({ unit_price: e.target.value })}
+            onWheel={(e) => e.target.blur()}
             className="w-full text-sm text-gray-800 bg-transparent border-0 outline-none focus:ring-0 text-right p-0 tabular-nums"
           />
         </td>
@@ -98,6 +99,7 @@ const ProductLineItemRow = ({ item, index, products, rentalUnits, canDelete, onU
             step="1"
             value={item.quantity}
             onChange={(e) => set({ quantity: e.target.value })}
+            onWheel={(e) => e.target.blur()}
             className="w-full text-sm text-gray-800 bg-transparent border-0 outline-none focus:ring-0 text-right p-0 tabular-nums"
           />
         </td>
@@ -108,6 +110,7 @@ const ProductLineItemRow = ({ item, index, products, rentalUnits, canDelete, onU
             step="0.01"
             value={item.unit_price}
             onChange={(e) => set({ unit_price: e.target.value })}
+            onWheel={(e) => e.target.blur()}
             className="w-full text-sm text-gray-800 bg-transparent border-0 outline-none focus:ring-0 text-right p-0 tabular-nums"
           />
         </td>
@@ -185,6 +188,7 @@ const ProductLineItemRow = ({ item, index, products, rentalUnits, canDelete, onU
                 placeholder="0.00"
                 value={item.deposit_amount}
                 onChange={(e) => set({ deposit_amount: e.target.value })}
+                onWheel={(e) => e.target.blur()}
                 className="w-40 rounded-lg border border-gray-200 bg-white text-gray-800 placeholder-gray-300 px-2 py-1.5 text-xs outline-none focus:border-blue-500"
               />
             </div>

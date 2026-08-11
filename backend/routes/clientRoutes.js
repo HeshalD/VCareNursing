@@ -26,6 +26,7 @@ router.delete('/:client_id/notes/:note_id', protect, requirePermission('CLIENT_D
 router.get('/:client_id/detail', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getAdminClientDetail);
 router.patch('/:client_id/deactivate', protect, requirePermission('CLIENT_DEACTIVATE'), clientController.deactivateClientProfile);
 router.patch('/:client_id/reactivate', protect, requirePermission('CLIENT_DEACTIVATE'), clientController.reactivateClientProfile);
+router.delete('/:client_id', protect, requirePermission('CLIENT_DELETE'), clientController.deleteClientProfile);
 router.patch('/:client_id/billing', protect, requirePermission('CLIENT_EDIT'), clientController.updateClientCompanyName);
 router.patch('/:client_id/profile', protect, requirePermission('CLIENT_EDIT'), clientController.updateClientProfile);
 router.post('/:client_id/send-reg-fee-invoice', protect, requirePermission('CLIENT_SEND_REG_FEE_INVOICE'), clientController.sendRegFeeInvoice);

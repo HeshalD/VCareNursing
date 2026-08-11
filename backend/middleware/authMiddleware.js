@@ -27,36 +27,42 @@ exports.invalidateAllPermissionCache = () => {
   _permCache.clear();
 };
 
+// Shared by requirePermission (middleware) and userHasPermission (in-handler check).
+// SUPER_ADMIN always passes without touching staff_permissions.
+async function _userHasPermission(user, permissionKey) {
+  const roles = _parseRoles(user.role);
+  if (roles.includes('SUPER_ADMIN')) return true;
+
+  const userId = user.user_id;
+  const now = Date.now();
+  let cached = _permCache.get(userId);
+
+  if (!cached || now - cached.cachedAt > CACHE_TTL) {
+    const result = await db.query(
+      `SELECT permission_key FROM staff_permissions WHERE user_id = $1
+       UNION
+       SELECT crp.permission_key FROM custom_role_permissions crp
+         JOIN internal_staff_roles isr ON isr.custom_role_id = crp.role_id AND isr.role = 'CUSTOM_ROLE'
+         JOIN internal_staff ist ON ist.id = isr.staff_id
+         WHERE ist.user_id = $1`,
+      [userId]
+    );
+    cached = {
+      perms: new Set(result.rows.map(r => r.permission_key)),
+      cachedAt: now,
+    };
+    _permCache.set(userId, cached);
+  }
+
+  return cached.perms.has(permissionKey);
+}
+
 // LAYER 3: Does the user have a specific permission?
 // Usage: requirePermission('BOOKING_SWAP_STAFF')
 // SUPER_ADMIN always passes. All others are checked against staff_permissions.
 exports.requirePermission = (permissionKey) => async (req, res, next) => {
   try {
-    const roles = _parseRoles(req.user.role);
-    if (roles.includes('SUPER_ADMIN')) return next();
-
-    const userId = req.user.user_id;
-    const now = Date.now();
-    let cached = _permCache.get(userId);
-
-    if (!cached || now - cached.cachedAt > CACHE_TTL) {
-      const result = await db.query(
-        `SELECT permission_key FROM staff_permissions WHERE user_id = $1
-         UNION
-         SELECT crp.permission_key FROM custom_role_permissions crp
-           JOIN internal_staff_roles isr ON isr.custom_role_id = crp.role_id AND isr.role = 'CUSTOM_ROLE'
-           JOIN internal_staff ist ON ist.id = isr.staff_id
-           WHERE ist.user_id = $1`,
-        [userId]
-      );
-      cached = {
-        perms: new Set(result.rows.map(r => r.permission_key)),
-        cachedAt: now,
-      };
-      _permCache.set(userId, cached);
-    }
-
-    if (!cached.perms.has(permissionKey)) {
+    if (!(await _userHasPermission(req.user, permissionKey))) {
       return res.status(403).json({ message: 'Permission Denied: You do not have access to this action.' });
     }
     next();
@@ -65,6 +71,11 @@ exports.requirePermission = (permissionKey) => async (req, res, next) => {
     res.status(500).json({ message: 'Internal server error' });
   }
 };
+
+// In-handler check for routes that gate different behaviour on the same endpoint
+// behind different permissions (e.g. a status field in the body). Usage:
+//   if (!(await userHasPermission(req.user, 'CLIENT_WAIVE_REG_FEE'))) { ... }
+exports.userHasPermission = _userHasPermission;
 
 // LAYER 4 (SALES-only): resolve the caller's internal_staff id so list endpoints
 // can filter down to "their own" bookings/clients. No-op for every other role.

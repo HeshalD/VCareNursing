@@ -978,6 +978,7 @@ const StaffDetailPage = () => {
                 step="0.01"
                 value={payoutForm.amount}
                 onChange={handlePayoutFieldChange('amount')}
+                onWheel={(e) => e.target.blur()}
                 className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none transition focus:border-blue-500"
                 placeholder="0.00"
                 required
@@ -1373,6 +1374,7 @@ const StaffDetailPage = () => {
                   step="0.01"
                   value={deductionForm.amount}
                   onChange={(e) => { setDeductionForm((f) => ({ ...f, amount: e.target.value })); setDeductionError(''); setDeductionSuccess(''); }}
+                  onWheel={(e) => e.target.blur()}
                   className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none transition focus:border-rose-500"
                   placeholder="0.00"
                   required

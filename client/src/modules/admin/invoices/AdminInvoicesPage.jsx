@@ -458,6 +458,7 @@ export default function AdminInvoicesPage() {
                                     [inv.daily_invoice_id]: e.target.value,
                                   }))
                                 }
+                                onWheel={(e) => e.target.blur()}
                                 disabled={busy}
                                 className="w-28 rounded-lg border border-slate-300 bg-white px-2 py-1 text-right text-sm font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:opacity-50"
                               />
