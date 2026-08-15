@@ -61,6 +61,7 @@ const PERMISSIONS = {
   BOOKING_FORCE_STOP:          { label: 'Force-Stop Booking',               module: 'Bookings', entity: 'Booking',           verb: 'Force-Stop',                category: 'action' },
   BOOKING_MANAGE_SHIFT_PATTERN: { label: 'Create/Change Shift Pattern',     module: 'Bookings', entity: 'Shift Pattern',     verb: 'Create/Change',             category: 'action' },
   BOOKING_UPDATE_HOSPITALIZATION: { label: 'Update Hospitalization Status', module: 'Bookings', entity: 'Booking',           verb: 'Update Hospitalization',    category: 'action' },
+  BOOKING_UPDATE_RATE:         { label: 'Update Client Billing Rate',       module: 'Bookings', entity: 'Booking',           verb: 'Update Rate',               category: 'action' },
 
   // ── Staff Assignment ──────────────────────────────────────────────────────
   ASSIGNMENT_ASSIGN:           { label: 'Assign Staff to Booking',          module: 'Bookings', entity: 'Staff Assignment',  verb: 'Assign',                    category: 'action' },
@@ -198,6 +199,13 @@ const PERMISSIONS = {
   INTERNAL_STAFF_EDIT:         { label: 'Edit Internal Staff',              module: 'Internal Staff', entity: 'Internal Staff Account', verb: 'Edit',   category: 'action' },
   INTERNAL_STAFF_REMOVE:       { label: 'Remove Internal Staff',            module: 'Internal Staff', entity: 'Internal Staff Account', verb: 'Remove', category: 'action' },
 
+  // Internal Staff Salary — monthly pay sheets for office/back-office staff.
+  // SUPER_ADMIN has these by default; nobody else does unless explicitly granted.
+  VIEW_INTERNAL_STAFF_SALARY:          { label: 'View Internal Staff Salary',           module: 'Internal Staff Salary', category: 'page' },
+  INTERNAL_STAFF_SALARY_BUILD:         { label: 'Build Internal Staff Salary Sheet',    module: 'Internal Staff Salary', entity: 'Salary Sheet',  verb: 'Build',    category: 'action' },
+  INTERNAL_STAFF_SALARY_FINALIZE:      { label: 'Finalize Internal Staff Salary Sheet', module: 'Internal Staff Salary', entity: 'Salary Sheet',  verb: 'Finalize', category: 'action' },
+  INTERNAL_STAFF_SALARY_PRESET_MANAGE: { label: 'Manage Salary Presets',                module: 'Internal Staff Salary', entity: 'Salary Preset', verb: 'Manage',   category: 'action' },
+
   // ── Bulk Import ───────────────────────────────────────────────────────────
   BULK_IMPORT_COMMIT:          { label: 'Commit Bulk Import',               module: 'Bulk Import', entity: 'Bulk Import', verb: 'Commit', category: 'action' },
 
@@ -223,6 +231,11 @@ const PERMISSIONS = {
 
   // ── Salespersons ──────────────────────────────────────────────────────────
   SALESPERSON_CREDIT:          { label: 'Credit / Switch Salesperson',      module: 'Salespersons', entity: 'Salesperson', verb: 'Credit/Switch', category: 'action' },
+  // Grants a SALES-role account visibility into every client/booking instead of
+  // only the ones assigned to them (see attachSalesScope/requireOwnSalesRecord
+  // in middleware/authMiddleware.js). Toggle per staff member via Staff
+  // Permissions, or per custom role, to let admins choose per-salesperson.
+  SALES_VIEW_ALL_RECORDS:      { label: 'View All Clients & Bookings (Bypass Sales Scope)', module: 'Salespersons', entity: 'Sales Scope', verb: 'View All', category: 'action' },
 
   // ── Staff Leaves ──────────────────────────────────────────────────────────
   STAFF_LEAVE_APPROVE:         { label: 'Approve Staff Leave',              module: 'Staff Leaves', entity: 'Staff Leave', verb: 'Approve', category: 'action' },
@@ -261,6 +274,7 @@ const ROLE_TEMPLATES = {
     'BOOKING_SEND_STATEMENT', 'BOOKING_EXTEND', 'BOOKING_COMPLETE', 'BOOKING_TERMINATE',
     'BOOKING_CREATE_DIRECT', 'BOOKING_CONVERT_FROM_LEAD', 'BOOKING_PAUSE', 'BOOKING_RESUME',
     'BOOKING_FORCE_STOP', 'BOOKING_MANAGE_SHIFT_PATTERN', 'BOOKING_UPDATE_HOSPITALIZATION',
+    'BOOKING_UPDATE_RATE',
     'ASSIGNMENT_ASSIGN', 'ASSIGNMENT_UPDATE', 'ASSIGNMENT_COMPLETE',
     'SERVICE_REQUEST_CREATE', 'SERVICE_REQUEST_EDIT', 'SERVICE_REQUEST_CONVERT',
     'SERVICE_REQUEST_SEND_CANDIDATE',
@@ -302,7 +316,7 @@ const ROLE_TEMPLATES = {
     'VIEW_PATIENTS', 'PATIENT_DELETE',
     'BOOKING_RECORD_PAYMENT', 'BOOKING_VERIFY_PAYMENT', 'BOOKING_REJECT_PAYMENT',
     'BOOKING_WALLET_PAYOFF', 'BOOKING_ADD_NOTE', 'BOOKING_EDIT_NOTE',
-    'BOOKING_UPDATE_HOSPITALIZATION', 'BOOKING_EXTEND',
+    'BOOKING_UPDATE_HOSPITALIZATION', 'BOOKING_EXTEND', 'BOOKING_UPDATE_RATE',
     'QUOTATION_EDIT', 'QUOTATION_SEND',
     'QUOTATION_RECORD_PAYMENT', 'QUOTATION_VERIFY_PAYMENT', 'QUOTATION_REJECT_PAYMENT',
     'QUOTATION_ACCEPT',

@@ -908,6 +908,10 @@ const BankAccounts = () => {
 									</div>
 								</>
 							)}
+
+							{error && (
+								<div className="mx-5 mb-6 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>
+							)}
 						</form>
 
 						<div className="flex items-center gap-2 px-5 py-4 border-t border-slate-200 bg-slate-50 flex-shrink-0">
@@ -943,10 +947,6 @@ const BankAccounts = () => {
 								<X className="w-4 h-4" />
 							</button>
 						</div>
-
-						{pettyCashError && (
-							<div className="mx-5 mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{pettyCashError}</div>
-						)}
 
 						<form onSubmit={handleSubmitPettyCash} id="petty-cash-form" className="flex-1 overflow-y-auto">
 							<div className="px-5 pt-4 pb-6 space-y-3">
@@ -1016,6 +1016,10 @@ const BankAccounts = () => {
 									/>
 								</Field>
 							</div>
+
+							{pettyCashError && (
+								<div className="mx-5 mb-6 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{pettyCashError}</div>
+							)}
 						</form>
 
 						<div className="flex items-center gap-2 px-5 py-4 border-t border-slate-200 bg-slate-50 flex-shrink-0">

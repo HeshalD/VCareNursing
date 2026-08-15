@@ -185,6 +185,8 @@ const ProxyUserManagement = () => {
   const [policeReportUrl, setPoliceReportUrl] = useState('');
   const [formLoading, setFormLoading] = useState(false);
   const [fieldConflicts, setFieldConflicts] = useState({ mobile_number: '', staff_code: '' });
+  const [formSuccess, setFormSuccess] = useState(null);
+  const [createdStaffId, setCreatedStaffId] = useState(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
   const [deletePasswordError, setDeletePasswordError] = useState('');
@@ -207,7 +209,7 @@ const ProxyUserManagement = () => {
       setWorkers(response.data || []);
       setPagination(response.pagination || null);
     } catch (err) {
-      setError('Failed to load workers');
+      setError(err?.message || 'Failed to load workers');
     } finally {
       setLoading(false);
     }
@@ -232,9 +234,14 @@ const ProxyUserManagement = () => {
     setPoliceReportUrl('');
     setFieldConflicts({ mobile_number: '', staff_code: '' });
     setFormError(null);
+    setFormSuccess(null);
+    setCreatedStaffId(null);
     setIsEditMode(false);
     setSelectedWorker(null);
     setShowDrawer(true);
+    apiClient.getNextStaffCode(3000)
+      .then(res => { if (res.staff_id) setFormData(p => ({ ...p, staff_code: res.staff_id })); })
+      .catch(() => {});
   };
 
   const openEdit = (worker) => {
@@ -269,6 +276,8 @@ const ProxyUserManagement = () => {
     setPoliceReportUrl(worker.police_report_url || '');
     setFieldConflicts({ mobile_number: '', staff_code: '' });
     setFormError(null);
+    setFormSuccess(null);
+    setCreatedStaffId(null);
     setSelectedWorker(worker);
     setIsEditMode(true);
     setShowDrawer(true);
@@ -278,6 +287,8 @@ const ProxyUserManagement = () => {
     setShowDrawer(false);
     setIsEditMode(false);
     setFormError(null);
+    setFormSuccess(null);
+    setCreatedStaffId(null);
   };
 
   const handleProfilePictureChange = (file) => {
@@ -361,7 +372,7 @@ const ProxyUserManagement = () => {
       setDeletePassword('');
       setDeleteConfirmWorker(null);
       fetchWorkers();
-    } catch { setError('Failed to delete staff member'); setShowDeleteConfirm(false); }
+    } catch (err) { setError(err?.message || 'Failed to delete staff member'); setShowDeleteConfirm(false); }
   };
 
   const buildFormData = () => {
@@ -413,14 +424,20 @@ const ProxyUserManagement = () => {
       const fd = buildFormData();
       if (isEditMode && selectedWorker?.id) {
         await apiClient.updateStaffProfile(selectedWorker.id, fd);
+        setShowDrawer(false);
+        setIsEditMode(false);
       } else {
-        await apiClient.createStaffProfile(fd);
+        const res = await apiClient.createStaffProfile(fd);
+        setCreatedStaffId(res.data?.staff_profile_id || null);
+        setFormSuccess(
+          res.data?.tempPassword
+            ? `Temporary password: ${res.data.tempPassword}`
+            : 'Staff profile created successfully.'
+        );
       }
-      setShowDrawer(false);
-      setIsEditMode(false);
       fetchWorkers();
     } catch (err) {
-      setFormError(err.response?.data?.message || 'Failed to save staff member.');
+      setFormError(err?.message || 'Failed to save staff member.');
     } finally {
       setFormLoading(false);
     }
@@ -629,12 +646,6 @@ const ProxyUserManagement = () => {
             {/* Scrollable Form */}
             <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto">
 
-              {formError && (
-                <div className="mx-5 mt-4 px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg">
-                  {formError}
-                </div>
-              )}
-
               {/* Personal Information */}
               <SectionHeader title="Personal Information" />
               <div className="px-5 pt-4 pb-2 grid grid-cols-2 gap-3">
@@ -744,7 +755,7 @@ const ProxyUserManagement = () => {
                   <Field label="Staff Code" required={!isEditMode} error={fieldConflicts.staff_code}>
                     <input type="text" name="staff_code" value={formData.staff_code}
                       onChange={handleInputChange} onBlur={e => handleStaffCodeBlur(e.target.value)}
-                      required={!isEditMode} placeholder="e.g. VC-0042"
+                      required={!isEditMode} placeholder="e.g. EMP-3000"
                       className={inputCls(!!fieldConflicts.staff_code)} />
                   </Field>
                   <Field label="NIC Number">
@@ -847,23 +858,59 @@ const ProxyUserManagement = () => {
                   </Field>
                 )}
               </div>
+
+              {formSuccess && (
+                <div className="mx-5 mb-6 px-4 py-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-lg">
+                  <p className="font-semibold mb-0.5">Staff member created successfully.</p>
+                  <p>{formSuccess}</p>
+                  <p className="mt-1 text-emerald-600">
+                    Login credentials (mobile number + temporary password) have been sent via WhatsApp.
+                    They'll be required to set their own password on first login.
+                  </p>
+                </div>
+              )}
+
+              {formError && (
+                <div className="mx-5 mb-6 px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg">
+                  {formError}
+                </div>
+              )}
             </form>
 
             {/* Drawer Footer */}
             <div className="flex items-center gap-2 px-5 py-4 border-t border-slate-200 bg-slate-50 flex-shrink-0">
-              <button type="button" onClick={closeDrawer}
-                className="flex-1 px-4 py-2 border border-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-100 transition-colors">
-                Cancel
-              </button>
-              <button
-                onClick={handleSubmit}
-                disabled={formLoading || !!fieldConflicts.mobile_number || !!fieldConflicts.staff_code}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {formLoading
-                  ? (isEditMode ? 'Updating…' : 'Adding…')
-                  : (isEditMode ? 'Update Staff' : 'Add Staff')}
-              </button>
+              {formSuccess ? (
+                <>
+                  <button type="button" onClick={closeDrawer}
+                    className="flex-1 px-4 py-2 border border-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-100 transition-colors">
+                    Close
+                  </button>
+                  {createdStaffId && (
+                    <button
+                      onClick={() => { closeDrawer(); navigate(`/admin/staff/${createdStaffId}/detail`); }}
+                      className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500 transition-colors"
+                    >
+                      Proceed to Staff Profile
+                    </button>
+                  )}
+                </>
+              ) : (
+                <>
+                  <button type="button" onClick={closeDrawer}
+                    className="flex-1 px-4 py-2 border border-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-100 transition-colors">
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSubmit}
+                    disabled={formLoading || !!fieldConflicts.mobile_number || !!fieldConflicts.staff_code}
+                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {formLoading
+                      ? (isEditMode ? 'Updating…' : 'Adding…')
+                      : (isEditMode ? 'Update Staff' : 'Add Staff')}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>

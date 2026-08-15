@@ -5,7 +5,7 @@ const { toE164, isValidPhone } = require('../utils/phone');
 const { invalidatePermissionCache } = require('../middleware/authMiddleware');
 
 const LOGIN_ROLES = new Set(['COORDINATOR', 'ACCOUNTS', 'SALES', 'SUPER_ADMIN', 'CUSTOM_ROLE', 'RECRUITER']);
-const SELECTABLE = 's.id, s.user_id, s.full_name, s.role, s.email, s.phone, s.base_salary, s.joined_date, s.status, s.address, s.total_sales_amount, s.bookings_brought_count, s.custom_role_id, s.created_at, s.updated_at';
+const SELECTABLE = 's.id, s.user_id, s.full_name, s.role, s.email, s.phone, s.base_salary, s.joined_date, s.status, s.address, s.total_sales_amount, s.bookings_brought_count, s.registrations_brought_count, s.registrations_total_amount, s.custom_role_id, s.epf_applicable, s.etf_applicable, s.created_at, s.updated_at';
 
 // A staff member can hold multiple roles. `roles` (the source of truth) lives in
 // internal_staff_roles; internal_staff.role/custom_role_id mirror the first role
@@ -66,6 +66,23 @@ exports.list = async (req, res) => {
     res.json({ staff: result.rows });
   } catch (err) {
     console.error('internalStaff.list error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+exports.getOne = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await db.query(
+      `SELECT ${SELECTABLE}, ${ROLES_SUBQUERY} FROM internal_staff s WHERE s.id = $1`,
+      [id]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ message: 'Staff member not found' });
+    }
+    res.json({ staff: result.rows[0] });
+  } catch (err) {
+    console.error('internalStaff.getOne error:', err);
     res.status(500).json({ message: 'Internal server error' });
   }
 };
@@ -163,7 +180,7 @@ exports.create = async (req, res) => {
 
 exports.update = async (req, res) => {
   const { id } = req.params;
-  const allowed = ['full_name', 'email', 'phone', 'base_salary', 'joined_date', 'status', 'address'];
+  const allowed = ['full_name', 'email', 'phone', 'base_salary', 'joined_date', 'status', 'address', 'epf_applicable', 'etf_applicable'];
   const body = req.body;
   const rolesProvided = Object.prototype.hasOwnProperty.call(body, 'roles');
   const roles = rolesProvided ? normalizeRoles(body.roles) : null;

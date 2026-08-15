@@ -99,6 +99,9 @@ import SalarySheetLedgerPage from './modules/admin/salaries/SalarySheetLedgerPag
 import StaffPermissionsPage from './modules/admin/permissions/StaffPermissionsPage';
 import CustomRolesPage from './modules/admin/permissions/CustomRolesPage';
 import InternalStaffPage from './modules/admin/internal_staff/InternalStaffPage';
+import InternalStaffProfilePage from './modules/admin/internal_staff/InternalStaffProfilePage';
+import InternalStaffSalaryPage from './modules/admin/internal_staff_salary/InternalStaffSalaryPage';
+import InternalStaffSalaryBuilder from './modules/admin/internal_staff_salary/InternalStaffSalaryBuilder';
 import ActiveSessionsPage from './modules/admin/active_sessions/ActiveSessionsPage';
 import SalespersonsPage from './modules/admin/salespersons/SalespersonsPage';
 import AdminInvoicesPage from './modules/admin/invoices/AdminInvoicesPage';
@@ -430,6 +433,21 @@ function App() {
             <Route path="/admin/internal-staff" element={
               <AdminAuthProvider>
                 <InternalStaffPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/internal-staff/:id" element={
+              <AdminAuthProvider>
+                <InternalStaffProfilePage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/internal-staff-salary" element={
+              <AdminAuthProvider>
+                <InternalStaffSalaryPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/internal-staff-salary/build/:sheetId" element={
+              <AdminAuthProvider>
+                <InternalStaffSalaryBuilder />
               </AdminAuthProvider>
             } />
             <Route path="/admin/active-sessions" element={

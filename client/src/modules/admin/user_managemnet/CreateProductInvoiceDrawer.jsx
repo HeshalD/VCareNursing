@@ -185,8 +185,8 @@ const CreateProductInvoiceDrawer = ({ open, onClose, clientId, clientProfile, on
     try {
       const res = await apiClient.getProductInvoicePdf(invoiceId);
       window.open(res.pdf_url, '_blank', 'noopener,noreferrer');
-    } catch {
-      setError('Failed to generate invoice PDF');
+    } catch (err) {
+      setError(err?.message || 'Failed to generate invoice PDF');
     } finally {
       setPdfLoadingId('');
     }

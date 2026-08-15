@@ -75,6 +75,7 @@ const ClientManagement = () => {
   const navigate = useNavigate();
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('All');
   const [search, setSearch] = useState('');
@@ -92,6 +93,7 @@ const ClientManagement = () => {
   const [formError, setFormError] = useState(null);
   const [formSuccess, setFormSuccess] = useState(null);
   const [credentialsSent, setCredentialsSent] = useState(false);
+  const [createdClientId, setCreatedClientId] = useState(null);
 
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -118,18 +120,23 @@ const ClientManagement = () => {
   });
 
   const fetchClients = async ({ silent = false } = {}) => {
+    // Only take over the whole page with the spinner on the very first load.
+    // Later fetches (search/tab/page changes, auto-refresh) update in place so
+    // the search input never unmounts and loses focus.
+    const showSpinner = !silent && !hasLoadedOnce;
     try {
-      if (!silent) setLoading(true);
+      if (showSpinner) setLoading(true);
       if (!silent) setError(null);
       const response = await apiClient.getAllClients(buildFilters());
       setClients(response.data || []);
       setPagination(response.pagination || null);
       if (response.counts) setCounts(response.counts);
+      setHasLoadedOnce(true);
     } catch (err) {
       if (!silent) setError('Failed to load clients');
       else console.error('ClientManagement silent refresh error:', err);
     } finally {
-      if (!silent) setLoading(false);
+      if (showSpinner) setLoading(false);
     }
   };
 
@@ -145,6 +152,7 @@ const ClientManagement = () => {
     setFormError(null);
     setFormSuccess(null);
     setCredentialsSent(false);
+    setCreatedClientId(null);
     setShowDrawer(true);
   };
 
@@ -153,6 +161,7 @@ const ClientManagement = () => {
     setFormError(null);
     setFormSuccess(null);
     setCredentialsSent(false);
+    setCreatedClientId(null);
   };
 
   const toggleSelectMode = () => {
@@ -278,6 +287,7 @@ const ClientManagement = () => {
       };
       const res = await apiClient.createClientProfile(payload);
       setCredentialsSent(!!res.data?.tempPassword);
+      setCreatedClientId(res.data?.clientProfileId || null);
       setFormSuccess(
         res.data?.tempPassword
           ? `Temporary password: ${res.data.tempPassword}`
@@ -285,7 +295,7 @@ const ClientManagement = () => {
       );
       fetchClients();
     } catch (err) {
-      setFormError(err.response?.data?.message || 'Failed to create client.');
+      setFormError(err?.message || 'Failed to create client.');
     } finally {
       setFormLoading(false);
     }
@@ -555,24 +565,6 @@ const ClientManagement = () => {
 
             {/* Form */}
             <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto">
-              {formError && (
-                <div className="mx-5 mt-4 px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg">
-                  {formError}
-                </div>
-              )}
-              {formSuccess && (
-                <div className="mx-5 mt-4 px-4 py-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-lg">
-                  <p className="font-semibold mb-0.5">Client created successfully.</p>
-                  <p>{formSuccess}</p>
-                  {credentialsSent && (
-                    <p className="mt-1 text-emerald-600">
-                      Login credentials (mobile number + temporary password) have been sent to the client via SMS,
-                      and a welcome message via WhatsApp. They'll be required to set their own password on first login.
-                    </p>
-                  )}
-                </div>
-              )}
-
               {/* Personal */}
               <SectionHeader title="Personal Information" />
               <div className="px-5 pt-4 pb-2 space-y-3">
@@ -700,6 +692,25 @@ const ClientManagement = () => {
                     placeholder="e.g. 45/A, Galle Road, Dehiwala, Colombo" className={inputCls(false)} />
                 </Field>
               </div>
+
+              {formSuccess && (
+                <div className="mx-5 mb-6 px-4 py-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-lg">
+                  <p className="font-semibold mb-0.5">Client created successfully.</p>
+                  <p>{formSuccess}</p>
+                  {credentialsSent && (
+                    <p className="mt-1 text-emerald-600">
+                      Login credentials (mobile number + temporary password) have been sent to the client via SMS,
+                      and a welcome message via WhatsApp. They'll be required to set their own password on first login.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {formError && (
+                <div className="mx-5 mb-6 px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg">
+                  {formError}
+                </div>
+              )}
             </form>
 
             {/* Footer */}
@@ -715,6 +726,14 @@ const ClientManagement = () => {
                   className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {formLoading ? 'Creating…' : 'Create Client'}
+                </button>
+              )}
+              {formSuccess && createdClientId && (
+                <button
+                  onClick={() => { closeDrawer(); navigate(`/admin/users/${createdClientId}/detail`); }}
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500 transition-colors"
+                >
+                  Proceed to Client Profile
                 </button>
               )}
             </div>

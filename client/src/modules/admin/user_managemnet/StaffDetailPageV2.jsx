@@ -2368,12 +2368,6 @@ const StaffDetailPageV2 = () => {
             fullName={profile.full_name}
           />
 
-          {editModal.error && (
-            <div className="mx-6 mt-4 px-4 py-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 flex-shrink-0" /> {editModal.error}
-            </div>
-          )}
-
           {/* Basic information */}
           <EditSectionHeader title="Basic Information" />
           <div className="px-6 pt-4 pb-2 space-y-3">
@@ -2544,6 +2538,12 @@ const StaffDetailPageV2 = () => {
               </label>
             </div>
           </div>
+
+          {editModal.error && (
+            <div className="mx-6 mb-6 px-4 py-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 flex-shrink-0" /> {editModal.error}
+            </div>
+          )}
         </div>
 
         {/* Drawer footer */}

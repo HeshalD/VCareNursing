@@ -2970,6 +2970,88 @@ async function runMigration() {
   `);
 
   // =========================================================
+  // INTERNAL STAFF SALARY
+  // Monthly salary sheets for office/back-office staff (internal_staff),
+  // separate from the field-staff wallet/payout system. EPF (8% employee /
+  // 12% employer) and ETF (3% employer) are togglable per staff (persistent
+  // default here, overridable per sheet). Allowances/deductions are reusable
+  // named presets; the sheet stores a label/amount snapshot per line item so
+  // later preset renames don't rewrite history. Sales commission is a fully
+  // manual amount (see client_salesperson_assignments/booking_salesperson_
+  // assignments for the underlying attribution data shown to the admin).
+  // =========================================================
+
+  await db.query(`
+    ALTER TABLE internal_staff
+    ADD COLUMN IF NOT EXISTS epf_applicable BOOLEAN NOT NULL DEFAULT true,
+    ADD COLUMN IF NOT EXISTS etf_applicable BOOLEAN NOT NULL DEFAULT true
+  `);
+
+  await db.query(`
+    ALTER TABLE transactions
+    ADD COLUMN IF NOT EXISTS internal_staff_id UUID REFERENCES internal_staff(id)
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS internal_staff_salary_presets (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(100) NOT NULL,
+      type VARCHAR(10) NOT NULL CHECK (type IN ('ALLOWANCE', 'DEDUCTION')),
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_internal_salary_presets_unique
+    ON internal_staff_salary_presets (type, lower(name));
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS internal_staff_salary_sheets (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      staff_id UUID NOT NULL REFERENCES internal_staff(id),
+      month VARCHAR(7) NOT NULL,
+      basic_salary NUMERIC(12,2) NOT NULL DEFAULT 0,
+      epf_employee_applicable BOOLEAN NOT NULL DEFAULT true,
+      etf_employer_applicable BOOLEAN NOT NULL DEFAULT true,
+      epf_employee_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      epf_employer_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      etf_employer_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      commission_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      gross_earnings NUMERIC(12,2) NOT NULL DEFAULT 0,
+      total_deductions NUMERIC(12,2) NOT NULL DEFAULT 0,
+      net_payable NUMERIC(12,2) NOT NULL DEFAULT 0,
+      status VARCHAR(12) NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT', 'FINALIZED')),
+      transaction_id UUID REFERENCES transactions(transaction_id),
+      pdf_url TEXT,
+      notes TEXT,
+      created_by UUID REFERENCES users(user_id),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      finalized_at TIMESTAMP WITH TIME ZONE
+    );
+  `);
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_internal_salary_sheets_staff_month
+    ON internal_staff_salary_sheets (staff_id, month);
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS internal_staff_salary_line_items (
+      id SERIAL PRIMARY KEY,
+      sheet_id UUID NOT NULL REFERENCES internal_staff_salary_sheets(id) ON DELETE CASCADE,
+      item_type VARCHAR(10) NOT NULL CHECK (item_type IN ('ALLOWANCE', 'DEDUCTION')),
+      preset_id INTEGER REFERENCES internal_staff_salary_presets(id),
+      label VARCHAR(150) NOT NULL,
+      amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_internal_salary_line_items_sheet
+    ON internal_staff_salary_line_items(sheet_id);
+  `);
+
+  // =========================================================
   // SEED DEFAULT PRESET ITEMS
   // =========================================================
 

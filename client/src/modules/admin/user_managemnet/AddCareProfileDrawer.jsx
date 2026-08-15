@@ -101,12 +101,6 @@ export default function AddCareProfileDrawer({ open, clientProfileId, onClose, o
         <form id="add-care-profile-form" onSubmit={handleSubmit} className="flex flex-1 flex-col overflow-hidden">
           <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
 
-            {error && (
-              <div className="rounded-md bg-red-50 px-4 py-3 text-sm font-medium text-red-700 border border-red-200">
-                {error}
-              </div>
-            )}
-
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="sm:col-span-2">
                 <label className={labelCls}>Full Name *</label>
@@ -227,6 +221,12 @@ export default function AddCareProfileDrawer({ open, clientProfileId, onClose, o
                 </div>
               </div>
             </div>
+
+            {error && (
+              <div className="rounded-md bg-red-50 px-4 py-3 text-sm font-medium text-red-700 border border-red-200">
+                {error}
+              </div>
+            )}
           </div>
 
           {/* Footer */}

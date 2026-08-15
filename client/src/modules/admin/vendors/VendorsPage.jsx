@@ -554,6 +554,10 @@ const VendorsPage = () => {
 										className={inputCls}
 									/>
 								</Field>
+
+								{error && (
+									<div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>
+								)}
 							</div>
 						</form>
 
@@ -591,10 +595,6 @@ const VendorsPage = () => {
 							</button>
 						</div>
 
-						{billError && (
-							<div className="mx-5 mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{billError}</div>
-						)}
-
 						<form onSubmit={handleSubmitBill} id="vendor-bill-form" className="flex-1 overflow-y-auto">
 							<div className="px-5 pt-4 pb-6 space-y-3">
 								<Field label="Bill Type" required>
@@ -628,6 +628,10 @@ const VendorsPage = () => {
 										className={inputCls}
 									/>
 								</Field>
+
+								{billError && (
+									<div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{billError}</div>
+								)}
 							</div>
 						</form>
 

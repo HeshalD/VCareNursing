@@ -1,31 +1,48 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Save, Zap, Lock, KeySquare } from 'lucide-react';
+import { Users, Save, Zap, Lock, KeySquare, CheckSquare, Square } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import PermissionModuleList from './PermissionModuleList';
 
-const getRawRole = (user) => {
-  if (typeof user.role === 'string') return user.role.replace(/[{}]/g, '').trim();
-  if (Array.isArray(user.role)) return user.role.join(', ');
-  return '';
+// Must match the internal/office role labels used on the Internal Staff page.
+const ROLE_LABELS = {
+  SUPER_ADMIN: 'Super Admin',
+  COORDINATOR: 'Coordinator',
+  ACCOUNTS: 'Accounts',
+  SALES: 'Sales',
+  STORE_MANAGER: 'Store Manager',
+  RECRUITER: 'Recruiter',
 };
 
-// Custom roles use a generic CUSTOM_ROLE login role under the hood — display the
-// actual role name instead, same as the Internal Staff page does.
-const getRoleLabel = (user) => {
-  const raw = getRawRole(user);
-  return raw === 'CUSTOM_ROLE' ? (user.custom_role_name || 'Custom Role') : raw;
-};
+const fixedRoleLabel = (role) => ROLE_LABELS[role] || role;
 
-const getRoleColor = (user) => {
-  const raw = getRawRole(user);
-  if (raw === 'CUSTOM_ROLE') return 'bg-indigo-100 text-indigo-700';
-  if (raw.includes('SUPER_ADMIN')) return 'bg-purple-100 text-purple-700';
-  if (raw.includes('COORDINATOR')) return 'bg-blue-100 text-blue-700';
-  if (raw.includes('ACCOUNTS')) return 'bg-teal-100 text-teal-700';
-  if (raw.includes('SALES')) return 'bg-amber-100 text-amber-700';
+const fixedRoleColor = (role) => {
+  if (role === 'CUSTOM_ROLE') return 'bg-indigo-100 text-indigo-700';
+  if (role === 'SUPER_ADMIN') return 'bg-purple-100 text-purple-700';
+  if (role === 'COORDINATOR') return 'bg-blue-100 text-blue-700';
+  if (role === 'ACCOUNTS') return 'bg-teal-100 text-teal-700';
+  if (role === 'SALES') return 'bg-amber-100 text-amber-700';
+  if (role === 'STORE_MANAGER') return 'bg-cyan-100 text-cyan-700';
+  if (role === 'RECRUITER') return 'bg-rose-100 text-rose-700';
   return 'bg-slate-100 text-slate-600';
 };
+
+// A staff member can hold several roles at once (e.g. Coordinator + a custom
+// role). The registry now always sends the full `roles` array — each entry
+// already carries its own custom_role_name when applicable — so every role
+// renders with its real name instead of the raw CUSTOM_ROLE enum value.
+const getUserRoles = (user) => {
+  if (user.roles && user.roles.length > 0) return user.roles;
+  if (!user.role) return [];
+  const raw = typeof user.role === 'string' ? user.role.replace(/[{}]/g, '').trim() : '';
+  return raw
+    .split(',')
+    .map((r) => r.trim())
+    .filter(Boolean)
+    .map((role) => ({ role, custom_role_id: user.custom_role_id, custom_role_name: user.custom_role_name }));
+};
+
+const roleDisplayLabel = (r) => (r.role === 'CUSTOM_ROLE' ? (r.custom_role_name || 'Custom Role') : fixedRoleLabel(r.role));
 
 const StaffPermissionsPage = () => {
   const [users, setUsers] = useState([]);
@@ -172,7 +189,7 @@ const StaffPermissionsPage = () => {
               </div>
             ) : (
               users.map((user) => {
-                const roleLabel = getRoleLabel(user);
+                const roles = getUserRoles(user);
                 const isSelected = selectedUser?.user_id === user.user_id;
                 return (
                   <button
@@ -187,16 +204,19 @@ const StaffPermissionsPage = () => {
                     <div className="font-medium text-sm text-slate-800 truncate">
                       {user.full_name}
                     </div>
-                    <div className="flex items-center gap-2 mt-1 flex-wrap">
-                      <span
-                        className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${getRoleColor(user)}`}
-                      >
-                        {getRawRole(user) === 'CUSTOM_ROLE' && <KeySquare className="w-2.5 h-2.5" />}
-                        {roleLabel}
-                      </span>
-                      <span className="text-xs text-slate-400">
-                        {user.permission_count} perm{user.permission_count !== 1 ? 's' : ''}
-                      </span>
+                    <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                      {roles.map((r, i) => (
+                        <span
+                          key={`${r.role}-${r.custom_role_id || ''}-${i}`}
+                          className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${fixedRoleColor(r.role)}`}
+                        >
+                          {r.role === 'CUSTOM_ROLE' && <KeySquare className="w-2.5 h-2.5" />}
+                          {roleDisplayLabel(r)}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="text-xs text-slate-400 mt-1">
+                      {user.permission_count} perm{user.permission_count !== 1 ? 's' : ''}
                     </div>
                   </button>
                 );
@@ -224,7 +244,7 @@ const StaffPermissionsPage = () => {
                     {selectedUser.full_name}
                   </h2>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    {selectedUser.mobile_number} · {getRoleLabel(selectedUser)}
+                    {selectedUser.mobile_number} · {getUserRoles(selectedUser).map(roleDisplayLabel).join(', ') || '—'}
                   </p>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
@@ -284,16 +304,17 @@ const StaffPermissionsPage = () => {
                     </p>
                     <div className="flex gap-2">
                       <button
-                        onClick={() => setCurrentPerms(new Set(Object.values(registry).flat().map((p) => p.key)))}
-                        className="text-xs text-blue-600 hover:underline"
+                        onClick={() => { setSaveMsg(null); setCurrentPerms(new Set(Object.values(registry).flat().map((p) => p.key))); }}
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-md border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
                       >
+                        <CheckSquare className="w-3 h-3" />
                         Select all
                       </button>
-                      <span className="text-slate-300">·</span>
                       <button
                         onClick={() => { setSaveMsg(null); setCurrentPerms(new Set()); }}
-                        className="text-xs text-slate-500 hover:underline"
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-md border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-colors"
                       >
+                        <Square className="w-3 h-3" />
                         Clear all
                       </button>
                     </div>

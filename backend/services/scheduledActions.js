@@ -22,6 +22,7 @@ const {
     sendClientStaffSwapped,
 } = require('../utils/metaWhatsapp');
 const { sendSms } = require('../utils/sms');
+const { applyPartialAttendanceTime } = require('../controllers/dailyAttendanceController')._internal;
 
 const SYSTEM_ACTOR = { user_id: null, name: 'SYSTEM (scheduled)', role: 'SYSTEM' };
 
@@ -331,18 +332,39 @@ const executeStaffSwap = async (client, payload) => {
         new_scheduled_end_time,
         effective_date,
         swapped_by = null,
+        old_staff_out_time = null,
+        new_staff_in_time = null,
         actor = SYSTEM_ACTOR,
     } = payload;
 
     const effDateStr = toDateStr(effective_date);
 
     // Close the outgoing assignment.
-    await client.query(
+    const closedRes = await client.query(
         `UPDATE booking_staff_assignments
          SET service_end_date = $1, status = 'COMPLETED'
-         WHERE booking_id = $2 AND status = 'ACTIVE' AND assignment_id <> $3`,
+         WHERE booking_id = $2 AND status = 'ACTIVE' AND assignment_id <> $3
+         RETURNING assignment_id`,
         [effDateStr, booking_id, new_assignment_id]
     );
+    const oldAssignmentId = closedRes.rows[0]?.assignment_id || null;
+
+    // Out/in time capture — same effective date is both the old staff's last day
+    // and the new staff's first day for a scheduled swap (see swapStaff's
+    // scheduled branch, which inserts the new assignment at service_start_date =
+    // effective_date and this closes the old one at service_end_date = effective_date).
+    if (oldAssignmentId && old_staff_out_time) {
+        await applyPartialAttendanceTime(client, {
+            booking_id, assignment_id: oldAssignmentId,
+            service_date: effDateStr, out_time: old_staff_out_time,
+        });
+    }
+    if (new_staff_in_time) {
+        await applyPartialAttendanceTime(client, {
+            booking_id, assignment_id: new_assignment_id,
+            service_date: effDateStr, in_time: new_staff_in_time,
+        });
+    }
 
     // Activate the incoming (previously SCHEDULED) assignment.
     await client.query(
@@ -443,16 +465,23 @@ const executeStaffSwap = async (client, payload) => {
 // flips DB state.
 
 const executeAssignmentStart = async (client, payload) => {
-    const { booking_id, assignment_id, staff_profile_id, ot_rate, shift_slot_id = null, actor = SYSTEM_ACTOR } = payload;
+    const { booking_id, assignment_id, staff_profile_id, ot_rate, shift_slot_id = null, staff_in_time = null, actor = SYSTEM_ACTOR } = payload;
 
     const upd = await client.query(
         `UPDATE booking_staff_assignments SET status = 'ACTIVE'
          WHERE assignment_id = $1 AND status = 'SCHEDULED'
-         RETURNING assignment_id`,
+         RETURNING assignment_id, service_start_date`,
         [assignment_id]
     );
     if (upd.rows.length === 0) {
         return { result: { booking_id, skipped: 'assignment no longer scheduled' }, notify: null };
+    }
+
+    if (staff_in_time) {
+        await applyPartialAttendanceTime(client, {
+            booking_id, assignment_id,
+            service_date: toDateStr(upd.rows[0].service_start_date), in_time: staff_in_time, shift_slot_id,
+        });
     }
 
     if (shift_slot_id) {
@@ -510,17 +539,21 @@ const executeShiftReassignment = async (client, payload) => {
         new_assignment_id,
         effective_date,
         reason = null,
+        old_staff_out_time = null,
+        new_staff_in_time = null,
         actor = SYSTEM_ACTOR,
     } = payload;
 
     const effDateStr = toDateStr(effective_date);
 
-    await client.query(
+    const closedRes = await client.query(
         `UPDATE booking_staff_assignments
          SET service_end_date = $1, status = 'COMPLETED'
-         WHERE shift_slot_id = $2 AND status = 'ACTIVE' AND assignment_id <> $3`,
+         WHERE shift_slot_id = $2 AND status = 'ACTIVE' AND assignment_id <> $3
+         RETURNING assignment_id`,
         [effDateStr, shift_slot_id, new_assignment_id]
     );
+    const oldAssignmentId = closedRes.rows[0]?.assignment_id || null;
 
     await client.query(
         `UPDATE booking_staff_assignments SET status = 'ACTIVE' WHERE assignment_id = $1`,
@@ -531,6 +564,22 @@ const executeShiftReassignment = async (client, payload) => {
         await client.query(`UPDATE staff_profiles SET current_status = 'AVAILABLE' WHERE staff_profile_id = $1`, [old_staff_id]);
     }
     await client.query(`UPDATE staff_profiles SET current_status = 'ASSIGNED' WHERE staff_profile_id = $1`, [new_staff_id]);
+
+    // Out/in time capture — reassignment's old and new assignments both use
+    // effective_date as the boundary day (old's service_end_date, new's
+    // service_start_date — see reassignSlotStaff's immediate branch).
+    if (oldAssignmentId && old_staff_out_time) {
+        await applyPartialAttendanceTime(client, {
+            booking_id, assignment_id: oldAssignmentId,
+            service_date: effDateStr, out_time: old_staff_out_time, shift_slot_id,
+        });
+    }
+    if (new_staff_in_time) {
+        await applyPartialAttendanceTime(client, {
+            booking_id, assignment_id: new_assignment_id,
+            service_date: effDateStr, in_time: new_staff_in_time, shift_slot_id,
+        });
+    }
 
     const notify = async () => {
         try {

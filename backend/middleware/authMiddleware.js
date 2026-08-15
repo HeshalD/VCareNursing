@@ -78,11 +78,13 @@ exports.requirePermission = (permissionKey) => async (req, res, next) => {
 exports.userHasPermission = _userHasPermission;
 
 // LAYER 4 (SALES-only): resolve the caller's internal_staff id so list endpoints
-// can filter down to "their own" bookings/clients. No-op for every other role.
+// can filter down to "their own" bookings/clients. No-op for every other role,
+// and also a no-op for a SALES caller granted SALES_VIEW_ALL_RECORDS — that
+// permission is the admin's per-staff toggle to unscope a salesperson.
 exports.attachSalesScope = async (req, res, next) => {
   try {
     const roles = _parseRoles(req.user.role);
-    if (roles.includes('SALES')) {
+    if (roles.includes('SALES') && !(await _userHasPermission(req.user, 'SALES_VIEW_ALL_RECORDS'))) {
       const result = await db.query('SELECT id FROM internal_staff WHERE user_id = $1', [req.user.user_id]);
       req.user.salesperson_id = result.rows[0]?.id || null;
     }
@@ -95,11 +97,12 @@ exports.attachSalesScope = async (req, res, next) => {
 
 // Restricts a :paramName-keyed route to a SALES caller's own assignment row in
 // `table` (matched on a column of the same name as paramName). No-op for every
-// other role, since only SALES accounts get scoped to "their own" records.
+// other role, since only SALES accounts get scoped to "their own" records —
+// and also a no-op for a SALES caller granted SALES_VIEW_ALL_RECORDS.
 exports.requireOwnSalesRecord = (paramName, table) => async (req, res, next) => {
   try {
     const roles = _parseRoles(req.user.role);
-    if (!roles.includes('SALES')) return next();
+    if (!roles.includes('SALES') || await _userHasPermission(req.user, 'SALES_VIEW_ALL_RECORDS')) return next();
 
     const staffRes = await db.query('SELECT id FROM internal_staff WHERE user_id = $1', [req.user.user_id]);
     const salespersonId = staffRes.rows[0]?.id;

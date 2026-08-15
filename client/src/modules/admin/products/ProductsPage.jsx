@@ -989,12 +989,6 @@ function ProductModal({ product, categories, vendors, onClose, onSaved }) {
         </div>
 
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto">
-          {error && (
-            <div className="mx-5 mt-4 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-              <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {error}
-            </div>
-          )}
-
           <div className="px-5 pt-4 pb-2 space-y-4">
             <div>
               <label className="block text-[11px] font-medium text-slate-500 mb-1">Name *</label>
@@ -1135,6 +1129,12 @@ function ProductModal({ product, categories, vendors, onClose, onSaved }) {
                 </div>
               )}
             </div>
+
+            {error && (
+              <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {error}
+              </div>
+            )}
           </div>
         </form>
 
@@ -2146,12 +2146,6 @@ function NewProductQuoteModal({ onClose, onCreated }) {
           </button>
         </div>
         <div className="flex-1 overflow-y-auto space-y-4 px-5 py-4">
-          {error && (
-            <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-              <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {error}
-            </div>
-          )}
-
           <div>
             <div className="flex gap-1 rounded-lg bg-slate-100 p-1 w-fit mb-3">
               {[
@@ -2406,6 +2400,12 @@ function NewProductQuoteModal({ onClose, onCreated }) {
               )}
             </div>
           </div>
+
+          {error && (
+            <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" /> {error}
+            </div>
+          )}
         </div>
 
         <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-4 shrink-0">

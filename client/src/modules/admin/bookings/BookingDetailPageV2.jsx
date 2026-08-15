@@ -138,6 +138,46 @@ const Value = ({ children, mono }) => (
 );
 const Field = ({ label, value, mono }) => <div><Label>{label}</Label><Value mono={mono}>{value}</Value></div>;
 
+// Click-the-pencil inline-editable money field — used for the client/staff rate
+// fields (Overview + Rates tab). `rateKey` identifies which field this is so the
+// parent's single shared editingRate state knows whether this instance is the
+// one currently open for editing.
+const EditableRate = ({ rateKey, label, value, editingRate, onStartEdit, onChangeValue, onSave, onCancel, submitting, error, formatMoney }) => {
+  const isEditing = editingRate?.key === rateKey;
+  return (
+    <div>
+      {label && <Label>{label}</Label>}
+      {isEditing ? (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input
+              type="number" min="0" step="0.01" autoFocus
+              value={editingRate.value}
+              onChange={(e) => onChangeValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') onSave(); if (e.key === 'Escape') onCancel(); }}
+              style={{ width: 110, border: '1px solid #e5e7eb', borderRadius: 6, padding: '5px 8px', fontSize: 13, fontFamily: 'inherit', outline: 'none' }}
+            />
+            <button type="button" onClick={onSave} disabled={submitting} title="Save" style={{ border: 'none', background: '#1e293b', borderRadius: 6, padding: 5, color: '#fff', cursor: submitting ? 'wait' : 'pointer', display: 'flex' }}>
+              <Check style={{ width: 13, height: 13 }} />
+            </button>
+            <button type="button" onClick={onCancel} title="Cancel" style={{ border: '1px solid #e5e7eb', background: '#fff', borderRadius: 6, padding: 5, color: '#374151', cursor: 'pointer', display: 'flex' }}>
+              <X style={{ width: 13, height: 13 }} />
+            </button>
+          </div>
+          {error && <p style={{ fontSize: 11, color: '#BC4338', margin: '4px 0 0' }}>{error}</p>}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Value>{formatMoney(value)}</Value>
+          <button type="button" onClick={() => onStartEdit(rateKey, value)} title="Edit" style={{ border: 'none', background: 'transparent', padding: 2, color: '#9ca3af', cursor: 'pointer', display: 'flex' }}>
+            <Pencil style={{ width: 12, height: 12 }} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const Card = ({ children, style }) => (
   <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '18px 20px', ...style }}>{children}</div>
 );
@@ -225,6 +265,14 @@ const BookingDetailPageV2 = () => {
   const [walletPayoffSubmitting, setWalletPayoffSubmitting] = useState(false);
   const [walletPayoffError, setWalletPayoffError]         = useState('');
 
+  // inline rate editing (client billing rate on `bookings`, staff pay rate on
+  // `booking_staff_assignments`) — one shared editor since only one field is
+  // ever open at a time. rateKey shapes: 'client_daily' | 'client_shift' |
+  // 'client_ot' | `staff_${assignment_id}`.
+  const [editingRate, setEditingRate]         = useState(null); // { key, value }
+  const [rateSubmitting, setRateSubmitting]   = useState(false);
+  const [rateError, setRateError]             = useState('');
+
   // swap modal
   const [showSwapModal, setShowSwapModal]             = useState(false);
   const [swapModalStep, setSwapModalStep]             = useState(1);
@@ -238,6 +286,16 @@ const BookingDetailPageV2 = () => {
   const [swapModalDesignation, setSwapModalDesignation] = useState('');
   const [swapModalSlotId, setSwapModalSlotId]         = useState(null); // set => modal targets a shift slot, not the whole booking
   const [swapModalIsAssign, setSwapModalIsAssign]     = useState(false); // true => slot has no current staff (assign, not reassign)
+  const [swapModalOldOutTime, setSwapModalOldOutTime] = useState(''); // HH:mm — outgoing staff's out time on swapModalStartDate (optional)
+  const [swapModalNewInTime, setSwapModalNewInTime]   = useState(''); // HH:mm — incoming staff's in time on swapModalStartDate (optional)
+
+  // edit times modal — backfills/corrects an assignment's start-day in_time and/or
+  // end-day out_time directly (past, present or already-completed rows all use this)
+  const [editTimesRow, setEditTimesRow]               = useState(null);
+  const [editTimesIn, setEditTimesIn]                 = useState('');
+  const [editTimesOut, setEditTimesOut]                = useState('');
+  const [editTimesSubmitting, setEditTimesSubmitting] = useState(false);
+  const [editTimesError, setEditTimesError]           = useState('');
 
   // reschedule modal — moves one shift occurrence to a different date, with an
   // optional staff change for the makeup occurrence
@@ -388,6 +446,9 @@ const BookingDetailPageV2 = () => {
   const isShiftBased    = bookingSummary.service_model === 'SHIFT_BASED';
 
   const activeStaffRow = staffHistory.find(r => (r.status || '').toLowerCase() === 'active') || staffHistory[0] || null;
+  // All currently-active assignments — for SHIFT_BASED this can be several (one per
+  // shift slot), each with its own independently-editable pay rate. Used by the Rates tab.
+  const activeAssignments = staffHistory.filter(r => (r.status || '').toLowerCase() === 'active');
 
   const normCurrentStaff = currentStaff?.staff_name || currentStaff?.full_name || currentStaff?.name
     ? { name: currentStaff.staff_name || currentStaff.full_name || currentStaff.name || '-', id: currentStaff.staff_code || currentStaff.staff_profile_id || '-', mobile: currentStaff.staff_mobile || currentStaff.mobile || '-', email: currentStaff.staff_email || currentStaff.email || '-', designation: currentStaff.designation || currentStaff.staff_designation || '-' }
@@ -416,6 +477,7 @@ const BookingDetailPageV2 = () => {
     startDate: r.service_start_date || r.assigned_at || r.created_at,
     endDate: r.service_end_date || r.ended_at || r.end_date,
     dailyRate: r.daily_rate ?? r.rate ?? 0, amountAllocated: r.amount_allocated ?? 0,
+    shiftSlotId: r.shift_slot_id || null,
   }));
 
   const normSwapHistory = swapHistory.map(s => ({
@@ -656,7 +718,12 @@ const BookingDetailPageV2 = () => {
   useEffect(() => {
     if (!adminToken) return;
     apiClient.setToken(adminToken);
-    apiClient.getAllStaff({ status: 'AVAILABLE', limit: 1000, page: 1 }).then(r => setAvailableStaff(r?.data || [])).catch(() => {});
+    // Deliberately unfiltered by current_status: bulk-migrated staff sit at
+    // UNAVAILABLE (see bulkImportController) and staff on another booking sit at
+    // ASSIGNED, but both are still valid swap/assign candidates as long as they have
+    // no genuine date-overlapping commitment — the backend (swapStaff/assignStaffToSlot)
+    // already re-checks that at write time, so the picker just needs to list everyone.
+    apiClient.getAllStaff({ limit: 1000, page: 1 }).then(r => setAvailableStaff(r?.data || [])).catch(() => {});
   }, [adminToken]);
 
   // Batched schedule lookup for the staff-picker UIs below (swap modal + shift
@@ -1387,7 +1454,7 @@ const BookingDetailPageV2 = () => {
     finally { setPaymentSubmitting(false); }
   };
 
-  const closeSwapModal = () => { setShowSwapModal(false); setSwapModalStep(1); setSwapModalSearch(''); setSwapModalSelectedStaff(null); setSwapModalReason(''); setSwapModalError(''); setSwapModalPage(1); setSwapModalDesignation(''); setSwapModalStartDate(toDateInput(new Date())); setSwapModalSlotId(null); setSwapModalIsAssign(false); };
+  const closeSwapModal = () => { setShowSwapModal(false); setSwapModalStep(1); setSwapModalSearch(''); setSwapModalSelectedStaff(null); setSwapModalReason(''); setSwapModalError(''); setSwapModalPage(1); setSwapModalDesignation(''); setSwapModalStartDate(toDateInput(new Date())); setSwapModalSlotId(null); setSwapModalIsAssign(false); setSwapModalOldOutTime(''); setSwapModalNewInTime(''); };
   const selectSwapStaff = (s) => { setSwapModalSelectedStaff(s); setSwapModalStep(2); };
   const openSlotAssignModal = (slot) => { setSwapModalSlotId(slot.shift_slot_id); setSwapModalIsAssign(!slot.assignment); setShowSwapModal(true); };
   const confirmSwap = async () => {
@@ -1395,13 +1462,16 @@ const BookingDetailPageV2 = () => {
     try {
       setSwapModalSubmitting(true); setSwapModalError('');
       apiClient.setToken(adminToken);
+      // Time-only inputs — combine with the staff start date above into a full timestamp.
+      const oldOutTime = swapModalOldOutTime ? `${swapModalStartDate}T${swapModalOldOutTime}` : null;
+      const newInTime = swapModalNewInTime ? `${swapModalStartDate}T${swapModalNewInTime}` : null;
       let response;
       if (swapModalSlotId) {
         response = swapModalIsAssign
-          ? await apiClient.assignStaffToShiftSlot(bookingId, swapModalSlotId, { staff_profile_id: swapModalSelectedStaff.staff_profile_id, service_start_date: swapModalStartDate, notes: swapModalReason.trim() || null })
-          : await apiClient.reassignShiftSlotStaff(bookingId, swapModalSlotId, { new_staff_id: swapModalSelectedStaff.staff_profile_id, effective_date: swapModalStartDate, reason: swapModalReason.trim() || null });
+          ? await apiClient.assignStaffToShiftSlot(bookingId, swapModalSlotId, { staff_profile_id: swapModalSelectedStaff.staff_profile_id, service_start_date: swapModalStartDate, notes: swapModalReason.trim() || null, staff_in_time: newInTime })
+          : await apiClient.reassignShiftSlotStaff(bookingId, swapModalSlotId, { new_staff_id: swapModalSelectedStaff.staff_profile_id, effective_date: swapModalStartDate, reason: swapModalReason.trim() || null, old_staff_out_time: oldOutTime, new_staff_in_time: newInTime });
       } else {
-        response = await apiClient.swapBookingStaff(bookingId, { new_staff_id: swapModalSelectedStaff.staff_profile_id, swap_reason: swapModalReason.trim(), new_staff_start_date: swapModalStartDate });
+        response = await apiClient.swapBookingStaff(bookingId, { new_staff_id: swapModalSelectedStaff.staff_profile_id, swap_reason: swapModalReason.trim(), new_staff_start_date: swapModalStartDate, old_staff_out_time: oldOutTime, new_staff_in_time: newInTime });
       }
       closeSwapModal(); await fetchDetail(); await fetchScheduledActions(); if (isShiftBased) await fetchShiftData();
       if (response?.scheduled) {
@@ -1409,6 +1479,64 @@ const BookingDetailPageV2 = () => {
       }
     } catch (err) { setSwapModalError(err?.message || 'Failed to update staff assignment'); }
     finally { setSwapModalSubmitting(false); }
+  };
+
+  // Backfill/correct an allocation-history row's start-day in_time and/or end-day
+  // out_time — the same mechanism the swap modal uses, exposed directly on
+  // already-recorded rows (past, current or scheduled) so a bulk-migrated or
+  // never-logged assignment can be filled in after the fact.
+  const openEditTimes = (row) => {
+    const startISO = row.startDate ? row.startDate.slice(0, 10) : null;
+    const endISO = row.effectiveEnd ? row.effectiveEnd.slice(0, 10) : null;
+    const inRecord = startISO ? attendanceRecords.find(a => a.assignment_id === row.id && a.service_date?.slice(0, 10) === startISO) : null;
+    const outRecord = endISO ? attendanceRecords.find(a => a.assignment_id === row.id && a.service_date?.slice(0, 10) === endISO) : null;
+    setEditTimesRow(row);
+    setEditTimesIn(inRecord?.in_time ? inRecord.in_time.slice(11, 16) : '');
+    setEditTimesOut(outRecord?.out_time ? outRecord.out_time.slice(11, 16) : '');
+    setEditTimesError('');
+  };
+  const closeEditTimes = () => { setEditTimesRow(null); setEditTimesIn(''); setEditTimesOut(''); setEditTimesError(''); };
+  const saveEditTimes = async () => {
+    if (!editTimesRow || (!editTimesIn && !editTimesOut)) return;
+    try {
+      setEditTimesSubmitting(true); setEditTimesError('');
+      apiClient.setToken(adminToken);
+      const startISO = editTimesRow.startDate ? editTimesRow.startDate.slice(0, 10) : null;
+      const endISO = editTimesRow.effectiveEnd ? editTimesRow.effectiveEnd.slice(0, 10) : null;
+      if (editTimesIn && startISO) {
+        await apiClient.setAttendanceTime(bookingId, { assignment_id: editTimesRow.id, service_date: startISO, in_time: `${startISO}T${editTimesIn}`, shift_slot_id: editTimesRow.shiftSlotId || undefined });
+      }
+      if (editTimesOut && endISO) {
+        await apiClient.setAttendanceTime(bookingId, { assignment_id: editTimesRow.id, service_date: endISO, out_time: `${endISO}T${editTimesOut}`, shift_slot_id: editTimesRow.shiftSlotId || undefined });
+      }
+      closeEditTimes();
+      await fetchDailyRecords();
+    } catch (err) { setEditTimesError(err?.message || 'Failed to save times'); }
+    finally { setEditTimesSubmitting(false); }
+  };
+
+  // Inline rate editing — one editor shared across the Overview and Rates tab
+  // fields (see EditableRate above). `staff_${assignment_id}` keys route to the
+  // staff-assignment endpoint; the `client_*` keys route to the booking-rates one.
+  const startEditRate = (key, currentValue) => { setEditingRate({ key, value: currentValue != null ? String(currentValue) : '' }); setRateError(''); };
+  const cancelEditRate = () => { setEditingRate(null); setRateError(''); };
+  const changeEditRateValue = (value) => setEditingRate(r => (r ? { ...r, value } : r));
+  const saveEditRate = async () => {
+    if (!editingRate) return;
+    const num = parseFloat(editingRate.value);
+    if (Number.isNaN(num) || num < 0) { setRateError('Enter a valid non-negative number'); return; }
+    try {
+      setRateSubmitting(true); setRateError('');
+      apiClient.setToken(adminToken);
+      const { key } = editingRate;
+      if (key === 'client_daily') await apiClient.updateBookingRates(bookingId, { daily_rate: num });
+      else if (key === 'client_shift') await apiClient.updateBookingRates(bookingId, { shift_rate: num });
+      else if (key === 'client_ot') await apiClient.updateBookingRates(bookingId, { ot_rate: num });
+      else if (key.startsWith('staff_')) await apiClient.updateStaffAssignment(key.slice(6), { daily_rate: num });
+      setEditingRate(null);
+      await fetchDetail();
+    } catch (err) { setRateError(err?.message || 'Failed to update rate'); }
+    finally { setRateSubmitting(false); }
   };
 
   const cascadeStartTimes = (slots, fromIdx = 0) => {
@@ -1844,6 +1972,7 @@ const BookingDetailPageV2 = () => {
     { id: 'overview',    label: 'Overview',      icon: LayoutGrid },
     { id: 'payments',    label: 'Payments',       icon: DollarSign },
     { id: 'staff',       label: 'Staff & Swaps',  icon: Users },
+    { id: 'rates',       label: 'Rates',          icon: Wallet },
     ...(isShiftBased ? [{ id: 'reschedules', label: 'Reschedules', icon: Repeat2 }] : []),
     { id: 'salesperson', label: 'Salesperson',    icon: Briefcase },
     { id: 'client',      label: 'Client & Care',  icon: User },
@@ -2138,7 +2267,7 @@ const BookingDetailPageV2 = () => {
                   </div>
                 </div>
                 <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, padding: '15px 16px' }}>
-                  <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: '#9ca3af' }}>{isShiftBased ? 'Shift rate' : 'Daily rate'}</div>
+                  <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase', color: '#9ca3af' }}>{isShiftBased ? 'Client shift rate' : 'Client daily rate'}</div>
                   <div style={{ fontSize: bigStatSize(formatMoney(isShiftBased ? shiftRate : dailyRate), isMobile), fontWeight: 800, letterSpacing: '-0.02em', marginTop: 6, color: '#111827', wordBreak: 'break-word' }}>{formatMoney(isShiftBased ? shiftRate : dailyRate)}</div>
                   <div style={{ fontSize: 12, color: '#6b7280', fontWeight: 500, marginTop: 3 }}>{bookingSummary.service_model || '—'}</div>
                 </div>
@@ -2368,9 +2497,6 @@ const BookingDetailPageV2 = () => {
                       { label: 'Total invoiced',   value: formatMoney(totalInvoiced) },
                       { label: 'Overdue amount',   value: formatMoney(overdueAmount),      red: overdueAmount > 0 },
                       { label: 'Remaining balance',value: formatMoney(remainingBalance) },
-                      isShiftBased
-                        ? { label: 'Per-shift rate', value: formatMoney(shiftRate) }
-                        : { label: 'Daily rate',     value: formatMoney(dailyRate) },
                       { label: 'Quoted amount',    value: formatMoney(bookingSummary.amount_quotated ?? 0) },
                       { label: 'Registration fee', value: formatMoney(bookingSummary.registration_fee ?? 0) },
                     ].map(({ label, value, red, green }) => (
@@ -2379,6 +2505,17 @@ const BookingDetailPageV2 = () => {
                         <span style={{ fontSize: 13, fontWeight: 600, color: red ? '#BC4338' : green ? '#2F8A5B' : '#2A2722' }}>{value}</span>
                       </div>
                     ))}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                      <span style={{ fontSize: 13, color: '#6F6A60' }}>{isShiftBased ? 'Client shift rate' : 'Client daily rate'}</span>
+                      <EditableRate
+                        rateKey={isShiftBased ? 'client_shift' : 'client_daily'}
+                        label={null}
+                        value={isShiftBased ? shiftRate : dailyRate}
+                        editingRate={editingRate} onStartEdit={startEditRate} onChangeValue={changeEditRateValue}
+                        onSave={saveEditRate} onCancel={cancelEditRate} submitting={rateSubmitting} error={rateError}
+                        formatMoney={formatMoney}
+                      />
+                    </div>
                   </div>
                 </Card>
               </div>
@@ -2400,7 +2537,16 @@ const BookingDetailPageV2 = () => {
                         <Field label="Staff ID"   value={normCurrentStaff.id}     mono />
                         <Field label="Phone"       value={normCurrentStaff.mobile} />
                         <Field label="Email"       value={normCurrentStaff.email}  />
-                        <Field label="Daily rate"  value={formatMoney(dailyRate)}  />
+                        {activeStaffRow && (
+                          <EditableRate
+                            rateKey={`staff_${activeStaffRow.assignment_id}`}
+                            label="Staff daily rate"
+                            value={activeStaffRow.daily_rate}
+                            editingRate={editingRate} onStartEdit={startEditRate} onChangeValue={changeEditRateValue}
+                            onSave={saveEditRate} onCancel={cancelEditRate} submitting={rateSubmitting} error={rateError}
+                            formatMoney={formatMoney}
+                          />
+                        )}
                       </div>
                     </>
                   ) : (
@@ -2734,7 +2880,16 @@ const BookingDetailPageV2 = () => {
                         <Field label="Staff ID"   value={normCurrentStaff.id}     mono />
                         <Field label="Phone"       value={normCurrentStaff.mobile} />
                         <Field label="Email"       value={normCurrentStaff.email}  />
-                        <Field label="Daily rate"  value={formatMoney(dailyRate)}  />
+                        {activeStaffRow && (
+                          <EditableRate
+                            rateKey={`staff_${activeStaffRow.assignment_id}`}
+                            label="Staff daily rate"
+                            value={activeStaffRow.daily_rate}
+                            editingRate={editingRate} onStartEdit={startEditRate} onChangeValue={changeEditRateValue}
+                            onSave={saveEditRate} onCancel={cancelEditRate} submitting={rateSubmitting} error={rateError}
+                            formatMoney={formatMoney}
+                          />
+                        )}
                       </div>
                     </>
                   ) : (
@@ -2774,6 +2929,20 @@ const BookingDetailPageV2 = () => {
                             {formatDate(row.startDate)} <span style={{ color: '#C4BFB5', margin: '0 4px' }}>→</span>
                             {row.effectiveEnd ? formatDate(row.effectiveEnd) : <span style={{ color: '#2F8A5B', fontWeight: 600 }}>Ongoing</span>}
                           </div>
+                          {(() => {
+                            const startISO = row.startDate ? row.startDate.slice(0, 10) : null;
+                            const endISO = row.effectiveEnd ? row.effectiveEnd.slice(0, 10) : null;
+                            const inRecord = startISO ? attendanceRecords.find(a => a.assignment_id === row.id && a.service_date?.slice(0, 10) === startISO) : null;
+                            const outRecord = endISO ? attendanceRecords.find(a => a.assignment_id === row.id && a.service_date?.slice(0, 10) === endISO) : null;
+                            if (!inRecord?.in_time && !outRecord?.out_time) return null;
+                            return (
+                              <div style={{ fontSize: 11, color: '#8B857A', marginTop: 2 }}>
+                                {inRecord?.in_time && <>In {formatDT(inRecord.in_time)}</>}
+                                {inRecord?.in_time && outRecord?.out_time && <span style={{ margin: '0 5px' }}>·</span>}
+                                {outRecord?.out_time && <>Out {formatDT(outRecord.out_time)}</>}
+                              </div>
+                            );
+                          })()}
                         </div>
                         <div style={{ textAlign: 'right', flexShrink: 0 }}>
                           <div style={{ fontSize: 12, fontWeight: 700, padding: '4px 10px', borderRadius: 8, background: row.color ? row.color.solid : '#E7E1D6', color: row.color ? '#fff' : '#5A554B', marginBottom: 4 }}>
@@ -2783,6 +2952,9 @@ const BookingDetailPageV2 = () => {
                             {row.dayCount !== null ? `${row.dayCount} day${row.dayCount !== 1 ? 's' : ''}` : row.isOngoing && row.dayStart && plannedDays ? `${plannedDays - row.dayStart + 1} planned` : '—'}
                           </div>
                           {row.amountAllocated > 0 && <div style={{ fontSize: 11, fontWeight: 600, color: '#5A554B', marginTop: 2 }}>{formatMoney(row.amountAllocated)}</div>}
+                          <button onClick={() => openEditTimes(row)} style={{ marginTop: 6, fontSize: 11, fontWeight: 600, color: '#8C5AA6', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                            Edit times
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -2793,6 +2965,7 @@ const BookingDetailPageV2 = () => {
               {/* Swap history */}
               <Card>
                 <CardTitle>Swap history</CardTitle>
+                <p style={{ fontSize: 11.5, color: '#A39D91', marginTop: -8, marginBottom: 12 }}>Out/in times for a swap live on its two rows in Allocation history above — use "Edit times" there to add or correct them.</p>
                 {normSwapHistory.length === 0 ? <Empty icon={Repeat2} text="No swap history for this booking." /> : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
                     {normSwapHistory.map((swap, i) => (
@@ -2808,6 +2981,70 @@ const BookingDetailPageV2 = () => {
                         <div style={{ fontSize: 12, color: '#A39D91', marginBottom: 5 }}>{formatDT(swap.swappedAt)}</div>
                         <div style={{ fontSize: 13, color: '#5A554B' }}>{swap.reason || 'No reason provided.'}</div>
                         {swap.swappedByMobile && <div style={{ fontSize: 12, color: '#A39D91', marginTop: 5 }}>Swapped by {swap.swappedByMobile}</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Card>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════
+              TAB: RATES — client billing rate(s) vs staff pay rate(s), set at
+              booking creation and editable at any time thereafter.
+          ══════════════════════════════════════════════════════ */}
+          {activeSection === 'rates' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <Card>
+                <CardTitle>Client billing rate</CardTitle>
+                <p style={{ fontSize: 12.5, color: '#6F6A60', marginTop: -8, marginBottom: 14 }}>
+                  Drives this booking's client invoices going forward — does not affect what any staff member is paid.
+                </p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 15 }}>
+                  {isShiftBased ? (
+                    <EditableRate
+                      rateKey="client_shift" label="Client shift rate" value={shiftRate}
+                      editingRate={editingRate} onStartEdit={startEditRate} onChangeValue={changeEditRateValue}
+                      onSave={saveEditRate} onCancel={cancelEditRate} submitting={rateSubmitting} error={rateError}
+                      formatMoney={formatMoney}
+                    />
+                  ) : (
+                    <EditableRate
+                      rateKey="client_daily" label="Client daily rate" value={dailyRate}
+                      editingRate={editingRate} onStartEdit={startEditRate} onChangeValue={changeEditRateValue}
+                      onSave={saveEditRate} onCancel={cancelEditRate} submitting={rateSubmitting} error={rateError}
+                      formatMoney={formatMoney}
+                    />
+                  )}
+                  <EditableRate
+                    rateKey="client_ot" label="Overtime rate" value={Number(bookingSummary.ot_rate || 0)}
+                    editingRate={editingRate} onStartEdit={startEditRate} onChangeValue={changeEditRateValue}
+                    onSave={saveEditRate} onCancel={cancelEditRate} submitting={rateSubmitting} error={rateError}
+                    formatMoney={formatMoney}
+                  />
+                </div>
+              </Card>
+
+              <Card>
+                <CardTitle>Staff pay rate{activeAssignments.length !== 1 ? 's' : ''}</CardTitle>
+                <p style={{ fontSize: 12.5, color: '#6F6A60', marginTop: -8, marginBottom: 14 }}>
+                  What each staff member currently on this booking earns per {isShiftBased ? 'shift' : 'day'} — set independently of the client rate above.
+                </p>
+                {activeAssignments.length === 0 ? <Empty icon={Users} text="No active staff assignment." /> : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {activeAssignments.map((a) => (
+                      <div key={a.assignment_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, border: '1px solid #EFEAE0', borderRadius: 12, padding: '12px 14px', background: '#FBF9F4' }}>
+                        <div>
+                          <div style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>{a.full_name || a.staff_name || '-'}</div>
+                          {(a.shift_label || a.shift_number) && <div style={{ fontSize: 12, color: '#A39D91', marginTop: 2 }}>{a.shift_label || `Shift ${a.shift_number}`}</div>}
+                          {a.staff_code && <div style={{ fontSize: 11, color: '#C4BFB5', marginTop: 2, fontFamily: "'JetBrains Mono',monospace" }}>{a.staff_code}</div>}
+                        </div>
+                        <EditableRate
+                          rateKey={`staff_${a.assignment_id}`} label={null} value={a.daily_rate}
+                          editingRate={editingRate} onStartEdit={startEditRate} onChangeValue={changeEditRateValue}
+                          onSave={saveEditRate} onCancel={cancelEditRate} submitting={rateSubmitting} error={rateError}
+                          formatMoney={formatMoney}
+                        />
                       </div>
                     ))}
                   </div>
@@ -3003,7 +3240,7 @@ const BookingDetailPageV2 = () => {
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 15 }}>
                   <Field label="Name"      value={clientDetails.client_name} />
-                  <Field label="Client ID" value={clientDetails.client_profile_id || bookingSummary.client_id || '-'} mono />
+                  <Field label="Client ID" value={clientDetails.client_code || clientDetails.client_profile_id || bookingSummary.client_id || '-'} mono />
                   <Field label="Phone"     value={clientDetails.client_mobile || clientDetails.mobile || '-'} />
                   <Field label="Email"     value={clientDetails.client_email || clientDetails.email || '-'} />
                   <div style={{ gridColumn: '1/-1' }}><Field label="Address" value={clientDetails.client_address || clientDetails.address || '-'} /></div>
@@ -3315,7 +3552,7 @@ const BookingDetailPageV2 = () => {
                       <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Actual end time</label>
                       <div style={{ display: 'flex', gap: 8 }}>
                         <DateInput value={actualEndDatePart} onChange={e => setActualEndDatePart(e.target.value)} style={{ ...inp, flex: 1 }} />
-                        <input type="time" value={actualEndTimePart} onChange={e => setActualEndTimePart(e.target.value)} style={{ ...inp, width: 130 }} />
+                        <input type="time" lang="en-GB" value={actualEndTimePart} onChange={e => setActualEndTimePart(e.target.value)} style={{ ...inp, width: 130 }} />
                       </div>
                       {actualEndTime && actualEndTime.slice(0, 10) > toDateInput(new Date()) && (
                         <p style={{ margin: '6px 0 0', fontSize: 11.5, color: '#B8893D' }}>
@@ -3450,7 +3687,7 @@ const BookingDetailPageV2 = () => {
                     {!isShiftBased && (
                       <div>
                         <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Service Start Time <span className="text-[#C4BFB5] font-normal">(optional)</span></label>
-                        <input type="time" value={resumeAssignForm.service_start_time} onChange={e => setResumeAssignForm(f => ({ ...f, service_start_time: e.target.value }))} className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8]" />
+                        <input type="time" lang="en-GB" value={resumeAssignForm.service_start_time} onChange={e => setResumeAssignForm(f => ({ ...f, service_start_time: e.target.value }))} className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8]" />
                       </div>
                     )}
                   </div>
@@ -3518,7 +3755,7 @@ const BookingDetailPageV2 = () => {
                                   <input value={slot.label} onChange={e => updateResumeShiftSlot(idx, 'label', e.target.value)} placeholder={`Shift ${slot.shift_number}`} className="w-full rounded-lg border border-[#E2DCD0] px-2 py-1.5 text-sm outline-none focus:border-[#137A6B]" />
                                 </td>
                                 <td className="px-2 py-2">
-                                  <input required type="time" value={slot.start_time} onChange={e => updateResumeShiftSlot(idx, 'start_time', e.target.value)} className="w-full rounded-lg border border-[#E2DCD0] px-2 py-1.5 text-sm outline-none focus:border-[#137A6B]" />
+                                  <input required type="time" lang="en-GB" value={slot.start_time} onChange={e => updateResumeShiftSlot(idx, 'start_time', e.target.value)} className="w-full rounded-lg border border-[#E2DCD0] px-2 py-1.5 text-sm outline-none focus:border-[#137A6B]" />
                                 </td>
                                 <td className="px-2 py-2">
                                   <input required type="number" min="0.5" step="0.5" value={slot.duration_hours} onChange={e => updateResumeShiftSlot(idx, 'duration_hours', e.target.value)} onWheel={e => e.currentTarget.blur()} className="w-full rounded-lg border border-[#E2DCD0] px-2 py-1.5 text-sm outline-none focus:border-[#137A6B]" />
@@ -3677,7 +3914,7 @@ const BookingDetailPageV2 = () => {
                         <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Actual end date &amp; time</label>
                         <div className="flex gap-2">
                           <DateInput value={actualEndDatePart} onChange={e => setActualEndDatePart(e.target.value)} className="flex-1 border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8] text-[#6F6A60]" />
-                          <input type="time" value={actualEndTimePart} onChange={e => setActualEndTimePart(e.target.value)} className="w-32 border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8] text-[#6F6A60]" />
+                          <input type="time" lang="en-GB" value={actualEndTimePart} onChange={e => setActualEndTimePart(e.target.value)} className="w-32 border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8] text-[#6F6A60]" />
                         </div>
                       </div>
                       <div>
@@ -3816,7 +4053,7 @@ const BookingDetailPageV2 = () => {
                     )}
                   </div>
                   <div className="flex-1 overflow-y-auto p-4 space-y-2">
-                    {availableStaff.length === 0 ? <Empty icon={Users} text="No available staff found." /> : filtered.length === 0 ? <Empty icon={Users} text="No staff match your filters." /> : (
+                    {availableStaff.length === 0 ? <Empty icon={Users} text="No staff found." /> : filtered.length === 0 ? <Empty icon={Users} text="No staff match your filters." /> : (
                       paginated.map(s => (
                         <div key={s.staff_profile_id} className="p-4 rounded-xl border border-slate-200 hover:border-blue-200 hover:bg-blue-50/30 transition">
                           <div className="flex items-center justify-between gap-4">
@@ -3831,10 +4068,17 @@ const BookingDetailPageV2 = () => {
                               </div>
                             </div>
                             <div className="flex items-center gap-3 shrink-0">
-                              <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-emerald-600/20"><CheckCircle className="w-3 h-3" /> Available</span>
+                              {s.current_status === 'ASSIGNED'
+                                ? <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 ring-1 ring-amber-600/20"><Repeat2 className="w-3 h-3" /> On assignment</span>
+                                : s.current_status === 'UNAVAILABLE'
+                                  ? <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600 ring-1 ring-slate-400/20">Unavailable</span>
+                                  : <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-emerald-600/20"><CheckCircle className="w-3 h-3" /> Available</span>}
                               <button onClick={() => selectSwapStaff(s)} className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition">Select</button>
                             </div>
                           </div>
+                          {s.current_status === 'ASSIGNED' && s.active_assignment_client && (
+                            <p className="mt-1.5 pl-[52px] text-xs text-amber-700">Currently on {s.active_assignment_client}{s.active_assignment_end_date ? ` until ${new Date(s.active_assignment_end_date).toLocaleDateString('en-GB')}` : ''} — check schedule below before assigning.</p>
+                          )}
                           <div className="mt-2.5 pl-[52px]">
                             <StaffScheduleTimeline
                               schedule={staffSchedules[s.staff_profile_id] || []}
@@ -3891,13 +4135,31 @@ const BookingDetailPageV2 = () => {
                   </div>
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">{swapModalIsAssign ? 'Service start date' : 'New staff start date'} <span className="text-rose-500">*</span></label>
-                    <DateInput value={swapModalStartDate} min={todayISO()} onChange={e => setSwapModalStartDate(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                    <DateInput value={swapModalStartDate} onChange={e => setSwapModalStartDate(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
                     {swapModalStartDate > toDateInput(new Date()) && (
                       <p className="text-xs text-amber-600 mt-1.5">
                         Future date — this will be scheduled and take effect automatically on that date.
                       </p>
                     )}
+                    {swapModalStartDate < todayISO() && (
+                      <p className="text-xs text-slate-500 mt-1.5">
+                        Backdated entry — this will be recorded as already having happened.
+                      </p>
+                    )}
                   </div>
+                  <div className={`grid ${swapModalIsAssign ? 'grid-cols-1' : 'grid-cols-2'} gap-3`}>
+                    {!swapModalIsAssign && (
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Old staff out time <span className="text-slate-400 normal-case font-normal">(optional)</span></label>
+                        <input type="time" lang="en-GB" value={swapModalOldOutTime} onChange={e => setSwapModalOldOutTime(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                      </div>
+                    )}
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">New staff in time <span className="text-slate-400 normal-case font-normal">(optional)</span></label>
+                      <input type="time" lang="en-GB" value={swapModalNewInTime} onChange={e => setSwapModalNewInTime(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-400 -mt-2">Times use the staff start date above ({formatDate(swapModalStartDate)}).</p>
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">{swapModalIsAssign ? 'Notes (optional)' : 'Reason for swap'} {!swapModalIsAssign && <span className="text-rose-500">*</span>}</label>
                     <textarea rows={3} value={swapModalReason} onChange={e => setSwapModalReason(e.target.value)} placeholder="e.g. Staff requested leave, client preference…" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
@@ -3914,6 +4176,51 @@ const BookingDetailPageV2 = () => {
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════
+          EDIT TIMES MODAL — backfill/correct an allocation row's start-day
+          in_time and/or end-day out_time. Works for any row: past, current
+          (ongoing) or already-completed — same PATCH endpoint the swap modal
+          uses, just aimed directly at a specific assignment/day.
+      ══════════════════════════════════════════════════════ */}
+      {editTimesRow && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(20,17,12,.45)' }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Edit times</h3>
+                <p className="text-xs text-slate-500 mt-0.5">{editTimesRow.name}</p>
+              </div>
+              <button onClick={closeEditTimes} className="p-1.5 rounded-lg hover:bg-slate-100 transition"><XCircle className="h-5 w-5 text-slate-400" /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              {editTimesRow.startDate && (
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">In time on {formatDate(editTimesRow.startDate)}</label>
+                  <input type="time" lang="en-GB" value={editTimesIn} onChange={e => setEditTimesIn(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                </div>
+              )}
+              {editTimesRow.effectiveEnd && (
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Out time on {formatDate(editTimesRow.effectiveEnd)}</label>
+                  <input type="time" lang="en-GB" value={editTimesOut} onChange={e => setEditTimesOut(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                </div>
+              )}
+              {!editTimesRow.effectiveEnd && (
+                <p className="text-xs text-slate-400">This assignment is still ongoing — no out time to set yet.</p>
+              )}
+              {editTimesError && <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700">{editTimesError}</div>}
+            </div>
+            <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-slate-200">
+              <button onClick={closeEditTimes} className="text-sm font-medium text-slate-600 hover:text-slate-900 transition px-3">Cancel</button>
+              <button onClick={saveEditTimes} disabled={editTimesSubmitting || (!editTimesIn && !editTimesOut)} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
+                {editTimesSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                {editTimesSubmitting ? 'Saving…' : 'Save'}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -3985,6 +4292,7 @@ const BookingDetailPageV2 = () => {
                   <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">New start time <span className="text-slate-400 font-normal normal-case">(optional)</span></label>
                   <input
                     type="time"
+                    lang="en-GB"
                     value={rescheduleModalTime}
                     onChange={e => setRescheduleModalTime(e.target.value)}
                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
@@ -4140,7 +4448,7 @@ const BookingDetailPageV2 = () => {
                           <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-1">
                             Start time {idx > 0 && <span className="normal-case font-normal text-blue-400 tracking-normal">(auto)</span>}
                           </label>
-                          <input type="time" value={s.start_time} onChange={e => updatePatternSlot(idx, 'start_time', e.target.value)} className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500" />
+                          <input type="time" lang="en-GB" value={s.start_time} onChange={e => updatePatternSlot(idx, 'start_time', e.target.value)} className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500" />
                         </div>
                         <div className="col-span-3">
                           <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Duration (h)</label>
@@ -4584,7 +4892,7 @@ const BookingDetailPageV2 = () => {
                                       <span className="text-xs text-gray-400">Ongoing</span>
                                     ) : (
                                       <>
-                                        <input type="time" value={inputs.in_time} onChange={e => setAttendanceInputs(p => ({ ...p, [a.assignment_id]: { ...inputs, in_time: e.target.value, autoFilled: false } }))} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-24" />
+                                        <input type="time" lang="en-GB" value={inputs.in_time} onChange={e => setAttendanceInputs(p => ({ ...p, [a.assignment_id]: { ...inputs, in_time: e.target.value, autoFilled: false } }))} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-24" />
                                         {inputs.autoFilled && inputs.in_time && <span className="block text-[10px] text-blue-400 mt-0.5">from schedule</span>}
                                       </>
                                     )}
@@ -4594,7 +4902,7 @@ const BookingDetailPageV2 = () => {
                                       <span className="text-xs text-gray-400" title="Booking hasn't ended yet — end time is only logged on the last day">Until booking ends</span>
                                     ) : (
                                       <>
-                                        <input type="time" value={inputs.out_time} onChange={e => setAttendanceInputs(p => ({ ...p, [a.assignment_id]: { ...inputs, out_time: e.target.value, autoFilled: false } }))} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-24" />
+                                        <input type="time" lang="en-GB" value={inputs.out_time} onChange={e => setAttendanceInputs(p => ({ ...p, [a.assignment_id]: { ...inputs, out_time: e.target.value, autoFilled: false } }))} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-24" />
                                         {inputs.autoFilled && inputs.out_time && <span className="block text-[10px] text-blue-400 mt-0.5">from schedule</span>}
                                       </>
                                     )}

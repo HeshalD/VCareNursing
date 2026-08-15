@@ -257,12 +257,6 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
         <form id="proxy-request-form" onSubmit={handleSubmit} className="flex flex-1 flex-col overflow-hidden">
           <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
 
-            {error && (
-              <div className="flex items-center gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                {error}
-              </div>
-            )}
             {success && (
               <div className="flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-700">
                 <CheckCircle className="w-4 h-4 flex-shrink-0" />
@@ -534,6 +528,13 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
 
               </div>
             </div>
+
+            {error && (
+              <div className="flex items-center gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                {error}
+              </div>
+            )}
           </div>
 
           {/* Footer */}

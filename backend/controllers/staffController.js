@@ -3177,6 +3177,7 @@ The VCare Team`;
             message: 'Staff profile created successfully',
             data: {
                 ...result.rows[0],
+                tempPassword,
                 user_info: {
                     user_id: user.user_id,
                     email: user.email,

@@ -49,31 +49,115 @@
   color: var(--vcare-phone-placeholder);
 }
 
-.vcare-phone-input .PhoneInputCountry {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
+.vcare-phone-input .vcare-country-select {
   padding-right: 0.5rem;
+  margin-right: 0.2rem;
   border-right: 1px solid var(--vcare-phone-border);
 }
 
-.vcare-phone-input .PhoneInputCountrySelect {
-  cursor: pointer;
-  /* The select itself is invisible (opacity: 0, overlaid on the flag icon —
-     see the library's style.css), but its dropdown list is a native browser
-     popup that inherits color/background from the select. Without an
-     explicit color it inherits a faint grey from the page, making the
-     country names in the popup unreadable — so set it explicitly here. */
-  color: #0f172a;
-  background-color: #ffffff;
-}
-
-.vcare-phone-input .PhoneInputCountrySelect option {
-  color: #0f172a;
-  background-color: #ffffff;
-}
-
 .vcare-phone-input.PhoneInput--disabled,
-.vcare-phone-input:has(.PhoneInputCountrySelect:disabled) {
+.vcare-phone-input:has(.vcare-country-select__trigger:disabled) {
   opacity: 0.6;
+}
+
+/* Searchable country select (replaces the native scroll <select>). */
+.vcare-country-select {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.vcare-country-select__trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
+.vcare-country-select__trigger:disabled {
+  cursor: not-allowed;
+}
+
+.vcare-country-select__trigger img,
+.vcare-country-select__trigger svg {
+  width: 1.1em;
+  height: 1.1em;
+}
+
+.vcare-country-select__arrow {
+  width: 0;
+  height: 0;
+  border-left: 3px solid transparent;
+  border-right: 3px solid transparent;
+  border-top: 4px solid #64748b; /* slate-500 */
+  opacity: 0.7;
+}
+
+.vcare-country-select__dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 50;
+  width: 260px;
+  max-width: 80vw;
+  background-color: #ffffff;
+  border: 1px solid #e2e8f0; /* slate-200 */
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.15), 0 4px 6px -2px rgba(15, 23, 42, 0.08);
+  overflow: hidden;
+}
+
+.vcare-country-select__search {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5rem 0.75rem;
+  border: none;
+  border-bottom: 1px solid #e2e8f0;
+  outline: none;
+  font-size: 0.9rem;
+  color: #0f172a;
+  background-color: #ffffff;
+}
+
+.vcare-country-select__list {
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.vcare-country-select__option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.9rem;
+  color: #0f172a;
+  cursor: pointer;
+}
+
+.vcare-country-select__option img,
+.vcare-country-select__option svg {
+  width: 1.1em;
+  height: 1.1em;
+  flex-shrink: 0;
+}
+
+.vcare-country-select__option:hover {
+  background-color: #f1f5f9; /* slate-100 */
+}
+
+.vcare-country-select__option--selected {
+  background-color: #eff6ff; /* blue-50 */
+  font-weight: 600;
+}
+
+.vcare-country-select__empty {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+  color: #94a3b8; /* slate-400 */
 }

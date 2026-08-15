@@ -187,6 +187,9 @@ router.get('/:booking_id/attendance', protect, requirePermission('VIEW_BOOKINGS'
 router.get('/:booking_id/attendance/history', protect, requirePermission('VIEW_BOOKINGS'), dailyAttendanceController.getAttendanceHistory);
 router.post('/:booking_id/attendance', protect, requirePermission('ATTENDANCE_RECORD'), dailyAttendanceController.upsertAttendance);
 router.post('/:booking_id/attendance/absent', protect, requirePermission('ATTENDANCE_MARK_ABSENT'), dailyAttendanceController.markAbsent);
+// Set/edit just the in_time and/or out_time on one assignment's day (used by the
+// staff-swap out/in time capture and by editing a past swap's recorded times).
+router.patch('/:booking_id/attendance/time', protect, requirePermission('ATTENDANCE_RECORD'), dailyAttendanceController.setAttendanceTime);
 router.post('/attendance/:attendance_id/confirm-salary', protect, requirePermission('ATTENDANCE_CONFIRM_SALARY'), dailyAttendanceController.confirmSalary);
 // Revoke a wrongly auto-paid/invoiced LIVE_IN day.
 router.post('/:booking_id/attendance/revoke', protect, requirePermission('ATTENDANCE_REVOKE'), dailyAttendanceController.revokeDays);
@@ -211,6 +214,7 @@ router.post('/:booking_id/shift-slots/:shift_slot_id/reassign-staff', protect, r
 router.get('/:booking_id/daily-invoices', protect, requirePermission('VIEW_BOOKINGS'), bookingController.getBookingDailyInvoices);
 router.post('/:booking_id/daily-invoices', protect, requirePermission('BOOKING_CONFIRM_DAILY_INVOICE'), bookingController.confirmDailyInvoice);
 router.patch('/:booking_id/invoicing-mode', protect, requirePermission('BOOKING_UPDATE_INVOICING_MODE'), bookingController.updateInvoicingMode);
+router.patch('/:booking_id/rates', protect, requirePermission('BOOKING_UPDATE_RATE'), bookingController.updateBookingRates);
 
 // Hospitalization status (any service model — patient may be admitted mid-booking)
 router.patch('/:booking_id/hospitalization', protect, requirePermission('BOOKING_UPDATE_HOSPITALIZATION'), bookingController.updateHospitalizationStatus);

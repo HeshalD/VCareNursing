@@ -24,6 +24,7 @@ const {
     hasOpenAction,
     executeShiftReassignment,
 } = require('../services/scheduledActions');
+const { applyPartialAttendanceTime } = require('./dailyAttendanceController')._internal;
 
 async function requireShiftBasedBooking(booking_id, queryable = db) {
     const res = await queryable.query(`SELECT booking_id, service_model, daily_rate FROM bookings WHERE booking_id = $1`, [booking_id]);
@@ -193,7 +194,7 @@ exports.getShiftSlots = async (req, res) => {
  */
 exports.assignStaffToSlot = async (req, res) => {
     const { booking_id, shift_slot_id } = req.params;
-    const { staff_profile_id, service_start_date, daily_rate, notes } = req.body;
+    const { staff_profile_id, service_start_date, daily_rate, notes, staff_in_time } = req.body;
     const assigned_by = req.user?.user_id || null;
 
     if (!staff_profile_id || !service_start_date) {
@@ -301,7 +302,7 @@ exports.assignStaffToSlot = async (req, res) => {
                 booking_id,
                 action_type: 'ASSIGNMENT_START',
                 effective_date: startDateStr,
-                payload: { assignment_id: assignment.assignment_id, staff_profile_id, shift_slot_id },
+                payload: { assignment_id: assignment.assignment_id, staff_profile_id, shift_slot_id, staff_in_time: staff_in_time || null },
                 created_by: assigned_by,
             });
         } else {
@@ -309,6 +310,12 @@ exports.assignStaffToSlot = async (req, res) => {
                 `UPDATE bookings SET status = CASE WHEN status = 'PENDING' THEN 'ACTIVE' ELSE status END WHERE booking_id = $1`,
                 [booking_id]
             );
+            if (staff_in_time) {
+                await applyPartialAttendanceTime(client, {
+                    booking_id, assignment_id: assignment.assignment_id,
+                    service_date: startDateStr, in_time: staff_in_time, shift_slot_id,
+                });
+            }
         }
 
         await client.query('COMMIT');
@@ -332,6 +339,9 @@ exports.assignStaffToSlot = async (req, res) => {
         });
     } catch (error) {
         await client.query('ROLLBACK');
+        if (error.statusCode) {
+            return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        }
         console.error('Assign staff to slot error:', error);
         res.status(500).json({ status: 'error', message: 'Failed to assign staff to shift' });
     } finally {
@@ -345,7 +355,7 @@ exports.assignStaffToSlot = async (req, res) => {
  */
 exports.reassignSlotStaff = async (req, res) => {
     const { booking_id, shift_slot_id } = req.params;
-    const { new_staff_id, effective_date, reason } = req.body;
+    const { new_staff_id, effective_date, reason, old_staff_out_time, new_staff_in_time } = req.body;
     const actorUserId = req.user?.user_id || null;
 
     if (!new_staff_id || !effective_date) {
@@ -451,6 +461,8 @@ exports.reassignSlotStaff = async (req, res) => {
                     new_staff_id,
                     new_assignment_id: newAssignmentId,
                     reason: reason || null,
+                    old_staff_out_time: old_staff_out_time || null,
+                    new_staff_in_time: new_staff_in_time || null,
                 },
                 reason: reason || null,
                 created_by: actorUserId,
@@ -473,6 +485,8 @@ exports.reassignSlotStaff = async (req, res) => {
             new_assignment_id: newAssignmentId,
             effective_date: effDateStr,
             reason: reason || null,
+            old_staff_out_time: old_staff_out_time || null,
+            new_staff_in_time: new_staff_in_time || null,
         });
 
         await client.query('COMMIT');
@@ -489,6 +503,9 @@ exports.reassignSlotStaff = async (req, res) => {
         res.status(200).json({ status: 'success', scheduled: false, message: `${newStaff.full_name} is now on this shift.`, data: result });
     } catch (error) {
         await client.query('ROLLBACK');
+        if (error.statusCode) {
+            return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        }
         console.error('Reassign slot staff error:', error);
         res.status(500).json({ status: 'error', message: 'Failed to reassign shift staff' });
     } finally {

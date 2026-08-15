@@ -4,7 +4,7 @@ const staffAppController = require('../controllers/staffAppController');
 const staffController = require('../controllers/staffController');
 const staffDocUploadController = require('../controllers/staffDocUploadController');
 const { uploadApplicationFiles } = require('../middleware/uploadMiddleware');
-const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission, userHasPermission } = require('../middleware/authMiddleware');
 const db = require('../config/db');
 const { toE164 } = require('../utils/phone');
 
@@ -120,8 +120,15 @@ router.put('/applications/:applicationId', uploadApplicationFiles, protect, requ
 // Admin Only: Send the Independent Contractor Agreement PDF to an approved applicant via WhatsApp
 router.post('/applications/:applicationId/send-agreement', protect, requirePermission('APPLICATION_SEND_AGREEMENT'), staffAppController.sendApplicationAgreement);
 
-// Admin Only: Suggest the next auto-generated Staff ID (EMP-5000 onwards)
-router.get('/next-staff-code', protect, requirePermission('VIEW_WORKER_VERIFICATIONS'), staffAppController.getNextStaffCode);
+// Admin Only: Suggest the next auto-generated Staff ID. Used both when accepting worker
+// applications (VIEW_WORKER_VERIFICATIONS) and when manually adding a staff member
+// (STAFF_PROXY_CREATE) — either permission is enough.
+router.get('/next-staff-code', protect, async (req, res, next) => {
+  const allowed = await userHasPermission(req.user, 'VIEW_WORKER_VERIFICATIONS')
+    || await userHasPermission(req.user, 'STAFF_PROXY_CREATE');
+  if (!allowed) return res.status(403).json({ message: 'Permission Denied: You do not have access to this action.' });
+  next();
+}, staffAppController.getNextStaffCode);
 
 // Admin Only: Accept Application
 router.post(

@@ -209,7 +209,7 @@ exports.listAdminUsers = async (req, res) => {
     const result = await db.query(
       `SELECT u.user_id, ist.full_name, u.mobile_number, u.role,
               ist.custom_role_id, cr.name AS custom_role_name,
-              COUNT(DISTINCT sp.permission_key)::int AS permission_count,
+              COALESCE(pc.permission_count, 0) AS permission_count,
               COALESCE(
                 (SELECT json_agg(json_build_object('role', isr.role, 'custom_role_id', isr.custom_role_id, 'custom_role_name', crx.name) ORDER BY isr.created_at)
                  FROM internal_staff_roles isr
@@ -219,9 +219,20 @@ exports.listAdminUsers = async (req, res) => {
               ) AS roles
        FROM internal_staff ist
        JOIN users u ON u.user_id = ist.user_id
-       LEFT JOIN staff_permissions sp ON sp.user_id = u.user_id
        LEFT JOIN custom_roles cr ON cr.id = ist.custom_role_id
-       GROUP BY u.user_id, ist.id, ist.full_name, u.mobile_number, u.role, ist.custom_role_id, cr.name
+       LEFT JOIN LATERAL (
+         -- direct per-user overrides plus permissions inherited from every
+         -- CUSTOM_ROLE the staff member is assigned, de-duplicated
+         SELECT COUNT(DISTINCT permission_key)::int AS permission_count
+         FROM (
+           SELECT permission_key FROM staff_permissions WHERE user_id = u.user_id
+           UNION
+           SELECT crp.permission_key
+           FROM internal_staff_roles isr2
+           JOIN custom_role_permissions crp ON crp.role_id = isr2.custom_role_id
+           WHERE isr2.staff_id = ist.id AND isr2.role = 'CUSTOM_ROLE'
+         ) combined
+       ) pc ON true
        ORDER BY ist.full_name`
     );
     res.json({ users: result.rows });

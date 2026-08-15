@@ -76,6 +76,7 @@ const ATTENDANCE_HISTORY_ACTION_TYPES = [
     'SHIFT_INVOICE_SKIPPED',
     'SHIFT_OCCURRENCE_WAIVED',
     'DAY_CONFIRMED',
+    'ATTENDANCE_TIME_EDITED',
 ];
 
 exports.getAttendanceHistory = async (req, res) => {
@@ -229,6 +230,189 @@ async function applyAttendanceTime(client, { booking_id, assignment_id, service_
 
     return { attendance: result.rows[0], hoursServed };
 }
+
+/**
+ * Partial sibling of applyAttendanceTime — accepts just in_time OR just out_time
+ * (or both) instead of requiring the full pair in one call. Used wherever only one
+ * side of a day is known at write time: a staff swap only has the outgoing staff's
+ * out_time and the incoming staff's in_time, each on a different assignment/day, and
+ * an admin editing a past/completed swap after the fact may only be filling in one
+ * side. Whichever side isn't supplied keeps its existing stored value (if any); hours
+ * are only computed once both sides are present. Same statusCode-throwing contract
+ * as applyAttendanceTime, and the same "already decided" edit lock.
+ */
+async function applyPartialAttendanceTime(client, { booking_id, assignment_id, service_date, in_time, out_time, notes, shift_slot_id, reschedule_id }) {
+    if (!assignment_id || !service_date) {
+        const err = new Error('assignment_id and service_date are required');
+        err.statusCode = 400;
+        throw err;
+    }
+    const hasIn = in_time !== undefined && in_time !== null && in_time !== '';
+    const hasOut = out_time !== undefined && out_time !== null && out_time !== '';
+    if (!hasIn && !hasOut) {
+        const err = new Error('At least one of in_time or out_time is required');
+        err.statusCode = 400;
+        throw err;
+    }
+
+    const assignmentCheck = await client.query(
+        `SELECT assignment_id, staff_profile_id, shift_slot_id FROM booking_staff_assignments
+         WHERE assignment_id = $1 AND booking_id = $2`,
+        [assignment_id, booking_id]
+    );
+    if (assignmentCheck.rows.length === 0) {
+        const err = new Error('Assignment not found for this booking');
+        err.statusCode = 404;
+        throw err;
+    }
+
+    const assignmentShiftSlotId = assignmentCheck.rows[0].shift_slot_id;
+    if (assignmentShiftSlotId) {
+        if (!shift_slot_id) {
+            const err = new Error('shift_slot_id is required for shift-based attendance');
+            err.statusCode = 400;
+            throw err;
+        }
+        if (shift_slot_id !== assignmentShiftSlotId) {
+            const err = new Error("shift_slot_id does not match this assignment's shift");
+            err.statusCode = 400;
+            throw err;
+        }
+    } else if (shift_slot_id) {
+        const err = new Error('This assignment is not shift-based; shift_slot_id must not be provided');
+        err.statusCode = 400;
+        throw err;
+    }
+
+    if (reschedule_id) {
+        const rescheduleCheck = await client.query(
+            `SELECT reschedule_id FROM shift_reschedules WHERE reschedule_id = $1 AND booking_id = $2 AND status = 'ACTIVE'`,
+            [reschedule_id, booking_id]
+        );
+        if (rescheduleCheck.rows.length === 0) {
+            const err = new Error('Reschedule not found for this booking');
+            err.statusCode = 404;
+            throw err;
+        }
+    }
+
+    const existingRes = reschedule_id
+        ? await client.query(`SELECT attendance_id, in_time, out_time, salary_status FROM staff_daily_attendance WHERE reschedule_id = $1`, [reschedule_id])
+        : await client.query(
+            `SELECT attendance_id, in_time, out_time, salary_status FROM staff_daily_attendance
+             WHERE assignment_id = $1 AND service_date = $2 AND reschedule_id IS NULL`,
+            [assignment_id, service_date]
+        );
+    const existing = existingRes.rows[0] || null;
+
+    if (existing && existing.salary_status !== 'PENDING') {
+        const err = new Error('This day has already been decided and cannot be edited');
+        err.statusCode = 409;
+        throw err;
+    }
+
+    const mergedIn = hasIn ? in_time : (existing?.in_time ?? null);
+    const mergedOut = hasOut ? out_time : (existing?.out_time ?? null);
+
+    let hoursServed = null;
+    if (mergedIn && mergedOut) {
+        const inDate = new Date(mergedIn);
+        const outDate = new Date(mergedOut);
+        if (Number.isNaN(inDate.getTime()) || Number.isNaN(outDate.getTime()) || outDate <= inDate) {
+            const err = new Error('out_time must be a valid timestamp after in_time');
+            err.statusCode = 400;
+            throw err;
+        }
+        hoursServed = ((outDate - inDate) / (1000 * 60 * 60)).toFixed(2);
+    }
+
+    const staffProfileId = assignmentCheck.rows[0].staff_profile_id;
+
+    const result = reschedule_id
+        ? await client.query(
+            `INSERT INTO staff_daily_attendance (
+                booking_id, assignment_id, staff_profile_id, service_date,
+                in_time, out_time, hours_served, entry_mode, notes, shift_slot_id, reschedule_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'MANUAL', $8, $9, $10)
+            ON CONFLICT (reschedule_id) WHERE reschedule_id IS NOT NULL
+            DO UPDATE SET in_time = EXCLUDED.in_time,
+                          out_time = EXCLUDED.out_time,
+                          hours_served = EXCLUDED.hours_served,
+                          notes = COALESCE(EXCLUDED.notes, staff_daily_attendance.notes),
+                          updated_at = NOW()
+            RETURNING *`,
+            [booking_id, assignment_id, staffProfileId, service_date, mergedIn, mergedOut, hoursServed, notes || null, assignmentShiftSlotId, reschedule_id]
+        )
+        : assignmentShiftSlotId
+            ? await client.query(
+                `INSERT INTO staff_daily_attendance (
+                    booking_id, assignment_id, staff_profile_id, service_date,
+                    in_time, out_time, hours_served, entry_mode, notes, shift_slot_id
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'MANUAL', $8, $9)
+                ON CONFLICT (assignment_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL
+                DO UPDATE SET in_time = EXCLUDED.in_time,
+                              out_time = EXCLUDED.out_time,
+                              hours_served = EXCLUDED.hours_served,
+                              notes = COALESCE(EXCLUDED.notes, staff_daily_attendance.notes),
+                              updated_at = NOW()
+                RETURNING *`,
+                [booking_id, assignment_id, staffProfileId, service_date, mergedIn, mergedOut, hoursServed, notes || null, assignmentShiftSlotId]
+            )
+            : await client.query(
+                `INSERT INTO staff_daily_attendance (
+                    booking_id, assignment_id, staff_profile_id, service_date,
+                    in_time, out_time, hours_served, entry_mode, notes
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'MANUAL', $8)
+                ON CONFLICT (assignment_id, service_date) WHERE shift_slot_id IS NULL
+                DO UPDATE SET in_time = EXCLUDED.in_time,
+                              out_time = EXCLUDED.out_time,
+                              hours_served = EXCLUDED.hours_served,
+                              notes = COALESCE(EXCLUDED.notes, staff_daily_attendance.notes),
+                              updated_at = NOW()
+                RETURNING *`,
+                [booking_id, assignment_id, staffProfileId, service_date, mergedIn, mergedOut, hoursServed, notes || null]
+            );
+
+    return { attendance: result.rows[0], hoursServed };
+}
+
+/**
+ * @route   PATCH /api/bookings/:booking_id/attendance/time
+ * @desc    Sets/edits just the in_time and/or out_time on one assignment's day —
+ *          the building block behind staff-swap out/in time capture and behind
+ *          editing a past swap's recorded times. Unlike upsertAttendance, either
+ *          field alone is enough.
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ * @body    assignment_id, service_date, in_time (optional), out_time (optional),
+ *          shift_slot_id (optional), reschedule_id (optional), notes (optional)
+ */
+exports.setAttendanceTime = async (req, res) => {
+    const { booking_id } = req.params;
+    const { assignment_id, service_date, in_time, out_time, notes, shift_slot_id, reschedule_id } = req.body;
+
+    try {
+        const { attendance } = await applyPartialAttendanceTime(db, {
+            booking_id, assignment_id, service_date, in_time, out_time, notes, shift_slot_id, reschedule_id
+        });
+
+        logActivity({
+            actorUserId: req.user?.user_id,
+            actorRole: req.user?.role,
+            actionType: 'ATTENDANCE_TIME_EDITED',
+            entityType: 'BOOKING',
+            entityId: String(booking_id),
+            details: { assignment_id, service_date, in_time: attendance.in_time, out_time: attendance.out_time },
+        }).catch(err => console.error('Activity log failed:', err));
+
+        res.status(200).json({ status: 'success', data: attendance });
+    } catch (error) {
+        if (error.statusCode) {
+            return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        }
+        console.error('Set attendance time error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to save attendance time' });
+    }
+};
 
 /**
  * @route   POST /api/bookings/:booking_id/attendance
@@ -729,6 +913,7 @@ exports.revokeDays = async (req, res) => {
 // not HTTP handlers themselves, see the doc comments above each for contract details.
 exports._internal = {
     applyAttendanceTime,
+    applyPartialAttendanceTime,
     applyAttendanceAbsent,
     applySalaryDecision,
     getDeciderName,

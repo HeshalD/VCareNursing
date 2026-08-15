@@ -234,6 +234,7 @@ const AdminDirectBookingDrawer = ({
 
   // ── Fetch patients when client changes (skipped when patient is preselected/locked) ──
   useEffect(() => {
+    if (!open) return;
     if (preselectedPatientId) return;
     if (!selectedClientId) { setPatients([]); setSelectedPatientId(''); return; }
     setPatientsLoading(true);
@@ -242,7 +243,7 @@ const AdminDirectBookingDrawer = ({
       .then((res) => setPatients(res?.data || []))
       .catch(() => setPatients([]))
       .finally(() => setPatientsLoading(false));
-  }, [selectedClientId, preselectedPatientId]);
+  }, [open, selectedClientId, preselectedPatientId]);
 
   // ── Use the client's own details as the patient (self-booking) ───────────
   const handleUseSelfAsPatient = async () => {

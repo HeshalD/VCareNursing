@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Plus, Pencil, Trash2, X, Loader2, ShieldCheck, Smartphone, Copy, Search, RefreshCw, KeySquare, Check } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -90,6 +91,7 @@ const StatusBadge = ({ status }) => {
 };
 
 const InternalStaffPage = () => {
+  const navigate = useNavigate();
   const [staff, setStaff] = useState([]);
   const [customRoles, setCustomRoles] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -460,7 +462,11 @@ const InternalStaffPage = () => {
                   </td>
                 </tr>
               ) : filtered.map((member) => (
-                <tr key={member.id} className="hover:bg-slate-50 transition-colors">
+                <tr
+                  key={member.id}
+                  onClick={() => navigate(`/admin/internal-staff/${member.id}`)}
+                  className="hover:bg-slate-50 cursor-pointer transition-colors"
+                >
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2 min-w-[160px]">
                       <span className="font-semibold text-slate-900">{member.full_name}</span>
@@ -512,7 +518,7 @@ const InternalStaffPage = () => {
                         })
                       : '—'}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-1">
                       {deleteConfirm === member.id ? (
                         <>
@@ -594,12 +600,6 @@ const InternalStaffPage = () => {
 
             {/* Body */}
             <div className="flex-1 overflow-y-auto">
-              {formError && (
-                <div className="mx-5 mt-4 px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg">
-                  {formError}
-                </div>
-              )}
-
               {isAdd && isLoginRole && (
                 <div className="mx-5 mt-4 flex items-start gap-2 bg-blue-50 border border-blue-100 text-blue-700 text-xs px-3 py-2.5 rounded-lg">
                   <ShieldCheck className="w-4 h-4 mt-0.5 flex-shrink-0" />
@@ -762,6 +762,12 @@ const InternalStaffPage = () => {
                 </>
               )}
               {!(isAdd && isLoginRole) && <div className="pb-6" />}
+
+              {formError && (
+                <div className="mx-5 mb-4 px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg">
+                  {formError}
+                </div>
+              )}
             </div>
 
             {/* Footer */}

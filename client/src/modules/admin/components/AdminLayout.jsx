@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useLayoutEffect } from 'react';
 import {
   Users, Calendar, DollarSign, Activity,
   Settings, LogOut, Bell, Search,
@@ -45,7 +45,8 @@ const NAV_SECTIONS = [
           || p.startsWith('/admin/staff/') || p === '/admin/staff-roster' || p.startsWith('/admin/staff-history/'),
         permKey: 'VIEW_USER_MANAGEMENT',
       },
-      { icon: Settings, label: 'Internal Staff', path: '/admin/internal-staff', permKey: 'VIEW_INTERNAL_STAFF' },
+      { icon: Settings, label: 'Internal Staff', path: '/admin/internal-staff', match: (p) => p === '/admin/internal-staff' || p.startsWith('/admin/internal-staff/'), permKey: 'VIEW_INTERNAL_STAFF' },
+      { icon: Wallet, label: 'Internal Staff Salary', path: '/admin/internal-staff-salary', match: (p) => p.startsWith('/admin/internal-staff-salary'), permKey: 'VIEW_INTERNAL_STAFF_SALARY' },
       { icon: Briefcase, label: 'Salespersons', path: '/admin/salespersons', match: (p) => p === '/admin/salespersons' || p.startsWith('/admin/salespersons/'), permKey: 'VIEW_SALESPERSONS' },
       { icon: Upload, label: 'Bulk Import', path: '/admin/bulk-import', permKey: 'VIEW_BULK_IMPORT' },
     ],
@@ -142,6 +143,12 @@ const findRouteRule = (pathname) => {
 
 const SECTION_STORAGE_KEY = 'adminSidebarCollapsedSections';
 
+// Every page mounts its own <AdminLayout>, so the sidebar <nav> is a fresh DOM
+// node on every navigation and its scrollTop resets to 0 — module-level (not
+// component) state so it survives the unmount/remount and the sidebar stays
+// put when clicking an item further down (e.g. Activity Log).
+let sidebarScrollTop = 0;
+
 const parseToken = (token) => {
   try {
     return JSON.parse(atob(token.split('.')[1]));
@@ -156,6 +163,12 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
   const { adminToken, isSuperAdmin, hasPermission, permissionsLoaded } = useAdminAuth();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const navRef = useRef(null);
+
+  // Restore the sidebar's scroll position before paint so it never visibly jumps to top.
+  useLayoutEffect(() => {
+    if (navRef.current) navRef.current.scrollTop = sidebarScrollTop;
+  }, []);
   const [collapsedSections, setCollapsedSections] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem(SECTION_STORAGE_KEY)) || {};
@@ -248,7 +261,11 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
           </button>
         </div>
 
-        <nav className="flex-1 p-2 space-y-1 overflow-y-auto scrollbar-hide">
+        <nav
+          ref={navRef}
+          onScroll={(e) => { sidebarScrollTop = e.currentTarget.scrollTop; }}
+          className="flex-1 p-2 space-y-1 overflow-y-auto scrollbar-hide"
+        >
           {visibleNavSections.map((group, idx) => (
             <SidebarSection
               key={group.section || `top-${idx}`}

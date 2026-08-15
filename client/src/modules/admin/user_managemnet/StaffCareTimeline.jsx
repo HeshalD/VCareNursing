@@ -25,6 +25,7 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 const fmtFull  = (d) => d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 const fmtShort = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+const fmtTime  = (iso) => { if (!iso) return null; const d = new Date(iso); return Number.isNaN(d.getTime()) ? null : d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); };
 const toLocalISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const moneyFmt = (n) => `Rs ${Math.round(Number(n || 0)).toLocaleString('en-US')}`;
 
@@ -478,6 +479,14 @@ const StaffCareTimeline = ({ assignments: rawAssignments = [], attendanceRecords
                                       <div className="flex items-center justify-between mt-1">
                                         <span className="text-[11px] text-[#A8A299]">Hours served</span>
                                         <span className="text-xs font-bold text-white">{Number(s.record.hours_served)}h</span>
+                                      </div>
+                                    )}
+                                    {(fmtTime(s.record?.in_time) || fmtTime(s.record?.out_time)) && (
+                                      <div className="flex items-center justify-between mt-1">
+                                        <span className="text-[11px] text-[#A8A299]">In / Out</span>
+                                        <span className="text-xs font-bold text-white">
+                                          {fmtTime(s.record?.in_time) || '—'} – {fmtTime(s.record?.out_time) || '—'}
+                                        </span>
                                       </div>
                                     )}
                                     <div className="mt-1.5 flex items-center justify-between">

@@ -22,6 +22,7 @@ const {
     executeCompletion,
 } = require('../services/scheduledActions');
 const { computeRegFeeSplit, settleRegistrationFee } = require('../services/registrationFeeSplit');
+const { applyPartialAttendanceTime } = require('./dailyAttendanceController')._internal;
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const { maybeAutoCompleteVisitingBooking } = require('../services/visitingBookings');
 const { closeActivePatternForPause } = require('../services/shiftPatternService');
@@ -1219,18 +1220,21 @@ exports.getAdminBookingDetail = async (req, res) => {
             b.is_hospitalized,
             b.hospital_name,
             c.client_profile_id,
+            c.client_code,
             c.full_name as client_name,
             c.primary_address as client_address,
             c.wallet_balance,
             uc.mobile_number as client_mobile,
             uc.email as client_email,
             p.patient_id as resolved_patient_id,
+            p.patient_code,
             p.full_name as patient_name,
             p.age as patient_age,
             p.relationship_to_client,
             p.medical_condition,
             p.residential_address as patient_address,
             s.staff_profile_id,
+            s.staff_code,
             s.full_name as staff_name,
             us.mobile_number as staff_mobile,
             us.email as staff_email,
@@ -1301,6 +1305,7 @@ exports.getAdminBookingDetail = async (req, res) => {
                     ss.duration_hours as shift_duration_hours,
                     ss.label as shift_label,
                     sp.full_name,
+                    sp.staff_code,
                     sp.designation,
                     sp.current_status
                  FROM booking_staff_assignments bsa
@@ -1419,6 +1424,7 @@ exports.getAdminBookingDetail = async (req, res) => {
                 },
                 client_details: {
                     client_profile_id: booking.client_profile_id,
+                    client_code: booking.client_code,
                     client_name: booking.client_name,
                     client_address: booking.client_address,
                     client_mobile: booking.client_mobile,
@@ -1427,6 +1433,7 @@ exports.getAdminBookingDetail = async (req, res) => {
                 },
                 patient_details: {
                     patient_id: booking.resolved_patient_id || booking.patient_id,
+                    patient_code: booking.patient_code,
                     patient_name: booking.patient_name,
                     patient_age: booking.patient_age,
                     relationship_to_client: booking.relationship_to_client,
@@ -1435,6 +1442,7 @@ exports.getAdminBookingDetail = async (req, res) => {
                 },
                 current_staff: booking.staff_profile_id ? {
                     staff_profile_id: booking.staff_profile_id,
+                    staff_code: booking.staff_code,
                     staff_name: booking.staff_name,
                     staff_mobile: booking.staff_mobile,
                     staff_email: booking.staff_email,
@@ -2507,6 +2515,72 @@ exports.updateInvoicingMode = async (req, res) => {
     } catch (error) {
         console.error('Update invoicing mode error:', error);
         res.status(500).json({ status: 'error', message: 'Failed to update invoicing mode' });
+    }
+};
+
+/**
+ * @route   PATCH /api/bookings/:booking_id/rates
+ * @desc    Update the CLIENT-facing billing rate(s) on a booking — daily_rate
+ *          (LIVE_IN/VISITING), shift_rate (SHIFT_BASED), and/or ot_rate. These
+ *          feed billingService.js's invoice calculations going forward; they do
+ *          NOT touch what any staff member is paid (see booking_staff_assignments.daily_rate,
+ *          updated instead via PUT /api/assignments/assignment/:assignment_id).
+ * @access  Private (gated by BOOKING_UPDATE_RATE)
+ * @body    daily_rate (optional), shift_rate (optional), ot_rate (optional) — at least one required
+ */
+exports.updateBookingRates = async (req, res) => {
+    const { booking_id } = req.params;
+    const { daily_rate, shift_rate, ot_rate } = req.body;
+
+    if (daily_rate === undefined && shift_rate === undefined && ot_rate === undefined) {
+        return res.status(400).json({ status: 'error', message: 'At least one of daily_rate, shift_rate, or ot_rate is required' });
+    }
+
+    for (const [label, value] of [['daily_rate', daily_rate], ['shift_rate', shift_rate], ['ot_rate', ot_rate]]) {
+        if (value !== undefined && (Number.isNaN(parseFloat(value)) || parseFloat(value) < 0)) {
+            return res.status(400).json({ status: 'error', message: `${label} must be a non-negative number` });
+        }
+    }
+
+    try {
+        const beforeRes = await db.query(
+            `SELECT booking_id, daily_rate, shift_rate, ot_rate FROM bookings WHERE booking_id = $1`,
+            [booking_id]
+        );
+        if (beforeRes.rows.length === 0) {
+            return res.status(404).json({ status: 'error', message: 'Booking not found' });
+        }
+        const before = beforeRes.rows[0];
+
+        const fields = [];
+        const values = [];
+        let p = 1;
+        if (daily_rate !== undefined) { fields.push(`daily_rate = $${p}`); values.push(parseFloat(daily_rate)); p++; }
+        if (shift_rate !== undefined) { fields.push(`shift_rate = $${p}`); values.push(parseFloat(shift_rate)); p++; }
+        if (ot_rate !== undefined) { fields.push(`ot_rate = $${p}`); values.push(parseFloat(ot_rate)); p++; }
+        values.push(booking_id);
+
+        const result = await db.query(
+            `UPDATE bookings SET ${fields.join(', ')} WHERE booking_id = $${p} RETURNING booking_id, daily_rate, shift_rate, ot_rate`,
+            values
+        );
+
+        logActivity({
+            actorUserId: req.user?.user_id,
+            actorRole: req.user?.role,
+            actionType: 'BOOKING_RATE_UPDATED',
+            entityType: 'BOOKING',
+            entityId: String(booking_id),
+            details: {
+                before: { daily_rate: before.daily_rate, shift_rate: before.shift_rate, ot_rate: before.ot_rate },
+                after: result.rows[0],
+            },
+        }).catch(err => console.error('Activity log failed:', err));
+
+        res.status(200).json({ status: 'success', data: result.rows[0] });
+    } catch (error) {
+        console.error('Update booking rates error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to update booking rates' });
     }
 };
 
@@ -3720,7 +3794,12 @@ exports.swapStaff = async (req, res) => {
         // Optional overrides
         new_daily_rate,
         new_ot_rate,
-        new_scheduled_end_time
+        new_scheduled_end_time,
+        // Out/in time capture — old staff's last logged out_time, new staff's first
+        // logged in_time. Both optional; either can be entered for a swap that's
+        // happening now, scheduled ahead, or being backfilled for a past date.
+        old_staff_out_time,
+        new_staff_in_time
     } = req.body;
 
     if (!new_staff_id) {
@@ -3909,6 +3988,8 @@ exports.swapStaff = async (req, res) => {
                     new_ot_rate: new_ot_rate ?? null,
                     new_scheduled_end_time: new_scheduled_end_time ?? null,
                     swapped_by: req.user.user_id,
+                    old_staff_out_time: old_staff_out_time || null,
+                    new_staff_in_time: new_staff_in_time || null,
                 },
                 reason: swap_reason || null,
                 created_by: req.user.user_id,
@@ -3976,13 +4057,30 @@ exports.swapStaff = async (req, res) => {
         }
 
         const newDailyRate = new_daily_rate ?? bookingDetail.daily_rate ?? bookingDetail.quote_daily_rate ?? 0;
-        await client.query(
+        const newAssignmentRes = await client.query(
             `INSERT INTO booking_staff_assignments
                 (booking_id, staff_profile_id, assigned_on, assigned_by, daily_rate,
                  service_start_date, service_end_date, amount_allocated, status)
-             VALUES ($1, $2, NOW(), $3, $4, $5, NULL, NULL, 'ACTIVE')`,
+             VALUES ($1, $2, NOW(), $3, $4, $5, NULL, NULL, 'ACTIVE')
+             RETURNING assignment_id`,
             [booking_id, new_staff_id, req.user.user_id, newDailyRate, newStartDateStr]
         );
+        const newAssignmentId = newAssignmentRes.rows[0].assignment_id;
+
+        // Out/in time capture: old staff's last logged day gets its out_time, the
+        // incoming staff's first day gets its in_time. Either/both optional.
+        if (activeAssignment && old_staff_out_time) {
+            await applyPartialAttendanceTime(client, {
+                booking_id, assignment_id: activeAssignment.assignment_id,
+                service_date: oldEndDateStr, out_time: old_staff_out_time,
+            });
+        }
+        if (new_staff_in_time) {
+            await applyPartialAttendanceTime(client, {
+                booking_id, assignment_id: newAssignmentId,
+                service_date: newStartDateStr, in_time: new_staff_in_time,
+            });
+        }
 
         // 6. Build the booking update dynamically
         // Only override fields the admin explicitly passed in
@@ -4127,6 +4225,9 @@ exports.swapStaff = async (req, res) => {
 
     } catch (error) {
         await client.query('ROLLBACK');
+        if (error.statusCode) {
+            return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        }
         console.error('swapStaff error:', error);
         res.status(500).json({ status: 'error', message: 'Failed to swap staff member' });
     } finally {

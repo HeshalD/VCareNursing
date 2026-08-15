@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, CheckSquare, Square } from 'lucide-react';
 
 export const PermToggle = ({ label, checked, onToggle, locked }) => (
   <div
@@ -49,10 +49,14 @@ const PermCheckbox = ({ checked, onChange, locked, title }) => (
   />
 );
 
-const SectionSelectAll = ({ perms, checkedKeys, lockedKeys, onSectionToggle }) => {
+// Compact, pill-shaped toggle used everywhere a group of permissions can be
+// bulk-checked/unchecked — an icon + label reads clearly at a glance, unlike
+// a bare "Select all" text link that gets lost next to real toggles.
+const SectionSelectAll = ({ perms, checkedKeys, lockedKeys, onSectionToggle, compact }) => {
   const togglable = perms.filter((p) => !lockedKeys?.has(p.key));
   if (togglable.length === 0) return null;
   const allChecked = togglable.every((p) => checkedKeys.has(p.key));
+  const Icon = allChecked ? CheckSquare : Square;
   return (
     <button
       type="button"
@@ -60,8 +64,15 @@ const SectionSelectAll = ({ perms, checkedKeys, lockedKeys, onSectionToggle }) =
         e.stopPropagation();
         onSectionToggle(togglable.map((p) => p.key), !allChecked);
       }}
-      className="text-[10px] font-semibold text-blue-600 hover:underline flex-shrink-0"
+      className={`inline-flex items-center gap-1 font-semibold rounded-md border transition-colors flex-shrink-0 whitespace-nowrap ${
+        compact ? 'text-[10px] px-1.5 py-0.5' : 'text-[11px] px-2 py-1'
+      } ${
+        allChecked
+          ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
+          : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50 hover:text-slate-700'
+      }`}
     >
+      <Icon className={compact ? 'w-2.5 h-2.5' : 'w-3 h-3'} />
       {allChecked ? 'Clear all' : 'Select all'}
     </button>
   );
@@ -97,6 +108,7 @@ const EntityVerbTable = ({ entityGroups, verbs, checkedKeys, lockedKeys, onToggl
                     checkedKeys={checkedKeys}
                     lockedKeys={lockedKeys}
                     onSectionToggle={onSectionToggle}
+                    compact
                   />
                 </div>
               </th>
@@ -111,7 +123,7 @@ const EntityVerbTable = ({ entityGroups, verbs, checkedKeys, lockedKeys, onToggl
                 <td className="px-2 py-2 whitespace-nowrap">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-slate-700">{entity}</span>
-                    <SectionSelectAll perms={perms} checkedKeys={checkedKeys} lockedKeys={lockedKeys} onSectionToggle={onSectionToggle} />
+                    <SectionSelectAll perms={perms} checkedKeys={checkedKeys} lockedKeys={lockedKeys} onSectionToggle={onSectionToggle} compact />
                   </div>
                 </td>
                 {verbs.map((verb) => {
@@ -220,17 +232,9 @@ const PermissionModuleList = ({
               <div>
                 {pagePerms.length > 0 && (
                   <div className="px-4 pt-3 pb-2">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
-                        Page Access
-                      </p>
-                      <SectionSelectAll
-                        perms={pagePerms}
-                        checkedKeys={checkedKeys}
-                        lockedKeys={lockedKeys}
-                        onSectionToggle={onSectionToggle}
-                      />
-                    </div>
+                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-2">
+                      Page Access
+                    </p>
                     <div className="space-y-2">
                       {pagePerms.map((perm) => (
                         <PermToggle

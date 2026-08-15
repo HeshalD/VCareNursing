@@ -2,6 +2,7 @@ import React from 'react';
 import ReactPhoneInput from 'react-phone-number-input';
 import flags from 'react-phone-number-input/flags';
 import { isValidPhoneNumber } from 'libphonenumber-js';
+import SearchableCountrySelect from './SearchableCountrySelect';
 import 'react-phone-number-input/style.css';
 import './PhoneInput.css';
 
@@ -33,6 +34,7 @@ export default function PhoneInput({
         international
         withCountryCallingCode
         flags={flags}
+        countrySelectComponent={SearchableCountrySelect}
         defaultCountry={defaultCountry}
         value={value || undefined}
         onChange={(val) => onChange && onChange({ target: { name, value: val || '' } })}

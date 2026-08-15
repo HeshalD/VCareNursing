@@ -515,6 +515,7 @@ const BookingStaffAssignmentPage = () => {
                     <FormField label="Service Start Time">
                       <input
                         type="time"
+                        lang="en-GB"
                         value={assignment.service_start_time}
                         onChange={(e) => setAssignment({ ...assignment, service_start_time: e.target.value })}
                         className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
@@ -658,6 +659,7 @@ const BookingStaffAssignmentPage = () => {
                                   <input
                                     required
                                     type="time"
+                                    lang="en-GB"
                                     value={slot.start_time}
                                     onChange={(e) => updateShiftSlot(idx, 'start_time', e.target.value)}
                                     className="w-full rounded-md border border-gray-200 px-2.5 py-1.5 text-sm text-gray-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"

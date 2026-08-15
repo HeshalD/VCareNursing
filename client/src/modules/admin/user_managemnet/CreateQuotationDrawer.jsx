@@ -89,8 +89,8 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
       const res = await apiClient.getClientServiceRequests(clientId);
       const requests = Array.isArray(res.data) ? res.data : [];
       setServiceRequests(requests);
-    } catch {
-      setError('Failed to load service requests');
+    } catch (err) {
+      setError(err?.message || 'Failed to load service requests');
     } finally {
       setLoading(false);
     }
@@ -197,8 +197,8 @@ const CreateQuotationDrawer = ({ open, onClose, clientId, clientProfile, quoteId
       setLineItems(Array.isArray(quote.line_items) ? quote.line_items : []);
       setTermsConditions(quote.terms_conditions || 'The initial estimated amount is non-refundable.');
       setExistingServiceModel(quote.service_model || null);
-    } catch {
-      setError('Failed to load quotation details');
+    } catch (err) {
+      setError(err?.message || 'Failed to load quotation details');
     } finally {
       setLoading(false);
     }

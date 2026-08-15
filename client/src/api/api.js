@@ -977,8 +977,8 @@ class ApiClient {
     });
   }
 
-  async getNextStaffCode() {
-    return this.request('/staff/next-staff-code');
+  async getNextStaffCode(start) {
+    return this.request(`/staff/next-staff-code${start ? `?start=${start}` : ''}`);
   }
 
   async sendDocumentRequest(applicationId) {
@@ -1470,6 +1470,15 @@ class ApiClient {
     });
   }
 
+  // Sets/edits just in_time and/or out_time on one assignment's day — used for
+  // staff-swap out/in time capture and for editing a past swap's recorded times.
+  async setAttendanceTime(bookingId, payload) {
+    return this.request(`/bookings/${bookingId}/attendance/time`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  }
+
   async markAttendanceAbsent(bookingId, attendanceData) {
     return this.request(`/bookings/${bookingId}/attendance/absent`, {
       method: 'POST',
@@ -1610,6 +1619,22 @@ class ApiClient {
     return this.request(`/bookings/${bookingId}/hospitalization`, {
       method: 'PATCH',
       body: JSON.stringify({ is_hospitalized, hospital_name }),
+    });
+  }
+
+  // Updates the CLIENT-facing billing rate(s) on a booking (daily_rate/shift_rate/ot_rate).
+  async updateBookingRates(bookingId, payload) {
+    return this.request(`/bookings/${bookingId}/rates`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  // Updates a specific staff assignment's pay rate (and/or dates/notes).
+  async updateStaffAssignment(assignmentId, payload) {
+    return this.request(`/assignments/assignment/${assignmentId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
     });
   }
 
@@ -2840,6 +2865,76 @@ class ApiClient {
   async deleteInternalStaff(id) {
     return this.request(`/internal-staff/${id}`, {
       method: 'DELETE',
+    });
+  }
+
+  async getInternalStaff(id) {
+    return this.request(`/internal-staff/${id}`);
+  }
+
+  // Internal Staff Salary endpoints
+  async listSalaryPresets() {
+    return this.request('/internal-staff-salary/presets');
+  }
+
+  async createSalaryPreset(data) {
+    return this.request('/internal-staff-salary/presets', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateSalaryPreset(id, data) {
+    return this.request(`/internal-staff-salary/presets/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteSalaryPreset(id) {
+    return this.request(`/internal-staff-salary/presets/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async listSalarySheets(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    return this.request(`/internal-staff-salary/sheets${qs ? `?${qs}` : ''}`);
+  }
+
+  async getInternalStaffSalaryProfile(staffId) {
+    return this.request(`/internal-staff-salary/staff/${staffId}/profile`);
+  }
+
+  async getSalesAttribution(staffId, month) {
+    return this.request(`/internal-staff-salary/staff/${staffId}/sales-attribution?month=${month}`);
+  }
+
+  async createSalarySheet(staffId, month) {
+    return this.request(`/internal-staff-salary/staff/${staffId}/sheets`, {
+      method: 'POST',
+      body: JSON.stringify({ month }),
+    });
+  }
+
+  async getSalarySheet(sheetId) {
+    return this.request(`/internal-staff-salary/sheets/${sheetId}`);
+  }
+
+  async updateSalarySheet(sheetId, data) {
+    return this.request(`/internal-staff-salary/sheets/${sheetId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async previewSalarySheet(sheetId) {
+    return this.request(`/internal-staff-salary/sheets/${sheetId}/preview`);
+  }
+
+  async finalizeSalarySheet(sheetId) {
+    return this.request(`/internal-staff-salary/sheets/${sheetId}/finalize`, {
+      method: 'POST',
     });
   }
 

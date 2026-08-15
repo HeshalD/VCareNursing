@@ -312,6 +312,34 @@ const sendStaffSalarySheet = (mobileNumber, fullName, monthLabel, netPayable, am
     [{ type: 'document', document: { link: pdfUrl, filename: `Salary_Sheet_${monthLabel.replace(/\s+/g, '_')}.pdf` } }]
   );
 
+// Sent when an internal (back-office) staff member's monthly salary sheet is
+// finalized — this is a single full monthly payment, not a partial payout
+// against accrued wallet earnings like sendStaffSalarySheet, so it uses its
+// own template with a simpler parameter shape.
+//
+// META TEMPLATE SPEC — vcare_internal_staff_salary_sheet_v1 (UTILITY, en)
+// Header: DOCUMENT (salary sheet PDF)
+// Body:
+//   Hi {{1}}, your salary for {{2}} has been processed.
+//
+//   Net Payable: LKR {{3}}
+//   Payment Date: {{4}}
+//
+//   Please find your official payslip attached. Thank you for your work this month.
+//
+// NOTE: this template must be created and approved in Meta Business Manager
+// before this function will actually deliver — until then, sendTemplate()
+// will reject/fail, which callers must treat as non-fatal (payment record
+// and PDF are independent of notification success).
+const sendInternalStaffSalarySheet = (mobileNumber, fullName, monthLabel, netPayable, paymentDate, pdfUrl) =>
+  sendTemplate(
+    formatNumber(mobileNumber),
+    'vcare_internal_staff_salary_sheet_v1',
+    'en',
+    [fullName, monthLabel, netPayable, paymentDate],
+    [{ type: 'document', document: { link: pdfUrl, filename: `Payslip_${monthLabel.replace(/\s+/g, '_')}.pdf` } }]
+  );
+
 // The company's Independent Contractor Agreement (terms & conditions) PDF.
 // Hosted on Cloudinary; sent as a real PDF document attachment (not a text link).
 const STAFF_AGREEMENT_PDF_URL = 'https://res.cloudinary.com/dohaktkth/image/upload/v1780652809/INDEPENDENT_CONTRACTOR_AGREEMENT_knloa6.pdf';
@@ -472,4 +500,4 @@ const sendRegFeeInvoice = (mobileNumber, clientName, amount, bankName, accountHo
 const sendStaffLeaveRejected = (mobileNumber, staffName, startDate, endDate, reason) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_leave_rejected', 'en', [staffName, startDate, endDate, reason]);
 
-module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendClientWelcomeNew, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendClientProductQuotation, sendPaymentRecorded, sendPaymentReceipt, sendClientInvoice, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected, sendClientBookingStatement, sendStaffAgreement, sendCandidateProfile, sendStaffLeaveApproved, sendStaffLeaveRejected, sendDocumentUploadRequest, sendRegFeeNotice, sendRegFeeInvoice };
+module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendClientWelcomeNew, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendClientProductQuotation, sendPaymentRecorded, sendPaymentReceipt, sendClientInvoice, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected, sendClientBookingStatement, sendStaffAgreement, sendCandidateProfile, sendStaffLeaveApproved, sendStaffLeaveRejected, sendDocumentUploadRequest, sendRegFeeNotice, sendRegFeeInvoice, sendInternalStaffSalarySheet };
