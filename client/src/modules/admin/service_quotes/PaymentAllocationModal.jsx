@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X, Upload, Loader2, BadgeDollarSign, CheckCircle2, Lock, ArrowLeft, ArrowRight, Receipt, Wallet, AlertTriangle } from 'lucide-react';
+import { X, Upload, Loader2, BadgeDollarSign, CheckCircle2, Lock, ArrowLeft, ArrowRight, Receipt, Wallet, AlertTriangle, FileText } from 'lucide-react';
 import apiClient from '../../../api/api';
 import DateInput from '../../../components/common/DateInput';
 
@@ -104,6 +104,61 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
   const [productQuoteId, setProductQuoteId] = useState(null);
   const [vendorItems, setVendorItems] = useState([]);
   const [vendorDecisions, setVendorDecisions] = useState({});
+
+  // Every invoiceable line item across the SERVICE quote and its linked
+  // PRODUCT quote (if any) — { line_item_id, quote_id, description, amount,
+  // item_type, invoice }. Each row's "Create Invoice" button fires
+  // immediately (see invoiceController.generateLineItemInvoice) — this is
+  // independent of the payment being recorded/allocated below, purely a
+  // documentation action the admin can trigger while reviewing the quote.
+  const [lineItems, setLineItems] = useState([]);
+  const [creatingInvoiceId, setCreatingInvoiceId] = useState('');
+
+  // Fetches the SERVICE quote's own line items (already present on `quote`
+  // from getQuoteWithLineItems) plus the linked PRODUCT quote's items, then
+  // cross-references both against any invoices already generated for them
+  // (see invoiceController.generateLineItemInvoice).
+  const loadLineItemsForInvoicing = async (serviceLineItems, pQuoteId) => {
+    try {
+      let productItems = [];
+      if (pQuoteId) {
+        const productDetail = await apiClient.getProductQuote(pQuoteId);
+        productItems = (productDetail?.data?.line_items || []).map((li) => ({ ...li, quote_id: pQuoteId }));
+      }
+      const allItems = [
+        ...(serviceLineItems || []).map((li) => ({ ...li, quote_id: quoteId })),
+        ...productItems,
+      ].filter((li) => li.item_type !== 'DISCOUNT');
+
+      const quoteIds = [quoteId, ...(pQuoteId ? [pQuoteId] : [])];
+      const invoiceLists = await Promise.all(quoteIds.map((id) => apiClient.getLineItemInvoices(id)));
+      const invoiceMap = Object.fromEntries(
+        invoiceLists
+          .flatMap((res) => (Array.isArray(res?.data) ? res.data : []))
+          .map((inv) => [inv.line_item_id, inv])
+      );
+
+      setLineItems(allItems.map((li) => ({ ...li, invoice: invoiceMap[li.line_item_id] || null })));
+    } catch {
+      setLineItems([]);
+    }
+  };
+
+  const handleCreateLineItemInvoice = async (lineItemId) => {
+    setCreatingInvoiceId(lineItemId);
+    setError('');
+    try {
+      const res = await apiClient.createLineItemInvoices(quoteId, [lineItemId]);
+      const created = Array.isArray(res?.data) ? res.data[0] : null;
+      if (created) {
+        setLineItems((prev) => prev.map((li) => (li.line_item_id === lineItemId ? { ...li, invoice: created } : li)));
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to create invoice');
+    } finally {
+      setCreatingInvoiceId('');
+    }
+  };
 
   const updateVendorDecision = (lineItemId, patch) => {
     setVendorDecisions((prev) => ({ ...prev, [lineItemId]: { ...prev[lineItemId], ...patch } }));
@@ -234,6 +289,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
       // correctly absent, not a bug.
       const pQuoteId = quote?.product_quote_id || null;
       setProductQuoteId(pQuoteId);
+      loadLineItemsForInvoicing(quote?.line_items, pQuoteId);
       if (!pQuoteId) {
         setProductsRemaining(0);
         setCombinedRemaining((regInfo?.remaining || 0) + svcOnly);
@@ -604,6 +660,49 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                     </p>
                   )}
                 </div>
+
+                {lineItems.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Line Item Invoices (optional)</p>
+                    <p className="mb-2 text-[11px] text-slate-500">
+                      Generate a standalone invoice for any item below — separate from the combined invoice and independent of the allocation above.
+                    </p>
+                    <div className="divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200">
+                      {lineItems.map((li) => (
+                        <div key={li.line_item_id} className="flex items-center justify-between gap-3 px-3 py-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-medium text-slate-700">{li.description}</p>
+                            <p className="text-[11px] text-slate-400">{money(li.amount)}</p>
+                          </div>
+                          {li.invoice ? (
+                            <a
+                              href={li.invoice.pdf_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100"
+                            >
+                              <CheckCircle2 className="h-3 w-3" /> {li.invoice.invoice_code}
+                            </a>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleCreateLineItemInvoice(li.line_item_id)}
+                              disabled={creatingInvoiceId === li.line_item_id}
+                              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                            >
+                              {creatingInvoiceId === li.line_item_id ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <FileText className="h-3 w-3" />
+                              )}
+                              {creatingInvoiceId === li.line_item_id ? 'Creating…' : 'Create Invoice'}
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {vendorItems.length > 0 && (
                   <div>

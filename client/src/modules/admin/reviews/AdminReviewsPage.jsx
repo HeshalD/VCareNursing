@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Star, Eye, EyeOff, Search, X, BookOpen, ChevronLeft, ChevronRight, Plus, Phone, Check, Loader2 } from 'lucide-react';
+import { Star, Eye, EyeOff, Search, X, BookOpen, ChevronLeft, ChevronRight, Plus, Phone, Check, Loader2, User, UserCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -33,49 +33,113 @@ const StatusDot = ({ visible }) => (
 
 // ─── Add Review Modal ─────────────────────────────────────────────────────────
 // Lets an admin log a review on a client's behalf — e.g. after calling the
-// client and getting verbal feedback over the phone.
+// client and getting verbal feedback over the phone. A 4-step picker: search
+// client → pick booking (most recent first) → pick the staff who worked it → rate.
+
+const STEP_CLIENT = 'client';
+const STEP_BOOKING = 'booking';
+const STEP_STAFF = 'staff';
+const STEP_DETAILS = 'details';
+
+const StepCrumb = ({ label, value, onChange, active }) => (
+  <button
+    type="button"
+    onClick={onChange}
+    disabled={!onChange}
+    className={`text-left px-2.5 py-1.5 rounded-lg border text-xs transition-colors ${
+      active ? 'border-blue-200 bg-blue-50' : 'border-slate-200 bg-slate-50 hover:bg-slate-100'
+    } ${!onChange ? 'cursor-default' : ''}`}
+  >
+    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+    <p className="font-medium text-slate-800 truncate max-w-[9rem]">{value}</p>
+  </button>
+);
 
 const AddReviewModal = ({ onClose, onCreated }) => {
-  const [clients, setClients] = useState([]);
-  const [clientsLoading, setClientsLoading] = useState(true);
-  const [clientId, setClientId] = useState('');
+  const [step, setStep] = useState(STEP_CLIENT);
+
+  const [clientSearch, setClientSearch] = useState('');
+  const [clientResults, setClientResults] = useState([]);
+  const [clientsLoading, setClientsLoading] = useState(false);
+  const [selectedClient, setSelectedClient] = useState(null);
 
   const [bookings, setBookings] = useState([]);
   const [bookingsLoading, setBookingsLoading] = useState(false);
-  const [bookingId, setBookingId] = useState('');
+  const [bookingFilter, setBookingFilter] = useState('');
+  const [selectedBooking, setSelectedBooking] = useState(null);
+
+  const [staffList, setStaffList] = useState([]);
+  const [staffLoading, setStaffLoading] = useState(false);
+  const [selectedStaff, setSelectedStaff] = useState(null);
 
   const [rating, setRating] = useState(0);
   const [reviewText, setReviewText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
+  // Debounced client search
   useEffect(() => {
-    apiClient.getAllClients()
-      .then(res => setClients(res?.data || []))
-      .catch(() => setClients([]))
-      .finally(() => setClientsLoading(false));
-  }, []);
+    if (!clientSearch.trim()) { setClientResults([]); setClientsLoading(false); return; }
+    setClientsLoading(true);
+    const t = setTimeout(() => {
+      apiClient.getAllClients({ search: clientSearch.trim(), limit: 20 })
+        .then(res => setClientResults(res?.data || []))
+        .catch(() => setClientResults([]))
+        .finally(() => setClientsLoading(false));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [clientSearch]);
 
-  useEffect(() => {
-    setBookingId('');
-    if (!clientId) { setBookings([]); return; }
+  const chooseClient = (client) => {
+    setSelectedClient(client);
+    setSelectedBooking(null);
+    setSelectedStaff(null);
+    setBookingFilter('');
+    setBookings([]);
     setBookingsLoading(true);
-    apiClient.getReviewableBookingsForClient(clientId)
+    setStep(STEP_BOOKING);
+    apiClient.getClientBookingsForAdmin(client.client_profile_id)
       .then(res => setBookings(res?.data || []))
       .catch(() => setBookings([]))
       .finally(() => setBookingsLoading(false));
-  }, [clientId]);
+  };
 
-  const selectedBooking = bookings.find(b => b.booking_id === bookingId) || null;
+  const chooseBooking = (booking) => {
+    setSelectedBooking(booking);
+    setSelectedStaff(null);
+    setStaffList([]);
+    setStaffLoading(true);
+    setStep(STEP_STAFF);
+    apiClient.getBookingStaffForReview(booking.booking_id)
+      .then(res => setStaffList(res?.data || []))
+      .catch(() => setStaffList([]))
+      .finally(() => setStaffLoading(false));
+  };
+
+  const chooseStaff = (staff) => {
+    setSelectedStaff(staff);
+    setStep(STEP_DETAILS);
+  };
+
+  const goToClientStep = () => setStep(STEP_CLIENT);
+  const goToBookingStep = () => selectedClient && setStep(STEP_BOOKING);
+  const goToStaffStep = () => selectedBooking && setStep(STEP_STAFF);
+
+  const filteredBookings = bookingFilter.trim()
+    ? bookings.filter(b =>
+        `${b.service_type || ''} ${b.service_model || ''} ${b.status || ''}`.toLowerCase().includes(bookingFilter.trim().toLowerCase())
+      )
+    : bookings;
 
   const handleSubmit = async () => {
-    if (!clientId || !bookingId || rating === 0 || !reviewText.trim()) return;
+    if (!selectedClient || !selectedBooking || !selectedStaff || rating === 0 || !reviewText.trim()) return;
     setSubmitting(true);
     setError('');
     try {
       const res = await apiClient.adminCreateReview({
-        client_id: clientId,
-        booking_id: bookingId,
+        client_id: selectedClient.client_profile_id,
+        booking_id: selectedBooking.booking_id,
+        staff_profile_id: selectedStaff.staff_profile_id,
         rating,
         review_text: reviewText.trim(),
       });
@@ -100,6 +164,36 @@ const AddReviewModal = ({ onClose, onCreated }) => {
           </button>
         </div>
 
+        {/* Breadcrumbs for steps already completed */}
+        {(selectedClient || selectedBooking || selectedStaff) && (
+          <div className="flex items-center gap-2 px-6 pt-4 flex-wrap">
+            {selectedClient && (
+              <StepCrumb
+                label="Client"
+                value={selectedClient.full_name}
+                active={step === STEP_CLIENT}
+                onChange={goToClientStep}
+              />
+            )}
+            {selectedBooking && (
+              <StepCrumb
+                label="Booking"
+                value={`${selectedBooking.service_type || 'Booking'} · ${fmt(selectedBooking.start_date)}`}
+                active={step === STEP_BOOKING}
+                onChange={goToBookingStep}
+              />
+            )}
+            {selectedStaff && (
+              <StepCrumb
+                label="Staff"
+                value={selectedStaff.full_name}
+                active={step === STEP_STAFF || step === STEP_DETAILS}
+                onChange={goToStaffStep}
+              />
+            )}
+          </div>
+        )}
+
         <div className="px-6 py-5 flex flex-col gap-4">
           {error && (
             <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-700">
@@ -107,89 +201,178 @@ const AddReviewModal = ({ onClose, onCreated }) => {
             </div>
           )}
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Client</label>
-            <select
-              value={clientId}
-              onChange={e => setClientId(e.target.value)}
-              disabled={clientsLoading}
-              className={inputCls}
-            >
-              <option value="">{clientsLoading ? 'Loading clients…' : '— Choose a client —'}</option>
-              {clients.map(c => (
-                <option key={c.client_profile_id} value={c.client_profile_id}>
-                  {c.full_name} {c.mobile_number ? `· ${c.mobile_number}` : ''}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Booking</label>
-            <select
-              value={bookingId}
-              onChange={e => setBookingId(e.target.value)}
-              disabled={!clientId || bookingsLoading}
-              className={inputCls}
-            >
-              <option value="">
-                {!clientId ? 'Select a client first' : bookingsLoading ? 'Loading bookings…' : bookings.length === 0 ? 'No reviewable bookings' : '— Choose a booking —'}
-              </option>
-              {bookings.map(b => (
-                <option key={b.booking_id} value={b.booking_id}>
-                  {b.service_type} · {b.staff_name || 'Unassigned'} · {fmt(b.start_date)}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {selectedBooking && (
-            <div className="flex items-center gap-3 px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg">
-              <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center flex-shrink-0">
-                <BookOpen className="w-3.5 h-3.5 text-slate-500" />
+          {/* Step 1: search client */}
+          {step === STEP_CLIENT && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Search Client</label>
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  autoFocus
+                  value={clientSearch}
+                  onChange={e => setClientSearch(e.target.value)}
+                  placeholder="Name, mobile, or client code…"
+                  className={inputCls}
+                />
               </div>
-              <div>
-                <p className="text-xs font-semibold text-slate-900">{selectedBooking.staff_name || 'Unassigned staff'}</p>
-                <p className="text-xs text-slate-500">{selectedBooking.designation || 'Staff'} · {selectedBooking.status}</p>
+              <div className="mt-2 border border-slate-200 rounded-lg max-h-64 overflow-y-auto divide-y divide-slate-100">
+                {clientsLoading ? (
+                  <div className="flex items-center justify-center py-6 text-xs text-slate-400 gap-2">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Searching…
+                  </div>
+                ) : !clientSearch.trim() ? (
+                  <p className="text-xs text-slate-400 text-center py-6">Type to search for a client…</p>
+                ) : clientResults.length === 0 ? (
+                  <p className="text-xs text-slate-400 text-center py-6">No clients found.</p>
+                ) : (
+                  clientResults.map(c => (
+                    <button
+                      key={c.client_profile_id}
+                      type="button"
+                      onClick={() => chooseClient(c)}
+                      className="w-full text-left px-3 py-2.5 hover:bg-slate-50 transition-colors flex items-center gap-2.5"
+                    >
+                      <div className="w-7 h-7 rounded-full bg-slate-200 flex items-center justify-center flex-shrink-0">
+                        <User className="w-3.5 h-3.5 text-slate-500" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-slate-900 truncate">{c.full_name}</p>
+                        <p className="text-xs text-slate-500 truncate">{c.mobile_number || c.email || '—'}</p>
+                      </div>
+                    </button>
+                  ))
+                )}
               </div>
             </div>
           )}
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Rating</label>
-            <div className="flex gap-1">
-              {[1, 2, 3, 4, 5].map(n => (
-                <button key={n} type="button" onClick={() => setRating(n)} className="p-0.5">
-                  <Star className={`w-6 h-6 ${n <= rating ? 'fill-amber-400 text-amber-400' : 'text-slate-200'}`} />
-                </button>
-              ))}
+          {/* Step 2: pick booking */}
+          {step === STEP_BOOKING && selectedClient && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+                Booking · most recent first
+              </label>
+              <div className="relative mb-2">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={bookingFilter}
+                  onChange={e => setBookingFilter(e.target.value)}
+                  placeholder="Filter by service or status…"
+                  className={inputCls}
+                />
+              </div>
+              <div className="border border-slate-200 rounded-lg max-h-64 overflow-y-auto divide-y divide-slate-100">
+                {bookingsLoading ? (
+                  <div className="flex items-center justify-center py-6 text-xs text-slate-400 gap-2">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading bookings…
+                  </div>
+                ) : filteredBookings.length === 0 ? (
+                  <p className="text-xs text-slate-400 text-center py-6">No bookings found for this client.</p>
+                ) : (
+                  filteredBookings.map(b => (
+                    <button
+                      key={b.booking_id}
+                      type="button"
+                      onClick={() => chooseBooking(b)}
+                      className="w-full text-left px-3 py-2.5 hover:bg-slate-50 transition-colors flex items-center gap-2.5"
+                    >
+                      <div className="w-7 h-7 rounded-full bg-slate-200 flex items-center justify-center flex-shrink-0">
+                        <BookOpen className="w-3.5 h-3.5 text-slate-500" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-slate-900 truncate">{b.service_type || 'Booking'}</p>
+                        <p className="text-xs text-slate-500 truncate">{fmt(b.start_date)} · {b.status}</p>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
             </div>
-          </div>
+          )}
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Review</label>
-            <textarea
-              rows={4}
-              value={reviewText}
-              onChange={e => setReviewText(e.target.value)}
-              placeholder="What the client said over the phone…"
-              className={`${inputCls} resize-y`}
-            />
-          </div>
+          {/* Step 3: pick staff */}
+          {step === STEP_STAFF && selectedBooking && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+                Staff who worked this booking
+              </label>
+              <div className="border border-slate-200 rounded-lg max-h-64 overflow-y-auto divide-y divide-slate-100">
+                {staffLoading ? (
+                  <div className="flex items-center justify-center py-6 text-xs text-slate-400 gap-2">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading staff…
+                  </div>
+                ) : staffList.length === 0 ? (
+                  <p className="text-xs text-slate-400 text-center py-6">No staff found for this booking.</p>
+                ) : (
+                  staffList.map(s => (
+                    <button
+                      key={s.staff_profile_id}
+                      type="button"
+                      onClick={() => chooseStaff(s)}
+                      className="w-full text-left px-3 py-2.5 hover:bg-slate-50 transition-colors flex items-center gap-2.5"
+                    >
+                      <div className="w-7 h-7 rounded-full bg-slate-200 flex items-center justify-center flex-shrink-0">
+                        <UserCheck className="w-3.5 h-3.5 text-slate-500" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-slate-900 truncate">{s.full_name}</p>
+                        <p className="text-xs text-slate-500 truncate">{s.designation || 'Staff'}</p>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
 
-          <div className="flex gap-2 pt-1">
-            <button onClick={onClose} className="flex-1 justify-center inline-flex items-center rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
+          {/* Step 4: rating + review */}
+          {step === STEP_DETAILS && selectedStaff && (
+            <>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Rating</label>
+                <div className="flex gap-1">
+                  {[1, 2, 3, 4, 5].map(n => (
+                    <button key={n} type="button" onClick={() => setRating(n)} className="p-0.5">
+                      <Star className={`w-6 h-6 ${n <= rating ? 'fill-amber-400 text-amber-400' : 'text-slate-200'}`} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">Review</label>
+                <textarea
+                  rows={4}
+                  value={reviewText}
+                  onChange={e => setReviewText(e.target.value)}
+                  placeholder="What the client said over the phone…"
+                  className={`${inputCls} resize-y`}
+                />
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button onClick={onClose} className="flex-1 justify-center inline-flex items-center rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSubmit}
+                  disabled={rating === 0 || !reviewText.trim() || submitting}
+                  className={`${primaryBtnCls} flex-1 justify-center disabled:opacity-50 disabled:cursor-not-allowed`}
+                >
+                  {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                  {submitting ? 'Submitting…' : 'Submit Review'}
+                </button>
+              </div>
+            </>
+          )}
+
+          {step !== STEP_DETAILS && (
+            <button onClick={onClose} className="justify-center inline-flex items-center rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
               Cancel
             </button>
-            <button
-              onClick={handleSubmit}
-              disabled={!clientId || !bookingId || rating === 0 || !reviewText.trim() || submitting}
-              className={`${primaryBtnCls} flex-1 justify-center disabled:opacity-50 disabled:cursor-not-allowed`}
-            >
-              {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-              {submitting ? 'Submitting…' : 'Submit Review'}
-            </button>
-          </div>
+          )}
         </div>
       </div>
     </div>

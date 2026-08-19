@@ -13,6 +13,8 @@ import ImageCropModal from '../../../components/common/ImageCropModal';
 import apiClient from '../../../api/api';
 import DateInput, { isoToDisplay } from '../../../components/common/DateInput';
 import PhoneInput, { isValidPhoneNumber } from '../../../components/common/PhoneInput';
+import LanguageMultiSelect from '../../../components/common/LanguageMultiSelect';
+import { DEFAULT_LANGUAGES } from '../../../data/languages';
 
 // Parses an ISO (YYYY-MM-DD) string into a Date, or null if invalid/empty
 const parseDateOfBirth = (value) => {
@@ -47,7 +49,7 @@ const WorkerRegistrationPage = () => {
     full_name: '', email: '', mobile_number: '', applied_roles: [],
     qualifications: '', home_address: '', location: '', latitude: '', longitude: '',
     documents: [], profile_picture: null, gender: '', willing_to_live_in: false, date_of_birth: '',
-    nic_number: '', nic_front: null, nic_back: null, experience_level: ''
+    nic_number: '', nic_front: null, nic_back: null, experience_level: '', languages: [...DEFAULT_LANGUAGES]
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
@@ -453,7 +455,8 @@ const WorkerRegistrationPage = () => {
         willing_to_live_in: formData.willing_to_live_in,
         date_of_birth: formData.date_of_birth,
         nic_number: formData.nic_number,
-        experience_level: formData.experience_level || ''
+        experience_level: formData.experience_level || '',
+        languages: formData.languages || []
       };
 
       // Prepare form data with all files
@@ -1093,6 +1096,14 @@ const WorkerRegistrationPage = () => {
                             </select>
                             <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                           </div>
+                        </div>
+
+                        <div>
+                          <label className="text-sm font-semibold text-slate-600 block mb-1">Languages Spoken</label>
+                          <LanguageMultiSelect
+                            value={formData.languages}
+                            onChange={(langs) => setFormData(prev => ({ ...prev, languages: langs }))}
+                          />
                         </div>
 
                         <div>

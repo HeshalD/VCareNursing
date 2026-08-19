@@ -160,9 +160,13 @@ exports.getAllLeads = async (req, res) => {
                      ) THEN 'ACTIVE'
                      ELSE b.status
                    END AS booking_status,
-                   b.booking_id
+                   b.booking_id,
+                   q.total_amount AS quote_total_amount,
+                   (SELECT COALESCE(SUM(amount_received), 0) FROM payment_tracking
+                    WHERE quote_id = sr.active_quote_id AND status = 'VERIFIED') AS quote_total_paid
             FROM service_requests sr
             LEFT JOIN bookings b ON b.request_id = sr.request_id
+            LEFT JOIN quotations q ON q.quote_id = sr.active_quote_id
             ORDER BY sr.created_at DESC
         `);
         res.status(200).json({ status: 'success', data: result.rows });
@@ -251,6 +255,11 @@ exports.createServiceRequest = async (req, res) => {
         client_id,
         patient_id,
         payer_name,
+        payer_email, // New-client mode only: client's own email
+        payer_gender, // New-client mode only: client's own gender (MALE/FEMALE/OTHER)
+        client_type, // New-client mode only: INDIVIDUAL/FAMILY/CORPORATE_PROXY
+        company_name, // New-client mode only: required when client_type is CORPORATE_PROXY
+        honorific, // New-client mode only: Mr./Mrs./Dr./etc.
         patient_name,
         patient_age,
         patient_gender, // Care profile's own gender (MALE/FEMALE/OTHER)
@@ -342,6 +351,16 @@ exports.createServiceRequest = async (req, res) => {
             }
         }
 
+        // Validate client_type (only meaningful when registering a brand-new client, i.e. no client_id)
+        const validClientTypes = ['INDIVIDUAL', 'FAMILY', 'CORPORATE_PROXY'];
+        const finalClientType = client_type || 'INDIVIDUAL';
+        if (!validClientTypes.includes(finalClientType)) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Invalid client type. Must be one of: INDIVIDUAL, FAMILY, CORPORATE_PROXY'
+            });
+        }
+
         // Insert new service request
         const insertQuery = `
             INSERT INTO service_requests (
@@ -349,6 +368,11 @@ exports.createServiceRequest = async (req, res) => {
                 patient_id,
                 payer_name,
                 payer_mobile,
+                payer_email,
+                payer_gender,
+                client_type,
+                company_name,
+                honorific,
                 patient_name,
                 patient_age,
                 relationship_to_client,
@@ -365,12 +389,12 @@ exports.createServiceRequest = async (req, res) => {
                 gender,
                 created_at
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::service_model_enum, $11,
-                CASE WHEN $12::double precision IS NOT NULL AND $13::double precision IS NOT NULL
-                     THEN point($13::double precision, $12::double precision)
+                $1, $2, $3, $4, $5, $6::gender_enum, $7::client_type_enum, $8, $9, $10, $11, $12, $13, $14, $15::service_model_enum, $16,
+                CASE WHEN $17::double precision IS NOT NULL AND $18::double precision IS NOT NULL
+                     THEN point($18::double precision, $17::double precision)
                      ELSE NULL
                 END,
-                $14, $15, $16::gender_preference_enum, $17, $18, $19::gender_enum, NOW()
+                $19, $20, $21::gender_preference_enum, $22, $23, $24::gender_enum, NOW()
             )
             RETURNING
                 request_id,
@@ -378,6 +402,11 @@ exports.createServiceRequest = async (req, res) => {
                 patient_id,
                 payer_name,
                 payer_mobile,
+                payer_email,
+                payer_gender,
+                client_type,
+                company_name,
+                honorific,
                 patient_name,
                 patient_age,
                 relationship_to_client,
@@ -400,6 +429,11 @@ exports.createServiceRequest = async (req, res) => {
             patient_id || null,
             payer_name,
             payer_mobile,
+            payer_email || null,
+            payer_gender || null,
+            finalClientType,
+            company_name || null,
+            honorific || null,
             patient_name,
             parseInt(patient_age),
             relationship_to_client || null,

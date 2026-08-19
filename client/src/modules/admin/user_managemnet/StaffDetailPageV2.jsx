@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import DateInput from '../../../components/common/DateInput';
 import PhoneInput from '../../../components/common/PhoneInput';
+import LanguageMultiSelect from '../../../components/common/LanguageMultiSelect';
+import YoutubeLinksField from '../../../components/common/YoutubeLinksField';
 import {
   Activity,
   AlertCircle,
@@ -1042,6 +1044,8 @@ const StaffDetailPageV2 = () => {
       date_of_birth: profile.date_of_birth ? String(profile.date_of_birth).slice(0, 10) : '',
       willing_to_live_in: profile.willing_to_live_in ? 'true' : 'false',
       roles: parseRoles(profile.role),
+      languages: Array.isArray(profile.languages) ? profile.languages : [],
+      youtube_links: Array.isArray(profile.youtube_links) ? profile.youtube_links : [],
     },
     files: {
       profile_picture: null,
@@ -1076,11 +1080,13 @@ const StaffDetailPageV2 = () => {
     try {
       const fd = new FormData();
       Object.entries(form).forEach(([key, value]) => {
-        if (key === 'roles') return; // sent separately as JSON below
+        if (key === 'roles' || key === 'languages' || key === 'youtube_links') return; // sent separately as JSON below
         // Skip blanks so the backend keeps the existing value instead of wiping it
         if (String(value).trim() !== '') fd.append(key, String(value).trim());
       });
       fd.append('roles', JSON.stringify(form.roles));
+      fd.append('languages', JSON.stringify(form.languages || []));
+      fd.append('youtube_links', JSON.stringify(form.youtube_links || []));
       if (files.profile_picture) fd.append('profile_picture', files.profile_picture);
       if (files.nic_front) fd.append('nic_front', files.nic_front);
       if (files.nic_back) fd.append('nic_back', files.nic_back);
@@ -1286,10 +1292,24 @@ const StaffDetailPageV2 = () => {
               <Field label="Willing to live in" value={profile.willing_to_live_in ? 'Yes' : 'No'} />
               <Field label="Experience" value={EXPERIENCE_LEVEL_LABELS[profile.experience_level] || '-'} />
               <Field label="Qualifications" value={profile.qualifications} />
+              <Field label="Languages" value={safeArray(profile.languages).join(', ')} />
               <Field label="Member since" value={formatDate(profile.created_at)} />
               <Field label="Average rating" value={averageRating ? `${averageRating.toFixed(1)} / 5` : '-'} />
               <Field label="Total reviews" value={totalReviews || '-'} />
             </div>
+            {safeArray(profile.youtube_links).length > 0 && (
+              <div className="mt-4 pt-4 border-t border-slate-100">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">YouTube Videos</p>
+                <div className="flex flex-col gap-1.5">
+                  {safeArray(profile.youtube_links).map((url) => (
+                    <a key={url} href={url} target="_blank" rel="noopener noreferrer"
+                      className="text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline truncate">
+                      {url}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
           </CardBody>
         </Card>
 
@@ -2474,6 +2494,23 @@ const StaffDetailPageV2 = () => {
             <EditField label="Home Address">
               <input value={editModal.form.home_address} onChange={e => editField('home_address', e.target.value)}
                 placeholder="e.g. 45/A, Galle Road, Dehiwala" className={editInputCls} />
+            </EditField>
+          </div>
+
+          {/* Languages & Media */}
+          <EditSectionHeader title="Languages & Media" sub="YouTube links are only manageable here — staff can't add their own." />
+          <div className="px-6 pt-4 pb-2 space-y-3">
+            <EditField label="Languages Spoken">
+              <LanguageMultiSelect
+                value={editModal.form.languages}
+                onChange={(langs) => editField('languages', langs)}
+              />
+            </EditField>
+            <EditField label="YouTube Video Links">
+              <YoutubeLinksField
+                value={editModal.form.youtube_links}
+                onChange={(links) => editField('youtube_links', links)}
+              />
             </EditField>
           </div>
 

@@ -117,6 +117,102 @@ exports.createInvoiceFromQuote = async (req, res) => {
   }
 };
 
+// Generates (once) a standalone invoice for a single quote line item —
+// independent of quoteController.ensureCombinedInvoice's all-or-nothing
+// combined invoice, and independent of payment allocation (this is a
+// documentation action an admin triggers manually, not a ledger entry tied
+// to how much of the line item has actually been paid). One invoice per
+// line item — idx_invoices_line_item_unique (migrate.js) enforces this at
+// the DB level, so a concurrent duplicate call is caught below.
+async function generateLineItemInvoice(lineItemId, { actorUserId } = {}) {
+  const existing = await db.query(`SELECT * FROM invoices WHERE line_item_id = $1`, [lineItemId]);
+  if (existing.rows.length > 0) {
+    return ensureInvoicePdf(existing.rows[0].invoice_id);
+  }
+
+  const liRes = await db.query(
+    `SELECT li.line_item_id, li.amount, li.quote_id,
+            q.client_id AS quote_client_id, q.walk_in_customer_id, q.request_id
+     FROM quote_line_items li
+     JOIN quotations q ON li.quote_id = q.quote_id
+     WHERE li.line_item_id = $1`,
+    [lineItemId]
+  );
+  if (liRes.rows.length === 0) return null;
+  const li = liRes.rows[0];
+
+  // SERVICE-type quotes carry the client on service_requests, not on the
+  // quotations row itself (see migrate.js:1389 — client_id there is only
+  // populated for PRODUCT-type quotes).
+  let client_id = li.quote_client_id;
+  if (!client_id && li.request_id) {
+    const reqRes = await db.query(`SELECT client_id FROM service_requests WHERE request_id = $1`, [li.request_id]);
+    client_id = reqRes.rows[0]?.client_id || null;
+  }
+
+  let invoice;
+  try {
+    const insertRes = await db.query(
+      `INSERT INTO invoices (category, client_id, walk_in_customer_id, quote_id, line_item_id, amount, status, created_by)
+       VALUES ('LINE_ITEM', $1, $2, $3, $4, $5, 'PENDING', $6)
+       RETURNING *`,
+      [client_id, li.walk_in_customer_id, li.quote_id, lineItemId, li.amount, actorUserId || null]
+    );
+    invoice = insertRes.rows[0];
+  } catch (err) {
+    // Unique violation on idx_invoices_line_item_unique — another request
+    // won the race, use its invoice instead.
+    if (err.code === '23505') {
+      const raceRes = await db.query(`SELECT * FROM invoices WHERE line_item_id = $1`, [lineItemId]);
+      invoice = raceRes.rows[0];
+    } else {
+      throw err;
+    }
+  }
+  if (!invoice) return null;
+
+  return ensureInvoicePdf(invoice.invoice_id);
+}
+exports.generateLineItemInvoice = generateLineItemInvoice;
+
+// POST /api/quotes/:quote_id/line-item-invoices — body: { line_item_ids: [...] }
+// Bulk version of generateLineItemInvoice for the admin-facing "create
+// invoices for these line items" picker shown after recording a payment
+// (see service_request_summary.jsx's payment-recorded popup chain). :quote_id
+// is only used to identify the actor's context in the log entry — each line
+// item is looked up (and validated) independently, since items can belong
+// either to this SERVICE quote or its linked PRODUCT quote.
+exports.createLineItemInvoices = async (req, res) => {
+  const { quote_id } = req.params;
+  const { line_item_ids } = req.body;
+
+  if (!Array.isArray(line_item_ids) || line_item_ids.length === 0) {
+    return res.status(400).json({ message: 'line_item_ids must be a non-empty array' });
+  }
+
+  try {
+    const invoices = [];
+    for (const lineItemId of line_item_ids) {
+      const invoice = await generateLineItemInvoice(lineItemId, { actorUserId: req.user?.user_id });
+      if (invoice) invoices.push(invoice);
+    }
+
+    await safeLog({
+      actorUserId: req.user?.user_id,
+      actorRole: extractActorRole(req.user?.role),
+      actionType: 'LINE_ITEM_INVOICE_CREATED',
+      entityType: 'QUOTATION',
+      entityId: quote_id,
+      details: { line_item_ids, invoice_codes: invoices.map(i => i.invoice_code) },
+    });
+
+    res.status(201).json({ status: 'success', data: invoices });
+  } catch (error) {
+    console.error('Create Line Item Invoices Error:', error);
+    res.status(500).json({ message: 'Failed to create line item invoices' });
+  }
+};
+
 // GET /api/product-invoices?category=PRODUCT&status=PENDING&client_id=...
 exports.listInvoices = async (req, res) => {
   const { category, status, client_id, walk_in_customer_id, quote_id } = req.query;
@@ -196,7 +292,7 @@ exports.getInvoice = async (req, res) => {
        LEFT JOIN client_profiles cp ON i.client_id = cp.client_profile_id
        LEFT JOIN users u ON cp.user_id = u.user_id
        LEFT JOIN walk_in_customers wc ON i.walk_in_customer_id = wc.walk_in_customer_id
-       LEFT JOIN quote_line_items li ON i.quote_id = li.quote_id
+       LEFT JOIN quote_line_items li ON li.quote_id = i.quote_id AND (i.line_item_id IS NULL OR li.line_item_id = i.line_item_id)
        WHERE i.invoice_id = $1
        GROUP BY i.invoice_id, q.estimate_number, cp.full_name, cp.company_name, cp.display_name_source, u.mobile_number, wc.full_name, wc.mobile_number`,
       [invoice_id]
@@ -264,6 +360,14 @@ async function ensureInvoicePdf(invoiceId) {
         });
       }
     }
+  } else if (invoice.line_item_id) {
+    // Standalone per-line-item invoice (see generateLineItemInvoice) — only
+    // its own line item, not the whole quote's.
+    const liRes = await db.query(
+      `SELECT description, quantity, unit_price, amount FROM quote_line_items WHERE line_item_id = $1`,
+      [invoice.line_item_id]
+    );
+    line_items = liRes.rows;
   } else if (invoice.quote_id) {
     const liRes = await db.query(
       `SELECT description, quantity, unit_price, amount FROM quote_line_items WHERE quote_id = $1 ORDER BY sort_order`,

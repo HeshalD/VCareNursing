@@ -22,6 +22,7 @@ import {
   Eye,
   Upload,
   ShieldCheck,
+  Youtube,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import apiClient from '../../../api/api';
@@ -333,6 +334,30 @@ const WorkerDashboardDemo = () => {
               <StatCard key={stat.title} {...stat} />
             ))}
           </section>
+
+          {Array.isArray(staffData?.youtube_links) && staffData.youtube_links.length > 0 && (
+            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center gap-2 mb-3">
+                <Youtube className="h-4 w-4 text-red-500" />
+                <p className="font-semibold text-slate-900 text-sm">My Videos</p>
+              </div>
+              <p className="text-xs text-slate-500 mb-3">Added by the VCare team to showcase your profile.</p>
+              <div className="flex flex-col gap-2">
+                {staffData.youtube_links.map((url) => (
+                  <a
+                    key={url}
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700 transition-colors"
+                  >
+                    <Youtube className="h-4 w-4 flex-shrink-0 text-red-500" />
+                    <span className="truncate">{url}</span>
+                  </a>
+                ))}
+              </div>
+            </section>
+          )}
 
           <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-6 py-4 shadow-sm">
             <div>

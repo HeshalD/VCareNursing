@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Search, Phone, MapPin, Calendar, FileText,
   Eye, Calculator, Settings, Shield, Loader2,
-  ChevronRight,
+  ChevronRight, Wallet, UserPlus, CalendarCheck,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -63,6 +63,39 @@ const formatDate = (v) =>
 
 const formatDateTime = (v) =>
   v ? new Date(v).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
+
+// Returns the next actionable stage for a request, or null once there's nothing
+// left to do from this table (booking created + staff assigned).
+const getStageAction = (r) => {
+  const status = r.status || 'PENDING';
+
+  if (status === 'BOOKING_CREATED') {
+    if (r.booking_status === 'PENDING' && r.booking_id) {
+      return { icon: UserPlus, title: 'Assign Staff', path: `/admin/bookings/${r.booking_id}/staff-assignment` };
+    }
+    return null; // staff already assigned — booking module owns it from here
+  }
+
+  // `status` is a free-text column, not a DB enum — besides NEW_LEAD/PENDING it can
+  // also be CONTACTED/CONFIRMED (set manually via the generic status-update endpoint)
+  // or any other legacy value. Anything short of BOOKING_CREATED/CANCELLED is still
+  // pre-booking and should walk through the same quote → payment → booking stages.
+  if (status !== 'CANCELLED') {
+    if (!r.active_quote_id) {
+      return { icon: Calculator, title: 'Create Quote', path: `/admin/modular-quote-builder/${r.request_id}` };
+    }
+    const isFullyPaid = r.quote_total_amount != null
+      && Number(r.quote_total_paid) >= Number(r.quote_total_amount);
+    if (!isFullyPaid) {
+      return { icon: Wallet, title: 'Record Payment', path: `/admin/quotations/${r.active_quote_id}` };
+    }
+    // Fully paid — ready to convert. There's no standalone "create booking" page;
+    // the Proceed/convert action lives on the request summary page itself.
+    return { icon: CalendarCheck, title: 'Create Booking', path: `/admin/service-requests/${r.request_id}/summary` };
+  }
+
+  return null;
+};
 
 const ServiceRequests = () => {
   const navigate = useNavigate();
@@ -292,15 +325,20 @@ const ServiceRequests = () => {
                       >
                         <Eye className="w-4 h-4" />
                       </button>
-                      {['NEW_LEAD', 'PENDING'].includes(r.status || 'PENDING') && (
-                        <button
-                          onClick={() => navigate(`/admin/modular-quote-builder/${r.request_id}`)}
-                          title="Create Quote"
-                          className="p-1.5 rounded-md text-slate-400 hover:bg-slate-100 hover:text-emerald-600 transition-colors"
-                        >
-                          <Calculator className="w-4 h-4" />
-                        </button>
-                      )}
+                      {(() => {
+                        const action = getStageAction(r);
+                        if (!action) return null;
+                        const StageIcon = action.icon;
+                        return (
+                          <button
+                            onClick={() => navigate(action.path)}
+                            title={action.title}
+                            className="p-1.5 rounded-md text-slate-400 hover:bg-slate-100 hover:text-emerald-600 transition-colors"
+                          >
+                            <StageIcon className="w-4 h-4" />
+                          </button>
+                        );
+                      })()}
                     </div>
                   </td>
                 </tr>

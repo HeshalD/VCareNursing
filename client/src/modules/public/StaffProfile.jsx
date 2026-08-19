@@ -155,6 +155,11 @@ function StaffCard({ member, index }) {
   );
 }
 
+const getYoutubeId = (url) => {
+  const match = /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([\w-]{11})/.exec(url || '');
+  return match ? match[1] : null;
+};
+
 const API_URL = import.meta.env.VITE_API_URL;
 const STATUS_STYLE = {
   "Available": { dot: "#10b981", bg: "rgba(16,185,129,0.1)", text: "#047857", label: "Available now" },
@@ -340,7 +345,8 @@ export default function StaffProfile() {
     color: "#4f46e5", // Default color
     bio: staff.qualifications || 'Experienced healthcare professional',
     certifications: staff.role && Array.isArray(staff.role) ? staff.role : [staff.role || 'Healthcare Professional'],
-    languages: ["English"], // Default, can be enhanced later
+    languages: Array.isArray(staff.languages) && staff.languages.length > 0 ? staff.languages : ["English"],
+    youtubeLinks: Array.isArray(staff.youtube_links) ? staff.youtube_links : [],
     specialty: staff.designation || 'Healthcare',
     availability: staff.availability || [
       { day: "Mon", avail: true },
@@ -635,6 +641,69 @@ export default function StaffProfile() {
                 <p style={{ fontSize: 15.5, color: "#475569", lineHeight: 1.85, margin: 0 }}>{s.bio}</p>
               </div>
             </Section>
+
+            {/* Languages */}
+            <Section title="Languages Spoken" accent="#10b981" delay={1}>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {s.languages.map((lang) => (
+                  <span key={lang} style={{
+                    display: "inline-flex", alignItems: "center",
+                    background: "rgba(16,185,129,0.1)", color: "#047857",
+                    fontSize: 13, fontWeight: 600,
+                    padding: "6px 16px", borderRadius: 999,
+                    border: "1px solid rgba(16,185,129,0.25)",
+                  }}>
+                    {lang}
+                  </span>
+                ))}
+              </div>
+            </Section>
+
+            {/* Videos */}
+            {s.youtubeLinks.length > 0 && (
+              <Section title="Videos" accent="#ef4444" delay={1}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 16 }}>
+                  {s.youtubeLinks.map((url) => {
+                    const videoId = getYoutubeId(url);
+                    return (
+                      <a key={url} href={url} target="_blank" rel="noopener noreferrer" style={{
+                        position: "relative", borderRadius: 14, overflow: "hidden",
+                        border: "1px solid #e2e8f0", background: "#0f172a",
+                        aspectRatio: "16/9", display: "block",
+                      }}>
+                        {videoId ? (
+                          <img
+                            src={`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`}
+                            alt="Video thumbnail"
+                            style={{ width: "100%", height: "100%", objectFit: "cover", opacity: 0.85 }}
+                          />
+                        ) : (
+                          <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 12 }}>
+                            Watch video
+                          </div>
+                        )}
+                        <div style={{
+                          position: "absolute", inset: 0,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                        }}>
+                          <div style={{
+                            width: 44, height: 44, borderRadius: "50%",
+                            background: "rgba(239,68,68,0.9)",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                          }}>
+                            <div style={{
+                              width: 0, height: 0,
+                              borderTop: "8px solid transparent", borderBottom: "8px solid transparent",
+                              borderLeft: "13px solid #fff", marginLeft: 3,
+                            }} />
+                          </div>
+                        </div>
+                      </a>
+                    );
+                  })}
+                </div>
+              </Section>
+            )}
 
             {/* Certifications */}
             <Section title="Certifications & Credentials" accent="#0ea5e9" delay={1}>

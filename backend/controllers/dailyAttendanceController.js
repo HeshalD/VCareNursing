@@ -37,6 +37,9 @@ exports.getBookingAttendance = async (req, res) => {
                 a.decided_at,
                 a.notes,
                 a.shift_slot_id,
+                a.revoke_reason,
+                a.revoked_by_name,
+                a.revoked_at,
                 ss.shift_number,
                 ss.label as shift_label,
                 ss.duration_hours as shift_duration_hours,
@@ -741,31 +744,43 @@ exports.confirmSalary = async (req, res) => {
 
 /**
  * @route   POST /api/bookings/:booking_id/attendance/revoke
- * @desc    Corrects a wrongly auto-paid/auto-invoiced LIVE_IN day (e.g. a no-show
- *          the cron already credited/charged). Reverses BOTH the staff salary and
- *          the client invoice for each selected day, without mutating the original
- *          AUTO rows — those stay as the audit trail; a second, linked transaction
- *          does the actual reversal (see billingService.reverseStaffSalary/
- *          reverseServiceInvoice). SUPER_ADMIN only, gated by re-entering their
- *          own login password as an extra confirmation step since this moves money
- *          on both sides of a booking.
+ * @desc    Corrects a wrongly paid/invoiced day (or single shift, for SHIFT_BASED) for
+ *          a LIVE_IN or SHIFT_BASED booking (e.g. a no-show that was already
+ *          credited/charged). Reverses BOTH the staff salary and the client invoice
+ *          for each selected target, without mutating the original rows — those stay
+ *          as the audit trail; a second, linked transaction does the actual reversal
+ *          (see billingService.reverseStaffSalary/reverseServiceInvoice).
+ *          WALLET_REFUND_EXTEND additionally pushes bookings.scheduled_end_time out by
+ *          1 day per revoked date, LIVE_IN only (SHIFT_BASED has no such column — its
+ *          calendar "planned days" already stretches automatically from the
+ *          WALLET_REFUND-category credit, since it's computed live as total_paid ÷
+ *          rate). SUPER_ADMIN only, gated by re-entering their own login password as
+ *          an extra confirmation step since this moves money on both sides of a
+ *          booking.
  * @access  Private (SUPER_ADMIN only)
- * @body    service_dates (string[]), reason (string), password (string)
+ * @body    targets ({ service_date, shift_slot_id }[] — shift_slot_id null for LIVE_IN),
+ *          reason (string), password (string), settlement_action (optional, WALLET_REFUND default)
  */
+const VALID_SETTLEMENT_ACTIONS = ['WALLET_REFUND', 'WALLET_REFUND_EXTEND', 'BANK_REFUND', 'NO_REFUND'];
+
 exports.revokeDays = async (req, res) => {
     const { booking_id } = req.params;
-    const { service_dates, reason, password } = req.body;
+    const { targets, reason, password, settlement_action } = req.body;
 
     // Role is already gated to SUPER_ADMIN at the route level (restrictTo).
 
-    if (!Array.isArray(service_dates) || service_dates.length === 0) {
-        return res.status(400).json({ status: 'error', message: 'service_dates (non-empty array) is required' });
+    if (!Array.isArray(targets) || targets.length === 0 || targets.some(t => !t || !t.service_date)) {
+        return res.status(400).json({ status: 'error', message: 'targets (non-empty array of { service_date, shift_slot_id }) is required' });
     }
     if (!reason || !reason.trim()) {
         return res.status(400).json({ status: 'error', message: 'A reason is required' });
     }
     if (!password) {
         return res.status(400).json({ status: 'error', message: 'Password confirmation is required' });
+    }
+    const settlementAction = settlement_action || 'WALLET_REFUND';
+    if (!VALID_SETTLEMENT_ACTIONS.includes(settlementAction)) {
+        return res.status(400).json({ status: 'error', message: 'Invalid settlement_action' });
     }
 
     try {
@@ -799,9 +814,13 @@ exports.revokeDays = async (req, res) => {
 
         const booking = bookingRes.rows[0];
 
-        if (booking.service_model !== 'LIVE_IN') {
+        if (!['LIVE_IN', 'SHIFT_BASED'].includes(booking.service_model)) {
             await client.query('ROLLBACK');
-            return res.status(400).json({ status: 'error', message: 'Revoking a day is only supported for LIVE_IN bookings' });
+            return res.status(400).json({ status: 'error', message: 'Revoking a day is only supported for LIVE_IN and SHIFT_BASED bookings' });
+        }
+        if (settlementAction === 'WALLET_REFUND_EXTEND' && booking.service_model !== 'LIVE_IN') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ status: 'error', message: 'WALLET_REFUND_EXTEND is only available for LIVE_IN bookings' });
         }
 
         const decidedByName = await getDeciderName(req.user?.user_id);
@@ -809,19 +828,21 @@ exports.revokeDays = async (req, res) => {
         const skipped = [];
         const salaryReversed = [];
         const invoiceReversed = [];
+        const extendedDates = new Set();
 
-        for (const serviceDate of service_dates) {
-            let touchedThisDay = false;
+        for (const { service_date: serviceDate, shift_slot_id: shiftSlotId = null } of targets) {
+            let touchedThisTarget = false;
 
             const attendanceRes = await client.query(
                 `SELECT * FROM staff_daily_attendance
-                 WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id IS NULL AND reschedule_id IS NULL
+                 WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id IS NOT DISTINCT FROM $3
                  FOR UPDATE`,
-                [booking_id, serviceDate]
+                [booking_id, serviceDate, shiftSlotId]
             );
-            const attendance = attendanceRes.rows[0];
 
-            if (attendance && attendance.salary_status === 'PAID') {
+            for (const attendance of attendanceRes.rows) {
+                if (attendance.salary_status !== 'PAID') continue;
+
                 const reversalTransactionId = await reverseStaffSalary(client, {
                     staff_profile_id: attendance.staff_profile_id,
                     booking_id,
@@ -843,23 +864,25 @@ exports.revokeDays = async (req, res) => {
                 );
 
                 salaryReversed.push(serviceDate);
-                touchedThisDay = true;
+                touchedThisTarget = true;
             }
 
             const invoiceRes = await client.query(
                 `SELECT * FROM booking_daily_invoices
-                 WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id IS NULL AND reschedule_id IS NULL
+                 WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id IS NOT DISTINCT FROM $3
                  FOR UPDATE`,
-                [booking_id, serviceDate]
+                [booking_id, serviceDate, shiftSlotId]
             );
-            const invoice = invoiceRes.rows[0];
 
-            if (invoice && invoice.status === 'INVOICED') {
+            for (const invoice of invoiceRes.rows) {
+                if (invoice.status !== 'INVOICED') continue;
+
                 const reversalTransactionId = await reverseServiceInvoice(client, {
                     booking_id,
                     client_id: booking.client_id,
                     amount: invoice.amount,
-                    notes: `Reversal of ${serviceDate} invoice — ${reason}`
+                    notes: `Reversal of ${serviceDate} invoice — ${reason}`,
+                    settlementAction
                 });
 
                 await client.query(
@@ -870,22 +893,36 @@ exports.revokeDays = async (req, res) => {
                          revoked_by_user_id = $2,
                          revoked_by_name = $3,
                          revoke_reason = $4,
+                         settlement_action = $5,
                          updated_at = NOW()
-                     WHERE daily_invoice_id = $5`,
-                    [reversalTransactionId, req.user?.user_id || null, decidedByName, reason, invoice.daily_invoice_id]
+                     WHERE daily_invoice_id = $6`,
+                    [reversalTransactionId, req.user?.user_id || null, decidedByName, reason, settlementAction, invoice.daily_invoice_id]
                 );
 
                 invoiceReversed.push(serviceDate);
-                touchedThisDay = true;
+                touchedThisTarget = true;
+                if (settlementAction === 'WALLET_REFUND_EXTEND') extendedDates.add(serviceDate);
             }
 
-            if (touchedThisDay) revoked.push(serviceDate);
+            if (touchedThisTarget) revoked.push(serviceDate);
             else skipped.push(serviceDate);
         }
 
         if (revoked.length === 0) {
             await client.query('ROLLBACK');
-            return res.status(400).json({ status: 'error', message: 'Nothing to revoke for the selected day(s) — they may already be revoked or were never paid/invoiced' });
+            return res.status(400).json({ status: 'error', message: 'Nothing to revoke for the selected day(s)/shift(s) — they may already be revoked or were never paid/invoiced' });
+        }
+
+        // Push scheduled_end_time out by 1 day per distinct date whose invoice was
+        // actually reversed under WALLET_REFUND_EXTEND — one UPDATE per date so a
+        // multi-day batch extends proportionally. No-op (WHERE guard) for a booking
+        // with no fixed end date set.
+        for (const _ of extendedDates) {
+            await client.query(
+                `UPDATE bookings SET scheduled_end_time = scheduled_end_time + INTERVAL '1 day'
+                 WHERE booking_id = $1 AND scheduled_end_time IS NOT NULL`,
+                [booking_id]
+            );
         }
 
         await client.query('COMMIT');
@@ -896,10 +933,10 @@ exports.revokeDays = async (req, res) => {
             actionType: 'DAY_REVOKED',
             entityType: 'BOOKING',
             entityId: String(booking_id),
-            details: { service_dates, reason, salary_reversed: salaryReversed, invoice_reversed: invoiceReversed, skipped },
+            details: { service_dates: targets.map(t => t.service_date), targets, reason, settlement_action: settlementAction, salary_reversed: salaryReversed, invoice_reversed: invoiceReversed, skipped, extended_days: extendedDates.size },
         }).catch(err => console.error('Activity log failed:', err));
 
-        res.status(200).json({ status: 'success', data: { revoked, skipped } });
+        res.status(200).json({ status: 'success', data: { revoked, skipped, extended_days: extendedDates.size } });
     } catch (error) {
         await client.query('ROLLBACK');
         console.error('Revoke days error:', error);

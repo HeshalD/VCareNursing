@@ -31,12 +31,12 @@ const STATUS_CONFIG = {
 };
 
 const RELATIONSHIP_OPTIONS = [
-  'Parent', 'Child', 'Sibling', 'Spouse / Partner',
+  'Self', 'Parent', 'Child', 'Sibling', 'Spouse / Partner',
   'Guardian', 'Caregiver', 'Friend', 'Neighbor', 'Other',
 ];
 
 const SERVICE_TYPE_OPTIONS = [
-  { value: 'CARETAKER',         label: 'Caretaker' },
+  { value: 'CARETAKER',         label: 'Caregiver' },
   { value: 'NURSING_ASSISTANT', label: 'Nursing Assistant' },
   { value: 'NURSE',             label: 'Professional Nurse' },
   { value: 'PHYSIOTHERAPIST',   label: 'Physiotherapist' },
@@ -46,10 +46,15 @@ const SERVICE_TYPE_OPTIONS = [
 
 const SERVICE_MODEL_OPTIONS = ['LIVE_IN', 'SHIFT_BASED', 'VISITING'];
 const GENDER_OPTIONS        = ['MALE', 'FEMALE', 'ANY'];
+const PATIENT_GENDER_OPTIONS = ['MALE', 'FEMALE', 'OTHER'];
+const HONORIFICS = ['Mr.', 'Mrs.', 'Ms.', 'Dr.', 'Prof.', 'Rev.'];
+const CLIENT_TYPE_OPTIONS = ['INDIVIDUAL', 'FAMILY', 'CORPORATE_PROXY'];
 
 const BLANK_FORM = {
-  payer_name: '', payer_mobile: '', patient_name: '', patient_age: '',
-  relationship_to_client: '', patient_condition: '', service_type: '',
+  payer_name: '', payer_mobile: '', payer_email: '', payer_gender: '',
+  client_type: 'INDIVIDUAL', company_name: '', honorific: '',
+  patient_name: '', patient_age: '',
+  patient_gender: '', relationship_to_client: '', patient_condition: '', service_type: '',
   service_model: 'SHIFT_BASED', location_address: '', start_date: '',
   remarks: '', preferred_gender: 'ANY', status: 'NEW_LEAD',
 };
@@ -89,6 +94,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
   const [error, setError]                             = useState(null);
   const [success, setSuccess]                         = useState(null);
 
+  const [clientMode, setClientMode]                   = useState('existing'); // 'existing' | 'new'
   const [clients, setClients]                         = useState([]);
   const [clientsLoading, setClientsLoading]           = useState(false);
   const [clientSearch, setClientSearch]               = useState('');
@@ -96,6 +102,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
   const [careProfiles, setCareProfiles]               = useState([]);
   const [careProfilesLoading, setCareProfilesLoading] = useState(false);
   const [selectedCareProfile, setSelectedCareProfile] = useState(null);
+  const [useClientAddress, setUseClientAddress]       = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -107,15 +114,33 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
     } else {
       // reset on close
       setFormData(BLANK_FORM);
+      setClientMode('existing');
       setSelectedClient(null);
       setSelectedCareProfile(null);
       setCareProfiles([]);
       setClientSearch('');
+      setUseClientAddress(false);
       setError(null);
       setSuccess(null);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  const handleClientModeChange = (mode) => {
+    setClientMode(mode);
+    setSelectedClient(null);
+    setSelectedCareProfile(null);
+    setCareProfiles([]);
+    setClientSearch('');
+    setUseClientAddress(false);
+    setFormData(prev => ({
+      ...prev,
+      payer_name: '', payer_mobile: '', payer_email: '', payer_gender: '',
+      client_type: 'INDIVIDUAL', company_name: '', honorific: '',
+      patient_name: '', patient_age: '', patient_gender: '',
+      relationship_to_client: '', patient_condition: '', location_address: '',
+    }));
+  };
 
   const fetchClients = async () => {
     try {
@@ -141,11 +166,12 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
     setSelectedClient(client);
     setSelectedCareProfile(null);
     setCareProfiles([]);
+    setUseClientAddress(false);
     setFormData(prev => ({
       ...prev,
       payer_name: client.full_name || '',
       payer_mobile: client.mobile_number || '',
-      patient_name: '', patient_age: '', relationship_to_client: '',
+      patient_name: '', patient_age: '', patient_gender: '', relationship_to_client: '',
       patient_condition: '', location_address: '',
     }));
     fetchCareProfiles(client.client_profile_id);
@@ -155,19 +181,26 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
     setSelectedClient(null);
     setSelectedCareProfile(null);
     setCareProfiles([]);
+    setUseClientAddress(false);
     setFormData(prev => ({
       ...prev,
-      payer_name: '', payer_mobile: '', patient_name: '', patient_age: '',
+      payer_name: '', payer_mobile: '', payer_email: '', payer_gender: '',
+      client_type: 'INDIVIDUAL', company_name: '', honorific: '',
+      patient_name: '', patient_age: '', patient_gender: '',
       relationship_to_client: '', patient_condition: '', location_address: '',
     }));
   };
 
   const handleSelectCareProfile = (profile) => {
     setSelectedCareProfile(profile);
+    const isSelfProfile = profile.relationship_to_client === 'Self';
     setFormData(prev => ({
       ...prev,
-      patient_name: profile.full_name || '',
+      // A "Self" care profile is locked to the client's own current name/gender
+      // rather than whatever was last saved on the profile, so the two never disagree.
+      patient_name: isSelfProfile ? prev.payer_name : (profile.full_name || ''),
       patient_age: profile.age?.toString() || '',
+      patient_gender: isSelfProfile ? prev.payer_gender : (profile.gender || ''),
       relationship_to_client: profile.relationship_to_client || '',
       patient_condition: profile.medical_condition || '',
       location_address: profile.residential_address || '',
@@ -178,14 +211,36 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
     setSelectedCareProfile(null);
     setFormData(prev => ({
       ...prev,
-      patient_name: '', patient_age: '', relationship_to_client: '',
+      patient_name: '', patient_age: '', patient_gender: '', relationship_to_client: '',
       patient_condition: '', location_address: '',
+    }));
+  };
+
+  const handleUseClientAddressChange = (e) => {
+    const checked = e.target.checked;
+    setUseClientAddress(checked);
+    setFormData(prev => ({
+      ...prev,
+      location_address: checked ? (selectedClient?.primary_address || '') : prev.location_address,
     }));
   };
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+    setFormData(prev => {
+      const next = { ...prev, [name]: value };
+      // "Self" relationship means the care recipient IS the client — keep the
+      // care profile's name/gender locked to the client's own, in both
+      // directions, so they can never silently drift apart.
+      const isSelf = next.relationship_to_client === 'Self';
+      if (isSelf && (name === 'payer_name' || name === 'relationship_to_client')) {
+        next.patient_name = next.payer_name;
+      }
+      if (isSelf && (name === 'payer_gender' || name === 'relationship_to_client')) {
+        next.patient_gender = next.payer_gender;
+      }
+      return next;
+    });
     if (error) setError(null);
     if (success) setSuccess(null);
   };
@@ -196,16 +251,46 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
     setError(null);
     setSuccess(null);
     try {
-      if (!selectedClient) { setError('Please select a client before submitting.'); setFormLoading(false); return; }
+      if (clientMode === 'existing' && !selectedClient) { setError('Please select a client before submitting.'); setFormLoading(false); return; }
+      if (clientMode === 'new' && formData.client_type === 'CORPORATE_PROXY' && !formData.company_name) {
+        setError('Company name is required for a corporate client.'); setFormLoading(false); return;
+      }
+      if (clientMode === 'new' && formData.client_type !== 'CORPORATE_PROXY' && !formData.payer_gender) {
+        setError('Gender is required to register a new client.'); setFormLoading(false); return;
+      }
       const missing = ['payer_name', 'payer_mobile', 'patient_name', 'patient_age', 'service_type'].filter(f => !formData[f]);
       if (missing.length) { setError(`Please fill in: ${missing.join(', ')}`); setFormLoading(false); return; }
       if (isNaN(formData.patient_age) || formData.patient_age <= 0) { setError('Age must be a positive number.'); setFormLoading(false); return; }
       if (!isValidPhoneNumber(formData.payer_mobile)) { setError('Enter a valid mobile number.'); setFormLoading(false); return; }
 
+      // New Client mode: register the client account up front (rather than
+      // deferring to booking-conversion time) so this request has a real
+      // client_id from the start — the quote builder's registration-fee and
+      // product/deposit line items both require one.
+      let clientId = clientMode === 'existing' ? selectedClient.client_profile_id : null;
+      if (clientMode === 'new') {
+        try {
+          const clientRes = await apiClient.createClientProfile({
+            full_name: formData.payer_name,
+            mobile_number: formData.payer_mobile,
+            email: formData.payer_email || undefined,
+            gender: formData.payer_gender || undefined,
+            client_type: formData.client_type,
+            company_name: formData.company_name || undefined,
+            honorific: formData.honorific || undefined,
+          });
+          clientId = clientRes.data.clientProfileId;
+        } catch (clientErr) {
+          setError(clientErr.message || 'Failed to register the new client.');
+          setFormLoading(false);
+          return;
+        }
+      }
+
       await apiClient.createProxyServiceRequest({
         ...formData,
         patient_age: parseInt(formData.patient_age),
-        client_id: selectedClient.client_profile_id,
+        client_id: clientId,
         patient_id: selectedCareProfile?.patient_id || null,
         status: 'NEW_LEAD',
       });
@@ -225,6 +310,14 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
   const visibleClients = clientSearch.trim() ? filteredClients : filteredClients.slice(0, 4);
 
   if (!open) return null;
+
+  // Step numbers shift depending on which steps are visible: the client-select
+  // step is skipped when presetClient is given, and the care-profile step only
+  // shows once an existing client is selected (never in "new client" mode).
+  let stepCounter = presetClient ? 0 : 1;
+  const careProfileStepNum = selectedClient ? ++stepCounter : null;
+  const serviceStepNum = ++stepCounter;
+  const isSelf = formData.relationship_to_client === 'Self';
 
   return (
     <>
@@ -268,12 +361,12 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
             {!presetClient && (
             <div className="rounded-xl border border-slate-200 overflow-hidden">
               <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 bg-slate-50">
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${selectedClient ? 'bg-emerald-500 text-white' : 'bg-blue-600 text-white'}`}>
-                  {selectedClient ? <Check className="w-3.5 h-3.5" /> : '1'}
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${(selectedClient || clientMode === 'new') ? 'bg-emerald-500 text-white' : 'bg-blue-600 text-white'}`}>
+                  {(selectedClient || clientMode === 'new') ? <Check className="w-3.5 h-3.5" /> : '1'}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-slate-800 text-sm">Select Client (Payer)</p>
-                  <p className="text-xs text-slate-500">Choose the registered client paying for this service</p>
+                  <p className="font-semibold text-slate-800 text-sm">Select Client</p>
+                  <p className="text-xs text-slate-500">Choose an existing client or register a new one</p>
                 </div>
                 {selectedClient && (
                   <div className="flex items-center gap-2 px-2.5 py-1 bg-emerald-50 border border-emerald-200 rounded-lg">
@@ -287,55 +380,143 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
 
               {!selectedClient && (
                 <div className="p-4">
-                  <div className="relative mb-3">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-                    <input
-                      type="text"
-                      placeholder="Search clients by name or phone…"
-                      value={clientSearch}
-                      onChange={e => setClientSearch(e.target.value)}
-                      className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
+                  <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-1 w-fit mb-3">
+                    {[{ id: 'existing', label: 'Existing Client' }, { id: 'new', label: 'New Client' }].map(m => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => handleClientModeChange(m.id)}
+                        className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                          clientMode === m.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
                   </div>
 
-                  {clientsLoading ? (
-                    <div className="flex justify-center py-6">
-                      <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
-                    </div>
-                  ) : filteredClients.length === 0 ? (
-                    <div className="text-center py-6 text-slate-400">
-                      <Users className="w-8 h-8 mx-auto mb-2 text-slate-200" />
-                      <p className="text-sm">No clients found</p>
-                    </div>
-                  ) : (
+                  {clientMode === 'existing' ? (
                     <>
-                      <div className="grid grid-cols-2 gap-2">
-                        {visibleClients.map(client => (
-                          <button
-                            key={client.client_profile_id}
-                            type="button"
-                            onClick={() => handleSelectClient(client)}
-                            className="flex items-center gap-3 p-3 border border-slate-200 rounded-lg hover:border-blue-300 hover:bg-blue-50 transition-all text-left group"
-                          >
-                            <div className="w-8 h-8 rounded-full bg-slate-100 group-hover:bg-blue-100 flex items-center justify-center flex-shrink-0 transition-colors">
-                              <User className="w-4 h-4 text-slate-400 group-hover:text-blue-600" />
-                            </div>
-                            <div className="min-w-0">
-                              <p className="text-sm font-semibold text-slate-900 truncate">{client.full_name}</p>
-                              <div className="flex items-center gap-1 text-slate-400 mt-0.5">
-                                <Phone className="w-3 h-3" />
-                                <span className="text-xs">{client.mobile_number}</span>
-                              </div>
-                            </div>
-                          </button>
-                        ))}
+                      <div className="relative mb-3">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                        <input
+                          type="text"
+                          placeholder="Search clients by name or phone…"
+                          value={clientSearch}
+                          onChange={e => setClientSearch(e.target.value)}
+                          className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        />
                       </div>
-                      {!clientSearch.trim() && filteredClients.length > 4 && (
-                        <p className="text-xs text-slate-400 text-center mt-2">
-                          Showing 4 of {filteredClients.length} — search to find a specific client
-                        </p>
+
+                      {clientsLoading ? (
+                        <div className="flex justify-center py-6">
+                          <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
+                        </div>
+                      ) : filteredClients.length === 0 ? (
+                        <div className="text-center py-6 text-slate-400">
+                          <Users className="w-8 h-8 mx-auto mb-2 text-slate-200" />
+                          <p className="text-sm">No clients found</p>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="grid grid-cols-2 gap-2">
+                            {visibleClients.map(client => (
+                              <button
+                                key={client.client_profile_id}
+                                type="button"
+                                onClick={() => handleSelectClient(client)}
+                                className="flex items-center gap-3 p-3 border border-slate-200 rounded-lg hover:border-blue-300 hover:bg-blue-50 transition-all text-left group"
+                              >
+                                <div className="w-8 h-8 rounded-full bg-slate-100 group-hover:bg-blue-100 flex items-center justify-center flex-shrink-0 transition-colors">
+                                  <User className="w-4 h-4 text-slate-400 group-hover:text-blue-600" />
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-sm font-semibold text-slate-900 truncate">{client.full_name}</p>
+                                  <div className="flex items-center gap-1 text-slate-400 mt-0.5">
+                                    <Phone className="w-3 h-3" />
+                                    <span className="text-xs">{client.mobile_number}</span>
+                                  </div>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                          {!clientSearch.trim() && filteredClients.length > 4 && (
+                            <p className="text-xs text-slate-400 text-center mt-2">
+                              Showing 4 of {filteredClients.length} — search to find a specific client
+                            </p>
+                          )}
+                        </>
                       )}
                     </>
+                  ) : (
+                    <div className="space-y-2.5 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+                      <div className="grid grid-cols-3 gap-2">
+                        <select
+                          name="honorific"
+                          value={formData.honorific}
+                          onChange={handleInputChange}
+                          className="rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-xs outline-none focus:border-blue-500"
+                        >
+                          <option value="">Honorific</option>
+                          {HONORIFICS.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                        <input
+                          type="text"
+                          name="payer_name"
+                          placeholder="Client's full name *"
+                          value={formData.payer_name}
+                          onChange={handleInputChange}
+                          className="col-span-2 rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <select
+                          name="payer_gender"
+                          value={formData.payer_gender}
+                          onChange={handleInputChange}
+                          className="rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+                        >
+                          <option value="">Gender</option>
+                          {PATIENT_GENDER_OPTIONS.map(o => <option key={o} value={o}>{o.charAt(0) + o.slice(1).toLowerCase()}</option>)}
+                        </select>
+                        <select
+                          name="client_type"
+                          value={formData.client_type}
+                          onChange={(e) => setFormData(prev => ({
+                            ...prev,
+                            client_type: e.target.value,
+                            ...(e.target.value !== 'CORPORATE_PROXY' ? { company_name: '' } : {}),
+                          }))}
+                          className="rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+                        >
+                          {CLIENT_TYPE_OPTIONS.map(t => <option key={t} value={t}>{t.charAt(0) + t.slice(1).toLowerCase().replace('_', ' ')}</option>)}
+                        </select>
+                      </div>
+                      {formData.client_type === 'CORPORATE_PROXY' && (
+                        <input
+                          type="text"
+                          name="company_name"
+                          placeholder="Company name"
+                          value={formData.company_name}
+                          onChange={handleInputChange}
+                          className="w-full rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+                        />
+                      )}
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="email"
+                          name="payer_email"
+                          placeholder="Email (optional)"
+                          value={formData.payer_email}
+                          onChange={handleInputChange}
+                          className="rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+                        />
+                        <PhoneInput name="payer_mobile" value={formData.payer_mobile} onChange={handleInputChange} placeholder="Mobile number *" />
+                      </div>
+                      <p className="text-[11px] text-slate-400">
+                        Registers them as a new client (login credentials sent via SMS) when this request is converted to a booking.
+                      </p>
+                    </div>
                   )}
                 </div>
               )}
@@ -347,7 +528,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
               <div className="rounded-xl border border-slate-200 overflow-hidden">
                 <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 bg-slate-50">
                   <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${selectedCareProfile ? 'bg-emerald-500 text-white' : 'bg-blue-600 text-white'}`}>
-                    {selectedCareProfile ? <Check className="w-3.5 h-3.5" /> : (presetClient ? '1' : '2')}
+                    {selectedCareProfile ? <Check className="w-3.5 h-3.5" /> : careProfileStepNum}
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-slate-800 text-sm">Select Care Profile</p>
@@ -414,7 +595,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
             {/* ── Step 3 — Service Details ── */}
             <div className="rounded-xl border border-slate-200 overflow-hidden">
               <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 bg-slate-50">
-                <div className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold flex-shrink-0">{presetClient ? '2' : '3'}</div>
+                <div className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-xs font-bold flex-shrink-0">{serviceStepNum}</div>
                 <div>
                   <p className="font-semibold text-slate-800 text-sm">Service Details</p>
                   <p className="text-xs text-slate-500">Review auto-filled info and configure the service</p>
@@ -423,40 +604,45 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
 
               <div className="p-4 space-y-5">
 
-                {/* Payer */}
-                <div>
-                  <div className="flex items-center gap-2 mb-3">
-                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Payer Information</p>
-                    {selectedClient && <span className="text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 font-medium">Auto-filled</span>}
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className={labelCls}>Payer Name <span className="text-red-500">*</span></label>
-                      <input type="text" name="payer_name" value={formData.payer_name} onChange={handleInputChange} className={inputCls} placeholder="Payer's full name" />
-                    </div>
-                    <div>
-                      <label className={labelCls}>Mobile Number <span className="text-red-500">*</span></label>
-                      <PhoneInput name="payer_mobile" value={formData.payer_mobile} onChange={handleInputChange} placeholder="Mobile number" />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="border-t border-slate-100" />
-
                 {/* Care Profile */}
                 <div>
                   <div className="flex items-center gap-2 mb-3">
                     <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Care Profile</p>
-                    {selectedCareProfile && <span className="text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 font-medium">Auto-filled</span>}
+                    {isSelf ? (
+                      <span className="text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 font-medium">Same as client</span>
+                    ) : selectedCareProfile && (
+                      <span className="text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 font-medium">Auto-filled</span>
+                    )}
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className={labelCls}>Full Name <span className="text-red-500">*</span></label>
-                      <input type="text" name="patient_name" value={formData.patient_name} onChange={handleInputChange} className={inputCls} placeholder="Care recipient's name" />
+                      <input
+                        type="text"
+                        name="patient_name"
+                        value={formData.patient_name}
+                        onChange={handleInputChange}
+                        readOnly={isSelf}
+                        className={`${inputCls} ${isSelf ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
+                        placeholder="Care recipient's name"
+                      />
                     </div>
                     <div>
                       <label className={labelCls}>Age <span className="text-red-500">*</span></label>
                       <input type="number" name="patient_age" value={formData.patient_age} onChange={handleInputChange} onWheel={(e) => e.target.blur()} className={inputCls} placeholder="Age" min="1" />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Gender</label>
+                      <select
+                        name="patient_gender"
+                        value={formData.patient_gender}
+                        onChange={handleInputChange}
+                        disabled={isSelf}
+                        className={`${inputCls} ${isSelf ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
+                      >
+                        <option value="">— Select —</option>
+                        {PATIENT_GENDER_OPTIONS.map(o => <option key={o} value={o}>{o.charAt(0) + o.slice(1).toLowerCase()}</option>)}
+                      </select>
                     </div>
                     <div>
                       <label className={labelCls}>Relationship to Client</label>
@@ -512,8 +698,29 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="col-span-2">
-                      <label className={labelCls}>Service Address</label>
-                      <textarea name="location_address" value={formData.location_address} onChange={handleInputChange} rows={2} className={inputCls} placeholder="Full service address" />
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className={labelCls + ' mb-0'}>Service Address</label>
+                        {selectedClient?.primary_address && (
+                          <label className="flex items-center gap-1.5 text-xs text-slate-500 font-medium cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={useClientAddress}
+                              onChange={handleUseClientAddressChange}
+                              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            Same as client's primary address
+                          </label>
+                        )}
+                      </div>
+                      <textarea
+                        name="location_address"
+                        value={formData.location_address}
+                        onChange={handleInputChange}
+                        readOnly={useClientAddress}
+                        rows={2}
+                        className={`${inputCls} ${useClientAddress ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
+                        placeholder="Full service address"
+                      />
                     </div>
                     <div>
                       <label className={labelCls}>Preferred Start Date</label>
@@ -681,7 +888,7 @@ const ProxyServiceRequest = () => {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50">
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Client / Payer</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Client</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Care Profile</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Service</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Location</th>

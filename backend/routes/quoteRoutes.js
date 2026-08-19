@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const quoteController = require('../controllers/quoteController');
 const paymentTrackingController = require('../controllers/paymentTrackingController');
+const invoiceController = require('../controllers/invoiceController');
 const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware');
 const { upload } = require('../config/cloudinaryConfig');
 
@@ -273,6 +274,22 @@ router.post(
     requirePermission('QUOTATION_RECORD_PAYMENT'),
     upload.single('payment_slip'),
     paymentTrackingController.recordAllocatedPayment
+);
+
+/**
+ * @route   POST /api/quotes/:quote_id/line-item-invoices
+ * @desc    Generate a standalone invoice for one or more individual quote
+ *          line items (independent of the combined invoice and of payment
+ *          allocation) — shown as an admin-triggered picker after recording
+ *          a payment
+ * @access  Private (SUPER_ADMIN, ACCOUNTS, COORDINATOR)
+ * @body    line_item_ids (array of UUIDs)
+ */
+router.post(
+    '/:quote_id/line-item-invoices',
+    protect,
+    requirePermission('QUOTATION_RECORD_PAYMENT'),
+    invoiceController.createLineItemInvoices
 );
 
 /**

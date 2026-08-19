@@ -400,11 +400,29 @@ const ServiceRequestSummaryPage = () => {
             }
             const combined_total = q.total_amount + product_total;
             const combined_paid = q.total_paid + product_paid;
+
+            // Per-line-item invoices (created from the "Line Item Invoices"
+            // section of PaymentAllocationModal) live under whichever quote
+            // actually owns the item — the SERVICE quote for its own items,
+            // the linked PRODUCT quote for its items — so both are fetched
+            // and merged into one lookup keyed by line_item_id.
+            let line_item_invoices = {};
+            try {
+              const lineItemQuoteIds = [q.quote_id, ...(q.product_quote_id ? [q.product_quote_id] : [])];
+              const invoiceLists = await Promise.all(lineItemQuoteIds.map(id => apiClient.getLineItemInvoices(id)));
+              line_item_invoices = Object.fromEntries(
+                invoiceLists
+                  .flatMap(res => (Array.isArray(res?.data) ? res.data : []))
+                  .map(inv => [inv.line_item_id, inv])
+              );
+            } catch { /* non-critical */ }
+
             return {
               ...q,
               line_items,
               product_line_items,
               product_total,
+              line_item_invoices,
               combined_total,
               // Registration fee settlement (see paymentTrackingController.
               // recordPayment) is thresholded against the SERVICE-only paid
@@ -1247,11 +1265,23 @@ const ServiceRequestSummaryPage = () => {
                                   {[...quote.line_items, ...(quote.product_line_items || [])].map((li) => {
                                     const isDiscount = li.item_type === 'DISCOUNT';
                                     const amount = Math.abs(parseFloat(li.amount) || 0);
+                                    const lineInvoice = quote.line_item_invoices?.[li.line_item_id];
                                     return (
                                       <tr key={li.line_item_id}>
                                         <td className={`px-3 py-1.5 ${li.isProductItem ? 'text-purple-700' : 'text-slate-700'}`}>
                                           {li.description}
                                           {isDiscount && <span className="ml-1.5 text-[10px] text-slate-400">(Discount)</span>}
+                                          {lineInvoice && (
+                                            <a
+                                              href={lineInvoice.pdf_url}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              onClick={e => e.stopPropagation()}
+                                              className="ml-1.5 inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 hover:bg-blue-100"
+                                            >
+                                              <FileText className="h-2.5 w-2.5" /> {lineInvoice.invoice_code}
+                                            </a>
+                                          )}
                                         </td>
                                         <td className="px-3 py-1.5 text-right text-slate-500 tabular-nums">{parseFloat(li.quantity) || 1}</td>
                                         <td className="px-3 py-1.5 text-right text-slate-500 tabular-nums">{money(li.unit_price)}</td>

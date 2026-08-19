@@ -63,6 +63,12 @@ const hoursTier = (served, assigned) => {
   if (pct >= 75) return 'amber';
   return 'red';
 };
+const SETTLEMENT_ACTION_LABELS = {
+  WALLET_REFUND: 'wallet refund',
+  WALLET_REFUND_EXTEND: 'wallet refund + extended booking',
+  BANK_REFUND: 'bank refund',
+  NO_REFUND: 'write-off',
+};
 const TIER_STYLE = {
   green: { bg: '#f0fdf4', col: '#166534', dot: '#22c55e' },
   amber: { bg: '#fffbeb', col: '#92400e', dot: '#f59e0b' },
@@ -526,15 +532,15 @@ const BookingDetailPageV2 = () => {
   const manualInvoiceDay  = !isLiveIn || invoicingMode === 'MANUAL';
   const dayClickEnabled   = manualSalaryDay || manualInvoiceDay;
 
-  // Revoking a wrongly auto-paid/invoiced day is LIVE_IN-only and restricted to
-  // Super Admins, gated by re-entering their password (see CareTimeline's revoke
+  // Revoking a wrongly paid/invoiced day is LIVE_IN/SHIFT_BASED-only and restricted
+  // to Super Admins, gated by re-entering their password (see CareTimeline's revoke
   // confirmation modal and dailyAttendanceController.revokeDays on the backend).
   const isSuperAdmin = isSuperAdminToken(adminToken);
-  const revokeEnabled = isLiveIn && isSuperAdmin;
+  const revokeEnabled = (isLiveIn || isShiftBased) && isSuperAdmin;
 
-  const revokeDays = async (dates, reason, password) => {
+  const revokeDays = async (targets, reason, password, settlementAction) => {
     apiClient.setToken(adminToken);
-    await apiClient.revokeAttendanceDays(bookingId, { service_dates: dates, reason, password });
+    await apiClient.revokeAttendanceDays(bookingId, { targets, reason, password, settlement_action: settlementAction });
     await Promise.all([fetchDetail(), fetchDailyRecords()]);
   };
 
@@ -5029,7 +5035,7 @@ const BookingDetailPageV2 = () => {
                                   <td className={tdCls + ' tabular-nums'}>{invoiceRecord.status === 'INVOICED' ? `Rs.${Number(invoiceRecord.amount).toLocaleString()}` : '—'}</td>
                                   <td className={tdCls}>
                                     <span
-                                      title={invoiceRecord.status === 'REVOKED' ? [invoiceRecord.revoke_reason, invoiceRecord.revoked_by_name ? `by ${invoiceRecord.revoked_by_name}` : null].filter(Boolean).join(' — ') : undefined}
+                                      title={invoiceRecord.status === 'REVOKED' ? [invoiceRecord.revoke_reason, SETTLEMENT_ACTION_LABELS[invoiceRecord.settlement_action], invoiceRecord.revoked_by_name ? `by ${invoiceRecord.revoked_by_name}` : null].filter(Boolean).join(' — ') : undefined}
                                       className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${invoiceRecord.status === 'INVOICED' ? 'bg-green-50 text-green-700' : invoiceRecord.status === 'REVOKED' ? 'bg-red-50 text-red-700' : 'bg-gray-100 text-gray-500'}`}
                                     >
                                       <span className={`w-1.5 h-1.5 rounded-full ${invoiceRecord.status === 'INVOICED' ? 'bg-green-500' : invoiceRecord.status === 'REVOKED' ? 'bg-red-500' : 'bg-gray-400'}`} />

@@ -112,8 +112,8 @@ const CareTimeline = ({
   manualSalaryDay = false,
   manualInvoiceDay = false,
   pauses = [],           // [{ paused_date, resume_date, resumed_date }] — booking_pauses rows, any order
-  revokeEnabled = false, // true only for LIVE_IN + the viewer is a Super Admin
-  onRevokeDays,          // async (dates: string[], reason: string, password: string) => void
+  revokeEnabled = false, // true only for LIVE_IN/SHIFT_BASED + the viewer is a Super Admin
+  onRevokeDays,          // async (targets: { service_date: string, shift_slot_id: string|null }[], reason: string, password: string, settlementAction: string) => void
   hospitalizationPeriods = [], // [{ started_date, ended_date }] — booking_hospitalizations rows, ended_date null = ongoing
 }) => {
   const [monthOffset,   setMonthOffset]   = useState(null);
@@ -122,8 +122,13 @@ const CareTimeline = ({
   const [selectMode,    setSelectMode]    = useState(false);
   const [selectedDates, setSelectedDates] = useState(() => new Set());
   const [showRevokeConfirm, setShowRevokeConfirm] = useState(false);
+  // SHIFT_BASED starts on 'shifts' (pick exactly which shift(s) per selected day) before
+  // reaching 'details' (reason/settlement/password) — LIVE_IN skips straight to 'details'.
+  const [revokeStep, setRevokeStep] = useState('details');
+  const [selectedShiftTargets, setSelectedShiftTargets] = useState(() => new Set()); // Set<`${dateISO}__${shift_slot_id}`>
   const [revokeReason,  setRevokeReason]  = useState('');
   const [revokePassword, setRevokePassword] = useState('');
+  const [revokeSettlementAction, setRevokeSettlementAction] = useState('WALLET_REFUND');
   const [revokeBusy,    setRevokeBusy]    = useState(false);
   const [revokeError,   setRevokeError]   = useState('');
   const isMobile = useIsMobile();
@@ -141,12 +146,38 @@ const CareTimeline = ({
     setSelectMode(false);
     setSelectedDates(new Set());
     setShowRevokeConfirm(false);
+    setRevokeStep('details');
+    setSelectedShiftTargets(new Set());
     setRevokeReason('');
     setRevokePassword('');
+    setRevokeSettlementAction('WALLET_REFUND');
     setRevokeError('');
   };
 
+  const toggleShiftTarget = (key) => {
+    setSelectedShiftTargets((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const toggleAllShiftsForDate = (dateISO, shifts) => {
+    setSelectedShiftTargets((prev) => {
+      const next = new Set(prev);
+      const keys = shifts.map((s) => `${dateISO}__${s.shift_slot_id}`);
+      const allSelected = keys.every((k) => next.has(k));
+      keys.forEach((k) => (allSelected ? next.delete(k) : next.add(k)));
+      return next;
+    });
+  };
+
   const submitRevoke = async () => {
+    if (isShiftBased && selectedShiftTargets.size === 0) {
+      setRevokeError('Select at least one shift');
+      return;
+    }
     if (!revokeReason.trim() || !revokePassword) {
       setRevokeError('A reason and your password are both required');
       return;
@@ -154,7 +185,13 @@ const CareTimeline = ({
     setRevokeBusy(true);
     setRevokeError('');
     try {
-      await onRevokeDays?.([...selectedDates], revokeReason.trim(), revokePassword);
+      const targets = isShiftBased
+        ? [...selectedShiftTargets].map((key) => {
+            const sep = key.indexOf('__');
+            return { service_date: key.slice(0, sep), shift_slot_id: key.slice(sep + 2) };
+          })
+        : [...selectedDates].map((d) => ({ service_date: d, shift_slot_id: null }));
+      await onRevokeDays?.(targets, revokeReason.trim(), revokePassword, revokeSettlementAction);
       exitSelectMode();
     } catch (err) {
       setRevokeError(err?.response?.data?.message || err?.message || 'Failed to revoke selected day(s)');
@@ -434,6 +471,36 @@ const CareTimeline = ({
     });
     return map;
   }, [dailyInvoiceRecords]);
+
+  // Per-date, per-shift breakdown for the SHIFT_BASED revoke picker — unlike
+  // invoiceByDate above (which keeps only the last record per date, fine for the
+  // day-level aggregate badges), this needs every shift's own row so the admin can
+  // pick individually. Only shifts actually PAID/INVOICED are revocable.
+  const revocableShiftsByDate = useMemo(() => {
+    if (!isShiftBased) return new Map();
+    const map = new Map(); // dateISO -> [{ shift_slot_id, shift_number, shift_label, staff_name }]
+    selectedDates.forEach((dateISO) => {
+      const shifts = new Map(); // shift_slot_id -> row
+      (attendanceByDate.get(dateISO) || []).forEach((r) => {
+        if (!r.shift_slot_id || r.salary_status !== 'PAID') return;
+        shifts.set(r.shift_slot_id, {
+          shift_slot_id: r.shift_slot_id,
+          shift_number: r.shift_number,
+          shift_label: r.shift_label,
+          staff_name: r.staff_name,
+        });
+      });
+      dailyInvoiceRecords.forEach((r) => {
+        if (r.service_date?.slice(0, 10) !== dateISO || !r.shift_slot_id || r.status !== 'INVOICED') return;
+        const existing = shifts.get(r.shift_slot_id);
+        if (!existing) shifts.set(r.shift_slot_id, { shift_slot_id: r.shift_slot_id, shift_number: r.shift_number, shift_label: r.shift_label, staff_name: null });
+      });
+      if (shifts.size > 0) {
+        map.set(dateISO, [...shifts.values()].sort((a, b) => (a.shift_number || 0) - (b.shift_number || 0)));
+      }
+    });
+    return map;
+  }, [isShiftBased, selectedDates, attendanceByDate, dailyInvoiceRecords]);
 
   // Hospitalization periods — each covers [started_date, ended_date] inclusive; an
   // open (ongoing) period has ended_date null, so it covers every day from
@@ -1381,7 +1448,7 @@ const CareTimeline = ({
               Cancel
             </button>
             <button
-              onClick={() => setShowRevokeConfirm(true)}
+              onClick={() => { setShowRevokeConfirm(true); setRevokeStep(isShiftBased ? 'shifts' : 'details'); setSelectedShiftTargets(new Set()); }}
               disabled={selectedDates.size === 0}
               className="px-3 h-8 rounded-lg text-xs font-bold text-white transition disabled:opacity-40"
               style={{ background: '#B3261E' }}
@@ -1393,13 +1460,101 @@ const CareTimeline = ({
       )}
 
       {/* ── Revoke confirmation modal ── */}
-      {showRevokeConfirm && (
+      {showRevokeConfirm && revokeStep === 'shifts' && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: 'rgba(28,23,15,.45)' }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5 max-h-[85vh] overflow-y-auto">
+            <h3 className="text-sm font-bold text-[#2A2722]">Select shift(s) to revoke</h3>
+            <p className="text-xs text-[#6F6A60] mt-1.5">
+              Each shift can be revoked individually — check the ones that were wrongly paid/invoiced.
+            </p>
+
+            <div className="mt-4 space-y-4">
+              {[...selectedDates].sort().map((dateISO) => {
+                const shifts = revocableShiftsByDate.get(dateISO) || [];
+                if (shifts.length === 0) {
+                  return (
+                    <div key={dateISO}>
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-[#9A9488]">{dateISO}</div>
+                      <div className="text-xs text-[#B4AEA3] mt-1">No paid/invoiced shifts on this day.</div>
+                    </div>
+                  );
+                }
+                const keys = shifts.map((s) => `${dateISO}__${s.shift_slot_id}`);
+                const allSelected = keys.every((k) => selectedShiftTargets.has(k));
+                return (
+                  <div key={dateISO}>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-[#9A9488]">{dateISO}</span>
+                      <button
+                        onClick={() => toggleAllShiftsForDate(dateISO, shifts)}
+                        className="text-[11px] font-semibold"
+                        style={{ color: '#B3261E' }}
+                      >
+                        {allSelected ? 'Deselect all' : 'Select all'}
+                      </button>
+                    </div>
+                    <div className="mt-1.5 space-y-1.5">
+                      {shifts.map((s) => {
+                        const key = `${dateISO}__${s.shift_slot_id}`;
+                        const checked = selectedShiftTargets.has(key);
+                        return (
+                          <label
+                            key={key}
+                            className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 cursor-pointer transition ${checked ? 'border-[#B3261E] bg-[#FBEAE8]' : 'border-[#E7E1D6] hover:bg-slate-50'}`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleShiftTarget(key)}
+                              className="accent-[#B3261E]"
+                            />
+                            <span className="text-xs text-[#2A2722]">
+                              {s.shift_label || `Shift ${s.shift_number}`}
+                              {s.staff_name ? <span className="text-[#6F6A60]"> — {s.staff_name}</span> : null}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {revokeError && (
+              <div className="mt-2.5 text-xs font-semibold text-[#B3261E]">{revokeError}</div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 mt-5">
+              <button
+                onClick={() => { setShowRevokeConfirm(false); setRevokeError(''); }}
+                className="px-3 h-8 rounded-lg border border-[#E7E1D6] bg-white text-xs font-semibold text-[#6F6A60] hover:bg-slate-50 transition"
+              >
+                Back
+              </button>
+              <button
+                onClick={() => { if (selectedShiftTargets.size === 0) { setRevokeError('Select at least one shift'); return; } setRevokeError(''); setRevokeStep('details'); }}
+                disabled={selectedShiftTargets.size === 0}
+                className="px-3.5 h-8 rounded-lg text-xs font-bold text-white transition disabled:opacity-40"
+                style={{ background: '#B3261E' }}
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRevokeConfirm && revokeStep === 'details' && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: 'rgba(28,23,15,.45)' }}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5">
-            <h3 className="text-sm font-bold text-[#2A2722]">Revoke {selectedDates.size} day{selectedDates.size !== 1 ? 's' : ''}?</h3>
+            <h3 className="text-sm font-bold text-[#2A2722]">
+              Revoke {isShiftBased ? `${selectedShiftTargets.size} shift${selectedShiftTargets.size !== 1 ? 's' : ''}` : `${selectedDates.size} day${selectedDates.size !== 1 ? 's' : ''}`}?
+            </h3>
             <p className="text-xs text-[#6F6A60] mt-1.5">
-              This reverses the staff salary and the client invoice for the selected day(s). The original records stay
-              as an audit trail; a corrective transaction is issued on both sides. This cannot be undone from here.
+              This reverses the staff salary and, per the settlement choice below, the client invoice for the selected
+              {isShiftBased ? ' shift(s)' : ' day(s)'}. The original records stay as an audit trail. This cannot be
+              undone from here.
             </p>
 
             <label className="block text-[11px] font-bold uppercase tracking-wider text-[#9A9488] mt-4 mb-1">Reason</label>
@@ -1410,6 +1565,34 @@ const CareTimeline = ({
               placeholder="e.g. Client confirmed staff no-show on this date"
               className="w-full border border-[#E7E1D6] rounded-lg px-2.5 py-1.5 text-sm text-[#2A2722] focus:outline-none focus:ring-2 focus:ring-[#B3261E] resize-none"
             />
+
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-[#9A9488] mt-3 mb-1.5">Client invoice settlement</label>
+            <div className="space-y-1.5">
+              {[
+                { value: 'WALLET_REFUND', label: 'Wallet refund', desc: 'Credit offsets future invoices on this booking. No real money moves.' },
+                ...(!isShiftBased ? [{ value: 'WALLET_REFUND_EXTEND', label: 'Wallet refund + extend booking', desc: 'Same credit as Wallet refund, plus pushes the booking’s scheduled end date out by the number of days revoked.' }] : []),
+                { value: 'BANK_REFUND',   label: 'Bank refund',   desc: 'You’ll return the money to the client’s bank/payment method outside this system.' },
+                { value: 'NO_REFUND',     label: 'Write off',     desc: 'No credit issued — the invoiced amount is forfeited.' },
+              ].map((opt) => (
+                <label
+                  key={opt.value}
+                  className={`flex items-start gap-2 rounded-lg border px-2.5 py-1.5 cursor-pointer transition ${revokeSettlementAction === opt.value ? 'border-[#B3261E] bg-[#FBEAE8]' : 'border-[#E7E1D6] hover:bg-slate-50'}`}
+                >
+                  <input
+                    type="radio"
+                    name="revokeSettlementAction"
+                    value={opt.value}
+                    checked={revokeSettlementAction === opt.value}
+                    onChange={() => setRevokeSettlementAction(opt.value)}
+                    className="mt-0.5 accent-[#B3261E]"
+                  />
+                  <span>
+                    <span className="block text-xs font-semibold text-[#2A2722]">{opt.label}</span>
+                    <span className="block text-[11px] text-[#6F6A60]">{opt.desc}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
 
             <label className="block text-[11px] font-bold uppercase tracking-wider text-[#9A9488] mt-3 mb-1">Confirm your Super Admin password</label>
             <input
@@ -1425,7 +1608,7 @@ const CareTimeline = ({
 
             <div className="flex items-center justify-end gap-2 mt-5">
               <button
-                onClick={() => { setShowRevokeConfirm(false); setRevokeError(''); }}
+                onClick={() => { if (isShiftBased) { setRevokeStep('shifts'); setRevokeError(''); } else { setShowRevokeConfirm(false); setRevokeError(''); } }}
                 disabled={revokeBusy}
                 className="px-3 h-8 rounded-lg border border-[#E7E1D6] bg-white text-xs font-semibold text-[#6F6A60] hover:bg-slate-50 transition disabled:opacity-50"
               >

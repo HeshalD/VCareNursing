@@ -723,6 +723,16 @@ class ApiClient {
     });
   }
 
+  // Generates a standalone invoice for each given quote line item — shown as
+  // an admin-triggered picker after recording a payment, independent of the
+  // combined invoice (see quoteController.ensureCombinedInvoice).
+  async createLineItemInvoices(quoteId, lineItemIds) {
+    return this.request(`/quotes/${quoteId}/line-item-invoices`, {
+      method: 'POST',
+      body: JSON.stringify({ line_item_ids: lineItemIds }),
+    });
+  }
+
   async recordBookingPayment(bookingId, paymentData, paymentSlipFile = null) {
     if (paymentSlipFile) {
       const formData = new FormData();
@@ -860,7 +870,7 @@ class ApiClient {
 
     Object.keys(applicationData).forEach(key => {
 
-      if (key === 'applied_roles' && Array.isArray(applicationData[key])) {
+      if ((key === 'applied_roles' || key === 'languages') && Array.isArray(applicationData[key])) {
 
         formData.append(key, JSON.stringify(applicationData[key]));
 
@@ -957,7 +967,7 @@ class ApiClient {
   async updateApplicationDetails(applicationId, data, profilePictureFile = null) {
     const formData = new FormData();
     Object.keys(data).forEach(key => {
-      if (key === 'applied_roles' && Array.isArray(data[key])) {
+      if ((key === 'applied_roles' || key === 'languages') && Array.isArray(data[key])) {
         formData.append(key, JSON.stringify(data[key]));
       } else {
         formData.append(key, data[key] ?? '');
@@ -1497,10 +1507,10 @@ class ApiClient {
     return this.request(`/bookings/${bookingId}/daily-invoices`);
   }
 
-  async revokeAttendanceDays(bookingId, { service_dates, reason, password }) {
+  async revokeAttendanceDays(bookingId, { targets, reason, password, settlement_action }) {
     return this.request(`/bookings/${bookingId}/attendance/revoke`, {
       method: 'POST',
-      body: JSON.stringify({ service_dates, reason, password }),
+      body: JSON.stringify({ targets, reason, password, settlement_action }),
     });
   }
 
@@ -1961,6 +1971,14 @@ class ApiClient {
 
   async getReviewableBookingsForClient(clientId) {
     return this.request(`/staff-reviews/admin/reviewable/${clientId}`);
+  }
+
+  async getClientBookingsForAdmin(clientId) {
+    return this.request(`/staff-reviews/admin/bookings/${clientId}`);
+  }
+
+  async getBookingStaffForReview(bookingId) {
+    return this.request(`/staff-reviews/admin/booking/${bookingId}/staff`);
   }
 
   async adminCreateReview(reviewData) {
@@ -2475,6 +2493,12 @@ class ApiClient {
   async getProductInvoices(filters = {}) {
     const qs = new URLSearchParams(filters).toString();
     return this.request(qs ? `/product-invoices?${qs}` : '/product-invoices');
+  }
+
+  // Per-line-item invoices (category: 'LINE_ITEM') share the same generic
+  // `invoices` table/listing endpoint as product invoices.
+  async getLineItemInvoices(quoteId) {
+    return this.getProductInvoices({ quote_id: quoteId, category: 'LINE_ITEM' });
   }
 
   async getProductInvoice(invoiceId) {

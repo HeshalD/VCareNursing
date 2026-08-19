@@ -214,14 +214,39 @@ const reverseStaffSalary = async (client, { staff_profile_id, booking_id, amount
 };
 
 // ─── Client Invoice Reversal ────────────────────────────────────────────────────
-// Cancels a previously-created day's invoice by crediting the booking for the
-// same amount, via the same WALLET_REFUND category bookingSettlement.js already
-// uses for cancellations. total_paid sums CREDIT (excl. STAFF_SALARY) and
-// total_invoiced sums DEBIT, so this exactly nets out the booking's outstanding
-// balance by the invoiced amount without mutating the original SERVICE_INVOICE
-// DEBIT row. Must be called within an open client transaction.
+// Cancels a previously-created day's invoice under one of the admin-chosen settlement
+// actions (mirrors the WALLET_DEPOSIT/BANK_REFUND/NO_REFUND choice already offered
+// at booking completion/termination in bookingSettlement.js):
+//   - WALLET_REFUND: credits the booking for the invoiced amount (same WALLET_REFUND
+//     category used there), netting total_invoiced so the day stops counting as owed.
+//     No real money moves — it offsets future invoices on this booking. Since
+//     plannedDays on the calendar is computed live as total_paid ÷ rate (see
+//     BookingDetailPageV2.jsx), this credit already pushes the booking's effective
+//     "paid through" bound out by the reversed amount, with no extra code needed.
+//   - WALLET_REFUND_EXTEND: identical money mechanics to WALLET_REFUND — the extra
+//     effect (explicitly pushing bookings.scheduled_end_time for LIVE_IN) happens in
+//     the caller (dailyAttendanceController.revokeDays), not here.
+//   - BANK_REFUND: same netting transaction (still needed so the booking doesn't
+//     stay flagged OVERDUE for a day being refunded), noted as a real refund the
+//     admin processes externally (bank/gateway) rather than a system credit.
+//   - NO_REFUND: a write-off — no offsetting transaction at all, the invoiced
+//     amount is simply forfeited.
+// total_paid sums CREDIT (excl. STAFF_SALARY) and total_invoiced sums DEBIT, so for
+// every action except NO_REFUND this exactly nets out the booking's outstanding
+// balance without mutating the original SERVICE_INVOICE DEBIT row. Returns null (no
+// transaction) for NO_REFUND. Must be called within an open client transaction.
 
-const reverseServiceInvoice = async (client, { booking_id, client_id, amount, notes }) => {
+const reverseServiceInvoice = async (client, { booking_id, client_id, amount, notes, settlementAction = 'WALLET_REFUND' }) => {
+  if (settlementAction === 'NO_REFUND') {
+    return null;
+  }
+
+  const settlementNote = settlementAction === 'BANK_REFUND'
+    ? `${notes} (bank refund — processed externally by admin)`
+    : settlementAction === 'WALLET_REFUND_EXTEND'
+      ? `${notes} (booking extended)`
+      : notes;
+
   const result = await client.query(
     `INSERT INTO transactions (
       client_id,
@@ -234,7 +259,7 @@ const reverseServiceInvoice = async (client, { booking_id, client_id, amount, no
       created_at
     ) VALUES ($1, $2, 'WALLET_REFUND', 'CREDIT', $3, 'COMPLETED', $4, NOW())
     RETURNING transaction_id`,
-    [client_id, booking_id, amount, notes]
+    [client_id, booking_id, amount, settlementNote]
   );
 
   return result.rows[0].transaction_id;

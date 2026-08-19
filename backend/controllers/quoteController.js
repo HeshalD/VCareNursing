@@ -1559,7 +1559,7 @@ exports.acceptProductQuote = async (req, res) => {
         const rentalItems = lineItemsResult.rows.filter(li => li.product_type === 'RENTAL');
         const otherItems = lineItemsResult.rows.filter(li => li.product_type !== 'RENTAL');
 
-        const vendorPayments = req.body.vendor_payments || {};
+        const vendorPayments = (req.body || {}).vendor_payments || {};
         const createdAgreements = [];
         const createdVendorBills = [];
         for (const item of rentalItems) {

@@ -11,6 +11,7 @@ import { useAdminAuth } from '../../../context/AdminAuthContext';
 import ImageCropModal from '../../../components/common/ImageCropModal';
 import DateInput from '../../../components/common/DateInput';
 import PhoneInput from '../../../components/common/PhoneInput';
+import LanguageMultiSelect from '../../../components/common/LanguageMultiSelect';
 
 const STAFF_ROLES = ['CARETAKER', 'NURSING_ASSISTANT', 'NURSE', 'PHYSIOTHERAPIST', 'NANNY', 'COUNSELLOR'];
 const GENDERS = ['MALE', 'FEMALE', 'OTHER'];
@@ -232,6 +233,7 @@ const WorkerVerificationDetailsPage = () => {
         gender: data.gender || '',
         date_of_birth: data.date_of_birth ? data.date_of_birth.substring(0, 10) : '',
         experience_level: data.experience_level || '',
+        languages: Array.isArray(data.languages) ? data.languages : [],
       });
     } catch (err) {
       setError(err.message || 'Error fetching application');
@@ -281,6 +283,7 @@ const WorkerVerificationDetailsPage = () => {
       gender: application.gender || '',
       date_of_birth: application.date_of_birth ? application.date_of_birth.substring(0, 10) : '',
       experience_level: application.experience_level || '',
+      languages: Array.isArray(application.languages) ? application.languages : [],
     });
     setIsEditing(false);
     setActionError('');
@@ -716,6 +719,13 @@ const WorkerVerificationDetailsPage = () => {
                       ))}
                     </select>
                   </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-2">Languages Spoken</label>
+                    <LanguageMultiSelect
+                      value={editData.languages}
+                      onChange={(langs) => setEditData(p => ({ ...p, languages: langs }))}
+                    />
+                  </div>
                 </div>
               ) : (
                 <div className="divide-y divide-slate-50">
@@ -733,6 +743,18 @@ const WorkerVerificationDetailsPage = () => {
                   </div>
                   <InfoRow label="Qualifications" value={application.qualifications} />
                   <InfoRow label="Experience Level" value={experienceLevelLabel(application.experience_level)} />
+                  <div className="grid grid-cols-[140px_1fr] py-2.5 gap-4 items-start">
+                    <span className="text-xs text-slate-500">Languages</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {Array.isArray(application.languages) && application.languages.length > 0
+                        ? application.languages.map(l => (
+                            <span key={l} className="px-2 py-0.5 bg-slate-100 text-slate-700 border border-slate-200 text-xs font-medium rounded">
+                              {l}
+                            </span>
+                          ))
+                        : <span className="text-sm text-slate-400">None</span>}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

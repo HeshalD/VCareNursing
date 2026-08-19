@@ -38,6 +38,14 @@ exports.submitApplication = async (req, res) => {
       experience_level
     } = req.body;
 
+    let languagesArray = [];
+    if (req.body.languages) {
+      try {
+        const parsed = JSON.parse(req.body.languages);
+        if (Array.isArray(parsed)) languagesArray = parsed.map(l => String(l).trim()).filter(Boolean);
+      } catch { /* ignore malformed payload, keep empty */ }
+    }
+
     if (!isValidPhone(req.body.mobile_number)) {
       return res.status(400).json({ message: 'Enter a valid mobile number.' });
     }
@@ -111,12 +119,12 @@ exports.submitApplication = async (req, res) => {
 
     const query = `
       INSERT INTO staff_applications
-      (full_name, email, mobile_number, applied_roles, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, date_of_birth, experience_level)
+      (full_name, email, mobile_number, applied_roles, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, date_of_birth, experience_level, languages)
       VALUES ($1, $2, $3, $4::user_role_enum[], $5, $6, $7, $8,
         CASE WHEN $9::float IS NOT NULL AND $10::float IS NOT NULL
              THEN point($10::float, $9::float)
              ELSE NULL
-        END, $11, $12, $13, $14, $15::gender_enum, $16, $17)
+        END, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18)
       RETURNING *;
     `;
 
@@ -137,7 +145,8 @@ exports.submitApplication = async (req, res) => {
       nic_back_url,
       gender,
       date_of_birth,
-      experience_level || null
+      experience_level || null,
+      languagesArray
     ]);
 
     const application = result.rows[0];
@@ -471,8 +480,8 @@ exports.acceptApplication = async (req, res) => {
         }
 
         const profileInsertQuery = `
-          INSERT INTO staff_profiles (staff_code, user_id, full_name, designation, verification_status, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, willing_to_live_in, date_of_birth, admin_remarks, experience_level)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18, $19)
+          INSERT INTO staff_profiles (staff_code, user_id, full_name, designation, verification_status, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, willing_to_live_in, date_of_birth, admin_remarks, experience_level, languages)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18, $19, $20)
           RETURNING staff_profile_id
         `;
         const profileResult = await client.query(profileInsertQuery, [
@@ -494,7 +503,8 @@ exports.acceptApplication = async (req, res) => {
           app.willing_to_live_in || false,
           app.date_of_birth,
           admin_remarks || null,
-          app.experience_level || null
+          app.experience_level || null,
+          app.languages || []
         ]);
 
         // Auto-create staff wallet on approval
@@ -825,6 +835,16 @@ exports.updateApplication = async (req, res) => {
     home_address, location, nic_number, gender, date_of_birth, experience_level
   } = req.body;
 
+  let languagesArray = null;
+  if (req.body.languages !== undefined) {
+    try {
+      const parsed = JSON.parse(req.body.languages);
+      languagesArray = Array.isArray(parsed) ? parsed.map(l => String(l).trim()).filter(Boolean) : [];
+    } catch {
+      languagesArray = [];
+    }
+  }
+
   if (req.body.mobile_number && !isValidPhone(req.body.mobile_number)) {
     return res.status(400).json({ message: 'Enter a valid mobile number.' });
   }
@@ -873,11 +893,12 @@ exports.updateApplication = async (req, res) => {
            applied_roles = $4::user_role_enum[], qualifications = $5,
            home_address = $6, location = $7, nic_number = $8,
            gender = $9::gender_enum, date_of_birth = $10,
-           profile_picture_url = $11, experience_level = $12
+           profile_picture_url = $11, experience_level = $12,
+           languages = COALESCE($14, languages)
        WHERE application_id = $13`,
       [full_name, email, mobile_number, rolesArray, qualifications,
        home_address, location, nic_number, gender, date_of_birth,
-       profilePictureUrl, experience_level || null, applicationId]
+       profilePictureUrl, experience_level || null, applicationId, languagesArray]
     );
 
     const updated = await db.query(

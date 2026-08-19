@@ -688,7 +688,7 @@ const convertToBookingInternal = async (req, res) => {
                 const newUser = await client.query(
                     `INSERT INTO users (mobile_number, password_hash, email, role, is_active)
                      VALUES ($1, $2, $3, $4, $5) RETURNING user_id`,
-                    [reqData.payer_mobile, hashedPassword, null, ['CLIENT'], true]
+                    [reqData.payer_mobile, hashedPassword, reqData.payer_email || null, ['CLIENT'], true]
                 );
                 userId = newUser.rows[0].user_id;
                 reqData.tempPassword = tempPassword; // Store for the welcome SMS/WhatsApp after commit
@@ -703,10 +703,13 @@ const convertToBookingInternal = async (req, res) => {
                 const regFeePaid = registrationFeeAmount > 0;
                 const newProfile = await client.query(
                     `INSERT INTO client_profiles
-                       (user_id, full_name, primary_address, is_registration_fee_paid, reg_fee_status, reg_fee_paid_at, reg_fee_expires_at)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING client_profile_id`,
+                       (user_id, full_name, primary_address, gender, client_type, company_name, honorific, is_registration_fee_paid, reg_fee_status, reg_fee_paid_at, reg_fee_expires_at)
+                     VALUES ($1, $2, $3, $4::gender_enum, $5::client_type_enum, $6, $7, $8, $9, $10, $11) RETURNING client_profile_id`,
                     [
-                        userId, reqData.payer_name, reqData.location_address, regFeePaid, regFeePaid ? 'PAID' : 'PENDING',
+                        userId, reqData.payer_name, reqData.location_address,
+                        reqData.payer_gender || null, reqData.client_type || 'INDIVIDUAL',
+                        reqData.company_name || null, reqData.honorific || null,
+                        regFeePaid, regFeePaid ? 'PAID' : 'PENDING',
                         regFeePaid ? new Date() : null,
                         regFeePaid ? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) : null,
                     ]
@@ -1708,6 +1711,7 @@ exports.getBookingDailyInvoices = async (req, res) => {
                 bdi.daily_invoice_id, bdi.booking_id, bdi.service_date::text as service_date, bdi.entry_mode,
                 bdi.status, bdi.amount, bdi.transaction_id, bdi.decided_by_user_id, bdi.decided_by_name, bdi.decided_at,
                 bdi.notes, bdi.created_at, bdi.updated_at, bdi.shift_slot_id,
+                bdi.revoke_reason, bdi.revoked_by_name, bdi.revoked_at, bdi.settlement_action,
                 ss.shift_number, ss.label as shift_label
              FROM booking_daily_invoices bdi
              LEFT JOIN booking_shift_slots ss ON bdi.shift_slot_id = ss.shift_slot_id

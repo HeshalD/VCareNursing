@@ -7,6 +7,9 @@ import DateInput from '../../../components/common/DateInput';
 import PhoneInput from '../../../components/common/PhoneInput';
 import apiClient from '../../../api/api';
 import useDebouncedValue from '../../../hooks/useDebouncedValue';
+import LanguageMultiSelect from '../../../components/common/LanguageMultiSelect';
+import YoutubeLinksField from '../../../components/common/YoutubeLinksField';
+import { DEFAULT_LANGUAGES } from '../../../data/languages';
 
 const PAGE_SIZE = 50;
 
@@ -170,7 +173,8 @@ const ProxyUserManagement = () => {
     gender: '', role: [], experience_level: '',
     willing_to_live_in: false, date_of_birth: '',
     nic_number: '', nic_front: null, nic_back: null,
-    staff_code: '', admin_remarks: '', recruiter_id: ''
+    staff_code: '', admin_remarks: '', recruiter_id: '',
+    languages: [...DEFAULT_LANGUAGES], youtube_links: []
   });
   const [recruiters, setRecruiters] = useState([]);
 
@@ -222,7 +226,8 @@ const ProxyUserManagement = () => {
     gender: '', role: [], experience_level: '',
     willing_to_live_in: false, date_of_birth: '',
     nic_number: '', nic_front: null, nic_back: null,
-    staff_code: '', admin_remarks: '', recruiter_id: ''
+    staff_code: '', admin_remarks: '', recruiter_id: '',
+    languages: [...DEFAULT_LANGUAGES], youtube_links: []
   });
 
   const openAdd = () => {
@@ -266,6 +271,8 @@ const ProxyUserManagement = () => {
       nic_back: null,
       staff_code: worker.staff_code || '',
       admin_remarks: worker.admin_remarks || '',
+      languages: Array.isArray(worker.languages) ? worker.languages : [],
+      youtube_links: Array.isArray(worker.youtube_links) ? worker.youtube_links : [],
       grama_niladhari: null,
       police_report: null
     });
@@ -393,6 +400,8 @@ const ProxyUserManagement = () => {
     fd.append('nic_number', formData.nic_number);
     if (formData.staff_code) fd.append('staff_code', formData.staff_code);
     if (formData.admin_remarks) fd.append('admin_remarks', formData.admin_remarks);
+    fd.append('languages', JSON.stringify(formData.languages || []));
+    fd.append('youtube_links', JSON.stringify(formData.youtube_links || []));
     if (!isEditMode && formData.recruiter_id) fd.append('recruiter_id', formData.recruiter_id);
     if (formData.profile_picture) fd.append('profile_picture', formData.profile_picture);
     if (formData.nic_front) fd.append('nic_front', formData.nic_front);
@@ -467,6 +476,8 @@ const ProxyUserManagement = () => {
     nic_number: staff.nic_number || '',
     staff_code: staff.staff_code || '',
     admin_remarks: staff.admin_remarks || '',
+    languages: staff.languages || [],
+    youtube_links: staff.youtube_links || [],
     user_id: staff.user_id
   });
 
@@ -835,6 +846,23 @@ const ProxyUserManagement = () => {
                       </div>
                     )}
                   </div>
+                </Field>
+              </div>
+
+              {/* Languages & Media */}
+              <SectionHeader title="Languages & Media" />
+              <div className="px-5 pt-4 pb-2 space-y-4">
+                <Field label="Languages Spoken">
+                  <LanguageMultiSelect
+                    value={formData.languages}
+                    onChange={(langs) => setFormData(p => ({ ...p, languages: langs }))}
+                  />
+                </Field>
+                <Field label="YouTube Video Links">
+                  <YoutubeLinksField
+                    value={formData.youtube_links}
+                    onChange={(links) => setFormData(p => ({ ...p, youtube_links: links }))}
+                  />
                 </Field>
               </div>
 

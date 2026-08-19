@@ -351,6 +351,8 @@ exports.getStaffByID = async (req, res) => {
                 sp.doc_upload_token,
                 sp.grama_niladhari_url,
                 sp.police_report_url,
+                sp.languages,
+                sp.youtube_links,
                 sp.created_at,
                 sp.advance_threshold_amount,
                 CAST(sp.average_rating AS FLOAT) as average_rating,
@@ -414,6 +416,8 @@ exports.getStaffByUserID = async (req, res) => {
                 sp.doc_upload_token,
                 sp.grama_niladhari_url,
                 sp.police_report_url,
+                sp.languages,
+                sp.youtube_links,
                 sp.location,
                 sp.nic_number,
                 sp.created_at,
@@ -1467,6 +1471,8 @@ exports.getAllStaff = async (req, res) => {
                 sp.doc_upload_token,
                 sp.grama_niladhari_url,
                 sp.police_report_url,
+                sp.languages,
+                sp.youtube_links,
                 sp.admin_remarks,
                 sp.created_at,
                 sp.advance_threshold_amount,
@@ -2563,7 +2569,9 @@ exports.updateStaffProfile = async (req, res) => {
         nic_number,
         staff_code,
         experience_level,
-        remove_document_urls
+        remove_document_urls,
+        languages: languagesRaw,
+        youtube_links: youtubeLinksRaw
     } = req.body;
 
     if (experience_level && !VALID_EXPERIENCE_LEVELS.includes(experience_level)) {
@@ -2649,6 +2657,34 @@ exports.updateStaffProfile = async (req, res) => {
                 WHERE user_id = $2
             `;
             await db.query(updateUserRoleQuery, [rolesToSet, existingStaff.user_id]);
+        }
+
+        // Languages and YouTube links arrive as JSON-array strings (JSON.stringify'd
+        // arrays), same pattern as `roles` above. Undefined means "leave unchanged".
+        let languagesToSet = null;
+        if (languagesRaw !== undefined) {
+            try {
+                languagesToSet = JSON.parse(languagesRaw);
+            } catch {
+                return res.status(400).json({ status: 'error', message: 'Invalid languages payload.' });
+            }
+            if (!Array.isArray(languagesToSet)) {
+                return res.status(400).json({ status: 'error', message: 'Languages must be an array.' });
+            }
+            languagesToSet = languagesToSet.map(l => String(l).trim()).filter(Boolean);
+        }
+
+        let youtubeLinksToSet = null;
+        if (youtubeLinksRaw !== undefined) {
+            try {
+                youtubeLinksToSet = JSON.parse(youtubeLinksRaw);
+            } catch {
+                return res.status(400).json({ status: 'error', message: 'Invalid youtube_links payload.' });
+            }
+            if (!Array.isArray(youtubeLinksToSet)) {
+                return res.status(400).json({ status: 'error', message: 'YouTube links must be an array.' });
+            }
+            youtubeLinksToSet = youtubeLinksToSet.map(l => String(l).trim()).filter(Boolean);
         }
 
         // Validate date format if provided
@@ -2767,6 +2803,8 @@ exports.updateStaffProfile = async (req, res) => {
                 grama_niladhari_url = COALESCE($16, grama_niladhari_url),
                 police_report_url = COALESCE($17, police_report_url),
                 experience_level = COALESCE($18, experience_level),
+                languages = COALESCE($19, languages),
+                youtube_links = COALESCE($20, youtube_links),
                 onboarding_status = CASE
                     WHEN onboarding_status = 'PENDING_MIGRATION'
                      AND (SELECT is_complete FROM completeness)
@@ -2804,6 +2842,8 @@ exports.updateStaffProfile = async (req, res) => {
                 verification_status,
                 onboarding_status,
                 experience_level,
+                languages,
+                youtube_links,
                 created_at
         `;
 
@@ -2825,7 +2865,9 @@ exports.updateStaffProfile = async (req, res) => {
             finalNicBack || null,
             finalGramaNiladhari || null,
             finalPoliceReport || null,
-            experience_level || null
+            experience_level || null,
+            languagesToSet,
+            youtubeLinksToSet
         ];
 
         const result = await db.query(updateQuery, updateValues);
@@ -2907,8 +2949,25 @@ exports.createStaffProfile = async (req, res) => {
         staff_code,
         experience_level,
         admin_remarks,
-        recruiter_id
+        recruiter_id,
+        languages: languagesRaw,
+        youtube_links: youtubeLinksRaw
     } = req.body;
+
+    let createLanguages = [];
+    if (languagesRaw !== undefined) {
+        try {
+            const parsed = JSON.parse(languagesRaw);
+            if (Array.isArray(parsed)) createLanguages = parsed.map(l => String(l).trim()).filter(Boolean);
+        } catch { /* ignore malformed payload, keep empty */ }
+    }
+    let createYoutubeLinks = [];
+    if (youtubeLinksRaw !== undefined) {
+        try {
+            const parsed = JSON.parse(youtubeLinksRaw);
+            if (Array.isArray(parsed)) createYoutubeLinks = parsed.map(l => String(l).trim()).filter(Boolean);
+        } catch { /* ignore malformed payload, keep empty */ }
+    }
 
     // Extract file URLs from multer/S3
     const uploadedDocuments = req.files && req.files.documents ? req.files.documents.map(file => file.location) : [];
@@ -3060,11 +3119,13 @@ exports.createStaffProfile = async (req, res) => {
                 admin_remarks,
                 grama_niladhari_url,
                 police_report_url,
+                languages,
+                youtube_links,
                 current_status,
                 verification_status,
                 created_at
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'AVAILABLE', 'VERIFIED', NOW()
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, 'AVAILABLE', 'VERIFIED', NOW()
             )
             RETURNING
                 staff_profile_id,
@@ -3073,6 +3134,8 @@ exports.createStaffProfile = async (req, res) => {
                 admin_remarks,
                 grama_niladhari_url,
                 police_report_url,
+                languages,
+                youtube_links,
                 user_id,
                 full_name,
                 designation,
@@ -3111,7 +3174,9 @@ exports.createStaffProfile = async (req, res) => {
             experience_level || null,
             admin_remarks || null,
             uploadedGramaNiladhari || null,
-            uploadedPoliceReport || null
+            uploadedPoliceReport || null,
+            createLanguages,
+            createYoutubeLinks
         ];
 
         const result = await db.query(insertQuery, insertValues);

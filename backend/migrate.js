@@ -1464,6 +1464,28 @@ async function runMigration() {
     );
   }
 
+  // Lets an admin generate a standalone invoice for a single quote line item
+  // (independent of ensureCombinedInvoice's all-or-nothing combined invoice,
+  // and independent of payment allocation — this is a documentation action,
+  // not a ledger entry) via invoiceController.generateLineItemInvoice. One
+  // invoice per line item, hence the 1:1 unique index below rather than a
+  // join table.
+  await db.query(`
+    ALTER TABLE invoices ADD COLUMN IF NOT EXISTS line_item_id UUID REFERENCES quote_line_items(line_item_id)
+  `);
+  try {
+    await db.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_line_item_unique
+      ON invoices(line_item_id) WHERE line_item_id IS NOT NULL
+    `);
+  } catch (err) {
+    console.error(
+      'Could not create idx_invoices_line_item_unique — likely existing duplicate line-item invoices. ' +
+      'Find and reconcile them (SELECT line_item_id, COUNT(*) FROM invoices WHERE line_item_id IS NOT NULL GROUP BY line_item_id HAVING COUNT(*) > 1), then restart to retry this index.',
+      err.message
+    );
+  }
+
   // A combined Invoice document for a SERVICE quote (and its linked PRODUCT
   // quote, if any — e.g. daily-rate charges + a rental + its deposit) — one
   // invoice covering everything the client was quoted, generated the first
@@ -2941,6 +2963,13 @@ async function runMigration() {
   await db.query(`ALTER TABLE booking_daily_invoices ADD COLUMN IF NOT EXISTS revoke_reason TEXT`);
   await db.query(`ALTER TABLE booking_daily_invoices ADD COLUMN IF NOT EXISTS reversal_transaction_id UUID REFERENCES transactions(transaction_id)`);
 
+  // Which of the 3 settlement choices the admin picked when revoking this day's
+  // invoice — WALLET_REFUND (nets against this booking, default), BANK_REFUND
+  // (nets against this booking too, but money is returned to the client outside
+  // the system), or NO_REFUND (write-off, no offsetting transaction at all).
+  // Null for rows that were never revoked, or were revoked before this column existed.
+  await db.query(`ALTER TABLE booking_daily_invoices ADD COLUMN IF NOT EXISTS settlement_action VARCHAR(20)`);
+
   // =========================================================
   // HOSPITALIZATION STATUS (per-booking — patient may be admitted mid-booking)
   // =========================================================
@@ -3051,8 +3080,30 @@ async function runMigration() {
     ON internal_staff_salary_line_items(sheet_id);
   `);
 
+  // Client-identity fields captured on a proxy service request when the staff
+  // member registers a brand-new (not-yet-existing) client, so that a full
+  // client_profiles record (not just a bare name + phone) can be created at
+  // booking-conversion time.
+  await db.query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS payer_email VARCHAR(255)`);
+  await db.query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS payer_gender gender_enum`);
+  await db.query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS client_type client_type_enum DEFAULT 'INDIVIDUAL'`);
+  await db.query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS company_name VARCHAR(150)`);
+  await db.query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS honorific VARCHAR(10)`);
+
   // =========================================================
   // SEED DEFAULT PRESET ITEMS
+  // =========================================================
+  // STAFF LANGUAGES & YOUTUBE LINKS
+  // languages: spoken languages selected from a static frontend list (no
+  // separate lookup table, since the list never needs admin management).
+  // youtube_links: admin-only video links shown on the public profile;
+  // staff themselves cannot add these.
+  // =========================================================
+
+  await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS languages TEXT[] DEFAULT '{}'`);
+  await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS youtube_links TEXT[] DEFAULT '{}'`);
+  await db.query(`ALTER TABLE staff_applications ADD COLUMN IF NOT EXISTS languages TEXT[] DEFAULT '{}'`);
+
   // =========================================================
 
   await seedQuotePresetItems();
