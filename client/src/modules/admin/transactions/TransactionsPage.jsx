@@ -48,6 +48,38 @@ const SummaryCard = ({ label, value, icon: Icon, accent }) => (
 const filterInputCls =
   'w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-700 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-colors';
 
+const pad2 = (n) => String(n).padStart(2, '0');
+const toISO = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+// Each `range()` is computed at click time (not module load) so "today" stays current
+const DATE_PRESETS = [
+  { key: 'today', label: 'Today', range: () => { const d = new Date(); return [toISO(d), toISO(d)]; } },
+  { key: 'yesterday', label: 'Yesterday', range: () => {
+    const d = new Date(); d.setDate(d.getDate() - 1); return [toISO(d), toISO(d)];
+  } },
+  { key: 'week', label: 'This Week', range: () => {
+    const now = new Date();
+    const daysSinceMonday = (now.getDay() + 6) % 7; // Mon=0 … Sun=6
+    const start = new Date(now); start.setDate(now.getDate() - daysSinceMonday);
+    return [toISO(start), toISO(now)];
+  } },
+  { key: 'month', label: 'This Month', range: () => {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    return [toISO(start), toISO(now)];
+  } },
+  { key: 'quarter', label: 'This Quarter', range: () => {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1);
+    return [toISO(start), toISO(now)];
+  } },
+  { key: 'year', label: 'This Year', range: () => {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), 0, 1);
+    return [toISO(start), toISO(now)];
+  } },
+];
+
 const TransactionsPage = () => {
   const [transactions, setTransactions] = useState([]);
   const [summary, setSummary] = useState({ total_in: 0, total_out: 0, net: 0 });
@@ -64,6 +96,7 @@ const TransactionsPage = () => {
   const [source, setSource] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
+  const [activePreset, setActivePreset] = useState(null);
   const [exportingExcel, setExportingExcel] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
 
@@ -75,21 +108,23 @@ const TransactionsPage = () => {
 
   // Shared with the Excel/PDF exports so "download" always reflects exactly
   // what the current filters show on screen — not just the loaded page.
-  const buildFilterParams = useCallback(() => {
+  const buildFilterParams = useCallback((overrides = {}) => {
+    const effFromDate = overrides.fromDate !== undefined ? overrides.fromDate : fromDate;
+    const effToDate = overrides.toDate !== undefined ? overrides.toDate : toDate;
     const params = {};
     if (search.trim()) params.search = search.trim();
     if (category) params.category = category;
     if (flow) params.flow = flow;
     if (source) params.source = source;
-    if (fromDate) params.from_date = fromDate;
-    if (toDate) params.to_date = toDate;
+    if (effFromDate) params.from_date = effFromDate;
+    if (effToDate) params.to_date = effToDate;
     return params;
   }, [search, category, flow, source, fromDate, toDate]);
 
-  const fetchTransactions = useCallback(async (page = 1, { silent = false } = {}) => {
+  const fetchTransactions = useCallback(async (page = 1, { silent = false, overrides = {} } = {}) => {
     if (!silent) setLoading(true);
     try {
-      const res = await apiClient.getAllTransactions({ ...buildFilterParams(), page, limit: 25 });
+      const res = await apiClient.getAllTransactions({ ...buildFilterParams(overrides), page, limit: 25 });
       setTransactions(res.data || []);
       setSummary(res.summary || { total_in: 0, total_out: 0, net: 0 });
       setPagination(res.pagination || { total: 0, page, limit: 25, total_pages: 1 });
@@ -116,6 +151,15 @@ const TransactionsPage = () => {
     setSource('');
     setFromDate('');
     setToDate('');
+    setActivePreset(null);
+  };
+
+  const applyPreset = (preset) => {
+    const [from, to] = preset.range();
+    setFromDate(from);
+    setToDate(to);
+    setActivePreset(preset.key);
+    fetchTransactions(1, { overrides: { fromDate: from, toDate: to } });
   };
 
   const handleAddSuccess = () => {
@@ -259,6 +303,21 @@ const TransactionsPage = () => {
 
       {/* Filters */}
       <div className="bg-white rounded-xl border border-slate-200 p-4">
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <span className="text-xs font-medium text-slate-500 mr-1">Quick range:</span>
+          {DATE_PRESETS.map(p => (
+            <button
+              key={p.key}
+              type="button"
+              onClick={() => applyPreset(p)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                activePreset === p.key ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
           <div className="lg:col-span-2">
             <label className="block text-xs font-medium text-slate-600 mb-1">Search</label>
@@ -320,7 +379,7 @@ const TransactionsPage = () => {
             <label className="block text-xs font-medium text-slate-600 mb-1">From</label>
             <DateInput
               value={fromDate}
-              onChange={e => setFromDate(e.target.value)}
+              onChange={e => { setFromDate(e.target.value); setActivePreset(null); }}
               className={filterInputCls}
             />
           </div>
@@ -329,7 +388,7 @@ const TransactionsPage = () => {
             <label className="block text-xs font-medium text-slate-600 mb-1">To</label>
             <DateInput
               value={toDate}
-              onChange={e => setToDate(e.target.value)}
+              onChange={e => { setToDate(e.target.value); setActivePreset(null); }}
               className={filterInputCls}
             />
           </div>

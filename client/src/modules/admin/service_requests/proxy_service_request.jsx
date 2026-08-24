@@ -52,7 +52,7 @@ const CLIENT_TYPE_OPTIONS = ['INDIVIDUAL', 'FAMILY', 'CORPORATE_PROXY'];
 
 const BLANK_FORM = {
   payer_name: '', payer_mobile: '', payer_email: '', payer_gender: '',
-  client_type: 'INDIVIDUAL', company_name: '', honorific: '',
+  client_type: 'INDIVIDUAL', company_name: '', honorific: '', payer_primary_address: '',
   patient_name: '', patient_age: '',
   patient_gender: '', relationship_to_client: '', patient_condition: '', service_type: '',
   service_model: 'SHIFT_BASED', location_address: '', start_date: '',
@@ -136,7 +136,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
     setFormData(prev => ({
       ...prev,
       payer_name: '', payer_mobile: '', payer_email: '', payer_gender: '',
-      client_type: 'INDIVIDUAL', company_name: '', honorific: '',
+      client_type: 'INDIVIDUAL', company_name: '', honorific: '', payer_primary_address: '',
       patient_name: '', patient_age: '', patient_gender: '',
       relationship_to_client: '', patient_condition: '', location_address: '',
     }));
@@ -185,7 +185,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
     setFormData(prev => ({
       ...prev,
       payer_name: '', payer_mobile: '', payer_email: '', payer_gender: '',
-      client_type: 'INDIVIDUAL', company_name: '', honorific: '',
+      client_type: 'INDIVIDUAL', company_name: '', honorific: '', payer_primary_address: '',
       patient_name: '', patient_age: '', patient_gender: '',
       relationship_to_client: '', patient_condition: '', location_address: '',
     }));
@@ -278,6 +278,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
             client_type: formData.client_type,
             company_name: formData.company_name || undefined,
             honorific: formData.honorific || undefined,
+            primary_address: formData.payer_primary_address || undefined,
           });
           clientId = clientRes.data.clientProfileId;
         } catch (clientErr) {
@@ -454,7 +455,17 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                         <select
                           name="honorific"
                           value={formData.honorific}
-                          onChange={handleInputChange}
+                          onChange={(e) => {
+                            const honorific = e.target.value;
+                            const inferredGender =
+                              honorific === 'Mr.' ? 'MALE' :
+                              (honorific === 'Mrs.' || honorific === 'Ms.') ? 'FEMALE' : null;
+                            setFormData(prev => ({
+                              ...prev,
+                              honorific,
+                              ...(inferredGender ? { payer_gender: inferredGender } : {}),
+                            }));
+                          }}
                           className="rounded-md border border-slate-300 bg-white text-slate-800 px-2 py-1.5 text-xs outline-none focus:border-blue-500"
                         >
                           <option value="">Honorific</option>
@@ -513,6 +524,14 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                         />
                         <PhoneInput name="payer_mobile" value={formData.payer_mobile} onChange={handleInputChange} placeholder="Mobile number *" />
                       </div>
+                      <textarea
+                        name="payer_primary_address"
+                        placeholder="Primary address (optional)"
+                        value={formData.payer_primary_address}
+                        onChange={handleInputChange}
+                        rows={2}
+                        className="w-full rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+                      />
                       <p className="text-[11px] text-slate-400">
                         Registers them as a new client (login credentials sent via SMS) when this request is converted to a booking.
                       </p>
