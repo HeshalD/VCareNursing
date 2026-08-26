@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X, Upload, Loader2, BadgeDollarSign, CheckCircle2, Lock, ArrowLeft, ArrowRight, Receipt, Wallet, AlertTriangle, FileText } from 'lucide-react';
+import { X, Upload, Loader2, BadgeDollarSign, CheckCircle2, Lock, ArrowLeft, ArrowRight, Receipt, Wallet, AlertTriangle, FileText, FileStack, FileCheck2 } from 'lucide-react';
 import apiClient from '../../../api/api';
 import DateInput from '../../../components/common/DateInput';
 
@@ -113,6 +113,9 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
   // documentation action the admin can trigger while reviewing the quote.
   const [lineItems, setLineItems] = useState([]);
   const [creatingInvoiceId, setCreatingInvoiceId] = useState('');
+  const [creatingAllInvoices, setCreatingAllInvoices] = useState(false);
+  const [generatingCombinedInvoice, setGeneratingCombinedInvoice] = useState(false);
+  const [combinedInvoiceResult, setCombinedInvoiceResult] = useState(null);
 
   // Fetches the SERVICE quote's own line items (already present on `quote`
   // from getQuoteWithLineItems) plus the linked PRODUCT quote's items, then
@@ -128,7 +131,11 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
       const allItems = [
         ...(serviceLineItems || []).map((li) => ({ ...li, quote_id: quoteId })),
         ...productItems,
-      ].filter((li) => li.item_type !== 'DISCOUNT');
+      ].filter((li) => li.item_type !== 'DISCOUNT'
+        // Care-rate/shift-rate lines are invoiced strictly through the booking's
+        // own day-by-day invoice-decision flow, never here.
+        && li.item_subtype !== 'RATE_DAILY'
+        && li.item_subtype !== 'RATE_SHIFT');
 
       const quoteIds = [quoteId, ...(pQuoteId ? [pQuoteId] : [])];
       const invoiceLists = await Promise.all(quoteIds.map((id) => apiClient.getLineItemInvoices(id)));
@@ -157,6 +164,45 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
       setError(err.message || 'Failed to create invoice');
     } finally {
       setCreatingInvoiceId('');
+    }
+  };
+
+  // Bulk-creates invoices for every not-yet-invoiced line item currently shown
+  // (registration fee, other charges, products, rentals, deposits — rate lines
+  // are already excluded from `lineItems` itself, see loadLineItemsForInvoicing).
+  const handleCreateAllInvoices = async () => {
+    const uninvoicedIds = lineItems.filter((li) => !li.invoice).map((li) => li.line_item_id);
+    if (uninvoicedIds.length === 0) return;
+    setCreatingAllInvoices(true);
+    setError('');
+    try {
+      const res = await apiClient.createLineItemInvoices(quoteId, uninvoicedIds);
+      const created = Array.isArray(res?.data) ? res.data : [];
+      const createdMap = Object.fromEntries(created.map((inv) => [inv.line_item_id, inv]));
+      setLineItems((prev) => prev.map((li) => (createdMap[li.line_item_id] ? { ...li, invoice: createdMap[li.line_item_id] } : li)));
+    } catch (err) {
+      setError(err.message || 'Failed to create invoices');
+    } finally {
+      setCreatingAllInvoices(false);
+    }
+  };
+
+  // Builds (or fetches the already-cached) combined SERVICE+PRODUCT invoice PDF —
+  // a no-op until the quote is fully paid (see quoteController.ensureCombinedInvoice).
+  const handleGenerateCombinedInvoice = async () => {
+    setGeneratingCombinedInvoice(true);
+    setError('');
+    try {
+      const res = await apiClient.generateCombinedInvoice(quoteId);
+      if (res?.generated) {
+        setCombinedInvoiceResult(res.data);
+      } else {
+        setError(res?.message || 'Quotation is not fully paid yet — combined invoice not generated.');
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to generate combined invoice');
+    } finally {
+      setGeneratingCombinedInvoice(false);
     }
   };
 
@@ -663,9 +709,22 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
 
                 {lineItems.length > 0 && (
                   <div>
-                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Line Item Invoices (optional)</p>
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Line Item Invoices (optional)</p>
+                      {lineItems.some((li) => !li.invoice) && (
+                        <button
+                          type="button"
+                          onClick={handleCreateAllInvoices}
+                          disabled={creatingAllInvoices}
+                          className="inline-flex shrink-0 items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                        >
+                          {creatingAllInvoices ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileStack className="h-3 w-3" />}
+                          {creatingAllInvoices ? 'Creating…' : 'Create All Invoices'}
+                        </button>
+                      )}
+                    </div>
                     <p className="mb-2 text-[11px] text-slate-500">
-                      Generate a standalone invoice for any item below — separate from the combined invoice and independent of the allocation above.
+                      Generate a standalone invoice for any item below — separate from the combined invoice and independent of the allocation above. Care-rate/shift-rate charges are invoiced only through the booking itself and never appear here.
                     </p>
                     <div className="divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200">
                       {lineItems.map((li) => (
@@ -703,6 +762,33 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                     </div>
                   </div>
                 )}
+
+                <div>
+                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Combined Invoice</p>
+                  <p className="mb-2 text-[11px] text-slate-500">
+                    Builds the single merged Service + Products invoice PDF for this quote. Only generates once the quotation is fully paid — calling it again just returns the same PDF.
+                  </p>
+                  {combinedInvoiceResult ? (
+                    <a
+                      href={combinedInvoiceResult.invoice_pdf_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100"
+                    >
+                      <CheckCircle2 className="h-3 w-3" /> {combinedInvoiceResult.invoice_code}
+                    </a>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleGenerateCombinedInvoice}
+                      disabled={generatingCombinedInvoice}
+                      className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      {generatingCombinedInvoice ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileCheck2 className="h-3 w-3" />}
+                      {generatingCombinedInvoice ? 'Generating…' : 'Generate Combined Invoice'}
+                    </button>
+                  )}
+                </div>
 
                 {vendorItems.length > 0 && (
                   <div>

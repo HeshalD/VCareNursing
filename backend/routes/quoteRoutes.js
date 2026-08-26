@@ -243,6 +243,19 @@ router.post(
     quoteController.sendCombinedInvoice
 );
 
+/**
+ * @route   POST /api/quotes/:quote_id/generate-combined-invoice
+ * @desc    Generate (or return the already-cached) combined Invoice PDF for this
+ *          quote, without sending it anywhere — distinct from send-invoice above
+ * @access  Private (Admin/Coordinator/Accounts)
+ */
+router.post(
+    '/:quote_id/generate-combined-invoice',
+    protect,
+    requirePermission('QUOTATION_RECORD_PAYMENT'),
+    quoteController.generateCombinedInvoice
+);
+
 // ==================== PAYMENT TRACKING ROUTES ====================
 
 /**

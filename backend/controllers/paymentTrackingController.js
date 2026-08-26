@@ -9,6 +9,7 @@ const { applyInvoicePayment } = require('./invoiceController');
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const { computeRegFeeSplit, settleRegistrationFee } = require('../services/registrationFeeSplit');
 const { resolveBankAccountId } = require('../utils/pettyCash');
+const { creditClientWallet } = require('../services/walletService');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -248,7 +249,6 @@ const recordPayment = async (req, res) => {
     }
 
     const quotation = quoteCheck.rows[0];
-    const transactionCategory = quotation.booking_id ? 'BOOKING_PAYMENT' : 'CLIENT_PAYMENT';
 
     // CASH payments have no client-supplied bank account — route them to Petty Cash instead.
     const resolvedBankAccountId = await resolveBankAccountId(payment_method, bank_account_id);
@@ -267,18 +267,13 @@ const recordPayment = async (req, res) => {
     const total_paid_so_far = parseFloat(paidCheck.rows[0].total_paid);
     const new_total = total_paid_so_far + parseFloat(amount_received);
 
-    // Validate total paid doesn't exceed quotation amount
-    if (new_total > quotation.total_amount) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({
-        status: 'error',
-        message: `Total payment (${new_total}) cannot exceed quotation amount (${quotation.total_amount})`,
-        current_total: quotation.total_amount,
-        amount_paid: total_paid_so_far,
-        amount_received: amount_received,
-        remaining: quotation.total_amount - total_paid_so_far
-      });
-    }
+    // Payment no longer gets capped/rejected against the quotation total — every
+    // service-charge rupee (registration fee aside, split out below) is credited to
+    // the client's real wallet balance instead of the booking directly. A booking
+    // only ever draws from the wallet when a day/shift is actually invoiced (see
+    // walletService.drawWalletForBooking, called from applyInvoiceDecision and the
+    // LIVE_IN auto-invoicing cron) — so nothing is ever "stuck" pre-funding a
+    // booking that ends early, and no refund step is needed for that money.
 
     // Get verified_by from auth context
     const verified_by = req.user?.user_id || null;
@@ -327,98 +322,22 @@ const recordPayment = async (req, res) => {
 
     const payment = paymentResult.rows[0];
 
-    let mirroredBookingPayment = null;
+    // Service-charge money no longer touches booking_payment_tracking/amount_paid
+    // at payment time — it all becomes wallet credit below. Keep amount_quotated
+    // (and last_payment_date, for display) in sync either way a booking is found:
+    // via quotation.booking_id once linked, or via request_id before it is.
     if (quotation.booking_id) {
-      const mirroredResult = await client.query(
-        `INSERT INTO booking_payment_tracking (
-           payment_tracking_id,
-           booking_id,
-           quote_id,
-           client_id,
-           amount_received,
-           payment_method,
-           bank_account_id,
-           cheque_number,
-           cheque_date,
-           reference_number,
-           slip_url,
-           status,
-           verified_by,
-           notes,
-           payment_date,
-           verified_at
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'VERIFIED', $12, $13, $14, $15)
-         ON CONFLICT (payment_tracking_id) DO UPDATE SET
-           booking_id = EXCLUDED.booking_id,
-           quote_id = EXCLUDED.quote_id,
-           client_id = EXCLUDED.client_id,
-           amount_received = EXCLUDED.amount_received,
-           payment_method = EXCLUDED.payment_method,
-           bank_account_id = EXCLUDED.bank_account_id,
-           cheque_number = EXCLUDED.cheque_number,
-           cheque_date = EXCLUDED.cheque_date,
-           reference_number = EXCLUDED.reference_number,
-           slip_url = EXCLUDED.slip_url,
-           status = EXCLUDED.status,
-           verified_by = EXCLUDED.verified_by,
-           notes = EXCLUDED.notes,
-           payment_date = EXCLUDED.payment_date,
-           verified_at = EXCLUDED.verified_at
-         RETURNING booking_payment_id, booking_id, quote_id, amount_received, payment_method, reference_number, status, payment_date, verified_at`,
-        [
-          payment.payment_id,
-          quotation.booking_id,
-          quote_id,
-          client_id,
-          amount_received,
-          payment_method,
-          resolvedBankAccountId,
-          cheque_number || null,
-          cheque_date || null,
-          reference_number || null,
-          paymentSlipUrl,
-          verified_by,
-          notes || null,
-          payment.payment_date,
-          payment.verified_at
-        ]
+      await client.query(
+        `UPDATE bookings SET amount_quotated = $2, last_payment_date = $3 WHERE booking_id = $1`,
+        [quotation.booking_id, quotation.total_amount, payment.payment_date]
       );
-
-      mirroredBookingPayment = mirroredResult.rows[0];
-
+    } else {
       await client.query(
         `UPDATE bookings
-         SET
-           amount_paid = (
-             SELECT COALESCE(SUM(amount_received), 0)
-             FROM booking_payment_tracking
-             WHERE booking_id = $1 AND status = 'VERIFIED'
-           ),
-           last_payment_date = (
-             SELECT MAX(COALESCE(verified_at, payment_date))
-             FROM booking_payment_tracking
-             WHERE booking_id = $1 AND status = 'VERIFIED'
-           ),
-           amount_quotated = $2
-         WHERE booking_id = $1`,
-        [quotation.booking_id, quotation.total_amount]
+         SET amount_quotated = $2, last_payment_date = NOW()
+         WHERE request_id = (SELECT request_id FROM quotations WHERE quote_id = $1)`,
+        [quote_id, quotation.total_amount]
       );
-    }
-
-    // Keep legacy quote-linked bookings in sync only when the booking ledger does not exist yet.
-    if (!quotation.booking_id) {
-      await client.query(`
-        UPDATE bookings
-        SET 
-          amount_paid = (
-            SELECT COALESCE(SUM(amount_received), 0)
-            FROM payment_tracking
-            WHERE quote_id = $1 AND status = 'VERIFIED'
-          ),
-          amount_quotated = $2,
-          last_payment_date = NOW()
-        WHERE request_id = (SELECT request_id FROM quotations WHERE quote_id = $1)
-      `, [quote_id, quotation.total_amount]);
     }
 
     // Split off any portion of this payment that crosses the registration-fee
@@ -472,62 +391,27 @@ const recordPayment = async (req, res) => {
       ]);
     }
 
-    // Create transaction record for the remainder (or the whole amount, if no reg-fee split applied)
+    // Everything left after the registration-fee carve-out is service-charge
+    // money — credited to the client's real wallet balance rather than a
+    // booking directly (see walletService.creditClientWallet), and earmarked for
+    // this quote's booking so it can be settled if that booking ends early.
+    // When the quote isn't converted yet there's no booking to earmark against;
+    // convertToBookingInternal backfills the earmark at conversion time.
     if (regFeeSplit.remainderAmount > 0) {
-      await client.query(`
-        INSERT INTO transactions (
-          payment_tracking_id,
-          booking_id,
-          quote_id,
-          client_id,
-          category,
-          amount,
-          payment_method,
-          bank_account_id,
-          cheque_number,
-          cheque_date,
-          reference_number,
-          receipt_url,
-          verified_by,
-          status,
-          notes,
-          transaction_type,
-          created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
-        ON CONFLICT (payment_tracking_id) WHERE category != 'REGISTRATION_FEE' DO UPDATE SET
-          booking_id = EXCLUDED.booking_id,
-          quote_id = EXCLUDED.quote_id,
-          client_id = EXCLUDED.client_id,
-          category = EXCLUDED.category,
-          amount = EXCLUDED.amount,
-          payment_method = EXCLUDED.payment_method,
-          bank_account_id = EXCLUDED.bank_account_id,
-          cheque_number = EXCLUDED.cheque_number,
-          cheque_date = EXCLUDED.cheque_date,
-          receipt_url = EXCLUDED.receipt_url,
-          reference_number = EXCLUDED.reference_number,
-          verified_by = EXCLUDED.verified_by,
-          status = EXCLUDED.status,
-          notes = EXCLUDED.notes,
-          transaction_type = EXCLUDED.transaction_type
-        `, [
-        payment.payment_id,
-        quotation.booking_id || null,
-        quote_id,
+      await creditClientWallet(client, {
         client_id,
-        transactionCategory,
-        regFeeSplit.remainderAmount,
+        quote_id,
+        earmark_booking_id: quotation.booking_id || null,
+        amount: regFeeSplit.remainderAmount,
         payment_method,
-        resolvedBankAccountId,
-        cheque_number || null,
-        cheque_date || null,
-        reference_number || null,
-        paymentSlipUrl,
+        bank_account_id: resolvedBankAccountId,
+        cheque_number: cheque_number || null,
+        cheque_date: cheque_date || null,
+        reference_number: reference_number || null,
+        receipt_url: paymentSlipUrl,
+        notes: notes || null,
         verified_by,
-        'COMPLETED',
-        notes || null,
-        'CREDIT'
-      ]);
+      });
     }
 
     // Fetch bank account details (client-supplied, or the Petty Cash account for CASH)
@@ -684,7 +568,6 @@ const recordPayment = async (req, res) => {
       data: {
         payment_id: payment.payment_id,
         quote_id: payment.quote_id,
-          booking_payment_id: mirroredBookingPayment?.booking_payment_id || null,
         amount_received: parseFloat(payment.amount_received),
         payment_method: payment.payment_method,
         bank_account: bank_account,
@@ -698,8 +581,9 @@ const recordPayment = async (req, res) => {
       payment_summary: {
         total_amount: parseFloat(quotation.total_amount),
         total_paid: new_total,
-        remaining_balance: remaining_balance,
-        percent_paid: ((new_total / quotation.total_amount) * 100).toFixed(2)
+        remaining_balance: Math.max(0, remaining_balance),
+        percent_paid: Math.min(100, (new_total / quotation.total_amount) * 100).toFixed(2),
+        service_credited_to_wallet: regFeeSplit.remainderAmount > 0.005 ? regFeeSplit.remainderAmount : 0
       },
       registration_fee_settled: registrationFeeSettled
     });
@@ -865,7 +749,6 @@ const recordAllocatedPayment = async (req, res) => {
     }
 
     const quotation = quoteCheck.rows[0];
-    const transactionCategory = quotation.booking_id ? 'BOOKING_PAYMENT' : 'CLIENT_PAYMENT';
 
     // CASH payments have no client-supplied bank account — route them to Petty Cash instead.
     const resolvedBankAccountId = await resolveBankAccountId(payment_method, bank_account_id);
@@ -932,7 +815,6 @@ const recordAllocatedPayment = async (req, res) => {
     const verified_by = req.user?.user_id || null;
     const receiptLineItems = [];
     let payment = null;
-    let mirroredBookingPayment = null;
     let registrationFeeSettled = false;
 
     // ── Registration fee + service charges bucket ──────────────────────────
@@ -952,37 +834,18 @@ const recordAllocatedPayment = async (req, res) => {
       ]);
       payment = paymentResult.rows[0];
 
+      // Service-charge money no longer touches booking_payment_tracking/amount_paid
+      // here either — it becomes wallet credit below (see serviceAlloc handling).
+      // Keep amount_quotated/last_payment_date in sync regardless.
       if (quotation.booking_id) {
-        const mirroredResult = await client.query(
-          `INSERT INTO booking_payment_tracking (
-             payment_tracking_id, booking_id, quote_id, client_id, amount_received,
-             payment_method, bank_account_id, cheque_number, cheque_date, reference_number,
-             slip_url, status, verified_by, notes, payment_date, verified_at
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'VERIFIED', $12, $13, $14, $15)
-           RETURNING booking_payment_id, booking_id, quote_id, amount_received, payment_method, reference_number, status, payment_date, verified_at`,
-          [
-            payment.payment_id, quotation.booking_id, quote_id, client_id, svcAmount,
-            payment_method, resolvedBankAccountId, cheque_number || null, cheque_date || null,
-            reference_number || null, paymentSlipUrl, verified_by, notes || null,
-            payment.payment_date, payment.verified_at
-          ]
-        );
-        mirroredBookingPayment = mirroredResult.rows[0];
-
         await client.query(
-          `UPDATE bookings
-           SET amount_paid = (SELECT COALESCE(SUM(amount_received), 0) FROM booking_payment_tracking WHERE booking_id = $1 AND status = 'VERIFIED'),
-               last_payment_date = (SELECT MAX(COALESCE(verified_at, payment_date)) FROM booking_payment_tracking WHERE booking_id = $1 AND status = 'VERIFIED'),
-               amount_quotated = $2
-           WHERE booking_id = $1`,
-          [quotation.booking_id, quotation.total_amount]
+          `UPDATE bookings SET amount_quotated = $2, last_payment_date = $3 WHERE booking_id = $1`,
+          [quotation.booking_id, quotation.total_amount, payment.payment_date]
         );
       } else {
         await client.query(`
           UPDATE bookings
-          SET amount_paid = (SELECT COALESCE(SUM(amount_received), 0) FROM payment_tracking WHERE quote_id = $1 AND status = 'VERIFIED'),
-              amount_quotated = $2,
-              last_payment_date = NOW()
+          SET amount_quotated = $2, last_payment_date = NOW()
           WHERE request_id = (SELECT request_id FROM quotations WHERE quote_id = $1)
         `, [quote_id, quotation.total_amount]);
       }
@@ -1003,18 +866,21 @@ const recordAllocatedPayment = async (req, res) => {
       }
 
       if (serviceAlloc > 0) {
-        await client.query(`
-          INSERT INTO transactions (
-            payment_tracking_id, booking_id, quote_id, client_id, category, amount,
-            payment_method, bank_account_id, cheque_number, cheque_date, reference_number,
-            receipt_url, verified_by, status, notes, transaction_type, created_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'CREDIT', NOW())
-        `, [
-          payment.payment_id, quotation.booking_id || null, quote_id, client_id, transactionCategory, serviceAlloc,
-          payment_method, resolvedBankAccountId, cheque_number || null, cheque_date || null,
-          reference_number || null, paymentSlipUrl, verified_by, 'COMPLETED', notes || null,
-        ]);
-        receiptLineItems.push({ label: 'Service Charges', description: 'Payment toward service charges', amount: serviceAlloc });
+        await creditClientWallet(client, {
+          client_id,
+          quote_id,
+          earmark_booking_id: quotation.booking_id || null,
+          amount: serviceAlloc,
+          payment_method,
+          bank_account_id: resolvedBankAccountId,
+          cheque_number: cheque_number || null,
+          cheque_date: cheque_date || null,
+          reference_number: reference_number || null,
+          receipt_url: paymentSlipUrl,
+          notes: notes || 'Service charges credited to wallet',
+          verified_by,
+        });
+        receiptLineItems.push({ label: 'Service Charges', description: 'Credited to client wallet — drawn down as service is delivered', amount: serviceAlloc });
       }
 
       const new_total = total_paid_so_far + svcAmount;
@@ -1062,22 +928,21 @@ const recordAllocatedPayment = async (req, res) => {
     let overflowResult = null;
     if (overflowAmount > 0.01) {
       if (overflow.type === 'WALLET') {
-        await client.query(
-          `UPDATE client_profiles SET wallet_balance = COALESCE(wallet_balance, 0) + $1 WHERE client_profile_id = $2`,
-          [overflowAmount, client_id]
-        );
-        await client.query(
-          `INSERT INTO transactions (
-             client_id, quote_id, category, transaction_type, amount, payment_method,
-             bank_account_id, cheque_number, cheque_date, reference_number, receipt_url,
-             notes, status, verified_by
-           ) VALUES ($1, $2, 'WALLET_TOPUP', 'CREDIT', $3, $4, $5, $6, $7, $8, $9, $10, 'COMPLETED', $11)`,
-          [
-            client_id, quote_id, overflowAmount, payment_method, resolvedBankAccountId,
-            cheque_number || null, cheque_date || null, reference_number || null,
-            paymentSlipUrl, notes || 'Overpayment credited to wallet', verified_by,
-          ]
-        );
+        // Deliberately left unearmarked: the admin chose to park this beyond what
+        // the quotation needed, so it stays free for any of the client's bookings.
+        await creditClientWallet(client, {
+          client_id,
+          quote_id,
+          amount: overflowAmount,
+          payment_method,
+          bank_account_id: resolvedBankAccountId,
+          cheque_number: cheque_number || null,
+          cheque_date: cheque_date || null,
+          reference_number: reference_number || null,
+          receipt_url: paymentSlipUrl,
+          notes: notes || 'Overpayment credited to wallet',
+          verified_by,
+        });
         receiptLineItems.push({ label: 'Wallet Top-up', description: 'Overpayment credited to client wallet', amount: overflowAmount });
         overflowResult = { type: 'WALLET', amount: overflowAmount };
       } else if (overflow.type === 'BOOKING_PAYOFF') {
@@ -1224,7 +1089,6 @@ const recordAllocatedPayment = async (req, res) => {
       message: 'Payment recorded and allocated successfully',
       data: {
         payment_id: payment?.payment_id || null,
-        booking_payment_id: mirroredBookingPayment?.booking_payment_id || null,
         amount_received: parseFloat(amount_received),
         allocations: { reg_fee: regFeeAlloc, service: serviceAlloc, products: productsAlloc },
         product_payments: productPaymentResults,

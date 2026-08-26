@@ -485,7 +485,12 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                           name="payer_gender"
                           value={formData.payer_gender}
                           onChange={handleInputChange}
-                          className="rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+                          disabled={['Mr.', 'Mrs.', 'Ms.'].includes(formData.honorific)}
+                          className={`rounded-md border border-slate-300 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 ${
+                            ['Mr.', 'Mrs.', 'Ms.'].includes(formData.honorific)
+                              ? 'bg-slate-50 text-slate-500 cursor-not-allowed'
+                              : 'bg-white text-slate-800'
+                          }`}
                         >
                           <option value="">Gender</option>
                           {PATIENT_GENDER_OPTIONS.map(o => <option key={o} value={o}>{o.charAt(0) + o.slice(1).toLowerCase()}</option>)}

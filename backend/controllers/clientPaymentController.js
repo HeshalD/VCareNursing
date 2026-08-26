@@ -2,6 +2,7 @@ const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
 const { createPaymentReceipt } = require('../services/receiptService');
 const { resolveBankAccountId } = require('../utils/pettyCash');
+const { creditClientWallet } = require('../services/walletService');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -206,60 +207,44 @@ const recordClientPayment = async (req, res) => {
 
       if (alloc.type === 'BOOKING') {
 
-        const bptResult = await pgClient.query(
-          `INSERT INTO booking_payment_tracking
-             (booking_id, client_id, amount_received, payment_method, bank_account_id,
-              cheque_number, cheque_date, reference_number, slip_url, notes,
-              status, verified_at, verified_by)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'VERIFIED',NOW(),$11)
-           RETURNING booking_payment_id`,
-          [
-            alloc.booking_id, client_id, amount, payment_method,
-            resolvedBankAccountId, cheque_number || null, cheque_date || null,
-            reference_number || null, finalSlipUrl, notes || null, actorUserId,
-          ]
-        );
-        const booking_payment_id = bptResult.rows[0].booking_payment_id;
-
-        await pgClient.query(
-          `UPDATE bookings
-           SET amount_paid = COALESCE(amount_paid, 0) + $1, last_payment_date = NOW()
-           WHERE booking_id = $2`,
-          [amount, alloc.booking_id]
-        );
-
-        const txResult = await pgClient.query(
-          `INSERT INTO transactions
-             (client_id, booking_id, category, transaction_type, amount, payment_method,
-              bank_account_id, cheque_number, cheque_date, reference_number, receipt_url,
-              notes, status, verified_by)
-           VALUES ($1,$2,'BOOKING_PAYMENT','CREDIT',$3,$4,$5,$6,$7,$8,$9,$10,'COMPLETED',$11)
-           RETURNING transaction_id`,
-          [
-            client_id, alloc.booking_id, amount, payment_method,
-            resolvedBankAccountId, cheque_number || null, cheque_date || null,
-            reference_number || null, finalSlipUrl, notes || null, actorUserId,
-          ]
-        );
-        const transaction_id = txResult.rows[0].transaction_id;
+        // Same treatment as a quotation payment (paymentTrackingController.recordPayment):
+        // the money is credited to the client's wallet, not this booking's ledger
+        // directly. It's only drawn down once a day/shift is actually invoiced (see
+        // walletService.drawWalletForBooking), so nothing is pre-funded here.
+        const transaction_id = await creditClientWallet(pgClient, {
+          client_id,
+          earmark_booking_id: alloc.booking_id,
+          amount,
+          payment_method,
+          bank_account_id: resolvedBankAccountId,
+          cheque_number: cheque_number || null,
+          cheque_date: cheque_date || null,
+          reference_number: reference_number || null,
+          receipt_url: finalSlipUrl,
+          notes: notes || `Payment toward booking ${alloc.booking_id} credited to wallet`,
+          verified_by: actorUserId,
+        });
 
         const allocResult = await pgClient.query(
           `INSERT INTO client_payment_allocations
              (record_id, allocation_type, amount, booking_id, transaction_id, booking_payment_id)
-           VALUES ($1,'BOOKING',$2,$3,$4,$5)
+           VALUES ($1,'BOOKING',$2,$3,$4,NULL)
            RETURNING *`,
-          [record_id, amount, alloc.booking_id, transaction_id, booking_payment_id]
+          [record_id, amount, alloc.booking_id, transaction_id]
         );
         resultAllocations.push(allocResult.rows[0]);
 
       } else if (alloc.type === 'NEW_BOOKING') {
         const nb = alloc.new_booking;
 
+        // Created with amount_paid = 0 — same treatment as BOOKING above, the
+        // payment is credited to the wallet and drawn down lazily as this new
+        // booking's days/shifts are actually invoiced.
         const bookingResult = await pgClient.query(
           `INSERT INTO bookings
              (client_id, patient_id, service_type, service_model, preferred_gender,
               start_date, daily_rate, amount_quotated, amount_paid, status)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'ACTIVE')
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,'ACTIVE')
            RETURNING booking_id`,
           [
             client_id, nb.patient_id, nb.service_type,
@@ -268,75 +253,52 @@ const recordClientPayment = async (req, res) => {
             nb.start_date,
             parseFloat(nb.daily_rate),
             nb.amount_quotated ? parseFloat(nb.amount_quotated) : amount,
-            amount,
           ]
         );
         const new_booking_id = bookingResult.rows[0].booking_id;
         // Remember the created booking id so the receipt line item can resolve its code/patient.
         alloc._booking_id = new_booking_id;
 
-        const bptResult = await pgClient.query(
-          `INSERT INTO booking_payment_tracking
-             (booking_id, client_id, amount_received, payment_method, bank_account_id,
-              cheque_number, cheque_date, reference_number, slip_url, notes,
-              status, verified_at, verified_by)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'VERIFIED',NOW(),$11)
-           RETURNING booking_payment_id`,
-          [
-            new_booking_id, client_id, amount, payment_method,
-            resolvedBankAccountId, cheque_number || null, cheque_date || null,
-            reference_number || null, finalSlipUrl, notes || null, actorUserId,
-          ]
-        );
-        const booking_payment_id = bptResult.rows[0].booking_payment_id;
-
-        const txResult = await pgClient.query(
-          `INSERT INTO transactions
-             (client_id, booking_id, category, transaction_type, amount, payment_method,
-              bank_account_id, cheque_number, cheque_date, reference_number, receipt_url,
-              notes, status, verified_by)
-           VALUES ($1,$2,'BOOKING_PAYMENT','CREDIT',$3,$4,$5,$6,$7,$8,$9,$10,'COMPLETED',$11)
-           RETURNING transaction_id`,
-          [
-            client_id, new_booking_id, amount, payment_method,
-            resolvedBankAccountId, cheque_number || null, cheque_date || null,
-            reference_number || null, finalSlipUrl, notes || null, actorUserId,
-          ]
-        );
-        const transaction_id = txResult.rows[0].transaction_id;
+        const transaction_id = await creditClientWallet(pgClient, {
+          client_id,
+          earmark_booking_id: new_booking_id,
+          amount,
+          payment_method,
+          bank_account_id: resolvedBankAccountId,
+          cheque_number: cheque_number || null,
+          cheque_date: cheque_date || null,
+          reference_number: reference_number || null,
+          receipt_url: finalSlipUrl,
+          notes: notes || `Payment toward new booking ${new_booking_id} credited to wallet`,
+          verified_by: actorUserId,
+        });
 
         const allocResult = await pgClient.query(
           `INSERT INTO client_payment_allocations
              (record_id, allocation_type, amount, booking_id, transaction_id, booking_payment_id)
-           VALUES ($1,'NEW_BOOKING',$2,$3,$4,$5)
+           VALUES ($1,'NEW_BOOKING',$2,$3,$4,NULL)
            RETURNING *`,
-          [record_id, amount, new_booking_id, transaction_id, booking_payment_id]
+          [record_id, amount, new_booking_id, transaction_id]
         );
         resultAllocations.push(allocResult.rows[0]);
 
       } else if (alloc.type === 'WALLET') {
 
-        await pgClient.query(
-          `UPDATE client_profiles
-           SET wallet_balance = COALESCE(wallet_balance, 0) + $1, updated_at = NOW()
-           WHERE client_profile_id = $2`,
-          [amount, client_id]
-        );
-
-        const txResult = await pgClient.query(
-          `INSERT INTO transactions
-             (client_id, category, transaction_type, amount, payment_method,
-              bank_account_id, cheque_number, cheque_date, reference_number, receipt_url,
-              notes, status, verified_by)
-           VALUES ($1,'WALLET_TOPUP','CREDIT',$2,$3,$4,$5,$6,$7,$8,$9,'COMPLETED',$10)
-           RETURNING transaction_id`,
-          [
-            client_id, amount, payment_method,
-            resolvedBankAccountId, cheque_number || null, cheque_date || null,
-            reference_number || null, finalSlipUrl, notes || null, actorUserId,
-          ]
-        );
-        const transaction_id = txResult.rows[0].transaction_id;
+        // Left unearmarked on purpose — the admin allocated this straight to the
+        // wallet rather than to a booking, so it stays available to all of them.
+        // Routed through the shared helper so every WALLET_TOPUP takes one path.
+        const transaction_id = await creditClientWallet(pgClient, {
+          client_id,
+          amount,
+          payment_method,
+          bank_account_id: resolvedBankAccountId,
+          cheque_number: cheque_number || null,
+          cheque_date: cheque_date || null,
+          reference_number: reference_number || null,
+          receipt_url: finalSlipUrl,
+          notes: notes || null,
+          verified_by: actorUserId,
+        });
 
         const allocResult = await pgClient.query(
           `INSERT INTO client_payment_allocations

@@ -64,14 +64,40 @@ async function creditSalespersonForBooking(executor, { booking_id, salesperson_i
   }
 
   const bookingRes = await executor.query(
-    `SELECT booking_id, amount_paid FROM bookings WHERE booking_id = $1`,
+    `SELECT booking_id FROM bookings WHERE booking_id = $1`,
     [booking_id]
   );
   if (bookingRes.rows.length === 0) {
     throw new SalespersonError('BOOKING_NOT_FOUND', 'Booking not found');
   }
 
-  const creditedAmount = parseFloat(bookingRes.rows[0].amount_paid || 0);
+  // Commission is based on actual money paid toward this booking's quotation
+  // (minus the registration fee, which is handled separately) — not
+  // bookings.amount_paid, which under the lazy wallet model only reflects
+  // money already drawn to cover delivered days/shifts, not what the client
+  // has actually paid. Computed on demand from payment_tracking so this stays
+  // a real, booking-specific figure regardless of wallet draw timing.
+  const quoteRes = await executor.query(
+    `SELECT quote_id FROM quotations WHERE booking_id = $1`,
+    [booking_id]
+  );
+  const quoteId = quoteRes.rows[0]?.quote_id || null;
+
+  let creditedAmount = 0;
+  if (quoteId) {
+    const paidRes = await executor.query(
+      `SELECT COALESCE(SUM(amount_received), 0) as total_paid
+       FROM payment_tracking WHERE quote_id = $1 AND status = 'VERIFIED'`,
+      [quoteId]
+    );
+    const regFeeRes = await executor.query(
+      `SELECT amount FROM quote_line_items WHERE quote_id = $1 AND is_registration_fee = true`,
+      [quoteId]
+    );
+    const totalPaid = parseFloat(paidRes.rows[0].total_paid) || 0;
+    const regFeeAmount = parseFloat(regFeeRes.rows[0]?.amount || 0);
+    creditedAmount = Math.max(0, totalPaid - regFeeAmount);
+  }
 
   const insertRes = await executor.query(
     `INSERT INTO booking_salesperson_assignments

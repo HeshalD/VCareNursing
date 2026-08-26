@@ -712,9 +712,12 @@ const getPayablesAging = async (req, res) => {
 // on collection.
 const PNL_SERVICE_CATEGORIES = ['SERVICE_INVOICE'];
 const PNL_PRODUCT_CATEGORIES = ['PRODUCT_SALE', 'RENTAL_PAYMENT'];
-const PNL_OTHER_INCOME_CATEGORIES = ['REGISTRATION_FEE', 'OTHER_INCOME'];
+// SETTLEMENT_FORFEITURE is prepaid service money a client forfeited by ending a
+// booking early and choosing to waive it (see services/bookingSettlement.js) —
+// genuine income, but not service revenue, since no service was delivered for it.
+const PNL_OTHER_INCOME_CATEGORIES = ['REGISTRATION_FEE', 'OTHER_INCOME', 'SETTLEMENT_FORFEITURE'];
 const PNL_SALARY_CATEGORIES = ['STAFF_SALARY_PAID'];
-const PNL_OTHER_EXPENSE_CATEGORIES = ['OTHER_EXPENSE', 'AGENCY_FEE', 'INTERNAL_STAFF_SALARY', 'VENDOR_PAYMENT'];
+const PNL_OTHER_EXPENSE_CATEGORIES = ['OTHER_EXPENSE', 'AGENCY_FEE', 'INTERNAL_STAFF_SALARY', 'VENDOR_PAYMENT', 'CLIENT_REFUND'];
 
 function monthKey(d) {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;

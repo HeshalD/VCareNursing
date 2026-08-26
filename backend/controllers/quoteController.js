@@ -1352,6 +1352,29 @@ async function ensureCombinedInvoice(serviceQuoteId) {
 exports.ensureCombinedInvoice = ensureCombinedInvoice;
 exports.ensureRegFeeInvoiceRecord = ensureRegFeeInvoiceRecord;
 
+// POST /api/quotes/:quote_id/generate-combined-invoice — manual "just build (or
+// return the cached) combined invoice" action, without the WhatsApp-send side
+// effect that sendCombinedInvoice bundles in. Returns null (still 200, with
+// generated: false) if the quote isn't fully paid yet — ensureCombinedInvoice's
+// own guard, unchanged.
+exports.generateCombinedInvoice = async (req, res) => {
+    const { quote_id } = req.params;
+    try {
+        const invoice = await ensureCombinedInvoice(quote_id);
+        if (!invoice) {
+            return res.status(200).json({
+                status: 'success',
+                generated: false,
+                message: 'Quotation is not fully paid yet — combined invoice not generated.',
+            });
+        }
+        res.status(200).json({ status: 'success', generated: true, data: invoice });
+    } catch (error) {
+        console.error('Error generating combined invoice:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to generate combined invoice.' });
+    }
+};
+
 // GET /api/quotes/invoices/list — every SERVICE quote that has had a
 // combined Invoice generated (see ensureCombinedInvoice), for the admin
 // "Combined Invoices" view. Recomputes each row's total the same way the

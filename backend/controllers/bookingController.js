@@ -10,7 +10,8 @@ const { createServiceInvoice, calculateShiftSlotCharge, checkAndFlagBookingOverd
 const {
     getBookingFinancialTotals,
     getBookingSettlementSnapshot,
-    applyBookingSettlement
+    applyBookingSettlement,
+    VALID_BOOKING_SETTLEMENT_ACTIONS
 } = require('../services/bookingSettlement');
 const {
     getBusinessDate,
@@ -26,6 +27,7 @@ const { applyPartialAttendanceTime } = require('./dailyAttendanceController')._i
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const { maybeAutoCompleteVisitingBooking } = require('../services/visitingBookings');
 const { closeActivePatternForPause } = require('../services/shiftPatternService');
+const { drawWalletForBooking } = require('../services/walletService');
 
 function extractActorRole(role) {
     const raw = Array.isArray(role) ? role[0] : role;
@@ -96,7 +98,20 @@ const finalizeBookingState = async (req, res, nextStatus, actorLabel, includeTer
                 status: 'error',
                 message: 'settlement_action is required when there is a remaining balance',
                 remaining_balance: settlementBalance,
-                allowed_actions: ['WALLET_DEPOSIT', 'BANK_REFUND', 'NO_REFUND']
+                allowed_actions: VALID_BOOKING_SETTLEMENT_ACTIONS
+            });
+        }
+
+        // Previously the allowed list was only echoed back in the error above and
+        // never enforced, so an unrecognised action fell through and silently
+        // behaved like a write-off. Now that each action moves money differently,
+        // reject anything off the list outright.
+        if (settlement_action && !VALID_BOOKING_SETTLEMENT_ACTIONS.includes(settlement_action)) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                status: 'error',
+                message: `Invalid settlement_action. Must be one of: ${VALID_BOOKING_SETTLEMENT_ACTIONS.join(', ')}`,
+                allowed_actions: VALID_BOOKING_SETTLEMENT_ACTIONS
             });
         }
 
@@ -104,7 +119,7 @@ const finalizeBookingState = async (req, res, nextStatus, actorLabel, includeTer
             await client.query('ROLLBACK');
             return res.status(400).json({
                 status: 'error',
-                message: 'settlement_note is required when choosing NO_REFUND',
+                message: 'settlement_note is required when waiving the balance as income',
                 remaining_balance: settlementBalance
             });
         }
@@ -757,46 +772,6 @@ const convertToBookingInternal = async (req, res) => {
             patientId = newPatient.rows[0].patient_id;
         }
 
-        // 5. Fetch verified payments for this quote and mirror them into the booking payment ledger
-        const paymentRes = await client.query(`
-            SELECT
-                payment_id,
-                amount_received,
-                payment_method,
-                bank_account_id,
-                cheque_number,
-                cheque_date,
-                reference_number,
-                slip_url,
-                verified_by,
-                notes,
-                payment_date,
-                verified_at
-            FROM payment_tracking
-            WHERE quote_id = $1 AND status = 'VERIFIED'
-            ORDER BY payment_date ASC
-        `, [bookingQuoteId]);
-
-        // Registration fee money already collected (via recordPayment's own
-        // regFeeSplit — see paymentTrackingController.js) must not be
-        // double-counted here: it belongs to the client's one-time reg fee,
-        // not this booking's service charges. Look it up per payment_tracking
-        // row so a payment that only partially crossed the reg-fee threshold
-        // is handled correctly too.
-        const regFeeByPaymentRes = await client.query(
-            `SELECT payment_tracking_id, amount FROM transactions
-             WHERE quote_id = $1 AND category = 'REGISTRATION_FEE' AND transaction_type = 'CREDIT' AND status = 'COMPLETED'`,
-            [bookingQuoteId]
-        );
-        const regFeeByPayment = new Map(
-            regFeeByPaymentRes.rows.map((r) => [r.payment_tracking_id, parseFloat(r.amount) || 0])
-        );
-
-        const amountPaid = paymentRes.rows.reduce((sum, payment) => {
-            const regFeePortion = regFeeByPayment.get(payment.payment_id) || 0;
-            return sum + Math.max(0, parseFloat(payment.amount_received || 0) - regFeePortion);
-        }, 0);
-
         // 6. Create Booking Record with PENDING status (No staff assignment yet)
         // NOTE: assigned_staff_id is NULL - staff assignment happens in separate step via staffAssignmentController
         // SHIFT_BASED bookings have no booking end date — billing is purely
@@ -854,153 +829,67 @@ const convertToBookingInternal = async (req, res) => {
             );
         }
 
-        for (const payment of paymentRes.rows) {
-            // Only mirror the portion of this payment that isn't already
-            // accounted for as the registration fee (see regFeeByPayment
-            // above) — otherwise that money gets double-counted as booking
-            // income on top of its existing REGISTRATION_FEE credit.
-            const regFeePortion = regFeeByPayment.get(payment.payment_id) || 0;
-            const mirrorAmount = Math.max(0, parseFloat(payment.amount_received || 0) - regFeePortion);
-            if (mirrorAmount <= 0) continue;
+        // Service-charge payments already made against this quote (before this
+        // booking existed) already reached the client's wallet at payment time —
+        // see paymentTrackingController.recordPayment, which credits the wallet
+        // unconditionally, not just once a booking is linked. Nothing to mirror
+        // into this booking's ledger here; it'll draw from the wallet lazily as
+        // its days/shifts are actually invoiced (see walletService.drawWalletForBooking).
 
-            try {
-                await client.query(
-                `INSERT INTO booking_payment_tracking (
-                   payment_tracking_id,
-                   booking_id,
-                   quote_id,
-                   client_id,
-                   amount_received,
-                   payment_method,
-                   bank_account_id,
-                   cheque_number,
-                   cheque_date,
-                   reference_number,
-                   slip_url,
-                   status,
-                   verified_by,
-                   notes,
-                   payment_date,
-                   verified_at
-                                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'VERIFIED', $12, $13, $14, $15)
-                                 ON CONFLICT (payment_tracking_id) DO UPDATE SET
-                                     booking_id = EXCLUDED.booking_id,
-                                     quote_id = EXCLUDED.quote_id,
-                                     client_id = EXCLUDED.client_id,
-                                     amount_received = EXCLUDED.amount_received,
-                                     payment_method = EXCLUDED.payment_method,
-                                     bank_account_id = EXCLUDED.bank_account_id,
-                                     cheque_number = EXCLUDED.cheque_number,
-                                     cheque_date = EXCLUDED.cheque_date,
-                                     reference_number = EXCLUDED.reference_number,
-                                     slip_url = EXCLUDED.slip_url,
-                                     status = EXCLUDED.status,
-                                     verified_by = EXCLUDED.verified_by,
-                                     notes = EXCLUDED.notes,
-                                     payment_date = EXCLUDED.payment_date,
-                                     verified_at = EXCLUDED.verified_at`,
-                [
-                    payment.payment_id,
-                    bookingId,
-                    bookingQuoteId,
-                    clientProfileId,
-                    mirrorAmount,
-                    payment.payment_method,
-                    payment.bank_account_id || null,
-                    payment.cheque_number || null,
-                    payment.cheque_date || null,
-                    payment.reference_number || null,
-                    payment.slip_url || null,
-                    payment.verified_by || null,
-                    payment.notes || null,
-                    payment.payment_date || new Date(),
-                    payment.verified_at || payment.payment_date || new Date()
-                ]
-            );
+        // The registration-fee CREDIT recorded when the client paid (before this
+        // booking existed) was inserted with booking_id = NULL, since there was no
+        // booking to attach it to yet. The DEBIT charged just above always gets the
+        // real booking_id — without this backfill, this booking's own ledger view
+        // (getBookingFinancialTotals) would show that DEBIT with no offsetting
+        // CREDIT and report the full registration fee as "overdue".
+        await client.query(
+            `UPDATE transactions
+             SET booking_id = $1
+             WHERE quote_id = $2 AND category = 'REGISTRATION_FEE' AND transaction_type = 'CREDIT' AND booking_id IS NULL`,
+            [bookingId, bookingQuoteId]
+        );
 
+        // Same story for the wallet earmark: the service-charge money paid against
+        // this quote went into the wallet before there was a booking to reserve it
+        // for, so creditClientWallet could not earmark it. Claim those WALLET_TOPUP
+        // rows for this booking now, so an early termination knows how much of the
+        // wallet belongs to it.
+        //
+        // Capped at what this quote actually charges for service (total minus the
+        // registration fee, which is settled on its own). Anything the client paid
+        // beyond that is genuine overpayment and must stay unearmarked — free for
+        // any of their bookings — which also matches the deliberate choice made by
+        // recordAllocatedPayment's overflow→WALLET branch.
+        const quoteServiceCap = Math.max(0, parseFloat(quoteData.total_amount || 0) - registrationFeeAmount);
+        const walletTopupRes = await client.query(
+            `SELECT transaction_id, amount FROM transactions
+             WHERE quote_id = $1 AND category = 'WALLET_TOPUP' AND transaction_type = 'CREDIT'
+               AND status = 'COMPLETED' AND earmarked_booking_id IS NULL
+             ORDER BY created_at ASC`,
+            [bookingQuoteId]
+        );
+
+        let earmarkTotal = 0;
+        for (const row of walletTopupRes.rows) {
+            const headroom = quoteServiceCap - earmarkTotal;
+            if (headroom <= 0.005) break;
+            const claimable = Math.min(parseFloat(row.amount) || 0, headroom);
+            if (claimable <= 0.005) continue;
+            earmarkTotal += claimable;
+            // Only stamp rows fully inside the cap, so the audit trail never claims
+            // a row that is partly overpayment.
+            if (claimable >= (parseFloat(row.amount) || 0) - 0.005) {
                 await client.query(
-                `INSERT INTO transactions (
-                   payment_tracking_id,
-                   client_id,
-                   booking_id,
-                   quote_id,
-                   category,
-                   amount,
-                   payment_method,
-                   bank_account_id,
-                   cheque_number,
-                   cheque_date,
-                   reference_number,
-                   receipt_url,
-                   verified_by,
-                   status,
-                   notes,
-                   transaction_type,
-                   created_at
-                                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'COMPLETED', $14, 'CREDIT', NOW())
-                                 ON CONFLICT (payment_tracking_id) WHERE category != 'REGISTRATION_FEE' DO UPDATE SET
-                                     client_id = EXCLUDED.client_id,
-                                     booking_id = EXCLUDED.booking_id,
-                                     quote_id = EXCLUDED.quote_id,
-                                     category = EXCLUDED.category,
-                                     amount = EXCLUDED.amount,
-                                     payment_method = EXCLUDED.payment_method,
-                                     bank_account_id = EXCLUDED.bank_account_id,
-                                     cheque_number = EXCLUDED.cheque_number,
-                                     cheque_date = EXCLUDED.cheque_date,
-                                     receipt_url = EXCLUDED.receipt_url,
-                                     reference_number = EXCLUDED.reference_number,
-                                     verified_by = EXCLUDED.verified_by,
-                                     status = EXCLUDED.status,
-                                     notes = EXCLUDED.notes,
-                                     transaction_type = EXCLUDED.transaction_type`,
-                [
-                    payment.payment_id,
-                    clientProfileId,
-                    bookingId,
-                    bookingQuoteId,
-                    'BOOKING_PAYMENT',
-                    mirrorAmount,
-                    payment.payment_method,
-                    payment.bank_account_id || null,
-                    payment.cheque_number || null,
-                    payment.cheque_date || null,
-                    payment.reference_number || null,
-                    payment.slip_url || null,
-                    payment.verified_by || null,
-                    payment.notes || null
-                ]
-            );
-            } catch (paymentMirrorError) {
-                console.error('Payment mirror debug:', {
-                    request_id,
-                    bookingQuoteId,
-                    payment_id: payment.payment_id,
-                    payment_method: payment.payment_method,
-                    payment_method_length: payment.payment_method ? String(payment.payment_method).length : 0,
-                    cheque_number_length: payment.cheque_number ? String(payment.cheque_number).length : 0,
-                    reference_number_length: payment.reference_number ? String(payment.reference_number).length : 0,
-                    slip_url_length: payment.slip_url ? String(payment.slip_url).length : 0,
-                    verified_by_length: payment.verified_by ? String(payment.verified_by).length : 0,
-                    notes_length: payment.notes ? String(payment.notes).length : 0,
-                    error_code: paymentMirrorError.code,
-                    error_message: paymentMirrorError.message
-                });
-                throw paymentMirrorError;
+                    `UPDATE transactions SET earmarked_booking_id = $1 WHERE transaction_id = $2`,
+                    [bookingId, row.transaction_id]
+                );
             }
         }
 
-        if (amountPaid > 0) {
+        if (earmarkTotal > 0) {
             await client.query(
-                `UPDATE bookings
-                 SET amount_paid = $1,
-                     last_payment_date = (
-                        SELECT MAX(COALESCE(verified_at, payment_date))
-                        FROM booking_payment_tracking
-                        WHERE booking_id = $2 AND status = 'VERIFIED'
-                     )
-                 WHERE booking_id = $2`,
-                [amountPaid, bookingId]
+                `UPDATE bookings SET wallet_earmarked = COALESCE(wallet_earmarked, 0) + $1 WHERE booking_id = $2`,
+                [earmarkTotal, bookingId]
             );
         }
 
@@ -1219,6 +1108,7 @@ exports.getAdminBookingDetail = async (req, res) => {
             b.ot_rate,
             b.amount_quotated,
             b.amount_paid,
+            b.wallet_earmarked,
             b.invoicing_mode,
             b.is_hospitalized,
             b.hospital_name,
@@ -1378,8 +1268,30 @@ exports.getAdminBookingDetail = async (req, res) => {
         const verifiedPaid = parseFloat(financialTotalsResult.total_paid || 0);
         const totalInvoiced = parseFloat(financialTotalsResult.total_invoiced || 0);
         const totalAmount = parseFloat(booking.total_amount || 0);
+        const registrationFeeAmount = parseFloat(booking.registration_fee || 0);
+        const walletBalance = parseFloat(booking.wallet_balance || 0);
+
+        // Under the lazy wallet model service-charge money sits in the client's
+        // shared wallet until a day/shift is actually invoiced. What THIS booking
+        // can actually spend is its own reservation plus whatever in the wallet
+        // isn't reserved by any booking — exactly the pool
+        // walletService.drawWalletForBooking will draw from, so "shifts/days paid
+        // for" lines up with what will really be funded. Another booking's earmark
+        // is deliberately excluded.
+        const earmarkedForThis = parseFloat(booking.wallet_earmarked || 0);
+        const earmarkedTotalRes = await db.query(
+            `SELECT COALESCE(SUM(wallet_earmarked), 0) AS earmarked FROM bookings WHERE client_id = $1`,
+            [booking.client_id]
+        );
+        const unearmarked = Math.max(0, walletBalance - parseFloat(earmarkedTotalRes.rows[0]?.earmarked || 0));
+        const walletAvailable = Math.min(walletBalance, earmarkedForThis + unearmarked);
+
         const remainingBalance = verifiedPaid - totalInvoiced;
         const remainingToInvoice = Math.max(remainingBalance, 0);
+        // Overdue reflects real, already-incurred debt from when a charge was
+        // invoiced and the wallet fell short at that moment — it doesn't
+        // auto-clear just because the client has since topped up their wallet;
+        // an admin applies that manually via the wallet-payoff action.
         const overdueAmount = verifiedPaid > totalInvoiced ? 0 : totalInvoiced - verifiedPaid;
 
         let daysRemaining = null;
@@ -1387,7 +1299,7 @@ exports.getAdminBookingDetail = async (req, res) => {
         if (booking.quote_daily_rate) {
             const rate = parseFloat(booking.quote_daily_rate);
             if (rate > 0) {
-                daysRemaining = remainingBalance / rate;
+                daysRemaining = walletAvailable / rate;
                 overdueDays = overdueAmount > 0 ? Math.ceil(overdueAmount / rate) : 0;
             }
         }
@@ -1453,8 +1365,19 @@ exports.getAdminBookingDetail = async (req, res) => {
                 } : null,
                 payment_summary: {
                     payment_count: paymentHistoryResult.rows.length,
-                    total_paid: verifiedPaid,
-                    remaining_amount: Math.max(totalAmount - verifiedPaid, 0)
+                    total_paid: walletAvailable,
+                    remaining_amount: Math.max((totalAmount - registrationFeeAmount) - walletAvailable, 0),
+                    // Same figure as total_paid — kept as a separate, explicitly-named
+                    // field for BookingDetailPageV2's shiftBank/days-covered math to
+                    // read from, so that intent stays clear even if total_paid's
+                    // definition changes again later.
+                    funded_for_service: walletAvailable,
+                    // Reserved specifically for this booking, and therefore the amount
+                    // the admin is asked to settle if it ends early.
+                    wallet_earmarked: earmarkedForThis,
+                    // The rest of the client's wallet that no booking has claimed —
+                    // this booking may draw on it, but so may any of their others.
+                    wallet_unearmarked: unearmarked
                 },
                 invoice_summary: {
                     invoice_count: parseInt(invoiceSummaryResult.rows[0]?.invoice_count || 0, 10),
@@ -1544,6 +1467,7 @@ exports.getBookingInvoiceBreakdown = async (req, res) => {
                 b.amount_paid,
                 b.amount_quotated,
                 c.full_name as client_name,
+                c.wallet_balance,
                 q.quote_id,
                 q.total_amount,
                 q.daily_rate as quote_daily_rate,
@@ -1591,9 +1515,12 @@ exports.getBookingInvoiceBreakdown = async (req, res) => {
 
         const totalPaid = parseFloat(financialTotalsResult.total_paid || 0);
         const totalInvoiced = parseFloat(financialTotalsResult.total_invoiced || 0);
+        // Same wallet-pool "paid" figure as getAdminBookingDetail — see its
+        // comment for why this is the client's wallet balance directly.
+        const walletAvailable = parseFloat(booking.wallet_balance || 0);
         const remainingBalance = totalPaid - totalInvoiced;
         const overdueAmount = totalPaid > totalInvoiced ? 0 : totalInvoiced - totalPaid;
-        const remainingDays = rate > 0 ? remainingBalance / rate : null;
+        const remainingDays = rate > 0 ? walletAvailable / rate : null;
         const overdueDays = rate > 0 ? Math.max(Math.ceil(overdueAmount / rate), 0) : null;
 
         res.status(200).json({
@@ -1609,7 +1536,8 @@ exports.getBookingInvoiceBreakdown = async (req, res) => {
                 quote_total_amount: parseFloat(booking.total_amount || 0),
                 payment_summary: {
                     payment_count: recentPaymentResult.rows.length,
-                    total_paid: totalPaid,
+                    total_paid: walletAvailable,
+                    funded_for_service: walletAvailable,
                     last_payment_at: recentPaymentResult.rows[0]?.payment_date || null
                 },
                 invoice_summary: {
@@ -1843,6 +1771,16 @@ async function applyInvoiceDecision(client, { booking_id, service_date, approve,
             client_id: booking.client_id,
             amount: finalAmount,
             notes: `Manually confirmed ${shift_slot_id ? 'shift' : 'daily'} charge for ${service_date}`
+        });
+
+        // Draw as much of this charge as the client's wallet currently holds —
+        // whatever's short simply leaves the booking OVERDUE below, rather than
+        // being pre-funded ahead of time.
+        await drawWalletForBooking(client, {
+            booking_id,
+            client_id: booking.client_id,
+            maxAmount: finalAmount,
+            verified_by: deciderUserId || null,
         });
 
         await checkAndFlagBookingOverdue(client, booking_id);
@@ -2921,6 +2859,24 @@ exports.approveTerminationRequest = async (req, res) => {
     const { termination_id } = req.params;
     const { final_end_date, settlement_action = 'WALLET_DEPOSIT', settlement_note } = req.body;
 
+    // This endpoint previously accepted any settlement_action unchecked. Each one
+    // now moves money differently (see VALID_BOOKING_SETTLEMENT_ACTIONS), so it is
+    // validated here the same way finalizeBookingState does.
+    if (!VALID_BOOKING_SETTLEMENT_ACTIONS.includes(settlement_action)) {
+        return res.status(400).json({
+            status: 'error',
+            message: `Invalid settlement_action. Must be one of: ${VALID_BOOKING_SETTLEMENT_ACTIONS.join(', ')}`,
+            allowed_actions: VALID_BOOKING_SETTLEMENT_ACTIONS,
+        });
+    }
+
+    if (settlement_action === 'NO_REFUND' && !settlement_note) {
+        return res.status(400).json({
+            status: 'error',
+            message: 'settlement_note is required when waiving the balance as income',
+        });
+    }
+
     const client = await db.pool.connect();
 
     try {
@@ -3138,9 +3094,16 @@ exports.rejectTerminationRequest = async (req, res) => {
 
 exports.forceStopBooking = async (req, res) => {
     const { booking_id } = req.params;
-    // Admin can specify an exact date/time, or default to right now. 
+    // Admin can specify an exact date/time, or default to right now.
     // They can also type in the reason the client gave over the phone.
-    const { target_end_date, reason } = req.body || {};
+    const { target_end_date, reason, settlement_action, settlement_note } = req.body || {};
+
+    if (settlement_action && !VALID_BOOKING_SETTLEMENT_ACTIONS.includes(settlement_action)) {
+        return res.status(400).json({
+            status: 'error',
+            message: `Invalid settlement_action. Must be one of: ${VALID_BOOKING_SETTLEMENT_ACTIONS.join(', ')}`,
+        });
+    }
 
     const client = await db.pool.connect();
 
@@ -3223,7 +3186,10 @@ exports.forceStopBooking = async (req, res) => {
                 booking_id,
                 action_type: 'TERMINATION',
                 effective_date: officialEndDate,
-                payload: { settlement_action: 'WALLET_DEPOSIT' },
+                payload: {
+                    settlement_action: settlement_action || 'WALLET_DEPOSIT',
+                    settlement_note: settlement_note || null,
+                },
                 reason: reason || null,
                 termination_id,
                 created_by: req.user?.user_id || null,
@@ -3279,71 +3245,27 @@ exports.forceStopBooking = async (req, res) => {
         );
 
         // =========================================================
-        // 5. FINANCIAL SETTLEMENT ENGINE GOES HERE
-        /// =========================================================
-        // 5. FINANCIAL SETTLEMENT ENGINE
+        // 5. FINANCIAL SETTLEMENT
+        // Routed through the shared settlement path so a force-stop honours the
+        // admin's chosen action and always writes a ledger row — the same as every
+        // other completion/termination. This replaces a legacy quote-based
+        // `qty_days - daysWorked` calculation that credited wallet_balance directly
+        // with no transaction record, always behaved as a wallet deposit whatever
+        // the admin picked, and produced nothing at all for SHIFT_BASED bookings
+        // (which have no qty_days and a zero daily_rate).
         // =========================================================
 
-        // A. Fetch the Financial Contract (The Quote)
-        const financeRes = await client.query(
-            `SELECT b.start_date, b.client_id, q.daily_rate, q.qty_days, q.registration_fee 
-     FROM bookings b
-     JOIN service_requests sr ON b.request_id = sr.request_id
-     JOIN quotations q ON sr.active_quote_id = q.quote_id
-     WHERE b.booking_id = $1`,
-            [booking_id]
-        );
-
-        if (financeRes.rows.length > 0) {
-            const financeData = financeRes.rows[0];
-            const { start_date, client_id, daily_rate, qty_days } = financeData;
-
-            // B. Calculate Days Worked
-            // We calculate the difference in milliseconds, convert to days, and round up.
-            // (e.g., if they worked 2.1 days, it counts as 3 billable days for the nurse's sake)
-            const diffTime = officialEndDate.getTime() - new Date(start_date).getTime();
-            let daysWorked = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-            // Edge Case: If they cancel before the nurse even arrives (same day or future)
-            if (daysWorked < 0) daysWorked = 0;
-            // Edge Case: Minimum 1 day charge if they cancel a few hours after the nurse arrives
-            if (daysWorked === 0 && diffTime > 0) daysWorked = 1;
-
-            // C. Calculate Unused Days
-            const unusedDays = qty_days - daysWorked;
-
-            // D. Process the Wallet Refund
-            if (unusedDays > 0) {
-                // They paid for more days than they used!
-                const refundAmount = unusedDays * daily_rate;
-
-                // Add the exact refund amount to the Client's Wallet
-                await client.query(
-                    `UPDATE client_profiles 
-             SET wallet_balance = wallet_balance + $1 
-             WHERE client_profile_id = $2`,
-                    [refundAmount, client_id]
-                );
-
-                console.log(`SETTLEMENT: Credited Rs. ${refundAmount} for ${unusedDays} unused days to Client ${client_id}`);
-
-                // Optional: You can insert a record into a `wallet_transactions` table here 
-                // to keep a history of "Why" they got this money.
-
-            } else if (unusedDays < 0) {
-                // SCENARIO: They overstayed their prepaid quote! 
-                // e.g., Paid for 14 days, stopped on day 16.
-                const amountOwed = Math.abs(unusedDays) * daily_rate;
-                console.log(`SETTLEMENT ALERT: Client ${client_id} overstayed by ${Math.abs(unusedDays)} days and owes Rs. ${amountOwed}`);
-
-                // Here, instead of a refund, you would trigger an alert for your accountant 
-                // to send a final Post-Paid Invoice to the client for the extra days.
-            } else {
-                console.log(`SETTLEMENT: Perfect match. 0 unused days. No wallet changes.`);
-            }
+        const settlementSnapshot = await getBookingSettlementSnapshot(client, booking_id, officialEndDate);
+        if (settlementSnapshot) {
+            await applyBookingSettlement(
+                client,
+                settlementSnapshot,
+                settlement_action || 'WALLET_DEPOSIT',
+                settlement_note || null,
+                reason || null,
+                'Admin force stop'
+            );
         }
-
-        // =========================================================
 
         await client.query('COMMIT');
 

@@ -262,6 +262,32 @@ const reverseServiceInvoice = async (client, { booking_id, client_id, amount, no
     [client_id, booking_id, amount, settlementNote]
   );
 
+  // WALLET_REFUND_EXTEND keeps the money credited to this booking (it funds the
+  // extended day instead of leaving), so amount_paid stays untouched. WALLET_REFUND
+  // and BANK_REFUND both move real money out of this booking's budget — the former
+  // into the client's real wallet, the latter out of the system entirely — so both
+  // must release it from amount_paid to avoid double-counting it as still available.
+  if (settlementAction === 'WALLET_REFUND' || settlementAction === 'BANK_REFUND') {
+    await client.query(
+      `UPDATE bookings SET amount_paid = amount_paid - $1 WHERE booking_id = $2`,
+      [amount, booking_id]
+    );
+  }
+
+  if (settlementAction === 'WALLET_REFUND') {
+    await client.query(
+      `UPDATE client_profiles SET wallet_balance = COALESCE(wallet_balance, 0) + $1 WHERE client_profile_id = $2`,
+      [amount, client_id]
+    );
+    // The day was paid for out of this booking's earmark, so returning the money
+    // to the wallet also restores its reservation — otherwise it would silently
+    // become unearmarked and be spendable by the client's other bookings.
+    await client.query(
+      `UPDATE bookings SET wallet_earmarked = COALESCE(wallet_earmarked, 0) + $1 WHERE booking_id = $2`,
+      [amount, booking_id]
+    );
+  }
+
   return result.rows[0].transaction_id;
 };
 

@@ -3105,6 +3105,55 @@ async function runMigration() {
   await db.query(`ALTER TABLE staff_applications ADD COLUMN IF NOT EXISTS languages TEXT[] DEFAULT '{}'`);
 
   // =========================================================
+  // PER-BOOKING WALLET EARMARKING
+  // Service-charge money lives in the shared client_profiles.wallet_balance and
+  // is only drawn onto a booking when a day/shift is actually invoiced (see
+  // services/walletService.js). wallet_earmarked records how much of that shared
+  // balance was funded for THIS booking and hasn't been consumed yet — it is the
+  // amount the admin is asked to settle when a booking ends early.
+  //
+  // Invariant: for any client, SUM(wallet_earmarked) over their non-closed
+  // bookings <= client_profiles.wallet_balance. The remainder is "unearmarked"
+  // (overpayments, and deliberate top-ups the admin allocated to the wallet).
+  // =========================================================
+
+  await db.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS wallet_earmarked NUMERIC(12,2) NOT NULL DEFAULT 0`);
+
+  // Audit trail linking a WALLET_TOPUP credit back to the booking it was funding.
+  // Deliberately NOT transactions.booking_id: that column is summed as "total paid"
+  // by getBookingFinancialTotals (services/bookingSettlement.js) and by a dozen
+  // inline copies of the same SQL — including billingService.checkAndFlagBookingOverdue,
+  // which excludes no categories at all — so stamping booking_id on a WALLET_TOPUP
+  // row would double-count the money in every one of them. Nothing existing reads
+  // this new column, so it carries the attribution with no blast radius.
+  await db.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS earmarked_booking_id UUID REFERENCES bookings(booking_id)`);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_transactions_earmarked_booking_id
+      ON transactions(earmarked_booking_id) WHERE earmarked_booking_id IS NOT NULL
+  `);
+
+  // Settlement of an early-ended booking's unused earmark. CLIENT_REFUND is real
+  // cash leaving for a bank refund; SETTLEMENT_FORFEITURE is money the client
+  // forfeited, recognised as company income. Both must also be classified in
+  // utils/transactionFlow.js (IN/OUT) and financesController's P&L groupings,
+  // or they stay NEUTRAL and never appear in any report.
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'CLIENT_REFUND';
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'SETTLEMENT_FORFEITURE';
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  // =========================================================
 
   await seedQuotePresetItems();
 

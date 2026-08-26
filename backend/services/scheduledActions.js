@@ -137,32 +137,22 @@ const executeTermination = async (client, params) => {
         [toDateStr(endDate), booking_id]
     );
 
-    // Financial settlement — quote-based unused-days refund (same rule as approveTerminationRequest).
-    const financeRes = await client.query(
-        `SELECT b.start_date, b.client_id, q.daily_rate, q.qty_days
-         FROM bookings b
-         JOIN service_requests sr ON b.request_id = sr.request_id
-         JOIN quotations q ON sr.active_quote_id = q.quote_id
-         WHERE b.booking_id = $1`,
-        [booking_id]
-    );
-
-    if (financeRes.rows.length > 0) {
-        const { start_date, client_id, daily_rate, qty_days } = financeRes.rows[0];
-        const diffTime = endDate.getTime() - new Date(start_date).getTime();
-        let daysWorked = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        if (daysWorked < 0) daysWorked = 0;
-        if (daysWorked === 0 && diffTime > 0) daysWorked = 1;
-
-        const unusedDays = qty_days - daysWorked;
-        if (unusedDays > 0 && settlement_action === 'WALLET_DEPOSIT') {
-            const refundAmount = unusedDays * daily_rate;
-            await client.query(
-                `UPDATE client_profiles SET wallet_balance = wallet_balance + $1 WHERE client_profile_id = $2`,
-                [refundAmount, client_id]
-            );
-        }
-    }
+    // Financial settlement — the same path every other completion/termination uses,
+    // so the admin's choice is honoured and a ledger row is always written. This
+    // replaces a legacy quote-based `qty_days - daysWorked` refund that credited
+    // wallet_balance directly with no transaction row, ignored BANK_REFUND and
+    // NO_REFUND entirely, and could not work for SHIFT_BASED bookings (no qty_days).
+    const settlementSnapshot = await getBookingSettlementSnapshot(client, booking_id, endDate);
+    const settlementResult = settlementSnapshot
+        ? await applyBookingSettlement(
+            client,
+            settlementSnapshot,
+            settlement_action || 'WALLET_DEPOSIT',
+            settlement_note,
+            reason,
+            actorLabel
+        )
+        : null;
 
     const notify = async () => {
         try {
@@ -216,7 +206,7 @@ const executeTermination = async (client, params) => {
         }
     };
 
-    return { result: { booking_id, status: 'TERMINATED', end_date: endDate }, notify };
+    return { result: { booking_id, status: 'TERMINATED', end_date: endDate, ...(settlementResult || {}) }, notify };
 };
 
 // ─── COMPLETION ────────────────────────────────────────────────────────────────
@@ -484,20 +474,30 @@ const executeAssignmentStart = async (client, payload) => {
         });
     }
 
+    // A scheduled assignment reaching its start date is what gives the booking its
+    // start_date, if it doesn't have one yet — COALESCE so an already-running
+    // booking's original epoch (which CareTimeline's day-numbering is anchored to)
+    // is never overwritten by a later assignment activating.
+    const assignmentStartDate = toDateStr(upd.rows[0].service_start_date);
+
     if (shift_slot_id) {
         // SHIFT_BASED: one slot starting does not make the booking "ACTIVE" on its
         // own (other slots may still be unstaffed) and assigned_staff_id is
         // meaningless when multiple staff cover the same booking concurrently.
         await client.query(
-            `UPDATE bookings SET status = CASE WHEN status = 'PENDING' THEN 'ACTIVE' ELSE status END
+            `UPDATE bookings
+             SET status = CASE WHEN status = 'PENDING' THEN 'ACTIVE' ELSE status END,
+                 start_date = COALESCE(start_date, $2::date)
              WHERE booking_id = $1`,
-            [booking_id]
+            [booking_id, assignmentStartDate]
         );
     } else {
         await client.query(
-            `UPDATE bookings SET status = 'ACTIVE', assigned_staff_id = $2, ot_rate = COALESCE($3, ot_rate)
+            `UPDATE bookings
+             SET status = 'ACTIVE', assigned_staff_id = $2, ot_rate = COALESCE($3, ot_rate),
+                 start_date = COALESCE(start_date, $4::date)
              WHERE booking_id = $1`,
-            [booking_id, staff_profile_id, ot_rate ?? null]
+            [booking_id, staff_profile_id, ot_rate ?? null, assignmentStartDate]
         );
     }
 

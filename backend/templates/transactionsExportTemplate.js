@@ -11,6 +11,7 @@ const CATEGORY_LABELS = {
   SERVICE_INVOICE: 'Service Invoice', REGISTRATION_FEE: 'Registration Fee', WALLET_DEBIT: 'Wallet Debit',
   WALLET_REFUND: 'Wallet Refund', BOOKING_SETTLEMENT: 'Booking Settlement', PRODUCT_SALE: 'Product Sale',
   RENTAL_PAYMENT: 'Rental Payment', DEPOSIT_REFUND: 'Deposit Refund',
+  CLIENT_REFUND: 'Client Refund', SETTLEMENT_FORFEITURE: 'Waived Prepayment',
 };
 
 const relatedTo = (tx) => {

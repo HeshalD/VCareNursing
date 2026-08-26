@@ -19,6 +19,9 @@ const getBookingFinancialTotals = async (client, booking_id) => {
     };
 };
 
+// targetDateInput is accepted for call-site compatibility but no longer used: the
+// settlement balance is now read straight off the booking's earmark rather than
+// projected forward from a target date (see the note below).
 const getBookingSettlementSnapshot = async (client, booking_id, targetDateInput = null) => {
     const bookingResult = await client.query(
         `SELECT
@@ -32,6 +35,7 @@ const getBookingSettlementSnapshot = async (client, booking_id, targetDateInput 
             b.actual_end_time,
             b.daily_rate,
             b.ot_rate,
+            b.wallet_earmarked,
             c.full_name as client_name,
             c.wallet_balance,
             sr.active_quote_id as quote_id,
@@ -54,23 +58,18 @@ const getBookingSettlementSnapshot = async (client, booking_id, targetDateInput 
 
     const { total_paid: totalPaid, total_invoiced: totalInvoiced } = await getBookingFinancialTotals(client, booking_id);
 
-    // The ledger-based remaining balance only reflects invoicing already recorded. When
-    // completing/terminating on a given date, days between the last invoiced day and that
-    // date still need to be billed — a prepayment that exactly covers the full period through
-    // the chosen end date isn't a refundable surplus, it's earmarked for those pending
-    // invoices. Project the true settlement balance using the booking's daily rate and the
-    // number of days from start through the target date, so it reflects the full cost of
-    // service through that day rather than however far invoicing has caught up so far.
-    let settlementBalance = totalPaid - totalInvoiced;
-    const dailyRate = parseFloat(booking.quote_daily_rate || booking.daily_rate || 0);
-    if (targetDateInput && dailyRate > 0 && booking.start_date) {
-        const start = new Date(booking.start_date); start.setHours(0, 0, 0, 0);
-        const target = new Date(targetDateInput); target.setHours(0, 0, 0, 0);
-        if (!isNaN(target.getTime())) {
-            const targetServedDays = Math.max(0, Math.floor((target - start) / 86400000) + 1);
-            settlementBalance = totalPaid - (targetServedDays * dailyRate);
-        }
-    }
+    // What's genuinely left over for this booking is what the client prepaid for it
+    // and never consumed — bookings.wallet_earmarked. Money is drawn out of the
+    // earmark only as each day/shift is actually invoiced (services/walletService.js),
+    // so whatever remains reserved is precisely the undelivered portion.
+    //
+    // This replaces an older `totalPaid - servedDays * dailyRate` projection, which
+    // couldn't work for SHIFT_BASED bookings (their daily_rate is 0 — billing is
+    // per-shift) and which counted the registration fee as refundable service money.
+    // No forward projection is needed now: a future-dated termination settles when
+    // its scheduled action fires, by which point the days in between have drawn
+    // themselves out of the earmark.
+    const settlementBalance = parseFloat(booking.wallet_earmarked || 0);
 
     return {
         ...booking,
@@ -82,40 +81,71 @@ const getBookingSettlementSnapshot = async (client, booking_id, targetDateInput 
     };
 };
 
+// The three choices an admin is given for money a client prepaid for days/shifts
+// that were never delivered. All three clear the booking's earmark; they differ in
+// where the money goes:
+//
+//   WALLET_DEPOSIT — "Add to client wallet". The money is ALREADY in the wallet
+//                    under the lazy model, so nothing moves; releasing the earmark
+//                    simply frees it for the client's other bookings.
+//   BANK_REFUND    — "Refund to client". Real cash leaves: wallet_balance is
+//                    debited and a CLIENT_REFUND row records the outflow.
+//   NO_REFUND      — "Waive as additional income". The client forfeits it:
+//                    wallet_balance is debited and a SETTLEMENT_FORFEITURE row
+//                    recognises it as company revenue.
+//
+// The wire codes are historical (they predate the wallet model and are persisted in
+// scheduled_actions payloads), which is why NO_REFUND now actively moves money
+// rather than meaning "do nothing".
+const VALID_BOOKING_SETTLEMENT_ACTIONS = ['WALLET_DEPOSIT', 'BANK_REFUND', 'NO_REFUND'];
+
 const applyBookingSettlement = async (client, booking, settlementAction, settlementNote, reason, actorLabel) => {
-    // Use the date-projected settlement balance (falls back to the plain ledger remaining
-    // balance if no target date/daily rate was available to project with) — this is what
-    // will genuinely be left over once the days through the completion/termination date are
-    // billed, not just what's been invoiced so far.
+    // What the client prepaid for this booking and never consumed. Under the lazy
+    // wallet model this is exactly bookings.wallet_earmarked — the money is sitting
+    // in the shared wallet reserved for this booking (see services/walletService.js).
     const settlementBalance = parseFloat(booking.settlement_balance ?? booking.remaining_balance ?? 0);
 
-    // Nothing to settle — the prepayment doesn't exceed the cost of service through the
-    // chosen end date, so there's no surplus to credit, refund, or write off. Don't record a
-    // Rs. 0 wallet deposit / bank refund / write-off note for money that isn't actually spare.
+    // Nothing was left reserved for this booking, so there's no surplus to release,
+    // refund, or write off — don't record a Rs. 0 settlement row.
     if (settlementBalance <= 0) {
         return { remaining_balance: 0, wallet_deposited_amount: 0, settlement_notes: null, skipped: true };
-    }
-
-    let walletDepositedAmount = 0;
-
-    if (settlementAction === 'WALLET_DEPOSIT') {
-        walletDepositedAmount = settlementBalance;
-
-        await client.query(
-            `UPDATE client_profiles
-             SET wallet_balance = wallet_balance + $1
-             WHERE client_profile_id = $2`,
-            [walletDepositedAmount, booking.client_id]
-        );
     }
 
     const settlementNotes = [
         `${actorLabel}`,
         reason ? `Reason: ${reason}` : null,
         settlementAction ? `Settlement action: ${settlementAction}` : null,
-        `Remaining balance: Rs.${settlementBalance.toFixed(2)}`,
+        `Unused prepayment: Rs.${settlementBalance.toFixed(2)}`,
         settlementNote ? `Note: ${settlementNote}` : null
     ].filter(Boolean).join(' | ');
+
+    // Every action releases the reservation — what differs is whether the money
+    // stays in the wallet, leaves as a refund, or is recognised as income.
+    await client.query(
+        `UPDATE bookings SET wallet_earmarked = 0 WHERE booking_id = $1`,
+        [booking.booking_id]
+    );
+
+    // BANK_REFUND and NO_REFUND both take the money out of the client's wallet;
+    // WALLET_DEPOSIT deliberately leaves wallet_balance untouched (it's already there).
+    if (settlementAction === 'BANK_REFUND' || settlementAction === 'NO_REFUND') {
+        await client.query(
+            `UPDATE client_profiles
+             SET wallet_balance = GREATEST(COALESCE(wallet_balance, 0) - $1, 0)
+             WHERE client_profile_id = $2`,
+            [settlementBalance, booking.client_id]
+        );
+    }
+
+    // One ledger row per action, categorised so the outcome is recoverable from
+    // `category` alone rather than by parsing the notes string.
+    //   BANK_REFUND -> CLIENT_REFUND / DEBIT      (cash out, classified OUT)
+    //   NO_REFUND   -> SETTLEMENT_FORFEITURE / CREDIT (company income, classified IN)
+    //   WALLET_DEPOSIT -> WALLET_REFUND / CREDIT  (audit only, no money moved)
+    const [category, transactionType] =
+        settlementAction === 'BANK_REFUND'   ? ['CLIENT_REFUND', 'DEBIT']
+      : settlementAction === 'NO_REFUND'     ? ['SETTLEMENT_FORFEITURE', 'CREDIT']
+      :                                        ['WALLET_REFUND', 'CREDIT'];
 
     await client.query(
         `INSERT INTO transactions (
@@ -127,19 +157,22 @@ const applyBookingSettlement = async (client, booking, settlementAction, settlem
             status,
             notes,
             created_at
-        ) VALUES ($1, $2, $3, 'CREDIT', $4, 'COMPLETED', $5, NOW())`,
+        ) VALUES ($1, $2, $3, $4, $5, 'COMPLETED', $6, NOW())`,
         [
             booking.client_id,
             booking.booking_id,
-            'WALLET_REFUND',
-            walletDepositedAmount,
+            category,
+            transactionType,
+            settlementBalance,
             settlementNotes
         ]
     );
 
     return {
         remaining_balance: settlementBalance,
-        wallet_deposited_amount: walletDepositedAmount,
+        // Kept for API compatibility: how much ended up (staying) in the wallet.
+        wallet_deposited_amount: settlementAction === 'WALLET_DEPOSIT' ? settlementBalance : 0,
+        settlement_action: settlementAction,
         settlement_notes: settlementNotes
     };
 };
@@ -147,5 +180,6 @@ const applyBookingSettlement = async (client, booking, settlementAction, settlem
 module.exports = {
     getBookingFinancialTotals,
     getBookingSettlementSnapshot,
-    applyBookingSettlement
+    applyBookingSettlement,
+    VALID_BOOKING_SETTLEMENT_ACTIONS
 };

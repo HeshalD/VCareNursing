@@ -8,6 +8,7 @@ const {
   checkAndFlagBookingOverdue
 } = require('../services/billingService');
 const { runPreBillingScheduledActions, runPostBillingScheduledActions } = require('./scheduledActions');
+const { drawWalletForBooking } = require('../services/walletService');
 
 const getActiveBookingBalances = async (client) => {
   return client.query(
@@ -272,6 +273,14 @@ const startDailyInvoicing = () => {
             client_id: bookingData.client_id,
             amount,
             notes: `${notes} (${staffCount} staff member(s))`
+          });
+
+          // Draw as much of this charge as the client's wallet currently holds —
+          // any shortfall just leaves the booking OVERDUE below.
+          await drawWalletForBooking(client, {
+            booking_id: bookingId,
+            client_id: bookingData.client_id,
+            maxAmount: amount,
           });
 
           await checkAndFlagBookingOverdue(client, bookingId);

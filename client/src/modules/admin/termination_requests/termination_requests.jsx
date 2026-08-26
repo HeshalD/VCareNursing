@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ChevronUp,
   Wallet,
+  DollarSign,
   History,
   Loader2,
   X,
@@ -639,53 +640,63 @@ const TerminationRequests = () => {
               {/* Settlement action */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-xs font-medium text-slate-600">Settlement Action</label>
+                  <label className="block text-xs font-medium text-slate-600">Unused prepayment</label>
                   <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${
-                    settlementAction === 'WALLET_DEPOSIT' ? 'text-emerald-700' : 'text-amber-700'
+                    settlementAction === 'BANK_REFUND' ? 'text-blue-700'
+                      : settlementAction === 'WALLET_DEPOSIT' ? 'text-emerald-700'
+                      : 'text-amber-700'
                   }`}>
-                    <span className={`w-1.5 h-1.5 rounded-full ${settlementAction === 'WALLET_DEPOSIT' ? 'bg-emerald-500' : 'bg-amber-400'}`} />
-                    {settlementAction === 'WALLET_DEPOSIT' ? 'Refund available' : 'No refund'}
+                    <span className={`w-1.5 h-1.5 rounded-full ${
+                      settlementAction === 'BANK_REFUND' ? 'bg-blue-500'
+                        : settlementAction === 'WALLET_DEPOSIT' ? 'bg-emerald-500'
+                        : 'bg-amber-400'
+                    }`} />
+                    {settlementAction === 'BANK_REFUND' ? 'Refunding to client'
+                      : settlementAction === 'WALLET_DEPOSIT' ? 'Staying in wallet'
+                      : 'Waived as income'}
                   </span>
                 </div>
                 <div className="space-y-2">
-                  <label className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm text-slate-700 transition-colors ${
-                    settlementAction === 'WALLET_DEPOSIT' ? 'border-blue-400 ring-2 ring-blue-100 bg-white' : 'border-slate-200 bg-white hover:border-slate-300'
-                  }`}>
-                    <input
-                      type="radio"
-                      name="settlementAction"
-                      value="WALLET_DEPOSIT"
-                      checked={settlementAction === 'WALLET_DEPOSIT'}
-                      onChange={(e) => setSettlementAction(e.target.value)}
-                      className="mt-1 accent-blue-600"
-                    />
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <Wallet className="w-3.5 h-3.5 text-emerald-600" />
-                        <span className="font-semibold text-slate-900">Deposit to wallet</span>
+                  {[
+                    {
+                      value: 'BANK_REFUND',
+                      icon: <DollarSign className="w-3.5 h-3.5 text-blue-600" />,
+                      title: 'Refund to client',
+                      desc: 'Return it to the client. Money leaves the company.',
+                    },
+                    {
+                      value: 'WALLET_DEPOSIT',
+                      icon: <Wallet className="w-3.5 h-3.5 text-emerald-600" />,
+                      title: 'Add to client wallet',
+                      desc: "Keep it in the wallet, free for their other bookings.",
+                    },
+                    {
+                      value: 'NO_REFUND',
+                      icon: <XCircle className="w-3.5 h-3.5 text-amber-600" />,
+                      title: 'Waive as additional income',
+                      desc: 'The client forfeits it and the company keeps it as income.',
+                    },
+                  ].map(({ value, icon, title, desc }) => (
+                    <label key={value} className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm text-slate-700 transition-colors ${
+                      settlementAction === value ? 'border-blue-400 ring-2 ring-blue-100 bg-white' : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="settlementAction"
+                        value={value}
+                        checked={settlementAction === value}
+                        onChange={(e) => setSettlementAction(e.target.value)}
+                        className="mt-1 accent-blue-600"
+                      />
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          {icon}
+                          <span className="font-semibold text-slate-900">{title}</span>
+                        </div>
+                        <span className="block text-xs text-slate-500 mt-0.5">{desc}</span>
                       </div>
-                      <span className="block text-xs text-slate-500 mt-0.5">Return the remaining balance to the client's VCare wallet.</span>
-                    </div>
-                  </label>
-                  <label className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm text-slate-700 transition-colors ${
-                    settlementAction === 'NO_REFUND' ? 'border-blue-400 ring-2 ring-blue-100 bg-white' : 'border-slate-200 bg-white hover:border-slate-300'
-                  }`}>
-                    <input
-                      type="radio"
-                      name="settlementAction"
-                      value="NO_REFUND"
-                      checked={settlementAction === 'NO_REFUND'}
-                      onChange={(e) => setSettlementAction(e.target.value)}
-                      className="mt-1 accent-blue-600"
-                    />
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <XCircle className="w-3.5 h-3.5 text-amber-600" />
-                        <span className="font-semibold text-slate-900">No refund</span>
-                      </div>
-                      <span className="block text-xs text-slate-500 mt-0.5">Retain the remaining balance with the booking record.</span>
-                    </div>
-                  </label>
+                    </label>
+                  ))}
                 </div>
               </div>
 

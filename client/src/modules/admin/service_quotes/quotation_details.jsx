@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, FileText, RefreshCw, Receipt, CheckCircle2, Clock3, ClipboardList, Plus, Download, Send, Loader2, BadgeDollarSign, Pencil, Trash2, Save } from 'lucide-react';
+import { ArrowLeft, ArrowRight, FileText, RefreshCw, Receipt, CheckCircle2, Clock3, ClipboardList, Plus, Download, Send, Loader2, BadgeDollarSign, Pencil, Trash2, Save } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import PaymentAllocationModal from './PaymentAllocationModal';
@@ -179,6 +179,11 @@ const QuotationDetailsPage = () => {
   const [showReceiptPopup, setShowReceiptPopup] = useState(false);
   const [showInvoicePopup, setShowInvoicePopup] = useState(false);
   const [invoiceReady, setInvoiceReady] = useState(false);
+  // Set once a payment has been recorded in this session. A quotation that came
+  // from a service request is only half-done at this point — the request still
+  // needs converting to a booking — so the primary action swaps from "Record
+  // Payment" to a link straight into that request's summary.
+  const [paymentRecorded, setPaymentRecorded] = useState(false);
 
   // Editing the SERVICE quote's own line items — only allowed before any
   // payment (service or product) has been recorded, same rule as
@@ -426,11 +431,18 @@ const QuotationDetailsPage = () => {
           <button onClick={loadData} title="Refresh" className={iconBtnCls}>
             <RefreshCw className="h-4 w-4" />
           </button>
-          {quote && combinedRemaining > 0 && (
+          {quote && paymentRecorded && quote.request_id ? (
+            <button
+              onClick={() => navigate(`/admin/service-requests/${quote.request_id}/summary`)}
+              className={primaryBtnCls}
+            >
+              Proceed to Service Request <ArrowRight className="h-4 w-4" />
+            </button>
+          ) : quote && combinedRemaining > 0 ? (
             <button onClick={() => setShowPaymentModal(true)} className={primaryBtnCls}>
               <Plus className="h-4 w-4" /> Record Payment
             </button>
-          )}
+          ) : null}
         </div>
       }
     >
@@ -735,6 +747,7 @@ const QuotationDetailsPage = () => {
           onClose={() => setShowPaymentModal(false)}
           onRecorded={async () => {
             setShowPaymentModal(false);
+            setPaymentRecorded(true);
             const result = await loadData();
             setInvoiceReady(!!result && result.remaining <= 0.01);
             setShowReceiptPopup(true);

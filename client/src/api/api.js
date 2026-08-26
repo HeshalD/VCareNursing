@@ -733,6 +733,14 @@ class ApiClient {
     });
   }
 
+  // Generates (or returns the already-cached) combined Invoice PDF for this quote
+  // without sending it anywhere — separate from resendCombinedInvoice/WhatsApp send.
+  async generateCombinedInvoice(quoteId) {
+    return this.request(`/quotes/${quoteId}/generate-combined-invoice`, {
+      method: 'POST',
+    });
+  }
+
   async recordBookingPayment(bookingId, paymentData, paymentSlipFile = null) {
     if (paymentSlipFile) {
       const formData = new FormData();
@@ -1180,7 +1188,10 @@ class ApiClient {
   async getStaffSchedules(staffProfileIds) {
     const ids = [...new Set((staffProfileIds || []).filter(Boolean))];
     if (ids.length === 0) return { status: 'success', data: {} };
-    return this.request(`/staff/schedules?ids=${ids.join(',')}`);
+    return this.request('/staff/schedules', {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    });
   }
 
   async getStaffAttendanceCalendar(staffProfileId) {

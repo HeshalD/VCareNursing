@@ -89,6 +89,7 @@ exports.getAssignmentFormData = async (req, res) => {
         COALESCE(b.shift_rate, q.per_shift_rate) AS shift_rate,
         q.qty_shifts,
         q.total_amount,
+        COALESCE(cp.wallet_balance, 0) AS wallet_balance,
         COALESCE(cp.full_name, sr.payer_name) AS client_name,
         COALESCE(pp.full_name, sr.patient_name) AS patient_name,
         sr.payer_mobile,
@@ -148,9 +149,12 @@ exports.getAssignmentFormData = async (req, res) => {
     const assignmentsResult = await db.query(assignmentsQuery, [booking_id]);
     const currentAssignments = assignmentsResult.rows;
 
-    // Calculate total allocated
+    // Calculate total allocated — budget is now the client's shared wallet
+    // balance (money is no longer pre-funded per booking; it's drawn down lazily
+    // as days/shifts are actually invoiced, see walletService.drawWalletForBooking),
+    // not this booking's own amount_paid.
     const totalAllocated = currentAssignments.reduce((sum, a) => sum + parseFloat(a.amount_allocated || 0), 0);
-    const remainingBudget = booking.amount_paid - totalAllocated;
+    const remainingBudget = parseFloat(booking.wallet_balance || 0) - totalAllocated;
 
     // Get available staff (service-team roles) with their profiles. A staff member whose
     // current_status is ASSIGNED can still be offered here if their existing commitment(s)
@@ -301,16 +305,19 @@ exports.assignStaffToBooking = async (req, res) => {
       SELECT
         b.booking_id,
         b.request_id,
+        b.client_id,
         b.service_model,
         b.daily_rate AS booking_daily_rate,
         sr.active_quote_id AS quote_id,
         b.amount_paid,
         q.total_amount,
         COALESCE(q.daily_rate, b.daily_rate) AS quote_daily_rate,
-        b.ot_rate AS booking_ot_rate
+        b.ot_rate AS booking_ot_rate,
+        COALESCE(cp.wallet_balance, 0) AS wallet_balance
       FROM bookings b
       LEFT JOIN service_requests sr ON b.request_id = sr.request_id
       LEFT JOIN quotations q ON sr.active_quote_id = q.quote_id
+      LEFT JOIN client_profiles cp ON b.client_id = cp.client_profile_id
       WHERE b.booking_id = $1
     `;
     const bookingResult = await db.query(bookingQuery, [booking_id]);
@@ -333,10 +340,15 @@ exports.assignStaffToBooking = async (req, res) => {
     }
 
     const amount_paid = parseFloat(booking.amount_paid);
+    const walletBalance = parseFloat(booking.wallet_balance || 0);
 
-    // For normal bookings (with a quotation), require payment before assigning staff.
-    // Admin-direct bookings are deferred-payment arrangements, so skip this check.
-    if (!isDirectBooking && amount_paid <= 0) {
+    // For normal bookings (with a quotation), require the client to have money
+    // in their wallet before assigning staff. This is a shared, client-wide
+    // check now (not a reservation) — money is no longer pre-funded per
+    // booking; it's drawn down lazily as days/shifts are actually invoiced
+    // (see walletService.drawWalletForBooking). Admin-direct bookings are
+    // deferred-payment arrangements, so skip this check.
+    if (!isDirectBooking && walletBalance <= 0) {
       return res.status(400).json({
         status: 'error',
         message: 'Cannot assign staff without payment. Record payment first.'
@@ -417,7 +429,12 @@ exports.assignStaffToBooking = async (req, res) => {
       });
     }
 
-    const amount_allocated = amount_paid;
+    // Snapshot of the client's shared wallet at assignment time — not a
+    // reservation (other bookings for the same client can read the same
+    // balance), just a budget figure for display/gating consistency with
+    // getAssignmentFormData above. Real enforcement happens later, per
+    // day/shift, via walletService.drawWalletForBooking.
+    const amount_allocated = walletBalance;
 
     // If the start date is in the future, defer activation: the assignment is
     // created SCHEDULED (not billed/paid) and the cron flips it to ACTIVE on the day.

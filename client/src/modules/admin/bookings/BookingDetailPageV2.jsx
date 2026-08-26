@@ -495,6 +495,18 @@ const BookingDetailPageV2 = () => {
 
   const totalPaid     = Number(paymentSummary.total_paid    ?? 0);
   const totalInvoiced = Number(invoiceSummary.total_invoiced ?? 0);
+  // Money actually available to fund upcoming days/shifts — nets out the
+  // registration fee (which totalPaid includes but which was never meant to
+  // cover service days) and folds in the client's current wallet balance.
+  // Falls back to totalPaid - totalInvoiced for older API responses that
+  // don't send this field yet.
+  const fundedForService = paymentSummary.funded_for_service != null
+    ? Number(paymentSummary.funded_for_service)
+    : totalPaid - totalInvoiced;
+  // Reserved specifically for this booking — what the admin is asked to settle if
+  // it ends early. The rest of fundedForService is unearmarked wallet money that
+  // any of the client's bookings may draw on.
+  const walletEarmarked = Number(paymentSummary.wallet_earmarked ?? 0);
   const dailyRate     = Number(bookingSummary.quote_daily_rate || bookingSummary.daily_rate || 0);
 
   // Daily attendance / manual invoicing: SHIFT_BASED/VISITING bookings are always
@@ -578,28 +590,34 @@ const BookingDetailPageV2 = () => {
   // invoices, "waived" from skipped ones — so the client can always be told
   // exactly how many of the shifts they paid for have been delivered.
   const shiftRate = Number(bookingSummary.shift_rate || 0);
+  // "remaining" (shifts still fundable right now) comes straight from
+  // fundedForService — already nets out the registration fee and folds in the
+  // wallet. "paid" (total shifts covered so far) is used + remaining rather
+  // than a separately-computed gross figure, so the two numbers can never
+  // drift apart or double-count what's already been delivered.
   const shiftBank = useMemo(() => {
     if (!isShiftBased) return null;
     const used = dailyInvoiceRecords.filter(r => r.shift_slot_id && r.status === 'INVOICED').length;
     const waived = dailyInvoiceRecords.filter(r => r.shift_slot_id && r.status === 'SKIPPED').length;
-    const paid = shiftRate > 0 ? Math.floor(totalPaid / shiftRate) : 0;
-    return { paid, used, waived, remaining: paid - used };
-  }, [isShiftBased, dailyInvoiceRecords, shiftRate, totalPaid]);
+    const remaining = shiftRate > 0 ? Math.floor(fundedForService / shiftRate) : 0;
+    return { paid: used + remaining, used, waived, remaining };
+  }, [isShiftBased, dailyInvoiceRecords, shiftRate, fundedForService]);
 
   // SHIFT_BASED days are worth shift_rate × shifts/day — dailyRate never applies.
   const shiftsPerDay = shiftSlots.length || 0;
   const perDayCharge = isShiftBased ? shiftRate * shiftsPerDay : dailyRate;
-  const paidDays = perDayCharge > 0 ? Math.floor(totalPaid / perDayCharge) : 0;
+  const daysUsed = dailyInvoiceRecords.filter(r => !r.shift_slot_id && r.status === 'INVOICED').length;
+  const paidDays = perDayCharge > 0 ? daysUsed + Math.floor(fundedForService / perDayCharge) : 0;
   // Plan length: for shift bookings the paid shifts spill onto a final partial
   // day when they don't divide evenly (e.g. 7 shifts @ 2/day = 4 days, last day
   // one shift) — ceil, so that odd shift isn't silently truncated off the plan.
   const plannedDays = useMemo(() => {
     if (isShiftBased) {
-      if (!shiftRate || !shiftsPerDay) return 0;
-      return Math.ceil(Math.floor(totalPaid / shiftRate) / shiftsPerDay);
+      if (!shiftRate || !shiftsPerDay || !shiftBank) return 0;
+      return Math.ceil(shiftBank.paid / shiftsPerDay);
     }
-    return !dailyRate ? 0 : Math.floor(totalPaid / dailyRate);
-  }, [isShiftBased, totalPaid, shiftRate, shiftsPerDay, dailyRate]);
+    return !dailyRate ? 0 : daysUsed + Math.floor(fundedForService / dailyRate);
+  }, [isShiftBased, shiftBank, shiftRate, shiftsPerDay, dailyRate, daysUsed, fundedForService]);
   const servedDays = useMemo(() => {
     // VISITING is a one-time visit — it only ever has a single service day, so
     // servedDays is always 1, not the count of calendar days elapsed since start.
@@ -2400,6 +2418,32 @@ const BookingDetailPageV2 = () => {
                       {Math.abs(shiftBank.remaining)} shift{Math.abs(shiftBank.remaining) !== 1 ? 's' : ''} delivered beyond what's been paid for — record a payment or waive outstanding shifts.
                     </div>
                   )}
+                  {walletEarmarked > 0 && (
+                    <div style={{ fontSize: 12, color: '#6F6A60', marginTop: 8, paddingTop: 8, borderTop: '1px solid #EFEAE0' }}>
+                      <strong style={{ color: '#2A2722' }}>{formatMoney(walletEarmarked)}</strong> of the client's wallet is reserved for this booking
+                      {shiftRate > 0 ? ` (${Math.floor(walletEarmarked / shiftRate)} shift${Math.floor(walletEarmarked / shiftRate) !== 1 ? 's' : ''})` : ''}
+                      {' '}— you'll be asked what to do with it if this booking ends early.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Non-shift bookings get the same reserved-funds line, since they
+                  have no shift bank to hang it off. */}
+              {!isShiftBased && walletEarmarked > 0 && (
+                <div style={{ marginBottom: 18, padding: '14px 18px', borderRadius: 10, background: '#FBF9F4', border: '1px solid #EFEAE0' }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>Reserved for this booking</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: '#2A2722', marginTop: 4 }}>
+                    {formatMoney(walletEarmarked)}
+                    {dailyRate > 0 && (
+                      <span style={{ fontSize: 12, fontWeight: 600, color: '#8A8478', marginLeft: 8 }}>
+                        ≈ {Math.floor(walletEarmarked / dailyRate)} day{Math.floor(walletEarmarked / dailyRate) !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#6F6A60', marginTop: 4 }}>
+                    Paid in advance and not yet delivered. You'll be asked what to do with it if this booking ends early.
+                  </div>
                 </div>
               )}
 
@@ -3569,13 +3613,14 @@ const BookingDetailPageV2 = () => {
                     {projectedRemainingBalance > 0 && (
                       <div>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                          <label style={{ fontSize: 11.5, fontWeight: 600, color: '#7A756A' }}>Outstanding balance</label>
+                          <label style={{ fontSize: 11.5, fontWeight: 600, color: '#7A756A' }}>Unused prepayment ({formatMoney(projectedRemainingBalance)})</label>
                           {overdueAmount > 0 && <span style={{ fontSize: 11.5, fontWeight: 600, color: '#BC4338', background: '#F7E6E3', borderRadius: 8, padding: '3px 10px' }}>{formatMoney(overdueAmount)} due</span>}
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                           {[
-                            { value: 'WALLET_DEPOSIT', title: 'Collect to wallet',        desc: 'Record the shortfall against the client wallet for follow-up.' },
-                            { value: 'NO_REFUND',      title: 'Write off · no recovery', desc: 'Close the balance with a note explaining the decision.' },
+                            { value: 'BANK_REFUND',    title: 'Refund to client',           desc: 'Return it to the client. Money leaves the company.' },
+                            { value: 'WALLET_DEPOSIT', title: 'Add to client wallet',       desc: 'Keep it in the wallet, free for their other bookings.' },
+                            { value: 'NO_REFUND',      title: 'Waive as additional income', desc: 'The client forfeits it and the company keeps it. A note is required.' },
                           ].map(({ value, title, desc }) => (
                             <div key={value} onClick={() => setSettlementAction(value)} style={{ cursor: 'pointer', borderRadius: 12, padding: '12px 14px', border: settlementAction === value ? '1.5px solid #137A6B' : '1px solid #E7E1D6', background: settlementAction === value ? '#E4F1ED' : '#FCFBF8', transition: 'all .15s' }}>
                               <div style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>{title}</div>
@@ -3935,15 +3980,18 @@ const BookingDetailPageV2 = () => {
                 <>
                   <div className="rounded-xl border border-[#ECE7DF] bg-[#FBF9F4] p-4">
                     <div className="text-xs font-semibold uppercase tracking-wider text-[#9A9488] mb-1">
-                      {actionsTargetDate > toDateInput(new Date()) ? 'Projected balance on end date' : 'Remaining balance'}
+                      Unused prepayment for this booking
                     </div>
                     <div className="text-2xl font-extrabold text-[#2A2722] tracking-tight">{formatMoney(projectedRemainingBalance)}</div>
+                    <div className="text-xs text-[#7A756A] mt-1">
+                      Paid for days/shifts that were never delivered. Choose what happens to it.
+                    </div>
                   </div>
                   <div className="flex flex-col gap-2.5">
                     {[
-                      { value: 'WALLET_DEPOSIT', icon: Wallet,     label: 'Credit to client wallet', desc: `Add ${formatMoney(projectedRemainingBalance)} to the client's wallet.`,              activeCls: 'border-violet-400 bg-violet-50',  activeIcon: 'text-violet-600' },
-                      { value: 'BANK_REFUND',    icon: DollarSign, label: 'Process bank refund',     desc: `Return ${formatMoney(projectedRemainingBalance)} to the client's bank account.`,   activeCls: 'border-blue-400 bg-blue-50',      activeIcon: 'text-blue-600' },
-                      { value: 'NO_REFUND',      icon: XCircle,    label: 'Write off · no refund',   desc: 'Forfeit the remaining balance. A written explanation is required.',          activeCls: 'border-[#BC4338] bg-rose-50',     activeIcon: 'text-[#BC4338]' },
+                      { value: 'BANK_REFUND',    icon: DollarSign, label: 'Refund to client',           desc: `Return ${formatMoney(projectedRemainingBalance)} to the client. Money leaves the company.`,       activeCls: 'border-blue-400 bg-blue-50',     activeIcon: 'text-blue-600' },
+                      { value: 'WALLET_DEPOSIT', icon: Wallet,     label: 'Add to client wallet',       desc: `Keep ${formatMoney(projectedRemainingBalance)} in the wallet, free for their other bookings.`,  activeCls: 'border-violet-400 bg-violet-50', activeIcon: 'text-violet-600' },
+                      { value: 'NO_REFUND',      icon: XCircle,    label: 'Waive as additional income', desc: 'The client forfeits it and the company keeps it as income. A written explanation is required.', activeCls: 'border-[#BC4338] bg-rose-50',    activeIcon: 'text-[#BC4338]' },
                     ].map(({ value, icon: Icon, label, desc, activeCls, activeIcon }) => (
                       <div key={value} onClick={() => { setSettlementAction(value); setActionsModalError(''); }} className={`cursor-pointer rounded-xl p-4 border-2 transition flex items-start gap-3 ${settlementAction === value ? activeCls : 'border-[#E7E1D6] hover:border-slate-300'}`}>
                         <Icon className={`h-5 w-5 mt-0.5 flex-shrink-0 ${settlementAction === value ? activeIcon : 'text-[#C4BFB5]'}`} />
@@ -3953,7 +4001,7 @@ const BookingDetailPageV2 = () => {
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Settlement note {settlementAction === 'NO_REFUND' ? <span className="text-[#BC4338] ml-1">*</span> : <span className="text-[#C4BFB5] font-normal ml-1">(optional)</span>}</label>
-                    <textarea rows={3} value={settlementNote} onChange={e => { setSettlementNote(e.target.value); setActionsModalError(''); }} placeholder={settlementAction === 'NO_REFUND' ? 'Required — explain why no refund is being issued' : 'Any notes about this settlement…'} className={`w-full border rounded-xl px-3 py-2.5 text-sm outline-none bg-[#FCFBF8] resize-none ${actionsModalError ? 'border-rose-300' : 'border-[#E2DCD0] focus:border-[#137A6B]'}`} />
+                    <textarea rows={3} value={settlementNote} onChange={e => { setSettlementNote(e.target.value); setActionsModalError(''); }} placeholder={settlementAction === 'NO_REFUND' ? 'Required — explain why the client forfeits this amount' : 'Any notes about this settlement…'} className={`w-full border rounded-xl px-3 py-2.5 text-sm outline-none bg-[#FCFBF8] resize-none ${actionsModalError ? 'border-rose-300' : 'border-[#E2DCD0] focus:border-[#137A6B]'}`} />
                   </div>
                   {actionsModalError && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{actionsModalError}</div>}
                 </>
@@ -3978,7 +4026,7 @@ const BookingDetailPageV2 = () => {
                         { label: 'End time', value: formatDT(actualEndTime) },
                         ...(projectedRemainingBalance > 0 ? [
                           { label: actionsTargetDate > toDateInput(new Date()) ? 'Projected balance on end date' : 'Remaining balance', value: formatMoney(projectedRemainingBalance) },
-                          { label: 'Settlement', value: settlementAction === 'WALLET_DEPOSIT' ? 'Credit to wallet' : settlementAction === 'BANK_REFUND' ? 'Bank refund' : 'Write off (no refund)' },
+                          { label: 'Settlement', value: settlementAction === 'WALLET_DEPOSIT' ? 'Add to client wallet' : settlementAction === 'BANK_REFUND' ? 'Refund to client' : 'Waive as additional income' },
                         ] : []),
                         ...(reason.trim() ? [{ label: 'Reason', value: reason.trim() }] : []),
                       ].map(({ label, value, mono, colored }) => (
@@ -5251,24 +5299,37 @@ const BookingDetailPageV2 = () => {
 
                   <div>
                     <div className="flex items-center justify-between mb-2">
-                      <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Settlement Action</label>
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${termSettlementAction === 'WALLET_DEPOSIT' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                        {termSettlementAction === 'WALLET_DEPOSIT' ? 'Refund available' : 'No refund'}
+                      <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Unused prepayment</label>
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                        termSettlementAction === 'BANK_REFUND' ? 'bg-blue-100 text-blue-700'
+                          : termSettlementAction === 'WALLET_DEPOSIT' ? 'bg-emerald-100 text-emerald-700'
+                          : 'bg-amber-100 text-amber-700'
+                      }`}>
+                        {termSettlementAction === 'BANK_REFUND' ? 'Refunding to client'
+                          : termSettlementAction === 'WALLET_DEPOSIT' ? 'Staying in wallet'
+                          : 'Waived as income'}
                       </span>
                     </div>
                     <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <label className={`flex cursor-pointer items-start gap-3 rounded-lg bg-white p-3 text-sm text-slate-700 ring-1 transition ${termSettlementAction === 'BANK_REFUND' ? 'ring-blue-400' : 'ring-slate-200 hover:ring-blue-300'}`}>
+                        <input type="radio" name="termSettlementAction" value="BANK_REFUND" checked={termSettlementAction === 'BANK_REFUND'} onChange={e => setTermSettlementAction(e.target.value)} className="mt-1 accent-blue-600" />
+                        <div>
+                          <div className="flex items-center gap-1.5"><DollarSign className="w-3.5 h-3.5 text-blue-600" /><span className="font-semibold text-slate-900">Refund to client</span></div>
+                          <span className="block text-xs text-slate-500 mt-0.5">Return it to the client. Money leaves the company.</span>
+                        </div>
+                      </label>
                       <label className={`flex cursor-pointer items-start gap-3 rounded-lg bg-white p-3 text-sm text-slate-700 ring-1 transition ${termSettlementAction === 'WALLET_DEPOSIT' ? 'ring-green-400' : 'ring-slate-200 hover:ring-green-300'}`}>
                         <input type="radio" name="termSettlementAction" value="WALLET_DEPOSIT" checked={termSettlementAction === 'WALLET_DEPOSIT'} onChange={e => setTermSettlementAction(e.target.value)} className="mt-1 accent-green-600" />
                         <div>
-                          <div className="flex items-center gap-1.5"><Wallet className="w-3.5 h-3.5 text-emerald-600" /><span className="font-semibold text-slate-900">Deposit to wallet</span></div>
-                          <span className="block text-xs text-slate-500 mt-0.5">Return the remaining balance to the client's VCare wallet.</span>
+                          <div className="flex items-center gap-1.5"><Wallet className="w-3.5 h-3.5 text-emerald-600" /><span className="font-semibold text-slate-900">Add to client wallet</span></div>
+                          <span className="block text-xs text-slate-500 mt-0.5">Keep it in the wallet, free for their other bookings.</span>
                         </div>
                       </label>
                       <label className={`flex cursor-pointer items-start gap-3 rounded-lg bg-white p-3 text-sm text-slate-700 ring-1 transition ${termSettlementAction === 'NO_REFUND' ? 'ring-amber-400' : 'ring-slate-200 hover:ring-amber-300'}`}>
                         <input type="radio" name="termSettlementAction" value="NO_REFUND" checked={termSettlementAction === 'NO_REFUND'} onChange={e => setTermSettlementAction(e.target.value)} className="mt-1 accent-amber-500" />
                         <div>
-                          <div className="flex items-center gap-1.5"><XCircle className="w-3.5 h-3.5 text-amber-600" /><span className="font-semibold text-slate-900">No refund</span></div>
-                          <span className="block text-xs text-slate-500 mt-0.5">Retain the remaining balance with the booking record.</span>
+                          <div className="flex items-center gap-1.5"><XCircle className="w-3.5 h-3.5 text-amber-600" /><span className="font-semibold text-slate-900">Waive as additional income</span></div>
+                          <span className="block text-xs text-slate-500 mt-0.5">The client forfeits it and the company keeps it as income.</span>
                         </div>
                       </label>
                     </div>
@@ -5282,7 +5343,7 @@ const BookingDetailPageV2 = () => {
                       value={termSettlementNote}
                       onChange={e => setTermSettlementNote(e.target.value)}
                       rows={3}
-                      placeholder={termSettlementAction === 'NO_REFUND' ? 'Required — explain why no refund is being issued' : 'Optional note about the settlement decision'}
+                      placeholder={termSettlementAction === 'NO_REFUND' ? 'Required — explain why the client forfeits this amount' : 'Optional note about the settlement decision'}
                       className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 resize-none"
                     />
                   </div>

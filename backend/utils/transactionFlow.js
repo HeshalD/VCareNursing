@@ -8,10 +8,16 @@
 // This is the single source of truth the API uses to compute summary totals and
 // to filter by direction. The frontend mirrors these lists for display.
 
-const IN_CATEGORIES = ['CLIENT_PAYMENT', 'BOOKING_PAYMENT', 'WALLET_TOPUP', 'OTHER_INCOME', 'PRODUCT_SALE', 'RENTAL_PAYMENT', 'REGISTRATION_FEE'];
-const OUT_CATEGORIES = ['STAFF_SALARY_PAID', 'STAFF_ADVANCE', 'AGENCY_FEE', 'INTERNAL_STAFF_SALARY', 'OTHER_EXPENSE', 'DEPOSIT_REFUND', 'VENDOR_PAYMENT'];
+const IN_CATEGORIES = ['CLIENT_PAYMENT', 'BOOKING_PAYMENT', 'WALLET_TOPUP', 'OTHER_INCOME', 'PRODUCT_SALE', 'RENTAL_PAYMENT', 'REGISTRATION_FEE', 'SETTLEMENT_FORFEITURE'];
+const OUT_CATEGORIES = ['STAFF_SALARY_PAID', 'STAFF_ADVANCE', 'AGENCY_FEE', 'INTERNAL_STAFF_SALARY', 'OTHER_EXPENSE', 'DEPOSIT_REFUND', 'VENDOR_PAYMENT', 'CLIENT_REFUND'];
 // Everything else (STAFF_SALARY, SERVICE_INVOICE, WALLET_DEBIT, WALLET_REFUND,
 // BOOKING_SETTLEMENT) is NEUTRAL.
+//
+// SETTLEMENT_FORFEITURE / CLIENT_REFUND are the two money-moving outcomes when a
+// booking ends early with unused prepayment (see services/bookingSettlement.js):
+// the client either forfeits it — which the company keeps as income — or gets it
+// back as a real refund. The third choice, leaving it in the client's wallet,
+// moves no money and is recorded as a NEUTRAL WALLET_REFUND audit row instead.
 //
 // REGISTRATION_FEE is IN-only when transaction_type = 'CREDIT' (actual cash
 // collected — see services/registrationFeeSplit.js). It's also used as a

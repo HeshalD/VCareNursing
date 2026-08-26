@@ -815,10 +815,14 @@ exports.getBookingHistory = async (req, res) => {
 // admin assigning/swapping/reassigning staff can see at a glance whether the person
 // they're about to pick is already busy on another booking around the same dates.
 exports.getStaffSchedules = async (req, res) => {
-    const idsParam = req.query.ids;
-    if (!idsParam) return res.status(200).json({ status: 'success', data: {} });
+    // Accepts either a JSON body { ids: [...] } (POST, preferred — no URL-length
+    // limit) or a legacy ?ids=a,b,c query string, for any caller not yet updated.
+    const idsInput = Array.isArray(req.body?.ids) ? req.body.ids : req.query.ids;
+    if (!idsInput) return res.status(200).json({ status: 'success', data: {} });
 
-    const ids = String(idsParam).split(',').map((s) => s.trim()).filter(Boolean);
+    const ids = (Array.isArray(idsInput) ? idsInput : String(idsInput).split(','))
+        .map((s) => String(s).trim())
+        .filter(Boolean);
     if (ids.length === 0) return res.status(200).json({ status: 'success', data: {} });
 
     try {

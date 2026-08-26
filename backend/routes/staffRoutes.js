@@ -164,8 +164,11 @@ router.get('/', staffController.getAllStaff);
 router.get('/top-rated', staffController.getTopRatedStaff);
 
 // Admin: Batched schedule lookup (current + future bookings) for staff-picker UIs —
-// ?ids=uuid1,uuid2,... — used to show scheduling conflicts before assigning/swapping staff
-router.get(
+// body: { ids: [uuid1, uuid2, ...] } — used to show scheduling conflicts before
+// assigning/swapping staff. POST (not GET+querystring) because the id list can run
+// into the hundreds once there are enough staff profiles, which overflows the
+// request-line/URL length limit on a GET.
+router.post(
   '/schedules',
   protect,
   requirePermission('VIEW_USER_MANAGEMENT'),

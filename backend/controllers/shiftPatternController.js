@@ -306,9 +306,18 @@ exports.assignStaffToSlot = async (req, res) => {
                 created_by: assigned_by,
             });
         } else {
+            // Stamp the booking's own start_date from the first staffed shift.
+            // CareTimeline (BookingDetailPageV2) only renders once bookings.start_date
+            // is set, and its day-numbering is anchored to it — COALESCE so a later
+            // slot assignment or a post-pause reassignment never overwrites the
+            // booking's original epoch. Mirrors staffAssignmentController's
+            // isFirstAssignment handling on the LIVE_IN/VISITING path.
             await client.query(
-                `UPDATE bookings SET status = CASE WHEN status = 'PENDING' THEN 'ACTIVE' ELSE status END WHERE booking_id = $1`,
-                [booking_id]
+                `UPDATE bookings
+                 SET status = CASE WHEN status = 'PENDING' THEN 'ACTIVE' ELSE status END,
+                     start_date = COALESCE(start_date, $2::date)
+                 WHERE booking_id = $1`,
+                [booking_id, startDateStr]
             );
             if (staff_in_time) {
                 await applyPartialAttendanceTime(client, {
