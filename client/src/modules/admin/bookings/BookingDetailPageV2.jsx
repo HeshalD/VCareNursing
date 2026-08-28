@@ -14,7 +14,9 @@ import StaffScheduleTimeline from '../components/StaffScheduleTimeline';
 import BookingSwitcherSidebar from './BookingSwitcherSidebar';
 import vcareLogo from '../../../assets/Logo/VCareLogo.png';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
+import TimeInput from '../../../components/common/TimeInput';
 import { computeVisitingStatus, VISITING_STATUS, VISITING_STATUS_META } from '../../../utils/visitingBookingStatus';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -26,8 +28,9 @@ const initialPaymentForm = {
 const moneyFmt = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
 const formatMoney  = (v) => moneyFmt.format(Number(v || 0));
 const formatDate   = (v) => { if (!v) return '-'; const d = new Date(v); return isNaN(d) ? '-' : d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }); };
-const formatDT     = (v) => { if (!v) return '-'; const d = new Date(v); return isNaN(d) ? '-' : d.toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }); };
-const formatTime   = (t) => { if (!t) return '-'; const m = String(t).match(/^(\d{1,2}):(\d{2})/); if (!m) return '-'; let h = parseInt(m[1], 10); const p = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return `${h}:${m[2]} ${p}`; };
+// Times on this page are 24-hour throughout (hourCycle h23 so midnight reads 00:xx, not 24:xx).
+const formatDT     = (v) => { if (!v) return '-'; const d = new Date(v); return isNaN(d) ? '-' : d.toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }); };
+const formatTime   = (t) => { if (!t) return '-'; const m = String(t).match(/^(\d{1,2}):(\d{2})/); if (!m) return '-'; return `${String(m[1]).padStart(2, '0')}:${m[2]}`; };
 const toDTLocal    = (value = new Date()) => { const d = value instanceof Date ? value : new Date(value); if (isNaN(d)) return ''; return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
 const toDateInput  = (value = new Date()) => { const d = value instanceof Date ? value : new Date(value); return isNaN(d) ? '' : d.toISOString().slice(0, 10); };
 // Local calendar date (not UTC) as YYYY-MM-DD — service_start_date/service_end_date are
@@ -53,6 +56,54 @@ const computeWorkedHours = (inTime, outTime) => {
   if (mins <= 0) mins += 1440;
   return mins / 60;
 };
+// Reduce any phone format to its national significant digits so a search box entry
+// matches whatever variant is stored: +94778885555 / 0778885555 / 778885555 all -> 778885555.
+const phoneDigits = (value) => {
+  const d = String(value || '').replace(/\D/g, '');
+  if (!d) return '';
+  if (d.startsWith('94') && d.length > 9) return d.slice(2);
+  if (d.startsWith('0')) return d.replace(/^0+/, '');
+  return d;
+};
+// Reduce a staff code to its bare number so 'EMP-0541', 'emp0541', '0541' and '541'
+// all match the stored 'EMP-0541'.
+const staffCodeVariants = (value) => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return [];
+  const compact = raw.replace(/[^a-z0-9]/g, '');           // 'emp0541'
+  const numeric = compact.replace(/^emp/, '');             // '0541'
+  const trimmed = numeric.replace(/^0+/, '');              // '541'
+  return [...new Set([raw, compact, numeric, trimmed].filter(Boolean))];
+};
+// Free-text staff picker match: name, designation, phone (any format) or staff code
+// (with or without the EMP- prefix / leading zeros).
+const staffMatchesQuery = (staff, query) => {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return true;
+  if (staff.full_name?.toLowerCase().includes(q)) return true;
+  if (staff.designation?.toLowerCase().includes(q)) return true;
+  if (staff.email?.toLowerCase().includes(q)) return true;
+  if (staff.nic_number?.toLowerCase().includes(q)) return true;
+  const qPhone = phoneDigits(q);
+  if (qPhone.length >= 3 && phoneDigits(staff.mobile_number).includes(qPhone)) return true;
+  const codeVariants = staffCodeVariants(staff.staff_code);
+  if (codeVariants.length) {
+    const qCodes = staffCodeVariants(q);
+    if (qCodes.some(qc => codeVariants.some(cv => cv.includes(qc)))) return true;
+  }
+  return false;
+};
+// Fractional hours -> 'Hh Mmins' (e.g. 8.5 -> '8h 30mins'), so attendance reads as clock time.
+const formatHoursMins = (hours) => {
+  if (hours === null || hours === undefined || hours === '' || isNaN(Number(hours))) return null;
+  const totalMins = Math.round(Number(hours) * 60);
+  const h = Math.floor(Math.abs(totalMins) / 60);
+  const m = Math.abs(totalMins) % 60;
+  const sign = totalMins < 0 ? '-' : '';
+  if (h && m) return `${sign}${h}h ${m}min${m === 1 ? '' : 's'}`;
+  if (h) return `${sign}${h}h`;
+  return `${sign}${m}min${m === 1 ? '' : 's'}`;
+};
 // Colour tier for served hours vs. what the staff member was assigned: green when the
 // full assigned duration was met, amber for a moderate shortfall, red for a large one.
 // Returns null when there's nothing to compare against (no assigned_hours on record).
@@ -74,9 +125,70 @@ const TIER_STYLE = {
   amber: { bg: '#fffbeb', col: '#92400e', dot: '#f59e0b' },
   red:   { bg: '#fef2f2', col: '#991b1b', dot: '#ef4444' },
 };
+// Age in whole years from a date of birth, or null when there's no usable DOB.
+const ageFromDob = (dob) => {
+  if (!dob) return null;
+  const d = new Date(dob);
+  if (isNaN(d)) return null;
+  const now = new Date();
+  let age = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age -= 1;
+  return age >= 0 && age < 120 ? age : null;
+};
+// A staff record's list-shaped fields come back either as a Postgres array or as a
+// comma-separated string depending on the column — normalise both to a display string.
+const listToText = (value) => {
+  if (!value) return null;
+  const arr = Array.isArray(value) ? value : String(value).split(',');
+  const cleaned = arr.map(v => String(v).trim()).filter(Boolean);
+  return cleaned.length ? cleaned.join(', ') : null;
+};
+// Every profile field we hold on a staff member, laid out for the swap/assign picker so
+// the admin can judge a candidate without opening their profile in another tab.
+const StaffProfileDetails = ({ staff }) => {
+  const age = ageFromDob(staff.date_of_birth);
+  const fields = [
+    ['Staff ID',      staff.staff_code || null],
+    ['Designation',   staff.designation || null],
+    ['Phone',         staff.mobile_number ? formatMobileNumber(staff.mobile_number) : null],
+    ['Email',         staff.email || null],
+    ['NIC',           staff.nic_number || null],
+    ['Gender',        staff.gender || null],
+    ['Date of birth', staff.date_of_birth ? `${formatDate(staff.date_of_birth)}${age !== null ? ` (${age} yrs)` : ''}` : null],
+    ['Experience',    staff.experience_level || null],
+    ['Qualifications',listToText(staff.qualifications)],
+    ['Languages',     listToText(staff.languages)],
+    ['Location',      staff.location || null],
+    ['Address',       staff.home_address || null],
+    ['Live-in',       staff.willing_to_live_in === true ? 'Willing' : staff.willing_to_live_in === false ? 'Not willing' : null],
+    ['Rating',        staff.average_rating ? `${Number(staff.average_rating).toFixed(1)} / 5` : 'No ratings yet'],
+    ['Verification',  staff.verification_status || null],
+    ['Onboarding',    staff.onboarding_status || null],
+    ['Account',       staff.is_active === false ? 'Deactivated' : staff.is_active === true ? 'Active' : null],
+    ['Joined',        staff.created_at ? formatDate(staff.created_at) : null],
+  ].filter(([, v]) => v !== null && v !== undefined && v !== '');
+
+  return (
+    <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
+      {fields.map(([label, value]) => (
+        <div key={label} className="flex gap-1.5 text-[11px] leading-snug">
+          <span className="text-slate-400 shrink-0">{label}:</span>
+          <span className="text-slate-700 font-medium break-words">{value}</span>
+        </div>
+      ))}
+      {staff.admin_remarks && (
+        <div className="sm:col-span-2 flex gap-1.5 text-[11px] leading-snug">
+          <span className="text-slate-400 shrink-0">Remarks:</span>
+          <span className="text-slate-700 break-words">{staff.admin_remarks}</span>
+        </div>
+      )}
+    </div>
+  );
+};
 const HoursBadge = ({ served, assigned }) => {
   const tier = hoursTier(served, assigned);
-  const label = served !== null && served !== undefined ? `${Number(served).toFixed(2)}h` : '—';
+  const label = formatHoursMins(served) ?? '—';
   if (!tier) return <span className="tabular-nums">{label}</span>;
   const s = TIER_STYLE[tier];
   return (
@@ -294,6 +406,12 @@ const BookingDetailPageV2 = () => {
   const [swapModalIsAssign, setSwapModalIsAssign]     = useState(false); // true => slot has no current staff (assign, not reassign)
   const [swapModalOldOutTime, setSwapModalOldOutTime] = useState(''); // HH:mm — outgoing staff's out time on swapModalStartDate (optional)
   const [swapModalNewInTime, setSwapModalNewInTime]   = useState(''); // HH:mm — incoming staff's in time on swapModalStartDate (optional)
+  // Sharing a candidate's profile with the client happens straight from the staff
+  // picker — it's a "show the client who's available" step, independent of whether
+  // this staff member ends up being the one assigned.
+  const [profileSendingId, setProfileSendingId] = useState(null);   // staff_profile_id currently being sent
+  const [profileSentIds, setProfileSentIds]     = useState([]);     // staff sent to the client while this modal has been open
+  const [profileSendError, setProfileSendError] = useState('');
 
   // edit times modal — backfills/corrects an assignment's start-day in_time and/or
   // end-day out_time directly (past, present or already-completed rows all use this)
@@ -1478,8 +1596,26 @@ const BookingDetailPageV2 = () => {
     finally { setPaymentSubmitting(false); }
   };
 
-  const closeSwapModal = () => { setShowSwapModal(false); setSwapModalStep(1); setSwapModalSearch(''); setSwapModalSelectedStaff(null); setSwapModalReason(''); setSwapModalError(''); setSwapModalPage(1); setSwapModalDesignation(''); setSwapModalStartDate(toDateInput(new Date())); setSwapModalSlotId(null); setSwapModalIsAssign(false); setSwapModalOldOutTime(''); setSwapModalNewInTime(''); };
+  const closeSwapModal = () => { setShowSwapModal(false); setSwapModalStep(1); setSwapModalSearch(''); setSwapModalSelectedStaff(null); setSwapModalReason(''); setSwapModalError(''); setSwapModalPage(1); setSwapModalDesignation(''); setSwapModalStartDate(toDateInput(new Date())); setSwapModalSlotId(null); setSwapModalIsAssign(false); setSwapModalOldOutTime(''); setSwapModalNewInTime(''); setProfileSendingId(null); setProfileSentIds([]); setProfileSendError(''); };
   const selectSwapStaff = (s) => { setSwapModalSelectedStaff(s); setSwapModalStep(2); };
+  // WhatsApp one candidate's profile to this booking's client, straight from the picker.
+  // Deliberately independent of the swap itself: the admin can send several candidates
+  // for the client to choose from, and can resend the same one.
+  const sendStaffProfile = async (staff) => {
+    try {
+      setProfileSendingId(staff.staff_profile_id); setProfileSendError('');
+      apiClient.setToken(adminToken);
+      const res = await apiClient.sendBookingStaffProfile(bookingId, staff.staff_profile_id);
+      setProfileSentIds(ids => (ids.includes(staff.staff_profile_id) ? ids : [...ids, staff.staff_profile_id]));
+      // The server reports a globally disabled WhatsApp kill switch as a blocked send —
+      // surface that rather than letting the tick imply the client received anything.
+      if (res?.blocked) setProfileSendError(res.message || 'WhatsApp sending is currently disabled system-wide — nothing was delivered.');
+    } catch (err) {
+      setProfileSendError(err?.message || `Failed to send ${staff.full_name}'s profile to the client.`);
+    } finally {
+      setProfileSendingId(null);
+    }
+  };
   const openSlotAssignModal = (slot) => { setSwapModalSlotId(slot.shift_slot_id); setSwapModalIsAssign(!slot.assignment); setShowSwapModal(true); };
   const confirmSwap = async () => {
     if (!swapModalSelectedStaff || (!swapModalSlotId && !swapModalReason.trim())) return;
@@ -2585,7 +2721,7 @@ const BookingDetailPageV2 = () => {
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 13 }}>
                         <Field label="Staff ID"   value={normCurrentStaff.id}     mono />
-                        <Field label="Phone"       value={normCurrentStaff.mobile} />
+                        <Field label="Phone"       value={formatMobileNumber(normCurrentStaff.mobile)} />
                         <Field label="Email"       value={normCurrentStaff.email}  />
                         {activeStaffRow && (
                           <EditableRate
@@ -2928,7 +3064,7 @@ const BookingDetailPageV2 = () => {
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 13 }}>
                         <Field label="Staff ID"   value={normCurrentStaff.id}     mono />
-                        <Field label="Phone"       value={normCurrentStaff.mobile} />
+                        <Field label="Phone"       value={formatMobileNumber(normCurrentStaff.mobile)} />
                         <Field label="Email"       value={normCurrentStaff.email}  />
                         {activeStaffRow && (
                           <EditableRate
@@ -3030,7 +3166,7 @@ const BookingDetailPageV2 = () => {
                         </div>
                         <div style={{ fontSize: 12, color: '#A39D91', marginBottom: 5 }}>{formatDT(swap.swappedAt)}</div>
                         <div style={{ fontSize: 13, color: '#5A554B' }}>{swap.reason || 'No reason provided.'}</div>
-                        {swap.swappedByMobile && <div style={{ fontSize: 12, color: '#A39D91', marginTop: 5 }}>Swapped by {swap.swappedByMobile}</div>}
+                        {swap.swappedByMobile && <div style={{ fontSize: 12, color: '#A39D91', marginTop: 5 }}>Swapped by {formatMobileNumber(swap.swappedByMobile)}</div>}
                       </div>
                     ))}
                   </div>
@@ -3291,7 +3427,7 @@ const BookingDetailPageV2 = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 15 }}>
                   <Field label="Name"      value={clientDetails.client_name} />
                   <Field label="Client ID" value={clientDetails.client_code || clientDetails.client_profile_id || bookingSummary.client_id || '-'} mono />
-                  <Field label="Phone"     value={clientDetails.client_mobile || clientDetails.mobile || '-'} />
+                  <Field label="Phone"     value={formatMobileNumber(clientDetails.client_mobile || clientDetails.mobile) || '-'} />
                   <Field label="Email"     value={clientDetails.client_email || clientDetails.email || '-'} />
                   <div style={{ gridColumn: '1/-1' }}><Field label="Address" value={clientDetails.client_address || clientDetails.address || '-'} /></div>
                 </div>
@@ -3602,7 +3738,7 @@ const BookingDetailPageV2 = () => {
                       <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: '#7A756A', marginBottom: 5 }}>Actual end time</label>
                       <div style={{ display: 'flex', gap: 8 }}>
                         <DateInput value={actualEndDatePart} onChange={e => setActualEndDatePart(e.target.value)} style={{ ...inp, flex: 1 }} />
-                        <input type="time" lang="en-GB" value={actualEndTimePart} onChange={e => setActualEndTimePart(e.target.value)} style={{ ...inp, width: 130 }} />
+                        <TimeInput value={actualEndTimePart} onChange={e => setActualEndTimePart(e.target.value)} style={{ ...inp, width: 130 }} />
                       </div>
                       {actualEndTime && actualEndTime.slice(0, 10) > toDateInput(new Date()) && (
                         <p style={{ margin: '6px 0 0', fontSize: 11.5, color: '#B8893D' }}>
@@ -3738,7 +3874,7 @@ const BookingDetailPageV2 = () => {
                     {!isShiftBased && (
                       <div>
                         <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Service Start Time <span className="text-[#C4BFB5] font-normal">(optional)</span></label>
-                        <input type="time" lang="en-GB" value={resumeAssignForm.service_start_time} onChange={e => setResumeAssignForm(f => ({ ...f, service_start_time: e.target.value }))} className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8]" />
+                        <TimeInput value={resumeAssignForm.service_start_time} onChange={e => setResumeAssignForm(f => ({ ...f, service_start_time: e.target.value }))} className="w-full border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8]" />
                       </div>
                     )}
                   </div>
@@ -3806,7 +3942,7 @@ const BookingDetailPageV2 = () => {
                                   <input value={slot.label} onChange={e => updateResumeShiftSlot(idx, 'label', e.target.value)} placeholder={`Shift ${slot.shift_number}`} className="w-full rounded-lg border border-[#E2DCD0] px-2 py-1.5 text-sm outline-none focus:border-[#137A6B]" />
                                 </td>
                                 <td className="px-2 py-2">
-                                  <input required type="time" lang="en-GB" value={slot.start_time} onChange={e => updateResumeShiftSlot(idx, 'start_time', e.target.value)} className="w-full rounded-lg border border-[#E2DCD0] px-2 py-1.5 text-sm outline-none focus:border-[#137A6B]" />
+                                  <TimeInput required value={slot.start_time} onChange={e => updateResumeShiftSlot(idx, 'start_time', e.target.value)} className="w-full rounded-lg border border-[#E2DCD0] px-2 py-1.5 text-sm outline-none focus:border-[#137A6B]" />
                                 </td>
                                 <td className="px-2 py-2">
                                   <input required type="number" min="0.5" step="0.5" value={slot.duration_hours} onChange={e => updateResumeShiftSlot(idx, 'duration_hours', e.target.value)} onWheel={e => e.currentTarget.blur()} className="w-full rounded-lg border border-[#E2DCD0] px-2 py-1.5 text-sm outline-none focus:border-[#137A6B]" />
@@ -3965,7 +4101,7 @@ const BookingDetailPageV2 = () => {
                         <label className="block text-xs font-semibold text-[#7A756A] mb-1.5">Actual end date &amp; time</label>
                         <div className="flex gap-2">
                           <DateInput value={actualEndDatePart} onChange={e => setActualEndDatePart(e.target.value)} className="flex-1 border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8] text-[#6F6A60]" />
-                          <input type="time" lang="en-GB" value={actualEndTimePart} onChange={e => setActualEndTimePart(e.target.value)} className="w-32 border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8] text-[#6F6A60]" />
+                          <TimeInput value={actualEndTimePart} onChange={e => setActualEndTimePart(e.target.value)} className="w-32 border border-[#E2DCD0] rounded-xl px-3 py-2.5 text-sm outline-none focus:border-[#137A6B] bg-[#FCFBF8] text-[#6F6A60]" />
                         </div>
                       </div>
                       <div>
@@ -4085,9 +4221,8 @@ const BookingDetailPageV2 = () => {
             {swapModalStep === 1 && (() => {
               const PAGE_SIZE = 4;
               const designations = [...new Set(availableStaff.map(s => s.designation).filter(Boolean))].sort();
-              const q = swapModalSearch.toLowerCase();
               const filtered = availableStaff.filter(s =>
-                (!q || s.full_name?.toLowerCase().includes(q) || s.designation?.toLowerCase().includes(q) || s.mobile_number?.includes(q)) &&
+                staffMatchesQuery(s, swapModalSearch) &&
                 (!swapModalDesignation || s.designation === swapModalDesignation)
               );
               const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -4097,7 +4232,7 @@ const BookingDetailPageV2 = () => {
                   <div className="px-6 py-3 border-b border-slate-100 shrink-0 space-y-2">
                     <div className="relative">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-                      <input type="text" autoFocus placeholder="Search by name, designation, or phone..." value={swapModalSearch} onChange={e => { setSwapModalSearch(e.target.value); setSwapModalPage(1); }} className="w-full pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+                      <input type="text" autoFocus placeholder="Search by name, phone (0778885555 / +94778885555 / 778885555), staff ID (EMP-0541 / 0541), or designation…" value={swapModalSearch} onChange={e => { setSwapModalSearch(e.target.value); setSwapModalPage(1); }} className="w-full pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
                     </div>
                     {designations.length > 0 && (
                       <div className="flex items-center gap-2 flex-wrap">
@@ -4107,6 +4242,12 @@ const BookingDetailPageV2 = () => {
                     )}
                   </div>
                   <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                    <p className="text-xs text-slate-500">
+                      <span className="font-semibold text-slate-600">Send to client</span> WhatsApps that staff member's profile to this booking's client — send as many candidates as you like for them to choose from. It does not change the assignment; use <span className="font-semibold text-slate-600">Select</span> for that.
+                    </p>
+                    {profileSendError && (
+                      <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">{profileSendError}</div>
+                    )}
                     {availableStaff.length === 0 ? <Empty icon={Users} text="No staff found." /> : filtered.length === 0 ? <Empty icon={Users} text="No staff match your filters." /> : (
                       paginated.map(s => (
                         <div key={s.staff_profile_id} className="p-4 rounded-xl border border-slate-200 hover:border-blue-200 hover:bg-blue-50/30 transition">
@@ -4116,9 +4257,12 @@ const BookingDetailPageV2 = () => {
                                 {s.profile_picture_url ? <img src={s.profile_picture_url} alt={s.full_name} className="w-10 h-10 object-cover" /> : <User className="w-5 h-5 text-slate-400" />}
                               </div>
                               <div className="min-w-0">
-                                <p className="text-sm font-semibold text-slate-900 truncate">{s.full_name}</p>
+                                <p className="text-sm font-semibold text-slate-900 truncate">
+                                  {s.full_name}
+                                  {s.staff_code && <span className="ml-2 text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{s.staff_code}</span>}
+                                </p>
                                 {s.designation && <p className="text-xs text-slate-500">{s.designation}</p>}
-                                {s.mobile_number && <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5"><Phone className="w-3 h-3" /> {s.mobile_number}</p>}
+                                {s.mobile_number && <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5"><Phone className="w-3 h-3" /> {formatMobileNumber(s.mobile_number)}</p>}
                               </div>
                             </div>
                             <div className="flex items-center gap-3 shrink-0">
@@ -4127,12 +4271,27 @@ const BookingDetailPageV2 = () => {
                                 : s.current_status === 'UNAVAILABLE'
                                   ? <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600 ring-1 ring-slate-400/20">Unavailable</span>
                                   : <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-emerald-600/20"><CheckCircle className="w-3 h-3" /> Available</span>}
+                              <button
+                                onClick={() => sendStaffProfile(s)}
+                                disabled={profileSendingId !== null}
+                                title="WhatsApp this staff member's profile to the client"
+                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition disabled:opacity-50 disabled:cursor-not-allowed ${profileSentIds.includes(s.staff_profile_id) ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                              >
+                                {profileSendingId === s.staff_profile_id
+                                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Sending…</>
+                                  : profileSentIds.includes(s.staff_profile_id)
+                                    ? <><Check className="w-3.5 h-3.5" /> Sent — resend</>
+                                    : <><SendHorizontal className="w-3.5 h-3.5" /> Send to client</>}
+                              </button>
                               <button onClick={() => selectSwapStaff(s)} className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition">Select</button>
                             </div>
                           </div>
                           {s.current_status === 'ASSIGNED' && s.active_assignment_client && (
                             <p className="mt-1.5 pl-[52px] text-xs text-amber-700">Currently on {s.active_assignment_client}{s.active_assignment_end_date ? ` until ${new Date(s.active_assignment_end_date).toLocaleDateString('en-GB')}` : ''} — check schedule below before assigning.</p>
                           )}
+                          <div className="pl-[52px]">
+                            <StaffProfileDetails staff={s} />
+                          </div>
                           <div className="mt-2.5 pl-[52px]">
                             <StaffScheduleTimeline
                               schedule={staffSchedules[s.staff_profile_id] || []}
@@ -4176,8 +4335,12 @@ const BookingDetailPageV2 = () => {
                         {swapModalSelectedStaff.profile_picture_url ? <img src={swapModalSelectedStaff.profile_picture_url} alt={swapModalSelectedStaff.full_name} className="w-12 h-12 object-cover" /> : <User className="w-6 h-6 text-emerald-600" />}
                       </div>
                       <p className="text-sm font-semibold text-slate-900 truncate">{swapModalSelectedStaff.full_name}</p>
-                      {swapModalSelectedStaff.mobile_number && <p className="text-xs text-slate-500 mt-0.5">{swapModalSelectedStaff.mobile_number}</p>}
+                      {swapModalSelectedStaff.mobile_number && <p className="text-xs text-slate-500 mt-0.5">{formatMobileNumber(swapModalSelectedStaff.mobile_number)}</p>}
                     </div>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 p-3.5">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">{swapModalSelectedStaff.full_name}'s profile</p>
+                    <StaffProfileDetails staff={swapModalSelectedStaff} />
                   </div>
                   <div className="rounded-xl border border-slate-200 p-3.5">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">{swapModalSelectedStaff.full_name}'s schedule</p>
@@ -4205,12 +4368,12 @@ const BookingDetailPageV2 = () => {
                     {!swapModalIsAssign && (
                       <div>
                         <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Old staff out time <span className="text-slate-400 normal-case font-normal">(optional)</span></label>
-                        <input type="time" lang="en-GB" value={swapModalOldOutTime} onChange={e => setSwapModalOldOutTime(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                        <TimeInput value={swapModalOldOutTime} onChange={e => setSwapModalOldOutTime(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
                       </div>
                     )}
                     <div>
                       <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">New staff in time <span className="text-slate-400 normal-case font-normal">(optional)</span></label>
-                      <input type="time" lang="en-GB" value={swapModalNewInTime} onChange={e => setSwapModalNewInTime(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                      <TimeInput value={swapModalNewInTime} onChange={e => setSwapModalNewInTime(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
                     </div>
                   </div>
                   <p className="text-xs text-slate-400 -mt-2">Times use the staff start date above ({formatDate(swapModalStartDate)}).</p>
@@ -4254,13 +4417,13 @@ const BookingDetailPageV2 = () => {
               {editTimesRow.startDate && (
                 <div>
                   <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">In time on {formatDate(editTimesRow.startDate)}</label>
-                  <input type="time" lang="en-GB" value={editTimesIn} onChange={e => setEditTimesIn(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                  <TimeInput value={editTimesIn} onChange={e => setEditTimesIn(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
                 </div>
               )}
               {editTimesRow.effectiveEnd && (
                 <div>
                   <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Out time on {formatDate(editTimesRow.effectiveEnd)}</label>
-                  <input type="time" lang="en-GB" value={editTimesOut} onChange={e => setEditTimesOut(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                  <TimeInput value={editTimesOut} onChange={e => setEditTimesOut(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
                 </div>
               )}
               {!editTimesRow.effectiveEnd && (
@@ -4296,7 +4459,7 @@ const BookingDetailPageV2 = () => {
         // are pinned to the top, then alphabetical.
         const staffSearchQ = rescheduleModalStaffSearch.trim().toLowerCase();
         const filteredRescheduleStaff = rescheduleStaffOptions
-          .filter(s => !staffSearchQ || s.full_name?.toLowerCase().includes(staffSearchQ) || s.designation?.toLowerCase().includes(staffSearchQ))
+          .filter(s => staffMatchesQuery(s, staffSearchQ))
           .sort((a, b) => {
             const aOn = onBookingStaffIds.has(a.staff_profile_id) ? 0 : 1;
             const bOn = onBookingStaffIds.has(b.staff_profile_id) ? 0 : 1;
@@ -4344,9 +4507,7 @@ const BookingDetailPageV2 = () => {
 
                 <div>
                   <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">New start time <span className="text-slate-400 font-normal normal-case">(optional)</span></label>
-                  <input
-                    type="time"
-                    lang="en-GB"
+                  <TimeInput
                     value={rescheduleModalTime}
                     onChange={e => setRescheduleModalTime(e.target.value)}
                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
@@ -4388,7 +4549,7 @@ const BookingDetailPageV2 = () => {
                             <input
                               type="text"
                               autoFocus
-                              placeholder="Search staff by name or designation…"
+                              placeholder="Search by name, phone, staff ID (EMP-0541) or designation…"
                               value={rescheduleModalStaffSearch}
                               onChange={e => setRescheduleModalStaffSearch(e.target.value)}
                               className="w-full pl-8 pr-2.5 py-2 text-sm rounded-lg border border-slate-200 bg-white outline-none focus:border-blue-500"
@@ -4502,7 +4663,7 @@ const BookingDetailPageV2 = () => {
                           <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-1">
                             Start time {idx > 0 && <span className="normal-case font-normal text-blue-400 tracking-normal">(auto)</span>}
                           </label>
-                          <input type="time" lang="en-GB" value={s.start_time} onChange={e => updatePatternSlot(idx, 'start_time', e.target.value)} className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500" />
+                          <TimeInput value={s.start_time} onChange={e => updatePatternSlot(idx, 'start_time', e.target.value)} className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500" />
                         </div>
                         <div className="col-span-3">
                           <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Duration (h)</label>
@@ -4599,7 +4760,7 @@ const BookingDetailPageV2 = () => {
         const isLastDayInvoiceDecision = isLiveIn && invoicingMode !== 'MANUAL' &&
           dayModal.assignments.some(a => liveInBoundary(a, dayModal.dateISO).onlyEnd);
         const showInvoiceSection = manualInvoiceDay || isFirstDayInvoiceDecision || isLastDayInvoiceDecision;
-        const fmtTime = (ts) => ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+        const fmtTime = (ts) => ts ? new Date(ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : '—';
         const thCls = 'px-3 py-2 text-left text-[10.5px] font-semibold uppercase tracking-wider text-gray-400';
         const tdCls = 'px-3 py-3 text-sm text-gray-700 align-middle';
         const hasDraftContent = Object.keys(draftTimeSaved).length > 0 || Object.keys(draftAbsent).length > 0
@@ -4676,7 +4837,7 @@ const BookingDetailPageV2 = () => {
                                   {r.kind === 'ABSENT' && <span className="text-xs text-red-700">Absent — no pay</span>}
                                   {r.kind === 'TIME' && (
                                     <span className="text-xs text-gray-600">
-                                      {Number(r.saved.hours_served).toFixed(1)}h served —{' '}
+                                      {formatHoursMins(r.saved.hours_served)} served —{' '}
                                       {r.decision
                                         ? (r.decision.approve ? `Rs.${Number(r.decision.amount).toLocaleString()} salary` : 'salary skipped')
                                         : 'salary not yet decided'}
@@ -4783,7 +4944,7 @@ const BookingDetailPageV2 = () => {
                               const assignedCell = (
                                 <td className={tdCls}>
                                   <div className="text-xs text-gray-600">{assignedStart ? formatTime(assignedStart) : '—'}</div>
-                                  {assignedHours !== null && <div className="text-[10px] text-gray-400">{assignedHours}h expected</div>}
+                                  {assignedHours !== null && <div className="text-[10px] text-gray-400">{formatHoursMins(assignedHours)} expected</div>}
                                 </td>
                               );
 
@@ -4946,7 +5107,7 @@ const BookingDetailPageV2 = () => {
                                       <span className="text-xs text-gray-400">Ongoing</span>
                                     ) : (
                                       <>
-                                        <input type="time" lang="en-GB" value={inputs.in_time} onChange={e => setAttendanceInputs(p => ({ ...p, [a.assignment_id]: { ...inputs, in_time: e.target.value, autoFilled: false } }))} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-24" />
+                                        <TimeInput value={inputs.in_time} onChange={e => setAttendanceInputs(p => ({ ...p, [a.assignment_id]: { ...inputs, in_time: e.target.value, autoFilled: false } }))} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-24" />
                                         {inputs.autoFilled && inputs.in_time && <span className="block text-[10px] text-blue-400 mt-0.5">from schedule</span>}
                                       </>
                                     )}
@@ -4956,7 +5117,7 @@ const BookingDetailPageV2 = () => {
                                       <span className="text-xs text-gray-400" title="Booking hasn't ended yet — end time is only logged on the last day">Until booking ends</span>
                                     ) : (
                                       <>
-                                        <input type="time" lang="en-GB" value={inputs.out_time} onChange={e => setAttendanceInputs(p => ({ ...p, [a.assignment_id]: { ...inputs, out_time: e.target.value, autoFilled: false } }))} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-24" />
+                                        <TimeInput value={inputs.out_time} onChange={e => setAttendanceInputs(p => ({ ...p, [a.assignment_id]: { ...inputs, out_time: e.target.value, autoFilled: false } }))} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-24" />
                                         {inputs.autoFilled && inputs.out_time && <span className="block text-[10px] text-blue-400 mt-0.5">from schedule</span>}
                                       </>
                                     )}
@@ -5143,7 +5304,7 @@ const BookingDetailPageV2 = () => {
                           {dayHistory.map((h, idx) => {
                             const d = h.details || {};
                             const detailBits = [
-                              d.hours_served != null ? `${d.hours_served}h served` : null,
+                              d.hours_served != null ? `${formatHoursMins(d.hours_served)} served` : null,
                               d.amount != null ? `Rs.${Number(d.amount).toLocaleString()}` : null,
                               d.reason || null,
                               d.notes && d.notes !== 'Marked absent — no-show' ? d.notes : null,

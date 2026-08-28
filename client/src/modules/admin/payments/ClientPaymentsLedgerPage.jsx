@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
 
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
@@ -157,7 +158,7 @@ const ClientPaymentsLedgerPage = () => {
                             <div className="flex items-center gap-2 text-slate-700">
                               <User className="w-4 h-4 text-slate-400" />
                               <span className="font-semibold">{r.client_name || 'Unknown client'}</span>
-                              {r.mobile_number && <span className="text-xs text-slate-400">· {r.mobile_number}</span>}
+                              {r.mobile_number && <span className="text-xs text-slate-400">· {formatMobileNumber(r.mobile_number)}</span>}
                             </div>
                           </td>
                         </tr>

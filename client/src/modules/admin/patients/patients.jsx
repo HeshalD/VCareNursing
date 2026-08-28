@@ -8,6 +8,7 @@ import {
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 
 const fmt = (v) =>
   v ? new Date(v).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
@@ -380,7 +381,7 @@ const ClientRow = ({ clientName, clientMobile, patients, proxyMode, selectMode, 
             <span className="font-semibold text-slate-900">{clientName || 'Unknown Client'}</span>
           </div>
         </td>
-        <td className="px-4 py-3 text-slate-500">{clientMobile || '—'}</td>
+        <td className="px-4 py-3 text-slate-500">{formatMobileNumber(clientMobile) || '—'}</td>
         <td className="px-4 py-3 text-right text-slate-500 tabular-nums">{patients.length}</td>
       </tr>
 

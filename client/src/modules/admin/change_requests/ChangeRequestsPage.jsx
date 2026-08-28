@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 
 const STATUS_TABS = ['PENDING', 'UNDER_REVIEW', 'APPROVED', 'REJECTED'];
@@ -240,7 +241,7 @@ const ChangeRequestsPage = () => {
                         </div>
                         <div>
                           <p className="font-semibold text-slate-900 leading-tight">{req.staff_name}</p>
-                          <p className="text-xs text-slate-400">{req.staff_mobile}</p>
+                          <p className="text-xs text-slate-400">{formatMobileNumber(req.staff_mobile)}</p>
                         </div>
                       </div>
                     </td>
@@ -299,7 +300,7 @@ const ChangeRequestsPage = () => {
                     </div>
                     <div>
                       <p className="text-sm font-semibold text-slate-900">{selectedRequest.staff_name}</p>
-                      <p className="text-xs text-slate-400">{selectedRequest.staff_mobile}</p>
+                      <p className="text-xs text-slate-400">{formatMobileNumber(selectedRequest.staff_mobile)}</p>
                     </div>
                   </div>
                 </div>

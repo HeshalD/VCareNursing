@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import DateInput from '../../../components/common/DateInput';
 
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
@@ -48,6 +49,15 @@ const PRODUCT_INVOICE_STATUS_CONFIG = {
   CANCELLED: { dot: 'bg-slate-400',   text: 'text-slate-600',   label: 'Cancelled' },
 };
 
+// The system-wide overdue-invoices ledger (backend/services/overdueInvoices.js)
+// — every invoice the system generated that the client hasn't paid off yet,
+// currently populated only from registration fee invoices.
+const OVERDUE_INVOICE_STATUS_CONFIG = {
+  OVERDUE:  { dot: 'bg-red-500',     text: 'text-red-700',     label: 'Overdue' },
+  RESOLVED: { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Resolved' },
+};
+const OVERDUE_SOURCE_LABELS = { REGISTRATION_FEE: 'Registration Fee' };
+
 const StatusDot = ({ status, config }) => {
   const cfg = config[status] || { dot: 'bg-slate-400', text: 'text-slate-600', label: status || '—' };
   return (
@@ -78,6 +88,7 @@ const TAB_GROUPS = [
       { id: 'reg-fee', label: 'Registration Fee' },
       { id: 'products', label: 'Product & Rental' },
       { id: 'combined', label: 'Combined' },
+      { id: 'overdue', label: 'Overdue' },
     ],
   },
 ];
@@ -102,6 +113,10 @@ const TAB_META = {
   combined: {
     title: 'Combined Invoices',
     subtitle: 'The merged service + product Invoice generated once a quotation is paid in full.',
+  },
+  overdue: {
+    title: 'Overdue Invoices',
+    subtitle: 'Every invoice the system has sent that the client hasn\'t paid off yet, across all invoice sources.',
   },
 };
 
@@ -133,6 +148,11 @@ export default function AdminInvoicesPage() {
   const [productInvoicesLoading, setProductInvoicesLoading] = useState(false);
   const [productInvoiceStatusFilter, setProductInvoiceStatusFilter] = useState('');
   const [downloadingProductInvoiceId, setDownloadingProductInvoiceId] = useState('');
+
+  // ── Overdue invoices state ─────────────────────────────────────────────────
+  const [overdueInvoices, setOverdueInvoices] = useState([]);
+  const [overdueInvoicesLoading, setOverdueInvoicesLoading] = useState(false);
+  const [overdueStatusFilter, setOverdueStatusFilter] = useState('OVERDUE');
 
   // ── Pending queue state ────────────────────────────────────────────────────
   const [pending, setPending] = useState([]);
@@ -233,6 +253,22 @@ export default function AdminInvoicesPage() {
     }
   }, [productInvoiceStatusFilter]);
 
+  // ── Overdue invoices fetch ──────────────────────────────────────────────────
+  const fetchOverdueInvoices = useCallback(async (overrides = {}) => {
+    setOverdueInvoicesLoading(true);
+    try {
+      const status = overrides.status !== undefined ? overrides.status : overdueStatusFilter;
+      const filters = { limit: 200 };
+      if (status) filters.status = status;
+      const res = await apiClient.getAllOverdueInvoices(filters);
+      setOverdueInvoices(Array.isArray(res?.data) ? res.data : []);
+    } catch {
+      setOverdueInvoices([]);
+    } finally {
+      setOverdueInvoicesLoading(false);
+    }
+  }, [overdueStatusFilter]);
+
   const handleDownloadProductInvoice = async (inv) => {
     setDownloadingProductInvoiceId(inv.invoice_id);
     try {
@@ -280,6 +316,7 @@ export default function AdminInvoicesPage() {
   useEffect(() => { if (tab === 'reg-fee') fetchRegFeeInvoices(); }, [tab]); // eslint-disable-line
   useEffect(() => { if (tab === 'products') fetchProductInvoices(); }, [tab]); // eslint-disable-line
   useEffect(() => { if (tab === 'combined') fetchCombinedInvoices(); }, [tab]); // eslint-disable-line
+  useEffect(() => { if (tab === 'overdue') fetchOverdueInvoices(); }, [tab]); // eslint-disable-line
 
   // ── Decide (approve / reject) ──────────────────────────────────────────────
   const handleDecide = async (inv, approve) => {
@@ -892,7 +929,7 @@ export default function AdminInvoicesPage() {
                           </td>
                           <td className="px-4 py-3 text-slate-700">
                             {inv.payer_name || '—'}
-                            {inv.payer_mobile && <span className="block text-xs text-slate-400">{inv.payer_mobile}</span>}
+                            {inv.payer_mobile && <span className="block text-xs text-slate-400">{formatMobileNumber(inv.payer_mobile)}</span>}
                           </td>
                           <td className="px-4 py-3 text-right font-medium text-slate-800 whitespace-nowrap">{formatMoney(inv.total_amount)}</td>
                           <td className="px-4 py-3">
@@ -913,6 +950,83 @@ export default function AdminInvoicesPage() {
                               </button>
                             </div>
                           </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* ── OVERDUE INVOICES TAB ──────────────────────────────────────────── */}
+        {tab === 'overdue' && (
+          <>
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Status</label>
+                <select
+                  value={overdueStatusFilter}
+                  onChange={(e) => setOverdueStatusFilter(e.target.value)}
+                  className={inputCls}
+                >
+                  <option value="">All</option>
+                  <option value="OVERDUE">Overdue</option>
+                  <option value="RESOLVED">Resolved</option>
+                </select>
+              </div>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => fetchOverdueInvoices()} className={primaryBtnCls}>Apply</button>
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              {overdueInvoicesLoading ? (
+                <div className="flex items-center justify-center h-64">
+                  <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+                </div>
+              ) : overdueInvoices.length === 0 ? (
+                <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-400">
+                  <Receipt className="h-8 w-8" />
+                  <p className="text-sm font-medium">No overdue invoices match the current filters</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50">
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Invoiced On</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Client</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Source</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Invoice Code</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Resolved On</th>
+                        <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {overdueInvoices.map((inv) => (
+                        <tr key={inv.overdue_invoice_id} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{formatDate(inv.invoiced_at)}</td>
+                          <td className="px-4 py-3">
+                            {inv.client_profile_id ? (
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/admin/users/${inv.client_profile_id}/detail`)}
+                                className={linkCls}
+                              >
+                                {inv.client_name || '—'}
+                              </button>
+                            ) : (inv.client_name || '—')}
+                          </td>
+                          <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{OVERDUE_SOURCE_LABELS[inv.source_type] || inv.source_type}</td>
+                          <td className="px-4 py-3 font-mono text-xs text-slate-500">{inv.invoice_code || '—'}</td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <StatusDot status={inv.status} config={OVERDUE_INVOICE_STATUS_CONFIG} />
+                          </td>
+                          <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{inv.resolved_at ? formatDate(inv.resolved_at) : '—'}</td>
+                          <td className="px-4 py-3 text-right font-medium text-slate-800 whitespace-nowrap">{formatMoney(inv.amount)}</td>
                         </tr>
                       ))}
                     </tbody>

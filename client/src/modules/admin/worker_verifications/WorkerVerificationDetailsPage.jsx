@@ -12,6 +12,7 @@ import ImageCropModal from '../../../components/common/ImageCropModal';
 import DateInput from '../../../components/common/DateInput';
 import PhoneInput from '../../../components/common/PhoneInput';
 import LanguageMultiSelect from '../../../components/common/LanguageMultiSelect';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 
 const STAFF_ROLES = ['CARETAKER', 'NURSING_ASSISTANT', 'NURSE', 'PHYSIOTHERAPIST', 'NANNY', 'COUNSELLOR'];
 const GENDERS = ['MALE', 'FEMALE', 'OTHER'];
@@ -564,7 +565,7 @@ const WorkerVerificationDetailsPage = () => {
               <p className="text-xs text-slate-400 mt-1">Applied {formatDate(application.applied_at)}</p>
             </div>
             <div className="divide-y divide-slate-50 px-4">
-              <InfoRow label="Mobile" value={application.mobile_number} />
+              <InfoRow label="Mobile" value={formatMobileNumber(application.mobile_number)} />
               <InfoRow label="Email" value={application.email} />
               <InfoRow label="Location" value={application.location} />
             </div>
@@ -647,7 +648,7 @@ const WorkerVerificationDetailsPage = () => {
               ) : (
                 <div className="divide-y divide-slate-50">
                   <InfoRow label="Full Name" value={application.full_name} />
-                  <InfoRow label="Mobile" value={application.mobile_number} />
+                  <InfoRow label="Mobile" value={formatMobileNumber(application.mobile_number)} />
                   <InfoRow label="Email" value={application.email} />
                   <InfoRow label="Gender" value={application.gender} />
                   <InfoRow label="Date of Birth" value={formatDate(application.date_of_birth)} />
@@ -812,7 +813,7 @@ const WorkerVerificationDetailsPage = () => {
                 <p className="text-xs text-slate-500">
                   {application.agreement_sent_at
                     ? `Independent Contractor Agreement sent to ${application.full_name} via WhatsApp.`
-                    : `Send the Independent Contractor Agreement PDF to ${application.full_name}${application.mobile_number ? ` (${application.mobile_number})` : ''} via WhatsApp.`}
+                    : `Send the Independent Contractor Agreement PDF to ${application.full_name}${application.mobile_number ? ` (${formatMobileNumber(application.mobile_number)})` : ''} via WhatsApp.`}
                 </p>
               </div>
             </div>

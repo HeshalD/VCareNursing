@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, FileText, RefreshCw, Receipt, CheckCircle2, Clock3, ClipboardList, Plus, Download, Send, Loader2, BadgeDollarSign, Pencil, Trash2, Save } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import PaymentAllocationModal from './PaymentAllocationModal';
 import ReceiptSendPopup from './ReceiptSendPopup';
 import InvoiceSendPopup from './InvoiceSendPopup';
@@ -679,7 +680,7 @@ const QuotationDetailsPage = () => {
               </div>
               <div className="p-5 space-y-2 text-sm">
                 <Row label="Payer" value={quote.payer_name} />
-                <Row label="Mobile" value={quote.payer_mobile} />
+                <Row label="Mobile" value={formatMobileNumber(quote.payer_mobile)} />
                 <Row label="Service" value={quote.service_type} />
                 <Row label="Request Status" value={quote.request_status || 'N/A'} />
               </div>

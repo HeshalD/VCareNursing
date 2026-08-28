@@ -181,6 +181,8 @@ router.post('/:booking_id/resolve-overdue', protect, requirePermission('BOOKING_
 
 router.post('/:booking_id/swap-staff', protect, requirePermission('BOOKING_SWAP_STAFF'), bookingController.swapStaff);
 router.get('/:booking_id/swap-history', protect, requirePermission('VIEW_BOOKINGS'), bookingController.getSwapHistory);
+// Share a (replacement) staff member's profile with the booking's client on WhatsApp.
+router.post('/:booking_id/send-staff-profile', protect, requirePermission('BOOKING_SEND_STAFF_PROFILE'), bookingController.sendStaffProfileToClient);
 
 // Daily attendance (staff in/out time + manual salary confirmation)
 router.get('/:booking_id/attendance', protect, requirePermission('VIEW_BOOKINGS'), dailyAttendanceController.getBookingAttendance);

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, UserCircle, FileText, Plus, Edit2, Trash2, X, Upload, Shield, LogOut, ExternalLink, CheckCircle2, ChevronLeft, ChevronRight } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import ImageCropModal from '../../../components/common/ImageCropModal';
 import DateInput from '../../../components/common/DateInput';
 import PhoneInput from '../../../components/common/PhoneInput';
@@ -572,7 +573,7 @@ const ProxyUserManagement = () => {
 
                   {/* Contact */}
                   <td className="px-4 py-3 whitespace-nowrap">
-                    <p className="text-slate-700">{worker.phone || '—'}</p>
+                    <p className="text-slate-700">{formatMobileNumber(worker.phone) || '—'}</p>
                     <p className="text-xs text-slate-400">{worker.email || '—'}</p>
                   </td>
 

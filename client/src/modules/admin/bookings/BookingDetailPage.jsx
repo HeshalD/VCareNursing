@@ -21,6 +21,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import CareTimeline from './CareTimeline';
 import DateInput from '../../../components/common/DateInput';
 import DateTimeInput from '../../../components/common/DateTimeInput';
@@ -1095,7 +1096,7 @@ const BookingDetailPage = () => {
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                     <DetailRow label="Staff ID"  value={normalizedCurrentStaff.id}     mono />
-                    <DetailRow label="Phone"      value={normalizedCurrentStaff.mobile} />
+                    <DetailRow label="Phone"      value={formatMobileNumber(normalizedCurrentStaff.mobile)} />
                     <DetailRow label="Email"      value={normalizedCurrentStaff.email}  />
                     <DetailRow label="Daily rate" value={formatMoney(dailyRate)} />
                   </div>
@@ -1201,7 +1202,7 @@ const BookingDetailPage = () => {
                         <div className="text-xs text-[#A39D91] mb-1">{formatDateTime(swap.swappedAt)}</div>
                         <div className="text-sm text-[#5A554B]">{swap.reason || 'No reason provided.'}</div>
                         {swap.swappedByMobile && (
-                          <div className="text-xs text-[#A39D91] mt-1">Swapped by {swap.swappedByMobile}</div>
+                          <div className="text-xs text-[#A39D91] mt-1">Swapped by {formatMobileNumber(swap.swappedByMobile)}</div>
                         )}
                       </div>
                       <Pill tone={swap.billingGap ? 'amber' : 'violet'}>
@@ -1231,7 +1232,7 @@ const BookingDetailPage = () => {
               <div className="grid grid-cols-2 gap-4">
                 <DetailRow label="Name"      value={clientDetails.client_name} />
                 <DetailRow label="Client ID" value={clientDetails.client_profile_id || bookingSummary.client_id || '-'} mono />
-                <DetailRow label="Phone"     value={clientDetails.client_mobile || clientDetails.mobile || '-'} />
+                <DetailRow label="Phone"     value={formatMobileNumber(clientDetails.client_mobile || clientDetails.mobile) || '-'} />
                 <DetailRow label="Email"     value={clientDetails.client_email  || clientDetails.email  || '-'} />
                 <div className="col-span-2">
                   <DetailRow label="Address" value={clientDetails.client_address || clientDetails.address || '-'} />
@@ -1808,7 +1809,7 @@ const BookingDetailPage = () => {
                               {s.designation && <p className="text-xs text-slate-500">{s.designation}</p>}
                               {s.mobile_number && (
                                 <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
-                                  <Phone className="w-3 h-3" /> {s.mobile_number}
+                                  <Phone className="w-3 h-3" /> {formatMobileNumber(s.mobile_number)}
                                 </p>
                               )}
                             </div>
@@ -1867,7 +1868,7 @@ const BookingDetailPage = () => {
                       </div>
                       <p className="text-sm font-semibold text-slate-900 truncate">{swapModalSelectedStaff.full_name}</p>
                       {swapModalSelectedStaff.mobile_number && (
-                        <p className="text-xs text-slate-500 mt-0.5">{swapModalSelectedStaff.mobile_number}</p>
+                        <p className="text-xs text-slate-500 mt-0.5">{formatMobileNumber(swapModalSelectedStaff.mobile_number)}</p>
                       )}
                     </div>
                   </div>

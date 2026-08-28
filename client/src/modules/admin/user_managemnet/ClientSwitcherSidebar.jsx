@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Search, Loader2 } from 'lucide-react';
 import apiClient from '../../../api/api';
 import useDebouncedValue from '../../../hooks/useDebouncedValue';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 
 const PAGE_SIZE = 50;
 
@@ -92,7 +93,7 @@ const ClientSwitcherSidebar = ({ activeClientId, onNavigate }) => {
                       {c.full_name || 'Unnamed'}
                     </p>
                     <p className="truncate text-[11px] text-gray-400">
-                      {c.client_code || '—'}{c.mobile_number ? ` · ${c.mobile_number}` : ''}
+                      {c.client_code || '—'}{c.mobile_number ? ` · ${formatMobileNumber(c.mobile_number)}` : ''}
                     </p>
                   </div>
                 </button>

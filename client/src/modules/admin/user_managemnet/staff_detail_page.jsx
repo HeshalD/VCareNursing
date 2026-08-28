@@ -39,6 +39,7 @@ import {
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 
 const moneyFormatter = new Intl.NumberFormat('en-LK', {
   style: 'currency',
@@ -501,7 +502,7 @@ const StaffDetailPage = () => {
                 </span>
               </div>
               <div className="mt-2 flex flex-wrap gap-4 text-sm text-slate-600">
-                <span className="inline-flex items-center gap-2"><Phone className="h-4 w-4" /> {profile.mobile_number || profile.email || '-'}</span>
+                <span className="inline-flex items-center gap-2"><Phone className="h-4 w-4" /> {formatMobileNumber(profile.mobile_number) || profile.email || '-'}</span>
                 <span className="inline-flex items-center gap-2"><Mail className="h-4 w-4" /> {profile.email || '-'}</span>
                 <span className="inline-flex items-center gap-2"><MapPin className="h-4 w-4" /> {profile.location || profile.home_address || '-'}</span>
               </div>
@@ -1755,7 +1756,7 @@ const StaffDetailPage = () => {
                     </span>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-4 text-sm text-slate-200">
-                    <span className="inline-flex items-center gap-2"><Phone className="h-4 w-4" /> {profile.mobile_number || profile.email || '-'}</span>
+                    <span className="inline-flex items-center gap-2"><Phone className="h-4 w-4" /> {formatMobileNumber(profile.mobile_number) || profile.email || '-'}</span>
                     <span className="inline-flex items-center gap-2"><Mail className="h-4 w-4" /> {profile.email || '-'}</span>
                     <span className="inline-flex items-center gap-2"><MapPin className="h-4 w-4" /> {profile.location || profile.home_address || '-'}</span>
                     <span className="inline-flex items-center gap-2"><Briefcase className="h-4 w-4" /> {profile.designation || '-'}</span>

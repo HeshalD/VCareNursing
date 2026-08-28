@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Loader2, FileText, Plus, ShieldCheck } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 
 const STATUS_CONFIG = {
   Active:      { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Active' },
@@ -151,7 +152,7 @@ const InternalStaffProfilePage = () => {
             </div>
             <div>
               <p className="text-xs text-slate-400 uppercase tracking-wide">Phone</p>
-              <p className="text-slate-700">{staff.phone || '—'}</p>
+              <p className="text-slate-700">{formatMobileNumber(staff.phone) || '—'}</p>
             </div>
             <div>
               <p className="text-xs text-slate-400 uppercase tracking-wide">Base Salary</p>

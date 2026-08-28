@@ -10,6 +10,7 @@ import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import DateInput from '../../../components/common/DateInput';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 
 const PAGE_SIZE = 10;
 
@@ -524,7 +525,7 @@ const Statements = () => {
       .map((c) => ({
         client_profile_id: c.client_profile_id,
         client_name: c.full_name,
-        patient_name: c.mobile_number || '',
+        patient_name: formatMobileNumber(c.mobile_number) || '',
         booking_code: null,
         booking_id: c.client_profile_id,
       })),
@@ -1252,7 +1253,7 @@ const Statements = () => {
                       <div>
                         <p className="text-xs text-slate-400 mb-0.5">Client</p>
                         <p className="text-sm font-semibold text-slate-900 truncate">{booking.client_name}</p>
-                        <p className="text-xs text-slate-500 truncate">{booking.client_mobile}</p>
+                        <p className="text-xs text-slate-500 truncate">{formatMobileNumber(booking.client_mobile)}</p>
                       </div>
                       <div>
                         <p className="text-xs text-slate-400 mb-0.5">Care Profile</p>
@@ -1272,7 +1273,7 @@ const Statements = () => {
                         {booking.staff_name ? (
                           <>
                             <p className="text-sm font-medium text-slate-900 truncate">{booking.staff_name}</p>
-                            <p className="text-xs text-slate-500 truncate">{booking.staff_mobile}</p>
+                            <p className="text-xs text-slate-500 truncate">{formatMobileNumber(booking.staff_mobile)}</p>
                           </>
                         ) : (
                           <p className="text-xs text-slate-400 italic">Not assigned</p>
@@ -1610,7 +1611,7 @@ const Statements = () => {
                           <p className="text-xs text-slate-400 mb-0.5">Phone</p>
                           <div className="flex items-center gap-1">
                             <Phone className="w-3 h-3 text-slate-400 shrink-0" />
-                            <p className="text-sm font-medium text-slate-900 truncate">{client.mobile_number || '—'}</p>
+                            <p className="text-sm font-medium text-slate-900 truncate">{formatMobileNumber(client.mobile_number) || '—'}</p>
                           </div>
                         </div>
                         <div>

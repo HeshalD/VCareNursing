@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, MessageCircle, SendHorizontal, Loader2 } from 'lucide-react';
 import apiClient from '../../../api/api';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 
 // Shown right after a payment is recorded (see PaymentAllocationModal) so the
 // admin can immediately push the client's latest payment receipt out over
@@ -52,7 +53,7 @@ const ReceiptSendPopup = ({ open, clientId, payerName, payerMobile, onClose }) =
             Payment recorded. Would you like to send the receipt to{' '}
             <span className="font-semibold text-slate-900">{payerName || 'the client'}</span>
             {payerMobile && (
-              <span className="text-slate-400"> ({payerMobile})</span>
+              <span className="text-slate-400"> ({formatMobileNumber(payerMobile)})</span>
             )}{' '}
             via WhatsApp?
           </p>

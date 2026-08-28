@@ -265,6 +265,8 @@ exports.createServiceRequest = async (req, res) => {
         patient_gender, // Care profile's own gender (MALE/FEMALE/OTHER)
         relationship_to_client,
         patient_condition,
+        emergency_contact_name, // Care profile's emergency contact(s); multiple contacts " | "-joined
+        emergency_contact_number,
         service_type,
         service_model,
         location_address,
@@ -377,6 +379,8 @@ exports.createServiceRequest = async (req, res) => {
                 patient_age,
                 relationship_to_client,
                 patient_condition,
+                emergency_contact_name,
+                emergency_contact_number,
                 service_type,
                 service_model,
                 location_address,
@@ -389,12 +393,12 @@ exports.createServiceRequest = async (req, res) => {
                 gender,
                 created_at
             ) VALUES (
-                $1, $2, $3, $4, $5, $6::gender_enum, $7::client_type_enum, $8, $9, $10, $11, $12, $13, $14, $15::service_model_enum, $16,
-                CASE WHEN $17::double precision IS NOT NULL AND $18::double precision IS NOT NULL
-                     THEN point($18::double precision, $17::double precision)
+                $1, $2, $3, $4, $5, $6::gender_enum, $7::client_type_enum, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::service_model_enum, $18,
+                CASE WHEN $19::double precision IS NOT NULL AND $20::double precision IS NOT NULL
+                     THEN point($20::double precision, $19::double precision)
                      ELSE NULL
                 END,
-                $19, $20, $21::gender_preference_enum, $22, $23, $24::gender_enum, NOW()
+                $21, $22, $23::gender_preference_enum, $24, $25, $26::gender_enum, NOW()
             )
             RETURNING
                 request_id,
@@ -411,6 +415,8 @@ exports.createServiceRequest = async (req, res) => {
                 patient_age,
                 relationship_to_client,
                 patient_condition,
+                emergency_contact_name,
+                emergency_contact_number,
                 service_type,
                 service_model,
                 location_address,
@@ -438,6 +444,8 @@ exports.createServiceRequest = async (req, res) => {
             parseInt(patient_age),
             relationship_to_client || null,
             patient_condition || null,
+            emergency_contact_name || null,
+            emergency_contact_number || null,
             service_type,
             finalServiceModel,
             location_address || null,

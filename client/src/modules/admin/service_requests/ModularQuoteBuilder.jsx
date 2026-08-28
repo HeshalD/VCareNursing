@@ -24,6 +24,7 @@ import {
   CalendarClock,
   Clock3,
 } from 'lucide-react';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import PresetItemSelector from '../service_quotes/PresetItemSelector';
 import PresetManager from '../service_quotes/PresetManager';
 import LineItemRow from '../service_quotes/LineItemRow';
@@ -189,7 +190,7 @@ const QuotePreviewPanel = ({
           <div>
             <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1.5">Billed To</p>
             <p className="text-sm font-semibold text-gray-900">{serviceRequest.payer_name}</p>
-            <p className="text-[12px] text-gray-500 mt-0.5">{serviceRequest.payer_mobile}</p>
+            <p className="text-[12px] text-gray-500 mt-0.5">{formatMobileNumber(serviceRequest.payer_mobile)}</p>
           </div>
           <div>
             <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1.5">Care Recipient</p>
@@ -742,7 +743,7 @@ const ModularQuoteBuilder = () => {
               <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">Payer</p>
               <div className="grid grid-cols-1 gap-3">
                 <InfoRow label="Name"   value={serviceRequest?.payer_name} />
-                <InfoRow label="Mobile" value={serviceRequest?.payer_mobile} />
+                <InfoRow label="Mobile" value={formatMobileNumber(serviceRequest?.payer_mobile)} />
               </div>
             </div>
 

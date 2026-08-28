@@ -11,6 +11,7 @@ import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
 import PhoneInput from '../../../components/common/PhoneInput';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import PaymentAllocationModal from '../service_quotes/PaymentAllocationModal';
 import ReceiptSendPopup from '../service_quotes/ReceiptSendPopup';
 import InvoiceSendPopup from '../service_quotes/InvoiceSendPopup';
@@ -885,7 +886,7 @@ const ServiceRequestSummaryPage = () => {
             <div className="border-t border-slate-100 px-6 py-3 bg-slate-50 flex flex-wrap items-center gap-x-6 gap-y-2">
               <div className="flex items-center gap-1.5 text-xs text-slate-500">
                 <Phone className="w-3.5 h-3.5 text-slate-400" />
-                <span className="font-medium text-slate-700">{request.payer_mobile || '—'}</span>
+                <span className="font-medium text-slate-700">{formatMobileNumber(request.payer_mobile) || '—'}</span>
               </div>
               <div className="flex items-center gap-1.5 text-xs text-slate-500">
                 <Heart className="w-3.5 h-3.5 text-slate-400" />
@@ -1069,7 +1070,7 @@ const ServiceRequestSummaryPage = () => {
                         </div>
                         <div className="p-4 grid grid-cols-1 gap-3">
                           <InfoRow label="Full Name" value={request.payer_name} />
-                          <InfoRow label="Mobile" value={request.payer_mobile} />
+                          <InfoRow label="Mobile" value={formatMobileNumber(request.payer_mobile)} />
                           {request.client_code && <InfoRow label="Client Code" value={request.client_code} />}
                           {request.location_address && (
                             <div>

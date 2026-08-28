@@ -3,6 +3,7 @@ import { Loader2, Search, ChevronRight, UserCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 
 const ROLE_LABELS = {
@@ -218,7 +219,7 @@ const WorkerVerification = () => {
 
                       {/* Contact */}
                       <td className="px-4 py-3 whitespace-nowrap">
-                        <p className="text-slate-700">{app.mobile_number ?? '—'}</p>
+                        <p className="text-slate-700">{formatMobileNumber(app.mobile_number) ?? '—'}</p>
                         <p className="text-xs text-slate-400">{app.email ?? '—'}</p>
                       </td>
 

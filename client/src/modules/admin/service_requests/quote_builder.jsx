@@ -18,6 +18,7 @@ import {
   BadgeCheck,
   Layers
 } from 'lucide-react';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import QuoteLineItem from '../service_quotes/QuoteLineItem';
 import PresetItemSelector from '../service_quotes/PresetItemSelector';
 import QuoteSummary from '../service_quotes/QuoteSummary';
@@ -304,7 +305,7 @@ const QuoteBuilder = () => {
               <p className="text-blue-200 text-sm mt-1">
                 Payer: <span className="text-white font-medium">{serviceRequest.payer_name}</span>
                 <span className="mx-2 opacity-50">·</span>
-                {serviceRequest.payer_mobile}
+                {formatMobileNumber(serviceRequest.payer_mobile)}
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -345,7 +346,7 @@ const QuoteBuilder = () => {
                   </div>
                   <div className="pl-8 divide-y divide-slate-100">
                     <InfoRow label="Name" value={serviceRequest.payer_name} />
-                    <InfoRow label="Mobile" value={serviceRequest.payer_mobile} />
+                    <InfoRow label="Mobile" value={formatMobileNumber(serviceRequest.payer_mobile)} />
                   </div>
                 </div>
 

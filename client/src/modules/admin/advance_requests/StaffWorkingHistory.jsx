@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import {
   ArrowLeft,
   User,
@@ -207,7 +208,7 @@ export default function StaffWorkingHistory() {
               {profile.mobile_number && (
                 <div className="flex items-center gap-1">
                   <Phone className="w-3.5 h-3.5" />
-                  {profile.mobile_number}
+                  {formatMobileNumber(profile.mobile_number)}
                 </div>
               )}
               {profile.location && (

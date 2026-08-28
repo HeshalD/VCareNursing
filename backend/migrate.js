@@ -1823,6 +1823,41 @@ async function runMigration() {
     );
   `);
 
+  // The date the money actually changed hands, which is not always the day the
+  // admin sat down to enter it (backdated/historical payments). created_at stays
+  // the entry timestamp; payment_date is what the ledger and receipt are dated by.
+  await db.query(`
+    ALTER TABLE client_payment_records
+    ADD COLUMN IF NOT EXISTS payment_date DATE;
+  `);
+
+  // Backfill pre-existing rows: before this column existed, the entry date WAS
+  // the payment date, so created_at is the correct historical value.
+  await db.query(`
+    UPDATE client_payment_records
+    SET payment_date = created_at::date
+    WHERE payment_date IS NULL;
+  `);
+
+  // 'OTHER' = a payment that isn't tied to a booking, the wallet, or a quotation
+  // (e.g. a one-off charge settled in cash). It books straight to OTHER_INCOME on
+  // the ledger and carries a free-text description instead of a booking link.
+  await db.query(`
+    ALTER TABLE client_payment_allocations
+    ADD COLUMN IF NOT EXISTS description TEXT;
+  `);
+
+  await db.query(`
+    ALTER TABLE client_payment_allocations
+    DROP CONSTRAINT IF EXISTS client_payment_allocations_allocation_type_check;
+  `);
+
+  await db.query(`
+    ALTER TABLE client_payment_allocations
+    ADD CONSTRAINT client_payment_allocations_allocation_type_check
+    CHECK (allocation_type IN ('BOOKING', 'NEW_BOOKING', 'WALLET', 'OTHER'));
+  `);
+
   // =========================================================
   // INDEXES
   // =========================================================
@@ -3152,6 +3187,56 @@ async function runMigration() {
       WHEN duplicate_object THEN null;
     END $$;
   `);
+
+  // =========================================================
+  // OVERDUE INVOICES
+  // Generic ledger of "invoiced but not yet paid" amounts, shared across every
+  // invoice-producing flow in the system (currently just registration fees —
+  // see clientController.sendRegFeeInvoice). source_type/source_id point at
+  // whichever concrete invoice row generated this entry (e.g.
+  // client_reg_fee_invoices.invoice_id for REGISTRATION_FEE), so future
+  // sources (daily/product/combined invoices) can plug in without a schema
+  // change. A row is created the moment an invoice is sent and flipped to
+  // RESOLVED the moment that specific obligation is paid/waived — see
+  // services/overdueInvoices.js.
+  // =========================================================
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS overdue_invoices (
+      overdue_invoice_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      client_id UUID NOT NULL REFERENCES client_profiles(client_profile_id) ON DELETE CASCADE,
+      source_type VARCHAR(30) NOT NULL,
+      source_id UUID,
+      invoice_code VARCHAR(50),
+      amount NUMERIC(12,2) NOT NULL,
+      status VARCHAR(20) NOT NULL DEFAULT 'OVERDUE',
+      resolution VARCHAR(20),
+      invoiced_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      resolved_at TIMESTAMP WITH TIME ZONE,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_overdue_invoices_client_id
+    ON overdue_invoices(client_id);
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_overdue_invoices_status
+    ON overdue_invoices(status) WHERE status = 'OVERDUE';
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_overdue_invoices_source
+    ON overdue_invoices(source_type, source_id);
+  `);
+
+  // Emergency contact(s) for the care recipient, captured at proxy service
+  // request creation time. Mirrors patient_profiles' emergency_contact_name/
+  // emergency_contact_number pattern (TEXT so multiple contacts can be
+  // " | "-joined, same as AddCareProfileDrawer's serializeEmergencyContacts)
+  // and is carried over to the patient_profiles row created at
+  // booking-conversion time for a brand-new care profile.
+  await db.query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS emergency_contact_name TEXT`);
+  await db.query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS emergency_contact_number TEXT`);
 
   // =========================================================
 

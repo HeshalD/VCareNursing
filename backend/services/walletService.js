@@ -45,6 +45,10 @@ const creditClientWallet = async (client, {
   receipt_url = null,
   notes = null,
   verified_by = null,
+  // Ledger date for the resulting transaction row. Defaults to now; pass the
+  // real payment date when recording a backdated payment so the statement
+  // reflects when the money came in, not when it was keyed in.
+  created_at = null,
 }) => {
   await client.query(
     `UPDATE client_profiles SET wallet_balance = COALESCE(wallet_balance, 0) + $1 WHERE client_profile_id = $2`,
@@ -62,13 +66,14 @@ const creditClientWallet = async (client, {
     `INSERT INTO transactions (
        client_id, quote_id, earmarked_booking_id, category, transaction_type, amount, payment_method,
        bank_account_id, cheque_number, cheque_date, reference_number, receipt_url,
-       notes, status, verified_by
-     ) VALUES ($1, $2, $3, 'WALLET_TOPUP', 'CREDIT', $4, $5, $6, $7, $8, $9, $10, $11, 'COMPLETED', $12)
+       notes, status, verified_by, created_at
+     ) VALUES ($1, $2, $3, 'WALLET_TOPUP', 'CREDIT', $4, $5, $6, $7, $8, $9, $10, $11, 'COMPLETED', $12,
+               COALESCE($13::timestamptz, CURRENT_TIMESTAMP))
      RETURNING transaction_id`,
     [
       client_id, quote_id, earmark_booking_id, amount, payment_method, bank_account_id,
       cheque_number, cheque_date, reference_number, receipt_url,
-      notes || 'Overpayment credited to wallet', verified_by,
+      notes || 'Overpayment credited to wallet', verified_by, created_at,
     ]
   );
 

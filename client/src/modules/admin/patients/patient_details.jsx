@@ -9,6 +9,7 @@ import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import AdminDirectBookingDrawer from '../bookings/AdminDirectBookingDrawer';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -353,7 +354,7 @@ export default function PatientDetailPage() {
       <DataCard title="Client (Payer)">
         <div className="grid grid-cols-2 gap-4">
           <div className="col-span-2"><InfoRow label="Client Name" value={patient.client_name} /></div>
-          <InfoRow label="Phone" value={patient.client_mobile} />
+          <InfoRow label="Phone" value={formatMobileNumber(patient.client_mobile)} />
           <InfoRow label="Email" value={patient.client_email} />
           <div className="col-span-2"><InfoRow label="Address" value={patient.client_address} /></div>
         </div>
@@ -575,7 +576,7 @@ export default function PatientDetailPage() {
                 </div>
                 <div className="mt-1.5 text-[13px] text-gray-500">
                   Client: <span className="font-semibold text-gray-900">{patient.client_name || '-'}</span>
-                  {patient.client_mobile && <span className="ml-3 inline-flex items-center gap-1"><Phone className="h-3.5 w-3.5" />{patient.client_mobile}</span>}
+                  {patient.client_mobile && <span className="ml-3 inline-flex items-center gap-1"><Phone className="h-3.5 w-3.5" />{formatMobileNumber(patient.client_mobile)}</span>}
                   {patient.relationship_to_client && <span className="ml-3 text-gray-400">({patient.relationship_to_client})</span>}
                 </div>
               </div>

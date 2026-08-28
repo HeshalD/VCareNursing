@@ -9,6 +9,8 @@ import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
 import PhoneInput, { isValidPhoneNumber } from '../../../components/common/PhoneInput';
+import useDebouncedValue from '../../../hooks/useDebouncedValue';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -53,6 +55,7 @@ const CLIENT_TYPE_OPTIONS = ['INDIVIDUAL', 'FAMILY', 'CORPORATE_PROXY'];
 const BLANK_FORM = {
   payer_name: '', payer_mobile: '', payer_email: '', payer_gender: '',
   client_type: 'INDIVIDUAL', company_name: '', honorific: '', payer_primary_address: '',
+  payer_secondary_phones: [],
   patient_name: '', patient_age: '',
   patient_gender: '', relationship_to_client: '', patient_condition: '', service_type: '',
   service_model: 'SHIFT_BASED', location_address: '', start_date: '',
@@ -79,6 +82,33 @@ const formatDateTime = (v) =>
 
 const modelLabel = (v) => v?.replace(/_/g, ' ') ?? '—';
 
+const titleCase = (v) => v ? v.charAt(0) + v.slice(1).toLowerCase().replace(/_/g, ' ') : '—';
+
+const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
+const formatMoney = (v) => money.format(Number(v || 0));
+
+// Mirrors AddCareProfileDrawer's serializeEmergencyContacts: multiple contacts
+// are " | "-joined into the same emergency_contact_name/number columns
+// (widened to TEXT for this reason). Blank rows are dropped so an unused
+// "+ Add Contact" row doesn't leave a stray " | " in the saved value.
+const buildEmergencyContactFields = (contacts) => {
+  const filled = contacts.filter(c => c.name.trim() || c.number.trim());
+  if (!filled.length) return {};
+  return {
+    emergency_contact_name: filled.map(c => c.name.trim()).join(' | '),
+    emergency_contact_number: filled.map(c => c.number.trim()).join(' | '),
+  };
+};
+
+const REG_FEE_BADGE_STYLES = {
+  PENDING:           'bg-amber-50 text-amber-700 border-amber-200',
+  INVOICED:          'bg-blue-50 text-blue-700 border-blue-200',
+  RECEIPT_UPLOADED:  'bg-indigo-50 text-indigo-700 border-indigo-200',
+  PAID:              'bg-emerald-50 text-emerald-700 border-emerald-200',
+  WAIVED:            'bg-slate-100 text-slate-600 border-slate-200',
+  EXPIRED:           'bg-red-50 text-red-700 border-red-200',
+};
+
 const inputCls = 'w-full px-3 py-2 border border-slate-200 rounded-lg text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder:text-slate-400 bg-white';
 const labelCls = 'block text-xs font-medium text-slate-600 mb-1.5';
 
@@ -98,18 +128,18 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
   const [clients, setClients]                         = useState([]);
   const [clientsLoading, setClientsLoading]           = useState(false);
   const [clientSearch, setClientSearch]               = useState('');
+  const debouncedClientSearch                         = useDebouncedValue(clientSearch, 350);
   const [selectedClient, setSelectedClient]           = useState(null);
   const [careProfiles, setCareProfiles]               = useState([]);
   const [careProfilesLoading, setCareProfilesLoading] = useState(false);
   const [selectedCareProfile, setSelectedCareProfile] = useState(null);
   const [useClientAddress, setUseClientAddress]       = useState(false);
+  const [emergencyContacts, setEmergencyContacts]     = useState([{ name: '', number: '' }]);
 
   useEffect(() => {
     if (open) {
       if (presetClient) {
         handleSelectClient(presetClient);
-      } else {
-        fetchClients();
       }
     } else {
       // reset on close
@@ -119,12 +149,23 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
       setSelectedCareProfile(null);
       setCareProfiles([]);
       setClientSearch('');
+      setClients([]);
       setUseClientAddress(false);
+      setEmergencyContacts([{ name: '', number: '' }]);
       setError(null);
       setSuccess(null);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // Re-queries the backend (rather than filtering a client-side page of
+  // results) so a client search always searches the full client base, not
+  // just whatever page happened to be loaded — and matches on name, phone,
+  // email, client code, or address regardless of honorific.
+  useEffect(() => {
+    if (!open || presetClient || clientMode !== 'existing' || selectedClient) return;
+    fetchClients(debouncedClientSearch);
+  }, [open, presetClient, clientMode, selectedClient, debouncedClientSearch]);
 
   const handleClientModeChange = (mode) => {
     setClientMode(mode);
@@ -133,19 +174,25 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
     setCareProfiles([]);
     setClientSearch('');
     setUseClientAddress(false);
+    setEmergencyContacts([{ name: '', number: '' }]);
     setFormData(prev => ({
       ...prev,
       payer_name: '', payer_mobile: '', payer_email: '', payer_gender: '',
       client_type: 'INDIVIDUAL', company_name: '', honorific: '', payer_primary_address: '',
+      payer_secondary_phones: [],
       patient_name: '', patient_age: '', patient_gender: '',
       relationship_to_client: '', patient_condition: '', location_address: '',
     }));
   };
 
-  const fetchClients = async () => {
+  const fetchClients = async (searchTerm = '') => {
+    const trimmed = searchTerm.trim();
     try {
       setClientsLoading(true);
-      const res = await apiClient.getAllClients();
+      const res = await apiClient.getAllClients({
+        limit: trimmed ? 20 : 4,
+        ...(trimmed ? { search: trimmed } : {}),
+      });
       setClients(res.data || []);
     } catch { /* non-fatal */ } finally {
       setClientsLoading(false);
@@ -167,6 +214,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
     setSelectedCareProfile(null);
     setCareProfiles([]);
     setUseClientAddress(false);
+    setEmergencyContacts([{ name: '', number: '' }]);
     setFormData(prev => ({
       ...prev,
       payer_name: client.full_name || '',
@@ -182,10 +230,12 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
     setSelectedCareProfile(null);
     setCareProfiles([]);
     setUseClientAddress(false);
+    setEmergencyContacts([{ name: '', number: '' }]);
     setFormData(prev => ({
       ...prev,
       payer_name: '', payer_mobile: '', payer_email: '', payer_gender: '',
       client_type: 'INDIVIDUAL', company_name: '', honorific: '', payer_primary_address: '',
+      payer_secondary_phones: [],
       patient_name: '', patient_age: '', patient_gender: '',
       relationship_to_client: '', patient_condition: '', location_address: '',
     }));
@@ -193,6 +243,10 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
 
   const handleSelectCareProfile = (profile) => {
     setSelectedCareProfile(profile);
+    // An existing care profile already has its own emergency contact(s) on
+    // file (edited via its own profile page) — this drawer's fields are only
+    // for a brand-new care profile, so clear them once a real one is picked.
+    setEmergencyContacts([{ name: '', number: '' }]);
     const isSelfProfile = profile.relationship_to_client === 'Self';
     setFormData(prev => ({
       ...prev,
@@ -209,6 +263,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
 
   const handleDeselectCareProfile = () => {
     setSelectedCareProfile(null);
+    setEmergencyContacts([{ name: '', number: '' }]);
     setFormData(prev => ({
       ...prev,
       patient_name: '', patient_age: '', patient_gender: '', relationship_to_client: '',
@@ -216,14 +271,46 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
     }));
   };
 
+  const handleSecondaryPhoneChange = (idx, value) =>
+    setFormData(prev => {
+      const next = [...prev.payer_secondary_phones];
+      next[idx] = value;
+      return { ...prev, payer_secondary_phones: next };
+    });
+
+  const addSecondaryPhone = () =>
+    setFormData(prev => ({ ...prev, payer_secondary_phones: [...prev.payer_secondary_phones, ''] }));
+
+  const removeSecondaryPhone = (idx) =>
+    setFormData(prev => ({ ...prev, payer_secondary_phones: prev.payer_secondary_phones.filter((_, i) => i !== idx) }));
+
+  const updateEmergencyContact = (idx, key, value) =>
+    setEmergencyContacts(prev => prev.map((c, i) => i === idx ? { ...c, [key]: value } : c));
+
+  const addEmergencyContact = () =>
+    setEmergencyContacts(prev => [...prev, { name: '', number: '' }]);
+
+  const removeEmergencyContact = (idx) =>
+    setEmergencyContacts(prev => prev.filter((_, i) => i !== idx));
+
   const handleUseClientAddressChange = (e) => {
     const checked = e.target.checked;
     setUseClientAddress(checked);
     setFormData(prev => ({
       ...prev,
-      location_address: checked ? (selectedClient?.primary_address || '') : prev.location_address,
+      location_address: checked ? (selectedClient?.primary_address || prev.payer_primary_address || '') : prev.location_address,
     }));
   };
+
+  // Keep the locked service address in sync while a new client's primary
+  // address is still being typed (existing-client addresses don't change
+  // mid-form, so this only matters in "new client" mode).
+  useEffect(() => {
+    if (useClientAddress && clientMode === 'new') {
+      setFormData(prev => ({ ...prev, location_address: prev.payer_primary_address || '' }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useClientAddress, formData.payer_primary_address, clientMode]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -262,6 +349,10 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
       if (missing.length) { setError(`Please fill in: ${missing.join(', ')}`); setFormLoading(false); return; }
       if (isNaN(formData.patient_age) || formData.patient_age <= 0) { setError('Age must be a positive number.'); setFormLoading(false); return; }
       if (!isValidPhoneNumber(formData.payer_mobile)) { setError('Enter a valid mobile number.'); setFormLoading(false); return; }
+      const trimmedSecondaryPhones = formData.payer_secondary_phones.map(p => p.trim()).filter(Boolean);
+      if (clientMode === 'new' && trimmedSecondaryPhones.some(p => !isValidPhoneNumber(p))) {
+        setError('Enter valid secondary phone numbers.'); setFormLoading(false); return;
+      }
 
       // New Client mode: register the client account up front (rather than
       // deferring to booking-conversion time) so this request has a real
@@ -279,6 +370,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
             company_name: formData.company_name || undefined,
             honorific: formData.honorific || undefined,
             primary_address: formData.payer_primary_address || undefined,
+            secondary_phone_numbers: trimmedSecondaryPhones,
           });
           clientId = clientRes.data.clientProfileId;
         } catch (clientErr) {
@@ -293,6 +385,9 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
         patient_age: parseInt(formData.patient_age),
         client_id: clientId,
         patient_id: selectedCareProfile?.patient_id || null,
+        // Only meaningful for a brand-new care profile — an existing one keeps
+        // its own emergency contact(s), edited on its own profile page.
+        ...(selectedCareProfile ? {} : buildEmergencyContactFields(emergencyContacts)),
         status: 'NEW_LEAD',
       });
       setSuccess('Service request created successfully!');
@@ -303,12 +398,6 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
       setFormLoading(false);
     }
   };
-
-  const filteredClients = clients.filter(c =>
-    c.full_name?.toLowerCase().includes(clientSearch.toLowerCase()) ||
-    c.mobile_number?.includes(clientSearch)
-  );
-  const visibleClients = clientSearch.trim() ? filteredClients : filteredClients.slice(0, 4);
 
   if (!open) return null;
 
@@ -371,7 +460,9 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                 </div>
                 {selectedClient && (
                   <div className="flex items-center gap-2 px-2.5 py-1 bg-emerald-50 border border-emerald-200 rounded-lg">
-                    <span className="text-xs font-medium text-emerald-700 truncate max-w-[160px]">{selectedClient.full_name}</span>
+                    <span className="text-xs font-medium text-emerald-700 truncate max-w-[160px]">
+                      {selectedClient.honorific ? `${selectedClient.honorific} ` : ''}{selectedClient.full_name}
+                    </span>
                     <button type="button" onClick={handleDeselectClient} className="text-emerald-500 hover:text-emerald-700">
                       <X className="w-3.5 h-3.5" />
                     </button>
@@ -413,7 +504,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                         <div className="flex justify-center py-6">
                           <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
                         </div>
-                      ) : filteredClients.length === 0 ? (
+                      ) : clients.length === 0 ? (
                         <div className="text-center py-6 text-slate-400">
                           <Users className="w-8 h-8 mx-auto mb-2 text-slate-200" />
                           <p className="text-sm">No clients found</p>
@@ -421,7 +512,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                       ) : (
                         <>
                           <div className="grid grid-cols-2 gap-2">
-                            {visibleClients.map(client => (
+                            {clients.map(client => (
                               <button
                                 key={client.client_profile_id}
                                 type="button"
@@ -432,18 +523,20 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                                   <User className="w-4 h-4 text-slate-400 group-hover:text-blue-600" />
                                 </div>
                                 <div className="min-w-0">
-                                  <p className="text-sm font-semibold text-slate-900 truncate">{client.full_name}</p>
+                                  <p className="text-sm font-semibold text-slate-900 truncate">
+                                    {client.honorific ? `${client.honorific} ` : ''}{client.full_name}
+                                  </p>
                                   <div className="flex items-center gap-1 text-slate-400 mt-0.5">
                                     <Phone className="w-3 h-3" />
-                                    <span className="text-xs">{client.mobile_number}</span>
+                                    <span className="text-xs">{formatMobileNumber(client.mobile_number)}</span>
                                   </div>
                                 </div>
                               </button>
                             ))}
                           </div>
-                          {!clientSearch.trim() && filteredClients.length > 4 && (
+                          {!clientSearch.trim() && (
                             <p className="text-xs text-slate-400 text-center mt-2">
-                              Showing 4 of {filteredClients.length} — search to find a specific client
+                              Showing {clients.length} most recent — search by name or phone to find a specific client
                             </p>
                           )}
                         </>
@@ -537,11 +630,115 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                         rows={2}
                         className="w-full rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
                       />
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[11px] font-semibold text-slate-500">Secondary Phone Numbers</label>
+                        </div>
+                        <div className="space-y-2">
+                          {formData.payer_secondary_phones.map((phone, idx) => (
+                            <div key={idx} className="flex items-center gap-2">
+                              <div className="flex-1">
+                                <PhoneInput
+                                  value={phone}
+                                  onChange={(e) => handleSecondaryPhoneChange(idx, e.target.value)}
+                                  placeholder="07XXXXXXXX"
+                                />
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => removeSecondaryPhone(idx)}
+                                className="flex h-9 w-9 items-center justify-center rounded-md border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 flex-shrink-0"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={addSecondaryPhone}
+                            className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700"
+                          >
+                            <Plus className="w-3.5 h-3.5" /> Add phone number
+                          </button>
+                        </div>
+                      </div>
                       <p className="text-[11px] text-slate-400">
                         Registers them as a new client (login credentials sent via SMS) when this request is converted to a booking.
                       </p>
                     </div>
                   )}
+                </div>
+              )}
+
+              {selectedClient && (
+                <div className="p-4">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-4">
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                          <User className="w-5 h-5 text-blue-600" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-slate-900 truncate">
+                            {selectedClient.honorific ? `${selectedClient.honorific} ` : ''}{selectedClient.full_name}
+                          </p>
+                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                            {selectedClient.client_code && (
+                              <span className="text-xs text-slate-500 font-mono">{selectedClient.client_code}</span>
+                            )}
+                            {selectedClient.client_type && (
+                              <>
+                                <span className="text-xs text-slate-300">·</span>
+                                <span className="text-xs text-slate-500">{titleCase(selectedClient.client_type)}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      {selectedClient.reg_fee_status && (
+                        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border flex-shrink-0 whitespace-nowrap ${REG_FEE_BADGE_STYLES[selectedClient.reg_fee_status] || 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                          {titleCase(selectedClient.reg_fee_status)}
+                        </span>
+                      )}
+                    </div>
+
+                    {selectedClient.client_type === 'CORPORATE_PROXY' && selectedClient.company_name && (
+                      <p className="text-xs text-slate-500 mb-3 -mt-2">{selectedClient.company_name}</p>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 text-xs border-t border-slate-200 pt-3">
+                      <div>
+                        <p className="text-slate-400">Mobile</p>
+                        <p className="text-slate-800 font-medium">{formatMobileNumber(selectedClient.mobile_number) || '—'}</p>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-slate-400">Email</p>
+                        <p className="text-slate-800 font-medium truncate">{selectedClient.email || '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-slate-400">Gender</p>
+                        <p className="text-slate-800 font-medium">{titleCase(selectedClient.gender)}</p>
+                      </div>
+                      <div>
+                        <p className="text-slate-400">Wallet Balance</p>
+                        <p className="text-slate-800 font-medium">{formatMoney(selectedClient.wallet_balance)}</p>
+                      </div>
+                      <div className="col-span-2">
+                        <p className="text-slate-400">Primary Address</p>
+                        <p className="text-slate-800 font-medium">{selectedClient.primary_address || '—'}</p>
+                      </div>
+                      {selectedClient.secondary_phone_numbers?.length > 0 && (
+                        <div className="col-span-2">
+                          <p className="text-slate-400">Other Numbers</p>
+                          <p className="text-slate-800 font-medium">{selectedClient.secondary_phone_numbers.map(formatMobileNumber).join(', ')}</p>
+                        </div>
+                      )}
+                      <div>
+                        <p className="text-slate-400">Client Since</p>
+                        <p className="text-slate-800 font-medium">{formatDate(selectedClient.user_created_at || selectedClient.created_at)}</p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -680,6 +877,49 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                       <input type="text" name="patient_condition" value={formData.patient_condition} onChange={handleInputChange} className={inputCls} placeholder="Condition or care needs" />
                     </div>
                   </div>
+
+                  {!selectedCareProfile && (
+                    <div className="mt-3">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className={labelCls + ' mb-0'}>Emergency Contact(s)</label>
+                        <button
+                          type="button"
+                          onClick={addEmergencyContact}
+                          className="text-xs font-semibold text-blue-600 hover:text-blue-700"
+                        >
+                          + Add Contact
+                        </button>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        {emergencyContacts.map((contact, idx) => (
+                          <div key={idx} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
+                            <input
+                              type="text"
+                              value={contact.name}
+                              onChange={e => updateEmergencyContact(idx, 'name', e.target.value)}
+                              className={inputCls}
+                              placeholder="Contact name"
+                            />
+                            <PhoneInput
+                              value={contact.number}
+                              onChange={e => updateEmergencyContact(idx, 'number', e.target.value)}
+                              placeholder="Contact number"
+                            />
+                            {emergencyContacts.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => removeEmergencyContact(idx)}
+                                className="flex h-9 w-9 items-center justify-center rounded-lg border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 flex-shrink-0"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-1.5">Optional — who to contact in case of an emergency, separate from the payer.</p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="border-t border-slate-100" />
@@ -724,7 +964,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                     <div className="col-span-2">
                       <div className="flex items-center justify-between mb-1.5">
                         <label className={labelCls + ' mb-0'}>Service Address</label>
-                        {selectedClient?.primary_address && (
+                        {(selectedClient?.primary_address || (clientMode === 'new' && formData.payer_primary_address)) && (
                           <label className="flex items-center gap-1.5 text-xs text-slate-500 font-medium cursor-pointer">
                             <input
                               type="checkbox"
@@ -937,7 +1177,7 @@ const ProxyServiceRequest = () => {
                     <p className="font-semibold text-slate-900 leading-tight">{r.payer_name}</p>
                     <div className="flex items-center gap-1 mt-0.5 text-slate-500 text-xs">
                       <Phone className="w-3 h-3" />
-                      <span>{r.payer_mobile}</span>
+                      <span>{formatMobileNumber(r.payer_mobile)}</span>
                     </div>
                     {r.service_request_code && (
                       <p className="text-xs text-slate-400 font-mono mt-0.5">{r.service_request_code}</p>

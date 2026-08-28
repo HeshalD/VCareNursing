@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import PresetManager from '../service_quotes/PresetManager';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
 
@@ -257,7 +258,7 @@ const ServiceRequests = () => {
                     <p className="font-semibold text-slate-900 leading-tight">{r.payer_name}</p>
                     <div className="flex items-center gap-1 mt-0.5 text-slate-500 text-xs">
                       <Phone className="w-3 h-3" />
-                      <span>{r.payer_mobile}</span>
+                      <span>{formatMobileNumber(r.payer_mobile)}</span>
                     </div>
                     {r.service_request_code && (
                       <p className="text-xs text-slate-400 font-mono mt-0.5">{r.service_request_code}</p>

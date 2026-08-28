@@ -10,6 +10,7 @@ import logo from '../../../assets/Logo/VCareLogo.png';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import apiClient from '../../../api/api';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 
 const ROLE_LABELS = {
   SUPER_ADMIN: 'Super Admin',
@@ -203,7 +204,7 @@ const AdminLayout = ({ children, title, subtitle, actions }) => {
       ? payload.role.replace(/[{}]/g, '').split(',')[0].trim()
       : 'Admin';
     return {
-      name: payload.full_name || (rawRole === 'SUPER_ADMIN' ? 'Admin' : payload.mobile_number) || 'Admin',
+      name: payload.full_name || (rawRole === 'SUPER_ADMIN' ? 'Admin' : formatMobileNumber(payload.mobile_number)) || 'Admin',
       roleLabel: ROLE_LABELS[rawRole] || rawRole,
     };
   }, [adminToken]);

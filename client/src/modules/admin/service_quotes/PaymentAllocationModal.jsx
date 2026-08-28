@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { X, Upload, Loader2, BadgeDollarSign, CheckCircle2, Lock, ArrowLeft, ArrowRight, Receipt, Wallet, AlertTriangle, FileText, FileStack, FileCheck2 } from 'lucide-react';
 import apiClient from '../../../api/api';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import DateInput from '../../../components/common/DateInput';
 
 const paymentMethodOptions = ['BANK_TRANSFER', 'CASH_DEPOSIT', 'CASH', 'CHEQUE'];
@@ -523,7 +524,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
             <p className="text-xs text-slate-400 mt-0.5 truncate">
               {estimateNumber}
               {payerName && <span> &middot; {payerName}</span>}
-              {payerMobile && <span className="text-slate-300"> ({payerMobile})</span>}
+              {payerMobile && <span className="text-slate-300"> ({formatMobileNumber(payerMobile)})</span>}
             </p>
           </div>
           <button type="button" onClick={onClose} className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">

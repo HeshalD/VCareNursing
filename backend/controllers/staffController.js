@@ -1427,9 +1427,31 @@ exports.getAllStaff = async (req, res) => {
         }
 
         if (search) {
-            whereClause += ` AND (sp.full_name ILIKE $${paramIndex} OR u.mobile_number ILIKE $${paramIndex} OR sp.staff_code ILIKE $${paramIndex} OR sp.designation ILIKE $${paramIndex})`;
-            queryParams.push(`%${search}%`);
-            paramIndex++;
+            const trimmedSearch = search.trim();
+            // mobile_number is stored in E.164 (e.g. +94741735541). A search string
+            // that's purely phone-shaped may use the local 0-prefix or the +94
+            // prefix — generate the other variant so both match the stored value.
+            let phoneVariant = null;
+            if (/^[0-9+\s-]+$/.test(trimmedSearch)) {
+                const digitsOnly = trimmedSearch.replace(/\D/g, '');
+                if (digitsOnly.length >= 7) {
+                    if (digitsOnly.startsWith('0')) {
+                        phoneVariant = `94${digitsOnly.slice(1)}`;
+                    } else if (digitsOnly.startsWith('94')) {
+                        phoneVariant = `0${digitsOnly.slice(2)}`;
+                    }
+                }
+            }
+
+            if (phoneVariant) {
+                whereClause += ` AND (sp.full_name ILIKE $${paramIndex} OR u.mobile_number ILIKE $${paramIndex} OR sp.staff_code ILIKE $${paramIndex} OR sp.designation ILIKE $${paramIndex} OR u.mobile_number ILIKE $${paramIndex + 1})`;
+                queryParams.push(`%${trimmedSearch}%`, `%${phoneVariant}%`);
+                paramIndex += 2;
+            } else {
+                whereClause += ` AND (sp.full_name ILIKE $${paramIndex} OR u.mobile_number ILIKE $${paramIndex} OR sp.staff_code ILIKE $${paramIndex} OR sp.designation ILIKE $${paramIndex})`;
+                queryParams.push(`%${trimmedSearch}%`);
+                paramIndex++;
+            }
         }
 
         // Pagination

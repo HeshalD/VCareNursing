@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import StaffScheduleTimeline from '../components/StaffScheduleTimeline';
 import RequestPipelineStepper from '../components/RequestPipelineStepper';
 
@@ -1081,7 +1082,7 @@ const StaffPicker = ({ staff, value, onChange, compact = false }) => {
   }, [activeIdx, open]);
 
   const selectedLabel = selected
-    ? `${selected.staff_code ? `${selected.staff_code} — ` : ''}${selected.staff_name}${selected.mobile_number ? ` — ${selected.mobile_number}` : ''}`
+    ? `${selected.staff_code ? `${selected.staff_code} — ` : ''}${selected.staff_name}${selected.mobile_number ? ` — ${formatMobileNumber(selected.mobile_number)}` : ''}`
     : '';
 
   const selectStaff = (s) => {

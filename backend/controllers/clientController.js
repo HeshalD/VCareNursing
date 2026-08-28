@@ -5,6 +5,7 @@ const { sendRegFeeNotice, sendRegFeeInvoice, sendClientWelcomeNew, sendClientInv
 const { sendSms } = require('../utils/sms');
 const { generateAndUploadRegFeeInvoice } = require('../utils/regFeeInvoicePdf');
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
+const { createOverdueInvoice, resolveOverdueInvoices } = require('../services/overdueInvoices');
 const html_to_pdf = require('html-pdf-node');
 const dailyInvoiceTemplate = require('../templates/dailyInvoiceTemplate');
 const { uploadBufferToS3 } = require('../config/s3Config');
@@ -535,7 +536,19 @@ exports.getAdminClientDetail = async (req, res) => {
       [client_id]
     );
 
-    const [clientProfileResult, paymentHistoryResult, bookingHistoryResult, quotationHistoryResult, staffAssignmentsResult, reviewsResult, patientsResult, statementSummaryResult, clientPaymentsSummaryResult, dailyInvoiceSummaryResult] = await Promise.all([
+    // System-wide overdue-invoices ledger (currently only registration fees) —
+    // all_time_invoiced (paid or not, for folding into total_invoiced below) and
+    // the currently-outstanding total_overdue/overdue_count. See services/overdueInvoices.js.
+    const overdueInvoicesSummaryQuery = db.query(
+      `SELECT COALESCE(SUM(amount), 0) as all_time_invoiced,
+              COALESCE(SUM(amount) FILTER (WHERE status = 'OVERDUE'), 0) as total_overdue,
+              COUNT(*) FILTER (WHERE status = 'OVERDUE')::int as overdue_count
+       FROM overdue_invoices
+       WHERE client_id = $1`,
+      [client_id]
+    );
+
+    const [clientProfileResult, paymentHistoryResult, bookingHistoryResult, quotationHistoryResult, staffAssignmentsResult, reviewsResult, patientsResult, statementSummaryResult, clientPaymentsSummaryResult, dailyInvoiceSummaryResult, overdueInvoicesSummaryResult] = await Promise.all([
       clientProfileQuery,
       paymentHistoryQuery,
       bookingHistoryQuery,
@@ -545,7 +558,8 @@ exports.getAdminClientDetail = async (req, res) => {
       patientsQuery,
       statementSummaryQuery,
       clientPaymentsSummaryQuery,
-      dailyInvoiceSummaryQuery
+      dailyInvoiceSummaryQuery,
+      overdueInvoicesSummaryQuery
     ]);
 
     if (clientProfileResult.rows.length === 0) {
@@ -562,6 +576,7 @@ exports.getAdminClientDetail = async (req, res) => {
     const statementSummary = statementSummaryResult.rows[0];
     const clientPaymentsSummary = clientPaymentsSummaryResult.rows[0];
     const dailyInvoiceSummary = dailyInvoiceSummaryResult.rows[0];
+    const overdueInvoicesSummary = overdueInvoicesSummaryResult.rows[0];
 
     const paymentCount = payments.length;
     const totalPaid = payments.reduce((sum, payment) => {
@@ -661,15 +676,23 @@ exports.getAdminClientDetail = async (req, res) => {
     });
 
 
+    // "Total Invoiced" should reflect everything ever invoiced to this client, not
+    // just daily-attendance debits — fold in the overdue-invoices ledger's all-time
+    // total (registration fees for now) so it goes up the moment one is sent,
+    // whether or not it's ever paid.
+    const combinedTotalInvoiced = parseFloat(dailyInvoiceSummary?.total_invoiced || 0) + parseFloat(overdueInvoicesSummary?.all_time_invoiced || 0);
+    const combinedTotalPaid = parseFloat(clientPaymentsSummary?.total_paid || 0);
+    const combinedBalanceDue = Math.max(combinedTotalInvoiced - combinedTotalPaid, 0);
+
     res.status(200).json({
       status: 'success',
       data: {
         client_profile: clientProfile,
         payment_summary: {
           payment_count: paymentCount,
-          total_paid: parseFloat(clientPaymentsSummary?.total_paid || 0),
-          total_invoiced: parseFloat(dailyInvoiceSummary?.total_invoiced || 0),
-          balance_due: Math.max(parseFloat(dailyInvoiceSummary?.total_invoiced || 0) - parseFloat(clientPaymentsSummary?.total_paid || 0), 0),
+          total_paid: combinedTotalPaid,
+          total_invoiced: combinedTotalInvoiced,
+          balance_due: combinedBalanceDue,
           last_transaction_at: statementSummary?.last_transaction_at || null
         },
         booking_summary: {
@@ -704,15 +727,19 @@ exports.getAdminClientDetail = async (req, res) => {
         },
         statement_summary: {
           transaction_count: parseInt(statementSummary?.transaction_count || 0, 10),
-          total_invoiced: parseFloat(dailyInvoiceSummary?.total_invoiced || 0),
-          total_paid: parseFloat(clientPaymentsSummary?.total_paid || 0),
-          balance_due: Math.max(parseFloat(dailyInvoiceSummary?.total_invoiced || 0) - parseFloat(clientPaymentsSummary?.total_paid || 0), 0),
+          total_invoiced: combinedTotalInvoiced,
+          total_paid: combinedTotalPaid,
+          balance_due: combinedBalanceDue,
           last_transaction_at: statementSummary?.last_transaction_at || null
         },
         overdue_summary: {
           total_overdue_amount: parseFloat((clientPaymentsSummary?.total_paid || 0) - (dailyInvoiceSummary?.total_invoiced || 0)),
           overdue_payments_count: overdueCount || 0,
           total_outstanding_invoices: overduePayments.length
+        },
+        overdue_invoices_summary: {
+          total_overdue_amount: parseFloat(overdueInvoicesSummary?.total_overdue || 0),
+          overdue_invoice_count: overdueInvoicesSummary?.overdue_count || 0
         },
         recent_activity: {
           bookings: bookings.slice(0, 5),
@@ -1480,7 +1507,30 @@ exports.getAllClients = async (req, res) => {
     if (search) {
       params.push(`%${search}%`);
       const idx = params.length;
-      filters.push(`(cp.full_name ILIKE $${idx} OR u.email ILIKE $${idx} OR u.mobile_number ILIKE $${idx} OR cp.client_code ILIKE $${idx} OR cp.primary_address ILIKE $${idx})`);
+      // Matches on full_name alone (honorific stored separately) as well as
+      // "<honorific> <full_name>" so a search typed with or without the
+      // honorific (e.g. "Mrs. Premila Paulraj" or "Premila Paulraj") both hit.
+      const conditions = [
+        `cp.full_name ILIKE $${idx}`,
+        `(COALESCE(cp.honorific, '') || ' ' || cp.full_name) ILIKE $${idx}`,
+        `u.email ILIKE $${idx}`,
+        `u.mobile_number ILIKE $${idx}`,
+        `cp.client_code ILIKE $${idx}`,
+        `cp.primary_address ILIKE $${idx}`,
+      ];
+
+      // Numbers are stored in E.164 (+94XXXXXXXXX). Also match the local
+      // trunk-prefix format (0XXXXXXXXX) by stripping the leading zero, so
+      // "+94777745180", "0777745180", and "777745180" all find the same
+      // record — the last two are already substrings of the E.164 form.
+      const digitsOnly = search.replace(/\D/g, '');
+      const withoutLeadingZero = digitsOnly.replace(/^0+/, '');
+      if (withoutLeadingZero.length >= 4 && withoutLeadingZero !== digitsOnly) {
+        params.push(`%${withoutLeadingZero}%`);
+        conditions.push(`u.mobile_number ILIKE $${params.length}`);
+      }
+
+      filters.push(`(${conditions.join(' OR ')})`);
     }
 
     const whereSQL = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
@@ -1721,7 +1771,7 @@ exports.getOverduePayments = async (req, res) => {
 // Generates a receipt upload token, updates reg_fee_status to INVOICED, then sends both messages.
 exports.sendRegFeeInvoice = async (req, res) => {
   const { client_id } = req.params;
-  const { amount, bank_account_id } = req.body;
+  const { amount, bank_account_id, salesperson_id } = req.body;
 
   if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
     return res.status(400).json({ message: 'A valid fee amount is required.' });
@@ -1807,13 +1857,45 @@ exports.sendRegFeeInvoice = async (req, res) => {
     // Invoices tab and the admin-wide invoice list) instead of only living in
     // the WhatsApp message that was just sent.
     try {
-      await db.query(
+      const savedInvoice = await db.query(
         `INSERT INTO client_reg_fee_invoices (client_id, invoice_code, amount, pdf_url, bank_account_id, status, sent_by)
-         VALUES ($1, $2, $3, $4, $5, 'SENT', $6)`,
+         VALUES ($1, $2, $3, $4, $5, 'SENT', $6)
+         RETURNING invoice_id`,
         [client_id, invoiceCode, feeAmount, invoicePdfUrl, bank_account_id, req.user.user_id]
       );
+
+      // This invoice is now unpaid money owed by the client — surface it in the
+      // system-wide overdue-invoices ledger until it's paid/waived.
+      try {
+        await createOverdueInvoice(db, {
+          client_id,
+          source_type: 'REGISTRATION_FEE',
+          source_id: savedInvoice.rows[0]?.invoice_id || null,
+          invoice_code: invoiceCode,
+          amount: feeAmount,
+        });
+      } catch (overdueErr) {
+        console.error('Failed to record overdue invoice (reg fee):', overdueErr.message);
+      }
     } catch (saveErr) {
       console.error('Failed to save registration fee invoice record:', saveErr.message);
+    }
+
+    // Crediting now happens the moment the invoice goes out, not when it's later
+    // paid — idempotent + non-fatal, so a credit failure never blocks the invoice
+    // send itself. Once a client has an origin salesperson, later PAID/verify
+    // calls that still pass a salesperson_id are harmless no-ops (see
+    // creditSalespersonForRegistration's alreadyCredited guard).
+    if (salesperson_id) {
+      try {
+        await creditSalespersonForRegistration(db, {
+          client_id,
+          salesperson_id,
+          assigned_by: req.user.user_id,
+        });
+      } catch (creditErr) {
+        console.error('Failed to credit salesperson for registration:', creditErr.message);
+      }
     }
 
     // Send notice template, then invoice template (PDF document header + bank details in body + CTA button)
@@ -1913,6 +1995,16 @@ exports.updateRegFeeStatus = async (req, res) => {
 
     if (updated.rows.length === 0) {
       return res.status(404).json({ message: 'Client not found.' });
+    }
+
+    // Either settlement path clears the client's overdue obligation for this
+    // fee — a no-op if no invoice was ever sent (e.g. WAIVED with no prior invoice).
+    if (feePaid) {
+      try {
+        await resolveOverdueInvoices(db, { client_id, source_type: 'REGISTRATION_FEE', resolution: status });
+      } catch (overdueErr) {
+        console.error('Failed to resolve overdue invoice (reg fee):', overdueErr.message);
+      }
     }
 
     // Manually marking PAID (no receipt-upload flow) still means real cash was
@@ -2025,6 +2117,11 @@ exports.verifyRegFeePayment = async (req, res) => {
       console.error('Failed to record registration fee transaction:', txErr.message);
     }
     try {
+      await resolveOverdueInvoices(db, { client_id, source_type: 'REGISTRATION_FEE', resolution: 'PAID' });
+    } catch (overdueErr) {
+      console.error('Failed to resolve overdue invoice (reg fee):', overdueErr.message);
+    }
+    try {
       await db.query(
         `UPDATE client_reg_fee_invoices SET status = 'PAID'
          WHERE client_id = $1 AND status = 'SENT'`,
@@ -2073,6 +2170,115 @@ exports.verifyRegFeePayment = async (req, res) => {
   } catch (error) {
     console.error('Verify Reg Fee Payment Error:', error.message);
     res.status(500).json({ message: 'Failed to verify registration fee payment.', error: error.message });
+  }
+};
+
+// Admin: record a registration fee payment that actually happened in the past
+// (e.g. a client who paid before this system tracked reg fees, or before this
+// feature existed). Unlike verifyRegFeePayment/updateRegFeeStatus — which always
+// stamp "now" as the payment moment — this takes an admin-supplied payment_date
+// and derives reg_fee_expires_at from THAT date, not from today, so a backdated
+// entry doesn't grant a fresh 365-day membership starting today.
+exports.backdateRegFeePayment = async (req, res) => {
+  const { client_id } = req.params;
+  const { amount, payment_date, salesperson_id } = req.body;
+
+  if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+    return res.status(400).json({ message: 'A valid fee amount is required.' });
+  }
+
+  const paidAt = payment_date ? new Date(payment_date) : null;
+  if (!paidAt || isNaN(paidAt.getTime())) {
+    return res.status(400).json({ message: 'A valid payment date is required.' });
+  }
+  if (paidAt.getTime() > Date.now()) {
+    return res.status(400).json({ message: 'Payment date cannot be in the future — use "Send Invoice" or "Mark as Paid" for a current payment.' });
+  }
+
+  try {
+    const clientResult = await db.query(
+      `SELECT full_name FROM client_profiles WHERE client_profile_id = $1`,
+      [client_id]
+    );
+    if (clientResult.rows.length === 0) {
+      return res.status(404).json({ message: 'Client not found.' });
+    }
+
+    const feeAmount = parseFloat(amount).toFixed(2);
+    const expiresAt = new Date(paidAt.getTime() + 365 * 24 * 60 * 60 * 1000);
+
+    const updated = await db.query(
+      `UPDATE client_profiles
+       SET reg_fee_status = 'PAID', is_registration_fee_paid = true,
+           reg_fee_amount = $1, reg_fee_paid_at = $2, reg_fee_expires_at = $3
+       WHERE client_profile_id = $4
+       RETURNING reg_fee_status, reg_fee_amount, reg_fee_paid_at, reg_fee_expires_at`,
+      [feeAmount, paidAt, expiresAt, client_id]
+    );
+
+    // Dated to the actual payment date (not "now") so the statement/transactions
+    // ledger reflects when the money actually came in, not when this was entered.
+    try {
+      await db.query(
+        `INSERT INTO transactions (client_id, category, amount, transaction_type, status, notes, created_at)
+         VALUES ($1, 'REGISTRATION_FEE', $2, 'CREDIT', 'COMPLETED', 'Registration fee payment (backdated entry by admin)', $3)`,
+        [client_id, feeAmount, paidAt]
+      );
+    } catch (txErr) {
+      console.error('Failed to record backdated registration fee transaction:', txErr.message);
+    }
+
+    try {
+      await db.query(
+        `UPDATE client_reg_fee_invoices SET status = 'PAID'
+         WHERE client_id = $1 AND status = 'SENT'`,
+        [client_id]
+      );
+    } catch (invErr) {
+      console.error('Failed to sync registration fee invoice status:', invErr.message);
+    }
+
+    try {
+      await resolveOverdueInvoices(db, { client_id, source_type: 'REGISTRATION_FEE', resolution: 'PAID' });
+    } catch (overdueErr) {
+      console.error('Failed to resolve overdue invoice (backdated reg fee):', overdueErr.message);
+    }
+
+    if (salesperson_id) {
+      try {
+        await creditSalespersonForRegistration(db, {
+          client_id,
+          salesperson_id,
+          assigned_by: req.user.user_id,
+        });
+      } catch (creditErr) {
+        console.error('Failed to credit salesperson for registration:', creditErr.message);
+      }
+    }
+
+    try {
+      const actorName = await getActorName(req.user.user_id);
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName,
+        actorRole: extractActorRole(req.user.role),
+        actionType: 'REG_FEE_PAYMENT_BACKDATED',
+        entityType: 'CLIENT',
+        entityId: String(client_id),
+        details: { client_name: clientResult.rows[0].full_name, amount: feeAmount, payment_date: paidAt, expires_at: expiresAt },
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (reg fee backdate):', logErr.message);
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Historical registration fee payment recorded.',
+      data: updated.rows[0],
+    });
+  } catch (error) {
+    console.error('Backdate Reg Fee Payment Error:', error.message);
+    res.status(500).json({ message: 'Failed to record historical registration fee payment.', error: error.message });
   }
 };
 
@@ -2555,5 +2761,79 @@ exports.getAllRegFeeInvoices = async (req, res) => {
   } catch (err) {
     console.error('Get all reg fee invoices error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to fetch registration fee invoices.' });
+  }
+};
+
+/**
+ * @route   GET /api/client/:client_id/overdue-invoices
+ * @desc    A single client's overdue-invoices ledger (currently only
+ *          registration fees — see services/overdueInvoices.js).
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ */
+exports.getClientOverdueInvoices = async (req, res) => {
+  const { client_id } = req.params;
+  try {
+    const result = await db.query(
+      `SELECT overdue_invoice_id, source_type, source_id, invoice_code, amount,
+              status, resolution, invoiced_at, resolved_at
+       FROM overdue_invoices
+       WHERE client_id = $1
+       ORDER BY invoiced_at DESC`,
+      [client_id]
+    );
+    res.status(200).json({ status: 'success', data: result.rows });
+  } catch (err) {
+    console.error('Get client overdue invoices error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to fetch overdue invoices.' });
+  }
+};
+
+/**
+ * @route   GET /api/client/all-overdue-invoices
+ * @desc    System-wide overdue-invoices ledger across all clients (currently
+ *          only registration fees — see services/overdueInvoices.js).
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ */
+exports.getAllOverdueInvoices = async (req, res) => {
+  const { status = 'OVERDUE', source_type, client_id, page = 1, limit = 50 } = req.query;
+  const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
+
+  const conditions = [];
+  const params = [];
+  let idx = 1;
+
+  if (status) { conditions.push(`oi.status = $${idx++}`); params.push(status); }
+  if (source_type) { conditions.push(`oi.source_type = $${idx++}`); params.push(source_type); }
+  if (client_id) { conditions.push(`oi.client_id = $${idx++}`); params.push(client_id); }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  try {
+    const [rows, countResult] = await Promise.all([
+      db.query(
+        `SELECT oi.overdue_invoice_id, oi.source_type, oi.source_id, oi.invoice_code, oi.amount,
+                oi.status, oi.resolution, oi.invoiced_at, oi.resolved_at,
+                cp.client_profile_id,
+                CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
+                     THEN cp.company_name ELSE cp.full_name END AS client_name
+         FROM overdue_invoices oi
+         LEFT JOIN client_profiles cp ON oi.client_id = cp.client_profile_id
+         ${where}
+         ORDER BY oi.invoiced_at DESC
+         LIMIT $${idx} OFFSET $${idx + 1}`,
+        [...params, parseInt(limit, 10), offset]
+      ),
+      db.query(`SELECT COUNT(*) FROM overdue_invoices oi ${where}`, params),
+    ]);
+
+    const total = parseInt(countResult.rows[0].count, 10);
+    res.status(200).json({
+      status: 'success',
+      data: rows.rows,
+      pagination: { total, page: parseInt(page, 10), limit: parseInt(limit, 10), total_pages: Math.ceil(total / parseInt(limit, 10)) },
+    });
+  } catch (err) {
+    console.error('Get all overdue invoices error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to fetch overdue invoices.' });
   }
 };

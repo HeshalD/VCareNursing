@@ -19,6 +19,8 @@
 // different stages (payment_tracking pre-conversion, bookings.amount_paid /
 // booking_payment_tracking post-conversion) — inferring the wrong one would
 // silently mis-split payments once both ledgers have contributed.
+const { resolveOverdueInvoices } = require('./overdueInvoices');
+
 async function computeRegFeeSplit(client, { client_id, quote_id, amount, totalPaidBefore }) {
   const noSplit = { regFeePortion: 0, remainderAmount: amount, regFeeItem: null };
   if (!client_id || !quote_id || !amount || amount <= 0) return noSplit;
@@ -68,6 +70,15 @@ async function settleRegistrationFee(client, { client_id, regFeeItem, verified_b
   );
 
   if (settleResult.rows.length === 0) return false;
+
+  // Clears any outstanding overdue-invoice entry from a prior standalone
+  // WhatsApp reg-fee invoice, since this quotation payment just settled the
+  // same obligation. No-op if none exists.
+  try {
+    await resolveOverdueInvoices(client, { client_id, source_type: 'REGISTRATION_FEE', resolution: 'PAID' });
+  } catch (overdueErr) {
+    console.error('Failed to resolve overdue invoice (reg fee via quotation):', overdueErr.message);
+  }
 
   if (regFeeItem.salesperson_id && typeof creditSalespersonForRegistration === 'function') {
     try {

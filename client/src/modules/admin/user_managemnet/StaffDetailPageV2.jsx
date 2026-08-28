@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import DateInput from '../../../components/common/DateInput';
 import PhoneInput from '../../../components/common/PhoneInput';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import LanguageMultiSelect from '../../../components/common/LanguageMultiSelect';
 import YoutubeLinksField from '../../../components/common/YoutubeLinksField';
 import {
@@ -1282,7 +1283,7 @@ const StaffDetailPageV2 = () => {
               <Field label="Designation" value={profile.designation} />
               <Field label="Roles" value={formatRoles(profile.role)} />
               <Field label="Email" value={profile.email} />
-              <Field label="Phone" value={profile.mobile_number} />
+              <Field label="Phone" value={formatMobileNumber(profile.mobile_number)} />
               <Field label="Location" value={profile.location || profile.home_address} />
               <Field
                 label="Verification"
@@ -2802,7 +2803,7 @@ const StaffDetailPageV2 = () => {
             <div className="mt-1.5 flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-slate-500">
               <span className="flex items-center gap-1.5"><Briefcase className="h-3.5 w-3.5" />{profile.designation || 'Staff member'}</span>
               <span className="font-mono">{profile.staff_code || staffProfileId}</span>
-              <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5" />{profile.mobile_number || '—'}</span>
+              <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5" />{formatMobileNumber(profile.mobile_number) || '—'}</span>
               <span className="flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" />{profile.location || profile.home_address || '—'}</span>
             </div>
           </div>

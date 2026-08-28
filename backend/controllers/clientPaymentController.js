@@ -32,6 +32,7 @@ const recordClientPayment = async (req, res) => {
       reference_number,
       slip_url,
       notes,
+      payment_date,
       allocations: rawAllocations,
     } = req.body;
 
@@ -73,11 +74,39 @@ const recordClientPayment = async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'cheque_number and cheque_date are required for CHEQUE payments' });
     }
 
+    // Optional — when omitted the payment is treated as received today. A date is
+    // accepted so historical payments can be entered after the fact, but a future
+    // one would date the ledger ahead of reality, so it's rejected.
+    let paidOn = null;
+    if (payment_date) {
+      paidOn = new Date(payment_date);
+      if (isNaN(paidOn.getTime())) {
+        return res.status(400).json({ status: 'error', message: 'payment_date is not a valid date' });
+      }
+      const endOfToday = new Date();
+      endOfToday.setHours(23, 59, 59, 999);
+      if (paidOn.getTime() > endOfToday.getTime()) {
+        return res.status(400).json({ status: 'error', message: 'payment_date cannot be in the future' });
+      }
+    }
+    const paymentDateValue = paidOn ? paidOn.toISOString().slice(0, 10) : null;
+    // Ledger timestamp for every transaction this payment creates. Only a genuinely
+    // backdated payment overrides it — for one entered on the day it was received,
+    // null keeps the DB default (now) so the row lands in real chronological order
+    // against the day's other transactions instead of at midnight.
+    const localToday = new Date();
+    const todayValue = [
+      localToday.getFullYear(),
+      String(localToday.getMonth() + 1).padStart(2, '0'),
+      String(localToday.getDate()).padStart(2, '0'),
+    ].join('-');
+    const ledgerTimestamp = paymentDateValue && paymentDateValue < todayValue ? paidOn : null;
+
     if (!Array.isArray(allocations) || allocations.length === 0) {
       return res.status(400).json({ status: 'error', message: 'At least one allocation is required' });
     }
 
-    const validTypes = ['BOOKING', 'NEW_BOOKING', 'WALLET'];
+    const validTypes = ['BOOKING', 'NEW_BOOKING', 'WALLET', 'OTHER'];
     for (const alloc of allocations) {
       if (!validTypes.includes(alloc.type)) {
         return res.status(400).json({ status: 'error', message: `Invalid allocation type: ${alloc.type}` });
@@ -87,6 +116,11 @@ const recordClientPayment = async (req, res) => {
       }
       if (alloc.type === 'BOOKING' && !alloc.booking_id) {
         return res.status(400).json({ status: 'error', message: 'booking_id is required for BOOKING allocations' });
+      }
+      // An OTHER allocation has nothing to link back to, so the description is the
+      // only thing that says what the money was for — require it.
+      if (alloc.type === 'OTHER' && !String(alloc.description || '').trim()) {
+        return res.status(400).json({ status: 'error', message: 'description is required for OTHER allocations' });
       }
       if (alloc.type === 'NEW_BOOKING') {
         const nb = alloc.new_booking;
@@ -187,14 +221,16 @@ const recordClientPayment = async (req, res) => {
     const recordResult = await pgClient.query(
       `INSERT INTO client_payment_records
          (client_id, total_amount, payment_method, bank_account_id, cheque_number,
-          cheque_date, reference_number, slip_url, notes, recorded_by, recorded_by_name)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+          cheque_date, reference_number, slip_url, notes, recorded_by, recorded_by_name,
+          payment_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
+               COALESCE($12::date, CURRENT_DATE))
        RETURNING *`,
       [
         client_id, parsedTotal, payment_method,
         resolvedBankAccountId, cheque_number || null, cheque_date || null,
         reference_number || null, finalSlipUrl, notes || null,
-        actorUserId, actorName,
+        actorUserId, actorName, paymentDateValue,
       ]
     );
     const record = recordResult.rows[0];
@@ -223,6 +259,7 @@ const recordClientPayment = async (req, res) => {
           receipt_url: finalSlipUrl,
           notes: notes || `Payment toward booking ${alloc.booking_id} credited to wallet`,
           verified_by: actorUserId,
+          created_at: ledgerTimestamp,
         });
 
         const allocResult = await pgClient.query(
@@ -271,6 +308,7 @@ const recordClientPayment = async (req, res) => {
           receipt_url: finalSlipUrl,
           notes: notes || `Payment toward new booking ${new_booking_id} credited to wallet`,
           verified_by: actorUserId,
+          created_at: ledgerTimestamp,
         });
 
         const allocResult = await pgClient.query(
@@ -298,6 +336,7 @@ const recordClientPayment = async (req, res) => {
           receipt_url: finalSlipUrl,
           notes: notes || null,
           verified_by: actorUserId,
+          created_at: ledgerTimestamp,
         });
 
         const allocResult = await pgClient.query(
@@ -306,6 +345,40 @@ const recordClientPayment = async (req, res) => {
            VALUES ($1,'WALLET',$2,$3)
            RETURNING *`,
           [record_id, amount, transaction_id]
+        );
+        resultAllocations.push(allocResult.rows[0]);
+
+      } else if (alloc.type === 'OTHER') {
+
+        // Not tied to a booking, the wallet, or a quotation — money the company
+        // received from this client for something outside those flows. It's real
+        // cash in, so it books to OTHER_INCOME (an IN category, see
+        // utils/transactionFlow.js) with the admin's description as the display
+        // label, exactly like a manual "Add Transaction" entry. Deliberately does
+        // NOT touch wallet_balance: there's nothing to draw it down against later.
+        const description = String(alloc.description).trim();
+        const txResult = await pgClient.query(
+          `INSERT INTO transactions (
+             client_id, category, custom_category_label, transaction_type, amount,
+             payment_method, bank_account_id, cheque_number, cheque_date,
+             reference_number, receipt_url, notes, status, verified_by, created_at
+           ) VALUES ($1,'OTHER_INCOME',$2,'CREDIT',$3,$4,$5,$6,$7,$8,$9,$10,'COMPLETED',$11,
+                     COALESCE($12::timestamptz, CURRENT_TIMESTAMP))
+           RETURNING transaction_id`,
+          [
+            client_id, description, amount, payment_method, resolvedBankAccountId,
+            cheque_number || null, cheque_date || null, reference_number || null,
+            finalSlipUrl, notes || description, actorUserId, ledgerTimestamp,
+          ]
+        );
+        const transaction_id = txResult.rows[0].transaction_id;
+
+        const allocResult = await pgClient.query(
+          `INSERT INTO client_payment_allocations
+             (record_id, allocation_type, amount, transaction_id, description)
+           VALUES ($1,'OTHER',$2,$3,$4)
+           RETURNING *`,
+          [record_id, amount, transaction_id, description]
         );
         resultAllocations.push(allocResult.rows[0]);
       }
@@ -325,10 +398,12 @@ const recordClientPayment = async (req, res) => {
         total_amount: parsedTotal,
         payment_method,
         allocation_count: allocations.length,
+        payment_date: record.payment_date,
         allocations_summary: allocations.map(a => ({
           type: a.type,
           amount: parseFloat(a.amount),
           ...(a.booking_id && { booking_id: a.booking_id }),
+          ...(a.description && { description: a.description }),
         })),
       },
     }).catch(e => console.error('[ClientPayment] Activity log error:', e.message));
@@ -344,6 +419,14 @@ const recordClientPayment = async (req, res) => {
             lineItems.push({
               label: 'Wallet Top-up',
               description: 'Credited to client wallet balance',
+              amount: amt,
+            });
+            continue;
+          }
+          if (alloc.type === 'OTHER') {
+            lineItems.push({
+              label: String(alloc.description).trim(),
+              description: 'Not linked to a booking or quotation',
               amount: amt,
             });
             continue;
@@ -377,7 +460,7 @@ const recordClientPayment = async (req, res) => {
           reference_number: reference_number || null,
           cheque_number: cheque_number || null,
           bank_account_id: resolvedBankAccountId,
-          payment_date: new Date(),
+          payment_date: ledgerTimestamp || new Date(),
           line_items: lineItems,
           generated_by: actorUserId,
         });
@@ -423,6 +506,7 @@ const getClientPaymentRecords = async (req, res) => {
          r.reference_number,
          r.slip_url,
          r.notes,
+         r.payment_date,
          r.recorded_by_name,
          r.created_at,
          ba.account_nickname  AS bank_account_nickname,
@@ -436,6 +520,7 @@ const getClientPaymentRecords = async (req, res) => {
                'booking_id',         a.booking_id,
                'transaction_id',     a.transaction_id,
                'booking_payment_id', a.booking_payment_id,
+               'description',        a.description,
                'created_at',         a.created_at
              ) ORDER BY a.created_at
            ) FILTER (WHERE a.allocation_id IS NOT NULL),
@@ -446,7 +531,7 @@ const getClientPaymentRecords = async (req, res) => {
        LEFT JOIN client_payment_allocations a ON a.record_id = r.record_id
        WHERE r.client_id = $1
        GROUP BY r.record_id, ba.account_nickname, ba.bank_name
-       ORDER BY r.created_at DESC`,
+       ORDER BY r.payment_date DESC NULLS LAST, r.created_at DESC`,
       [client_id]
     );
 
@@ -494,6 +579,7 @@ const getPaymentRecordDetail = async (req, res) => {
          a.booking_id,
          a.transaction_id,
          a.booking_payment_id,
+         a.description,
          a.created_at,
          b.status        AS booking_status,
          b.service_type  AS booking_service_type,

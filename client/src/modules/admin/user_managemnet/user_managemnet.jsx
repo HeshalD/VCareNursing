@@ -6,6 +6,7 @@ import apiClient from '../../../api/api';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
 import useDebouncedValue from '../../../hooks/useDebouncedValue';
 import PhoneInput from '../../../components/common/PhoneInput';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 
 const PAGE_SIZE = 50;
 
@@ -499,7 +500,7 @@ const ClientManagement = () => {
 
                   {/* Contact */}
                   <td className="px-4 py-3 whitespace-nowrap">
-                    <p className="text-slate-700">{client.mobile_number ?? '—'}</p>
+                    <p className="text-slate-700">{formatMobileNumber(client.mobile_number) ?? '—'}</p>
                     <p className="text-xs text-slate-400">{client.email ?? '—'}</p>
                   </td>
 

@@ -7,6 +7,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import AdminLayout from '../components/AdminLayout';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import apiClient from '../../../api/api';
 
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
@@ -1304,7 +1305,7 @@ const StaffSalariesPage = () => {
                       </td>
                       <td className="px-4 py-3">
                         <p className="font-semibold text-slate-800">{s.full_name}</p>
-                        <p className="text-xs text-slate-500">{s.designation} · {s.mobile_number || '—'}</p>
+                        <p className="text-xs text-slate-500">{s.designation} · {formatMobileNumber(s.mobile_number) || '—'}</p>
                       </td>
                       <td className="px-4 py-3 text-right">
                         <span className={`font-medium ${hasBalance ? 'text-rose-600' : 'text-slate-400'}`}>

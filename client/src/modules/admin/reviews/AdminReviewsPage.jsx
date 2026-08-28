@@ -3,6 +3,7 @@ import { Star, Eye, EyeOff, Search, X, BookOpen, ChevronLeft, ChevronRight, Plus
 import { Link } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 
 const StarDisplay = ({ rating }) => (
   <div className="flex gap-0.5">
@@ -238,7 +239,7 @@ const AddReviewModal = ({ onClose, onCreated }) => {
                       </div>
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-slate-900 truncate">{c.full_name}</p>
-                        <p className="text-xs text-slate-500 truncate">{c.mobile_number || c.email || '—'}</p>
+                        <p className="text-xs text-slate-500 truncate">{formatMobileNumber(c.mobile_number) || c.email || '—'}</p>
                       </div>
                     </button>
                   ))

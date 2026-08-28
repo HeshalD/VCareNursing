@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 
 const money = (value) =>
   `LKR ${parseFloat(value || 0).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -153,7 +154,7 @@ const SalespersonDetailPage = () => {
                   <span className="inline-flex items-center gap-1.5 sm:justify-end"><Mail className="w-3.5 h-3.5 text-slate-400" /> {salesperson.email}</span>
                 )}
                 {salesperson.phone && (
-                  <span className="inline-flex items-center gap-1.5 sm:justify-end"><Phone className="w-3.5 h-3.5 text-slate-400" /> {salesperson.phone}</span>
+                  <span className="inline-flex items-center gap-1.5 sm:justify-end"><Phone className="w-3.5 h-3.5 text-slate-400" /> {formatMobileNumber(salesperson.phone)}</span>
                 )}
                 {salesperson.joined_date && (
                   <span className="inline-flex items-center gap-1.5 sm:justify-end"><CalendarDays className="w-3.5 h-3.5 text-slate-400" /> Joined {formatDate(salesperson.joined_date)}</span>
@@ -356,7 +357,7 @@ const SalespersonDetailPage = () => {
                             {!c.is_origin && <Tag>switched in</Tag>}
                           </div>
                           <div className="text-xs text-slate-400 truncate mt-0.5">
-                            {c.mobile_number || '—'}
+                            {formatMobileNumber(c.mobile_number) || '—'}
                             {c.reg_fee_expires_at ? ` · reg. expires ${formatDate(c.reg_fee_expires_at)}` : ''}
                           </div>
                         </div>
@@ -399,7 +400,7 @@ const SalespersonDetailPage = () => {
                                 <button onClick={() => goToClient(c.client_id)} className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:underline">
                                   {c.client_name || '—'}
                                 </button>
-                                <div className="text-xs text-slate-400 mt-0.5">{c.mobile_number || '—'}</div>
+                                <div className="text-xs text-slate-400 mt-0.5">{formatMobileNumber(c.mobile_number) || '—'}</div>
                               </td>
                               <td className="px-4 py-3"><StatusDot status={c.reg_fee_status} /></td>
                               <td className="px-4 py-3 text-slate-500">{formatDate(c.assigned_at)}</td>

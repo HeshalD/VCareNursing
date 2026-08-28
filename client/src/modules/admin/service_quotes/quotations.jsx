@@ -21,6 +21,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import PaymentAllocationModal from './PaymentAllocationModal';
 import ReceiptSendPopup from './ReceiptSendPopup';
 import InvoiceSendPopup from './InvoiceSendPopup';
@@ -698,7 +699,7 @@ const QuotationsPage = () => {
                           <td className="px-4 py-3 font-semibold text-slate-900">{quote.estimate_number}</td>
                           <td className="px-4 py-3">
                             <p className="text-slate-700">{quote.payer_name}</p>
-                            <p className="text-xs text-slate-400">{quote.payer_mobile}</p>
+                            <p className="text-xs text-slate-400">{formatMobileNumber(quote.payer_mobile)}</p>
                           </td>
                           <td className="px-4 py-3 text-right text-slate-700">{money(quote.total_amount)}</td>
                           <td className="px-4 py-3 text-right font-medium text-slate-800">{money(quote.remaining_amount)}</td>

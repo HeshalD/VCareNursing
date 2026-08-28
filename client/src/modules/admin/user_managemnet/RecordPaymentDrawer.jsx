@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Loader2, Plus, Trash2, X, CreditCard, Wallet, FileText, Receipt, ChevronRight } from 'lucide-react';
 import apiClient from '../../../api/api';
-import DateInput from '../../../components/common/DateInput';
+import DateInput, { todayISO } from '../../../components/common/DateInput';
 import PaymentAllocationModal from '../service_quotes/PaymentAllocationModal';
 import ReceiptSendPopup from '../service_quotes/ReceiptSendPopup';
 import InvoiceSendPopup from '../service_quotes/InvoiceSendPopup';
@@ -18,6 +18,7 @@ function createRow() {
     type: 'BOOKING',
     amount: '',
     booking_id: '',
+    description: '',
     new_booking: {
       patient_id: '',
       service_type: '',
@@ -67,6 +68,7 @@ const AllocationRow = ({ row, index, bookings, patients, onChange, onRemove, can
             <option value="BOOKING">Apply to existing booking</option>
             <option value="NEW_BOOKING">Create new booking</option>
             <option value="WALLET">Add to client wallet</option>
+            <option value="OTHER">Other (not linked to anything)</option>
           </select>
         </div>
         <div>
@@ -83,6 +85,23 @@ const AllocationRow = ({ row, index, bookings, patients, onChange, onRemove, can
           />
         </div>
       </div>
+
+      {row.type === 'OTHER' && (
+        <div>
+          <label className={labelCls}>What is this payment for? *</label>
+          <input
+            type="text"
+            placeholder="e.g. Transport charge, Equipment deposit"
+            className={inputCls}
+            value={row.description}
+            onChange={e => update('description', e.target.value)}
+          />
+          <p className="mt-1 text-xs text-slate-400">
+            Recorded as income against this client. It does not go to the wallet and is not
+            applied to any booking or quotation.
+          </p>
+        </div>
+      )}
 
       {row.type === 'BOOKING' && (
         <div>
@@ -264,6 +283,9 @@ export default function RecordPaymentDrawer({ open, clientId, bookings, patients
     cheque_date: '',
     reference_number: '',
     notes: '',
+    // Defaults to today; the admin can move it back for a payment that was
+    // actually received earlier than it's being entered.
+    payment_date: todayISO(),
   });
   const [slipFile, setSlipFile]         = useState(null);
   const [rows, setRows]                 = useState([createRow()]);
@@ -293,7 +315,7 @@ export default function RecordPaymentDrawer({ open, clientId, bookings, patients
 
   useEffect(() => {
     if (!open) {
-      setForm({ total_amount: '', payment_method: 'CASH', bank_account_id: '', cheque_number: '', cheque_date: '', reference_number: '', notes: '' });
+      setForm({ total_amount: '', payment_method: 'CASH', bank_account_id: '', cheque_number: '', cheque_date: '', reference_number: '', notes: '', payment_date: todayISO() });
       setSlipFile(null);
       setRows([createRow()]);
       setError('');
@@ -387,6 +409,10 @@ export default function RecordPaymentDrawer({ open, clientId, bookings, patients
   const allocatedTotal = rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
   const remaining      = parsedTotal - allocatedTotal;
   const isBalanced     = parsedTotal > 0 && Math.abs(remaining) < 0.01;
+  // An OTHER row has no booking or quotation to identify it, so its description is
+  // what the receipt and the ledger label are built from — don't let it through empty.
+  const otherRowsLabelled = rows.every(r => r.type !== 'OTHER' || r.description.trim());
+  const canSubmit         = isBalanced && !!form.payment_date && otherRowsLabelled;
 
   const updateField = (field, value) => setForm(f => ({ ...f, [field]: value }));
   const updateRow   = (id, field, value) => setRows(prev => prev.map(r => r.id === id ? { ...r, [field]: value } : r));
@@ -404,9 +430,11 @@ export default function RecordPaymentDrawer({ open, clientId, bookings, patients
       cheque_date: form.cheque_date || null,
       reference_number: form.reference_number || null,
       notes: form.notes || null,
+      payment_date: form.payment_date || null,
       allocations: rows.map(r => {
         const base = { type: r.type, amount: parseFloat(r.amount) };
         if (r.type === 'BOOKING') return { ...base, booking_id: r.booking_id };
+        if (r.type === 'OTHER') return { ...base, description: r.description.trim() };
         if (r.type === 'NEW_BOOKING') return {
           ...base,
           new_booking: {
@@ -453,7 +481,7 @@ export default function RecordPaymentDrawer({ open, clientId, bookings, patients
             </div>
             <div>
               <h2 className="text-base font-bold text-slate-900">Record Client Payment</h2>
-              <p className="text-xs text-slate-500">Allocate across bookings or wallet</p>
+              <p className="text-xs text-slate-500">Allocate across bookings, wallet, or record it on its own</p>
             </div>
           </div>
           <button
@@ -539,6 +567,18 @@ export default function RecordPaymentDrawer({ open, clientId, bookings, patients
                     onChange={e => updateField('total_amount', e.target.value)}
                     onWheel={e => e.target.blur()}
                   />
+                </div>
+
+                <div>
+                  <label className={labelCls}>Payment Date *</label>
+                  <DateInput
+                    required
+                    max={todayISO()}
+                    className={inputCls}
+                    value={form.payment_date}
+                    onChange={e => updateField('payment_date', e.target.value)}
+                  />
+                  <p className="mt-1 text-xs text-slate-400">When the money was received.</p>
                 </div>
 
                 <div>
@@ -701,7 +741,7 @@ export default function RecordPaymentDrawer({ open, clientId, bookings, patients
             {payMode === 'ALLOCATIONS' && (
             <button
               type="submit"
-              disabled={!isBalanced || loading}
+              disabled={!canSubmit || loading}
               className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading && <Loader2 className="h-4 w-4 animate-spin" />}

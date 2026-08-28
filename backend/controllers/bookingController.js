@@ -4,7 +4,7 @@ const { sendWhatsAppMessage } = require('../utils/whatsapp');
 const sendEmail = require('../utils/email');
 const { upload } = require('../config/cloudinaryConfig');
 const { logActivity } = require('../utils/activityLogger');
-const { sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendStaffNewAssignment, sendClientStaffSwapped, sendClientWelcomeNew } = require('../utils/metaWhatsapp');
+const { sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendStaffNewAssignment, sendClientStaffSwapped, sendClientWelcomeNew, sendCandidateProfile } = require('../utils/metaWhatsapp');
 const { sendSms } = require('../utils/sms');
 const { createServiceInvoice, calculateShiftSlotCharge, checkAndFlagBookingOverdue } = require('../services/billingService');
 const {
@@ -764,10 +764,17 @@ const convertToBookingInternal = async (req, res) => {
             }
         } else {
             // SCENARIO B: New Lead (Auto-create Patient)
+            // Prefer the emergency contact(s) captured on the request itself;
+            // fall back to the payer's own name/number when none were given.
             const newPatient = await client.query(
                 `INSERT INTO patient_profiles (client_id, full_name, age, gender, relationship_to_client, medical_condition, is_registration_fee_paid, special_remarks, residential_address, emergency_contact_name, emergency_contact_number)
                  VALUES ($1, $2, $3, $4::gender_enum, $5, $6, TRUE, $7, $8, $9, $10) RETURNING patient_id`,
-                [clientProfileId, reqData.patient_name, reqData.patient_age, reqData.gender || null, reqData.relationship_to_client, reqData.patient_condition, reqData.remarks, reqData.location_address, reqData.payer_name, reqData.payer_mobile]
+                [
+                    clientProfileId, reqData.patient_name, reqData.patient_age, reqData.gender || null,
+                    reqData.relationship_to_client, reqData.patient_condition, reqData.remarks, reqData.location_address,
+                    reqData.emergency_contact_name || reqData.payer_name,
+                    reqData.emergency_contact_number || reqData.payer_mobile,
+                ]
             );
             patientId = newPatient.rows[0].patient_id;
         }
@@ -4158,6 +4165,95 @@ exports.swapStaff = async (req, res) => {
         res.status(500).json({ status: 'error', message: 'Failed to swap staff member' });
     } finally {
         client.release();
+    }
+};
+
+// POST /api/bookings/:booking_id/send-staff-profile   body: { staff_profile_id }
+// Sends a staff member's profile to this booking's client on WhatsApp — used by the
+// swap/assign modal so the client can see who is replacing their current carer before
+// (or as) the change takes effect. Mirrors serviceRequestController.sendCandidateProfile,
+// but keyed off the booking (works for admin-direct bookings with no service request)
+// and deliberately not one-time-only: a client may need the same profile resent.
+exports.sendStaffProfileToClient = async (req, res) => {
+    const { booking_id } = req.params;
+    const { staff_profile_id } = req.body;
+
+    if (!staff_profile_id) {
+        return res.status(400).json({ status: 'error', message: 'staff_profile_id is required' });
+    }
+
+    try {
+        const bookingRes = await db.query(
+            `SELECT b.booking_id,
+                    COALESCE(cp.full_name, sr.payer_name)      AS client_name,
+                    COALESCE(uc.mobile_number, sr.payer_mobile) AS client_mobile,
+                    COALESCE(p.full_name, sr.patient_name)     AS patient_name
+             FROM bookings b
+             LEFT JOIN client_profiles cp ON b.client_id = cp.client_profile_id
+             LEFT JOIN users uc ON cp.user_id = uc.user_id
+             LEFT JOIN service_requests sr ON b.request_id = sr.request_id
+             LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+             WHERE b.booking_id = $1`,
+            [booking_id]
+        );
+        if (!bookingRes.rows.length) {
+            return res.status(404).json({ status: 'error', message: 'Booking not found' });
+        }
+        const booking = bookingRes.rows[0];
+        if (!booking.client_mobile) {
+            return res.status(400).json({ status: 'error', message: 'This booking has no client mobile number on file.' });
+        }
+
+        const staffRes = await db.query(
+            `SELECT staff_profile_id, full_name, designation FROM staff_profiles WHERE staff_profile_id = $1`,
+            [staff_profile_id]
+        );
+        if (!staffRes.rows.length) {
+            return res.status(404).json({ status: 'error', message: 'Staff profile not found' });
+        }
+        const staff = staffRes.rows[0];
+
+        let sendResult;
+        try {
+            sendResult = await sendCandidateProfile(
+                booking.client_mobile,
+                booking.client_name || 'there',
+                booking.patient_name || 'your patient',
+                staff.full_name,
+                staff.designation
+            );
+        } catch (sendErr) {
+            console.error('[sendStaffProfileToClient] WhatsApp send failed:', sendErr.message);
+            return res.status(502).json({ status: 'error', message: 'WhatsApp send failed — the "vcare_candidate_profile" template may not be approved yet.' });
+        }
+
+        try {
+            await logActivity({
+                actorUserId: req.user?.user_id,
+                actorName: await getActorName(req.user?.user_id).catch(() => 'Admin'),
+                actorRole: extractActorRole(req.user?.role),
+                actionType: 'CANDIDATE_PROFILE_SENT',
+                entityType: 'BOOKING',
+                entityId: String(booking_id),
+                details: { staff_name: staff.full_name, staff_profile_id, client_name: booking.client_name, client_mobile: booking.client_mobile },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (send staff profile):', logErr.message);
+        }
+
+        // metaWhatsapp carries a global kill switch — report that honestly rather than
+        // claiming a send that never left the server.
+        const blocked = sendResult?.blocked === true;
+        res.status(200).json({
+            status: 'success',
+            blocked,
+            message: blocked
+                ? `WhatsApp sending is currently disabled system-wide, so ${staff.full_name}'s profile was NOT delivered to ${booking.client_name || 'the client'}.`
+                : `${staff.full_name}'s profile sent to ${booking.client_name || 'the client'} on WhatsApp.`,
+        });
+    } catch (error) {
+        console.error('sendStaffProfileToClient error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to send staff profile' });
     }
 };
 

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, FileCheck2, SendHorizontal, Loader2 } from 'lucide-react';
 import apiClient from '../../../api/api';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 
 // Shown right after a payment fully settles a quotation (see
 // ensureCombinedInvoice — the combined invoice PDF is generated on the first
@@ -50,7 +51,7 @@ const InvoiceSendPopup = ({ open, quoteId, payerName, payerMobile, onClose }) =>
             This quotation is now fully paid. Would you like to send the invoice to{' '}
             <span className="font-semibold text-slate-900">{payerName || 'the client'}</span>
             {payerMobile && (
-              <span className="text-slate-400"> ({payerMobile})</span>
+              <span className="text-slate-400"> ({formatMobileNumber(payerMobile)})</span>
             )}{' '}
             via WhatsApp?
           </p>

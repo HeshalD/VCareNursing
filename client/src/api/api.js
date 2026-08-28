@@ -332,10 +332,10 @@ class ApiClient {
     });
   }
 
-  async sendRegFeeInvoice(clientId, { amount, bank_account_id }) {
+  async sendRegFeeInvoice(clientId, { amount, bank_account_id, salesperson_id }) {
     return this.request(`/client/${clientId}/send-reg-fee-invoice`, {
       method: 'POST',
-      body: JSON.stringify({ amount, bank_account_id }),
+      body: JSON.stringify({ amount, bank_account_id, salesperson_id }),
     });
   }
 
@@ -349,6 +349,13 @@ class ApiClient {
     return this.request(`/client/${clientId}/verify-reg-fee-payment`, {
       method: 'POST',
       body: JSON.stringify({ salesperson_id: salespersonId }),
+    });
+  }
+
+  async backdateRegFeePayment(clientId, { amount, payment_date, salesperson_id }) {
+    return this.request(`/client/${clientId}/backdate-reg-fee-payment`, {
+      method: 'POST',
+      body: JSON.stringify({ amount, payment_date, salesperson_id }),
     });
   }
 
@@ -1439,6 +1446,15 @@ class ApiClient {
     });
   }
 
+  // Share a staff member's profile with the booking's client on WhatsApp — used by the
+  // swap/assign modal to introduce a replacement carer to the client.
+  async sendBookingStaffProfile(bookingId, staffProfileId) {
+    return this.request(`/bookings/${bookingId}/send-staff-profile`, {
+      method: 'POST',
+      body: JSON.stringify({ staff_profile_id: staffProfileId }),
+    });
+  }
+
   // ── Shift patterns & per-shift staff assignment (SHIFT_BASED only) ────
 
   async getShiftPattern(bookingId) {
@@ -1602,6 +1618,15 @@ class ApiClient {
   async getAllRegFeeInvoices(filters = {}) {
     const qs = new URLSearchParams(filters).toString();
     return this.request(qs ? `/client/all-reg-fee-invoices?${qs}` : '/client/all-reg-fee-invoices');
+  }
+
+  async getClientOverdueInvoices(clientId) {
+    return this.request(`/client/${clientId}/overdue-invoices`);
+  }
+
+  async getAllOverdueInvoices(filters = {}) {
+    const qs = new URLSearchParams(filters).toString();
+    return this.request(qs ? `/client/all-overdue-invoices?${qs}` : '/client/all-overdue-invoices');
   }
 
   // ── Payment receipts ──────────────────────────────────────────────

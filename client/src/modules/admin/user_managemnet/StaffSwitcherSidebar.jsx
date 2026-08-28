@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Search, Loader2 } from 'lucide-react';
 import apiClient from '../../../api/api';
 import useDebouncedValue from '../../../hooks/useDebouncedValue';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 
 const PAGE_SIZE = 50;
 
@@ -92,7 +93,7 @@ const StaffSwitcherSidebar = ({ activeStaffId, onNavigate }) => {
                       {s.full_name || 'Unnamed'}
                     </p>
                     <p className="truncate text-[11px] text-gray-400">
-                      {s.staff_code || '—'}{s.mobile_number ? ` · ${s.mobile_number}` : ''}
+                      {s.staff_code || '—'}{s.mobile_number ? ` · ${formatMobileNumber(s.mobile_number)}` : ''}
                     </p>
                   </div>
                 </button>

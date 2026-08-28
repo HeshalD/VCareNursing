@@ -1,7 +1,8 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import DateInput from '../../../components/common/DateInput';
+import DateInput, { todayISO } from '../../../components/common/DateInput';
 import PhoneInput, { isValidPhoneNumber } from '../../../components/common/PhoneInput';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import {
   ArrowLeft,
   ArrowRight,
@@ -23,6 +24,7 @@ import {
   Plus,
   ReceiptText,
   ShieldAlert,
+  AlertTriangle,
   Star,
   Users,
   Wallet,
@@ -153,20 +155,28 @@ const StatCard = ({ icon: Icon, label, value, tone = 'slate' }) => {
     violet:  'text-violet-600',
   };
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
-      <div className="flex items-center gap-2 mb-2">
-        <Icon className={`h-4 w-4 ${iconColor[tone] || 'text-gray-500'}`} />
-        <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">{label}</p>
+    // Own container so the label/value type scales with the card's real width
+    // rather than the viewport — the card is nested two sidebars deep, so a
+    // viewport breakpoint says nothing about how much room it actually has.
+    <div className="@container min-w-0 overflow-hidden rounded-lg border border-gray-200 bg-white p-3 @min-[13rem]:p-4">
+      <div className="flex items-start gap-2 mb-2">
+        <Icon className={`mt-px h-4 w-4 shrink-0 ${iconColor[tone] || 'text-gray-500'}`} />
+        <p className="min-w-0 text-[11px] font-medium uppercase leading-tight tracking-wider text-gray-400 break-words">{label}</p>
       </div>
-      <p className="text-xl font-semibold text-gray-900">{value}</p>
+      <p
+        title={typeof value === 'string' || typeof value === 'number' ? String(value) : undefined}
+        className="text-base font-semibold leading-tight text-gray-900 break-words @min-[11rem]:text-lg @min-[15rem]:text-xl"
+      >
+        {value}
+      </p>
     </div>
   );
 };
 
 const InfoRow = ({ label, value }) => (
-  <div>
-    <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">{label}</p>
-    <p className="mt-0.5 text-sm text-gray-800 font-medium">{value || '-'}</p>
+  <div className="min-w-0">
+    <p className="text-[11px] font-medium uppercase leading-tight tracking-wider text-gray-400 break-words">{label}</p>
+    <p className="mt-0.5 text-sm text-gray-800 font-medium break-words">{value || '-'}</p>
   </div>
 );
 
@@ -228,6 +238,9 @@ const ClientDetailPage = () => {
   const [regFeeInvoices, setRegFeeInvoices] = useState([]);
   const [regFeeInvoicesLoading, setRegFeeInvoicesLoading] = useState(false);
 
+  const [overdueInvoices, setOverdueInvoices] = useState([]);
+  const [overdueInvoicesLoading, setOverdueInvoicesLoading] = useState(false);
+
   const [combinedInvoices, setCombinedInvoices] = useState([]);
   const [combinedInvoicesLoading, setCombinedInvoicesLoading] = useState(false);
 
@@ -280,6 +293,21 @@ const ClientDetailPage = () => {
   const [lastInvoicePdfUrl, setLastInvoicePdfUrl] = useState(null);
   const [uploadingRegFeeReceipt, setUploadingRegFeeReceipt] = useState(false);
   const regFeeReceiptInputRef = useRef(null);
+
+  // Backdated (historical) registration fee payment entry — for clients who paid
+  // before this was tracked in-system, or before this feature existed.
+  const [showBackdateRegFeeForm, setShowBackdateRegFeeForm] = useState(false);
+  const [backdateRegFeeAmount, setBackdateRegFeeAmount] = useState('10000.00');
+  const [backdateRegFeeDate, setBackdateRegFeeDate] = useState('');
+  const [backdateRegFeeSalespersonId, setBackdateRegFeeSalespersonId] = useState('');
+  const [backdateRegFeeLoading, setBackdateRegFeeLoading] = useState(false);
+  const [backdateRegFeeError, setBackdateRegFeeError] = useState('');
+
+  // Registration Fee card UI — progressive disclosure so only the one action
+  // relevant to the client's current step is on screen by default.
+  const [showSendRegFeePanel, setShowSendRegFeePanel] = useState(false);
+  const [showUploadRegFeePanel, setShowUploadRegFeePanel] = useState(false);
+  const [regFeeMoreOpen, setRegFeeMoreOpen] = useState(false);
 
   // Salesperson who brought/manages this client's registration (separate metric from booking crediting).
   const [salespersonsList, setSalespersonsList] = useState([]);
@@ -444,6 +472,19 @@ const ClientDetailPage = () => {
       // non-fatal
     } finally {
       setRegFeeInvoicesLoading(false);
+    }
+  };
+
+  const fetchOverdueInvoices = async () => {
+    if (!clientId) return;
+    try {
+      setOverdueInvoicesLoading(true);
+      const res = await apiClient.getClientOverdueInvoices(clientId);
+      setOverdueInvoices(Array.isArray(res?.data) ? res.data : []);
+    } catch {
+      // non-fatal
+    } finally {
+      setOverdueInvoicesLoading(false);
     }
   };
 
@@ -684,7 +725,7 @@ const ClientDetailPage = () => {
 
   useEffect(() => {
     if (activeSection === 'bookings') fetchBookingsPag();
-    if (activeSection === 'invoices') { fetchClientInvoices(); fetchRegFeeInvoices(); fetchProductInvoices(); fetchCombinedInvoices(); }
+    if (activeSection === 'invoices') { fetchClientInvoices(); fetchRegFeeInvoices(); fetchProductInvoices(); fetchCombinedInvoices(); fetchOverdueInvoices(); }
     if (activeSection === 'products') { fetchProductInvoices(); fetchRentedItems(); fetchDeposits(); }
     if (activeSection === 'quotes') { fetchQuoteLineItems(); fetchProductQuotes(); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -826,13 +867,26 @@ const ClientDetailPage = () => {
     setRegFeeLoading(true);
     setRegFeeError('');
     try {
-      const res = await apiClient.sendRegFeeInvoice(clientId, { amount: regFeeAmount, bank_account_id: selectedBankAccountId });
+      const res = await apiClient.sendRegFeeInvoice(clientId, {
+        amount: regFeeAmount,
+        bank_account_id: selectedBankAccountId,
+        salesperson_id: salespersonForCredit || null,
+      });
       if (res.data?.invoice_pdf_url) setLastInvoicePdfUrl(res.data.invoice_pdf_url);
-      setDetail((prev) => ({
-        ...prev,
-        client_profile: { ...prev.client_profile, ...res.data },
-      }));
+      // Re-fetch rather than optimistically patching client_profile/overdue_invoices_summary
+      // locally — pulls the server's actual reg_fee_amount and overdue total instead of
+      // assuming the just-submitted regFeeAmount field is what was recorded.
+      const refreshed = await apiClient.getAdminClientDetail(clientId);
+      setDetail(refreshed.data || null);
       fetchRegFeeInvoices();
+      fetchOverdueInvoices();
+      // Crediting (if any) already happened server-side at send time — refresh the
+      // "Managed By" display and clear the picker since there's nothing left to decide.
+      if (salespersonForCredit) {
+        await reloadClientSalesperson();
+        setSalespersonForCredit('');
+      }
+      setShowSendRegFeePanel(false);
     } catch (err) {
       setRegFeeError(err.message || 'Failed to send registration fee invoice.');
     } finally {
@@ -852,6 +906,7 @@ const ClientDetailPage = () => {
       setDetail(refreshed.data || null);
       setClientTransactions(txRefreshed.data || []);
       fetchRegFeeInvoices();
+      fetchOverdueInvoices();
     } catch {
       // non-fatal — the reg_fee_status change itself already succeeded
     }
@@ -873,6 +928,7 @@ const ClientDetailPage = () => {
       await apiClient.updateRegFeeStatus(clientId, status, status === 'PAID' ? (salespersonForCredit || null) : null);
       await refreshAfterPaymentChange();
       if (status === 'PAID' && salespersonForCredit) await reloadClientSalesperson();
+      setRegFeeMoreOpen(false);
     } catch (err) {
       setRegFeeError(err.message || 'Failed to update registration fee status.');
     } finally {
@@ -916,11 +972,36 @@ const ClientDetailPage = () => {
     try {
       await apiClient.adminUploadRegFeeReceipt(clientId, file);
       await refreshAfterPaymentChange();
+      setShowUploadRegFeePanel(false);
     } catch (err) {
       setRegFeeError(err.message || 'Failed to upload registration fee receipt.');
     } finally {
       setUploadingRegFeeReceipt(false);
       if (regFeeReceiptInputRef.current) regFeeReceiptInputRef.current.value = '';
+    }
+  };
+
+  const handleBackdateRegFeePayment = async () => {
+    if (!backdateRegFeeDate) { setBackdateRegFeeError('Please select the date the fee was paid.'); return; }
+    if (!backdateRegFeeAmount || Number(backdateRegFeeAmount) <= 0) { setBackdateRegFeeError('Please enter a valid amount.'); return; }
+    setBackdateRegFeeLoading(true);
+    setBackdateRegFeeError('');
+    try {
+      await apiClient.backdateRegFeePayment(clientId, {
+        amount: backdateRegFeeAmount,
+        payment_date: backdateRegFeeDate,
+        salesperson_id: backdateRegFeeSalespersonId || null,
+      });
+      await refreshAfterPaymentChange();
+      if (backdateRegFeeSalespersonId) await reloadClientSalesperson();
+      setShowBackdateRegFeeForm(false);
+      setBackdateRegFeeDate('');
+      setBackdateRegFeeSalespersonId('');
+      setRegFeeMoreOpen(false);
+    } catch (err) {
+      setBackdateRegFeeError(err.message || 'Failed to record historical payment.');
+    } finally {
+      setBackdateRegFeeLoading(false);
     }
   };
 
@@ -933,6 +1014,7 @@ const ClientDetailPage = () => {
   const patientSummary = detail?.patient_summary || {};
   const statementSummary = detail?.statement_summary || {};
   const overdueSummary = detail?.overdue_summary || {};
+  const overdueInvoicesSummary = detail?.overdue_invoices_summary || {};
   const recentActivity = detail?.recent_activity || {};
 
   // The client's chosen "bill to" name — company name if they've opted into
@@ -1133,10 +1215,16 @@ const ClientDetailPage = () => {
   const overdueDisplayValue = isOverdue ? formatMoney(Math.abs(overdueAmount)) : formatMoney(0);
   const overdueTone = isOverdue ? 'rose' : 'emerald';
 
+  // Sum of unresolved rows in the system-wide overdue-invoices ledger (currently
+  // only registration fees) — distinct from "Overdue Amount" above, which is
+  // derived from the daily-attendance invoicing transaction ledger.
+  const overdueInvoicesAmount = Number(overdueInvoicesSummary.total_overdue_amount || 0);
+
   const topStats = [
     { icon: BadgeDollarSign, label: 'Payments Made By Client',         value: formatMoney(paymentSummary.total_paid),               tone: 'emerald' },
     { icon: Wallet,          label: 'Invoiced Amount', value: formatMoney(statementSummary.total_invoiced),          tone: 'blue' },
     { icon: ShieldAlert,     label: 'Overdue Amount',                   value: overdueDisplayValue,                                  tone: overdueTone },
+    { icon: AlertTriangle,   label: 'Overdue Invoices',                 value: formatMoney(overdueInvoicesAmount),                   tone: overdueInvoicesAmount > 0 ? 'rose' : 'emerald' },
     { icon: CalendarDays,    label: 'Bookings',                         value: bookingSummary.total_bookings || 0,                   tone: 'violet' },
     { icon: Wallet,          label: 'Wallet Balance',                   value: formatMoney(clientProfile.wallet_balance),            tone: 'amber' },
   ];
@@ -1177,7 +1265,7 @@ const ClientDetailPage = () => {
                   }
                 >
                   <div className="space-y-4">
-                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    <div className="grid gap-4 @md:grid-cols-2 @3xl:grid-cols-3">
                       <InfoRow label="Billed To" value={rcpt.received_from || billedToName} />
                       <InfoRow label="Receipt No." value={rcpt.receipt_code} />
                       <InfoRow label="Date" value={formatDateTime(rcpt.payment_date || rcpt.created_at)} />
@@ -1191,12 +1279,12 @@ const ClientDetailPage = () => {
                       <div className="overflow-hidden rounded-md border border-gray-200">
                         <div className="bg-gray-50 px-4 py-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400">Payment for</div>
                         {items.map((it, i) => (
-                          <div key={i} className="flex items-center justify-between border-t border-gray-100 px-4 py-2.5">
-                            <div>
-                              <div className="text-sm font-medium text-gray-800">{it.label}</div>
-                              {it.description && <div className="text-xs text-gray-500">{it.description}</div>}
+                          <div key={i} className="flex items-start justify-between gap-3 border-t border-gray-100 px-4 py-2.5">
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium text-gray-800 break-words">{it.label}</div>
+                              {it.description && <div className="text-xs text-gray-500 break-words">{it.description}</div>}
                             </div>
-                            <div className="text-sm font-semibold text-gray-700">{formatMoney(it.amount)}</div>
+                            <div className="shrink-0 text-sm font-semibold text-gray-700">{formatMoney(it.amount)}</div>
                           </div>
                         ))}
                       </div>
@@ -1273,7 +1361,7 @@ const ClientDetailPage = () => {
                 </div>
               }
             >
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid gap-4 @md:grid-cols-2 @3xl:grid-cols-3">
                 <InfoRow label="Booking ID" value={booking.booking_id} />
                 <InfoRow label="Status" value={booking.status || '-'} />
                 <InfoRow label="Service Model" value={booking.service_model || '-'} />
@@ -1489,8 +1577,14 @@ const ClientDetailPage = () => {
           { id: 'DAILY',     label: 'Daily Invoices',    count: clientInvoices.length },
           { id: 'PRODUCT',   label: 'Product Invoices',  count: productInvoices.length },
           { id: 'COMBINED',  label: 'Combined Invoices', count: combinedInvoices.length },
+          { id: 'OVERDUE',   label: 'Overdue',           count: overdueInvoices.filter((inv) => inv.status === 'OVERDUE').length },
         ];
-        const invoicesRefreshing = regFeeInvoicesLoading || invoicesLoading || productInvoicesLoading || combinedInvoicesLoading;
+        const invoicesRefreshing = regFeeInvoicesLoading || invoicesLoading || productInvoicesLoading || combinedInvoicesLoading || overdueInvoicesLoading;
+        const OVERDUE_SOURCE_LABELS = { REGISTRATION_FEE: 'Registration Fee' };
+        const OVERDUE_STATUS_COLORS = {
+          OVERDUE:  'bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-200',
+          RESOLVED: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
+        };
         return (
           <div className="space-y-6">
             {/* Invoice type toggle */}
@@ -1516,7 +1610,7 @@ const ClientDetailPage = () => {
               </div>
               <button
                 type="button"
-                onClick={() => { fetchClientInvoices(); fetchRegFeeInvoices(); fetchProductInvoices(); fetchCombinedInvoices(); }}
+                onClick={() => { fetchClientInvoices(); fetchRegFeeInvoices(); fetchProductInvoices(); fetchCombinedInvoices(); fetchOverdueInvoices(); }}
                 disabled={invoicesRefreshing}
                 className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-60"
               >
@@ -1892,6 +1986,54 @@ const ClientDetailPage = () => {
               )}
             </div>
             )}
+
+            {/* Overdue Invoices */}
+            {invoiceTypeView === 'OVERDUE' && (
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">Overdue Invoices</h3>
+              <p className="mb-3 text-[11px] text-gray-400">
+                Invoices this client has been sent but hasn't paid off yet. A row clears once the underlying invoice is paid or waived.
+              </p>
+              {overdueInvoicesLoading ? (
+                <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading overdue invoices…
+                </div>
+              ) : overdueInvoices.length === 0 ? (
+                <EmptyState title="No overdue invoices" />
+              ) : (
+                <div className="overflow-x-auto rounded-md border border-gray-200">
+                  <table className="min-w-full divide-y divide-gray-100 text-sm">
+                    <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                      <tr>
+                        <th className="px-4 py-3 text-left">Invoiced On</th>
+                        <th className="px-4 py-3 text-left">Source</th>
+                        <th className="px-4 py-3 text-left">Invoice Code</th>
+                        <th className="px-4 py-3 text-left">Status</th>
+                        <th className="px-4 py-3 text-left">Resolved On</th>
+                        <th className="px-4 py-3 text-right">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 bg-white">
+                      {overdueInvoices.map((inv) => (
+                        <tr key={inv.overdue_invoice_id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{formatDateTime(inv.invoiced_at)}</td>
+                          <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{OVERDUE_SOURCE_LABELS[inv.source_type] || inv.source_type}</td>
+                          <td className="px-4 py-3 font-mono text-xs text-gray-600">{inv.invoice_code || '—'}</td>
+                          <td className="px-4 py-3">
+                            <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${OVERDUE_STATUS_COLORS[inv.status] || 'bg-gray-100 text-gray-600'}`}>
+                              {inv.status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{inv.resolved_at ? formatDateTime(inv.resolved_at) : '—'}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(inv.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            )}
           </div>
         );
       }
@@ -2042,7 +2184,7 @@ const ClientDetailPage = () => {
                   }
                 >
                   <div className="space-y-4">
-                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    <div className="grid gap-4 @md:grid-cols-2 @3xl:grid-cols-3">
                       <InfoRow label="Billed To" value={quote.billed_to_name || quote.payer_name || '-'} />
                       <InfoRow label="Estimate No." value={quote.estimate_number || '-'} />
                       <InfoRow label="Service Request" value={quote.service_request_code || quote.request_id || '-'} />
@@ -2456,7 +2598,7 @@ const ClientDetailPage = () => {
                     </div>
                   }
                 >
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="grid gap-4 @md:grid-cols-2 @3xl:grid-cols-3">
                     <InfoRow label="Staff" value={assignment.staff_name || '-'} />
                     <InfoRow label="Designation" value={assignment.designation || '-'} />
                     <InfoRow label="Patient" value={assignment.patient_name || '-'} />
@@ -2487,7 +2629,7 @@ const ClientDetailPage = () => {
         return (
           <div className="space-y-5">
             {reviewSummary.total_reviews ? (
-              <div className="grid gap-4 md:grid-cols-3">
+              <div className="grid gap-3 @md:grid-cols-2 @2xl:grid-cols-3 @md:gap-4">
                 <StatCard icon={Star}     label="Average Rating" value={reviewSummary.average_rating || 0} tone="amber" />
                 <StatCard icon={Users}    label="Total Reviews"  value={reviewSummary.total_reviews || 0}  tone="violet" />
                 <StatCard icon={Activity} label="Rating Spread"  value={Object.keys(reviewSummary.rating_distribution || {}).length || 0} tone="slate" />
@@ -2513,11 +2655,11 @@ const ClientDetailPage = () => {
                       </div>
                     }
                   >
-                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    <div className="grid gap-4 @md:grid-cols-2 @3xl:grid-cols-3">
                       <InfoRow label="Staff"   value={review.staff_name || '-'} />
                       <InfoRow label="Rating"  value={review.rating || '-'} />
                       <InfoRow label="Visible" value={review.is_visible ? 'Yes' : 'No'} />
-                      <div className="sm:col-span-2 lg:col-span-3">
+                      <div className="@md:col-span-2 @3xl:col-span-3">
                         <InfoRow label="Comment" value={review.review_text || '-'} />
                       </div>
                     </div>
@@ -2568,7 +2710,7 @@ const ClientDetailPage = () => {
                       </button>
                     }
                   >
-                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    <div className="grid gap-4 @md:grid-cols-2 @3xl:grid-cols-3">
                       <InfoRow label="Name"         value={patient.full_name} />
                       <InfoRow label="Age"          value={patient.age || '-'} />
                       <InfoRow label="Gender"       value={patient.gender ? patient.gender.charAt(0) + patient.gender.slice(1).toLowerCase() : '-'} />
@@ -2584,7 +2726,7 @@ const ClientDetailPage = () => {
                           </React.Fragment>
                         ));
                       })()}
-                      <div className="sm:col-span-2 lg:col-span-3">
+                      <div className="@md:col-span-2 @3xl:col-span-3">
                         <InfoRow label="Condition / Remarks" value={patient.medical_condition || patient.special_remarks || '-'} />
                       </div>
                     </div>
@@ -2693,7 +2835,7 @@ const ClientDetailPage = () => {
                       ) : (
                         <>
                           <div className="flex items-start justify-between gap-3">
-                            <p className="text-sm leading-relaxed text-gray-800">{note.note_text}</p>
+                            <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-800">{note.note_text}</p>
                             <div className="flex shrink-0 items-center gap-1">
                               <button
                                 type="button"
@@ -2751,12 +2893,12 @@ const ClientDetailPage = () => {
       case 'statement':
         return (
           <div className="space-y-5">
-            <div className="flex items-center gap-2 text-sm text-gray-600">
+            <div className="flex flex-wrap items-center gap-2 text-sm text-gray-600">
               <span className="text-[11px] font-medium uppercase tracking-wider text-gray-400">Billed To</span>
               <span className="font-semibold text-gray-900">{billedToName}</span>
             </div>
             <div className="rounded-md border border-gray-200 bg-gray-50 p-4">
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="grid gap-3 @md:grid-cols-2 @2xl:grid-cols-3 @5xl:grid-cols-4 @md:gap-4">
                 <div>
                   <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1">Start date</p>
                   <DateInput
@@ -2773,7 +2915,7 @@ const ClientDetailPage = () => {
                     className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   />
                 </div>
-                <div className="flex items-end gap-3 md:col-span-2 xl:justify-end">
+                <div className="flex flex-wrap items-end gap-2 @md:col-span-2 @5xl:justify-end">
                   <button
                     type="button"
                     onClick={downloadStatement}
@@ -2797,7 +2939,7 @@ const ClientDetailPage = () => {
               </div>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-3 @md:grid-cols-2 @2xl:grid-cols-3 @5xl:grid-cols-4 @md:gap-4">
               <StatCard icon={ReceiptText}     label="Transactions"                   value={statementSummary.transaction_count || 0}             tone="slate" />
               <StatCard icon={Wallet}          label="Payments Made By Client"         value={formatMoney(paymentSummary.total_paid)}              tone="blue" />
               <StatCard icon={BadgeDollarSign} label="Invoiced Through Daily Invoicing" value={formatMoney(statementSummary.total_invoiced)}        tone="emerald" />
@@ -2806,7 +2948,7 @@ const ClientDetailPage = () => {
             </div>
 
             <div className="overflow-hidden rounded-md border border-gray-200 bg-white">
-              <div className="border-b border-gray-100 px-5 py-3.5 bg-gray-50">
+              <div className="border-b border-gray-100 px-4 py-3.5 bg-gray-50 @xl:px-5">
                 <h3 className="text-[13px] font-semibold text-gray-800">All Client Transactions</h3>
                 <p className="text-xs text-gray-400 mt-0.5">Fetched from the statement transaction endpoint for this client</p>
               </div>
@@ -2867,7 +3009,7 @@ const ClientDetailPage = () => {
                 const safePage = Math.min(txPage, txTotalPages);
                 const txStart = (safePage - 1) * TX_PAGE_SIZE;
                 return (
-                  <div className="flex items-center justify-between border-t border-gray-100 px-5 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 px-4 py-3 @xl:px-5">
                     <p className="text-xs text-gray-400">
                       Showing {txStart + 1}â€“{Math.min(txStart + TX_PAGE_SIZE, clientTransactions.length)} of {clientTransactions.length}
                     </p>
@@ -2880,7 +3022,7 @@ const ClientDetailPage = () => {
                       >
                         <ArrowLeft className="h-3.5 w-3.5" /> Prev
                       </button>
-                      <span className="min-w-[90px] text-center text-xs text-gray-400">
+                      <span className="text-center text-xs text-gray-400">
                         Page {safePage} of {txTotalPages}
                       </span>
                       <button
@@ -2901,7 +3043,7 @@ const ClientDetailPage = () => {
 
       case 'overdue':
         return (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-3 @md:grid-cols-2 @3xl:grid-cols-3 @md:gap-4">
             <StatCard icon={ShieldAlert}  label="Overdue Amount"       value={overdueDisplayValue}                             tone={overdueTone} />
             <StatCard icon={CalendarDays} label="Overdue Invoices"      value={overdueSummary.total_outstanding_invoices || 0}  tone="amber" />
             <StatCard icon={Activity}     label="Overdue Count"         value={overdueSummary.overdue_payments_count || 0}      tone="slate" />
@@ -2912,7 +3054,7 @@ const ClientDetailPage = () => {
       default:
         return (
           <div className="space-y-5">
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-3 @md:grid-cols-2 @2xl:grid-cols-3 @5xl:grid-cols-4 @md:gap-4">
               {topStats.map((stat) => (
                 <StatCard key={stat.label} {...stat} />
               ))}
@@ -2921,109 +3063,171 @@ const ClientDetailPage = () => {
             {/* Registration Fee */}
             {(() => {
               const feeStatus = clientProfile.reg_fee_status || 'PENDING';
-              const statusMeta = {
-                PENDING:          { label: 'Pending',          cls: 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200' },
-                INVOICED:         { label: 'Invoiced',         cls: 'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200' },
-                RECEIPT_UPLOADED: { label: 'Receipt Uploaded', cls: 'bg-violet-50 text-violet-700 ring-1 ring-inset ring-violet-200' },
-                PAID:             { label: 'Paid',             cls: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200' },
-                WAIVED:           { label: 'Waived',           cls: 'bg-gray-100 text-gray-600 ring-1 ring-inset ring-gray-200' },
-                EXPIRED:          { label: 'Expired',          cls: 'bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-200' },
-              };
-              const badge = statusMeta[feeStatus] || statusMeta.PENDING;
-              const canSendInvoice = ['PENDING', 'INVOICED', 'EXPIRED'].includes(feeStatus);
-              const canViewReceipt = feeStatus === 'RECEIPT_UPLOADED' && clientProfile.reg_fee_receipt_url;
               const isSettled = ['PAID', 'WAIVED'].includes(feeStatus);
+              const isExpired = feeStatus === 'EXPIRED';
+              const canViewReceipt = feeStatus === 'RECEIPT_UPLOADED' && clientProfile.reg_fee_receipt_url;
+
+              // How far along the pipeline this client is, for the stepper below.
+              // EXPIRED is functionally "back to square one" (needs a fresh invoice),
+              // not a step of its own, so it maps to the same rank as PENDING.
+              const REG_FEE_RANK = { PENDING: 0, EXPIRED: 0, INVOICED: 1, RECEIPT_UPLOADED: 2, PAID: 3, WAIVED: 3 };
+              const rank = REG_FEE_RANK[feeStatus] ?? 0;
 
               // Membership is valid for 365 days from payment (see
-              // backend/cron/regFeeExpiry.js) — once reg_fee_expires_at
-              // passes, the daily cron flips reg_fee_status to EXPIRED (a
-              // distinct state from PENDING/never-registered) so the client
+              // backend/cron/regFeeExpiry.js) - once reg_fee_expires_at passes,
+              // the daily cron flips reg_fee_status to EXPIRED so the client
               // re-enters the admin's re-invoicing queue.
-              const daysUntilReset = (feeStatus === 'PAID' && clientProfile.reg_fee_expires_at)
+              const daysUntilExpiry = (feeStatus === 'PAID' && clientProfile.reg_fee_expires_at)
                 ? Math.ceil((new Date(clientProfile.reg_fee_expires_at) - Date.now()) / (1000 * 60 * 60 * 24))
                 : null;
+              // Colors the expiry callout/pill by urgency so a soon-to-lapse
+              // membership actually catches the admin's eye instead of blending in.
+              const expiryTone = daysUntilExpiry === null ? null
+                : daysUntilExpiry <= 7 ? 'rose'
+                : daysUntilExpiry <= 30 ? 'amber'
+                : 'emerald';
+
+              const statusSentence = feeStatus === 'WAIVED'
+                ? 'Registration fee waived - no payment required from this client.'
+                : feeStatus === 'PAID'
+                  ? 'Active member.'
+                  : isExpired
+                    ? `Membership expired on ${formatDateTime(clientProfile.reg_fee_expires_at)}. Send a new invoice to renew it.`
+                    : feeStatus === 'RECEIPT_UPLOADED'
+                      ? 'A payment slip was submitted - review it and confirm below.'
+                      : feeStatus === 'INVOICED'
+                        ? `Invoice sent ${formatDateTime(clientProfile.reg_fee_invoiced_at)} - waiting for the client to pay.`
+                        : "This client hasn't been invoiced for their registration fee yet.";
+
+              const STEP_DEFS = [
+                { key: 'invoiced', label: 'Invoice Sent', icon: SendHorizontal },
+                { key: 'review',   label: 'Payment Submitted', icon: Upload },
+                { key: 'complete', label: feeStatus === 'WAIVED' ? 'Waived' : 'Complete', icon: Check },
+              ];
+
+              const uploadReceiptWidget = (
+                <div className="mt-2 rounded-md border border-gray-200 bg-gray-50 p-3">
+                  <p className="mb-2 text-xs text-gray-600">
+                    {canViewReceipt
+                      ? "Got a different proof of payment? Replace what's on file."
+                      : "If the client sent proof of payment another way (WhatsApp, email), upload it here on their behalf."}
+                  </p>
+                  <input
+                    ref={regFeeReceiptInputRef}
+                    type="file"
+                    accept="image/*,.pdf"
+                    className="hidden"
+                    id="admin-reg-fee-receipt-upload"
+                    onChange={(e) => handleAdminUploadRegFeeReceipt(e.target.files?.[0])}
+                  />
+                  <label
+                    htmlFor="admin-reg-fee-receipt-upload"
+                    className={`inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 cursor-pointer ${uploadingRegFeeReceipt ? 'opacity-60 pointer-events-none' : ''}`}
+                  >
+                    {uploadingRegFeeReceipt ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                    {uploadingRegFeeReceipt ? 'Uploading...' : canViewReceipt ? 'Replace Receipt' : 'Upload Receipt'}
+                  </label>
+                </div>
+              );
 
               return (
-                <DataCard title="Registration Fee">
-                  <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
-                    <div>
-                      <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1">Status</p>
-                      <span className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-semibold ${badge.cls}`}>{badge.label}</span>
+                <DataCard
+                  title="Registration Fee"
+                  headerRight={
+                    <div className="flex items-center gap-1.5">
+                      {expiryTone && (
+                        <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-bold ${
+                          expiryTone === 'rose' ? 'bg-rose-50 text-rose-700'
+                          : expiryTone === 'amber' ? 'bg-amber-50 text-amber-700'
+                          : 'bg-emerald-50 text-emerald-700'
+                        }`}>
+                          {expiryTone !== 'emerald' && <AlertTriangle className="h-3 w-3" />}
+                          {daysUntilExpiry > 0 ? `${daysUntilExpiry}d left` : daysUntilExpiry === 0 ? 'Renews today' : 'Renewal overdue'}
+                        </span>
+                      )}
+                      <span className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-bold ${
+                        isSettled
+                          ? (feeStatus === 'WAIVED' ? 'bg-gray-100 text-gray-600' : 'bg-emerald-50 text-emerald-700')
+                          : isExpired
+                            ? 'bg-rose-50 text-rose-700'
+                            : 'bg-blue-50 text-blue-700'
+                      }`}>
+                        {formatMoney(clientProfile.reg_fee_amount || 10000)}
+                      </span>
                     </div>
-                    <div>
-                      <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1">Current Amount</p>
-                      <p className="text-sm font-bold text-gray-800">{formatMoney(clientProfile.reg_fee_amount || 10000)}</p>
+                  }
+                >
+                  {isExpired && (
+                    <div className="mb-4 flex items-start gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2.5">
+                      <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500 mt-0.5" />
+                      <p className="text-xs text-rose-700">{statusSentence}</p>
                     </div>
-                    {clientProfile.reg_fee_invoiced_at && (
-                      <div>
-                        <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1">Invoiced On</p>
-                        <p className="text-sm font-medium text-gray-700">{formatDateTime(clientProfile.reg_fee_invoiced_at)}</p>
-                      </div>
-                    )}
-                    {daysUntilReset !== null && (
-                      <div>
-                        <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1">Membership Expires In</p>
-                        <p className={`text-sm font-bold ${daysUntilReset <= 30 ? 'text-amber-600' : 'text-gray-800'} ${daysUntilReset < 0 ? 'text-rose-600' : ''}`}>
-                          {daysUntilReset > 0
-                            ? `${daysUntilReset} day${daysUntilReset === 1 ? '' : 's'}`
-                            : daysUntilReset === 0
-                              ? 'Today'
-                              : `Expired ${Math.abs(daysUntilReset)} day${Math.abs(daysUntilReset) === 1 ? '' : 's'} ago`}
-                        </p>
-                        <p className="text-[11px] text-gray-400 mt-0.5">on {formatDateTime(clientProfile.reg_fee_expires_at)}</p>
-                      </div>
-                    )}
-                    {feeStatus === 'EXPIRED' && clientProfile.reg_fee_expires_at && (
-                      <div>
-                        <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1">Expired On</p>
-                        <p className="text-sm font-bold text-rose-600">{formatDateTime(clientProfile.reg_fee_expires_at)}</p>
-                        <p className="text-[11px] text-gray-400 mt-0.5">Send a new invoice to renew membership</p>
-                      </div>
-                    )}
-                    <div>
-                      <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1">Managed By</p>
-                      <p className="text-sm font-medium text-gray-700">
-                        {clientSalesperson?.current?.salesperson_name || 'Unassigned'}
-                      </p>
-                    </div>
+                  )}
+
+                  {/* Step-by-step progress */}
+                  <div className="flex items-center">
+                    {STEP_DEFS.map((step, i) => {
+                      const state = rank > i ? 'done' : rank === i ? 'current' : 'upcoming';
+                      const isWaivedNode = feeStatus === 'WAIVED' && i === 2;
+                      const StepIcon = state === 'done' ? Check : step.icon;
+                      return (
+                        <React.Fragment key={step.key}>
+                          {i > 0 && (
+                            <div className={`h-0.5 flex-1 min-w-[12px] @sm:min-w-[28px] ${rank > i ? (isWaivedNode ? 'bg-gray-300' : 'bg-emerald-400') : 'bg-gray-200'}`} />
+                          )}
+                          <div className="flex flex-col items-center gap-1 shrink-0 px-1">
+                            <div className={`flex h-8 w-8 items-center justify-center rounded-full border-2 ${
+                              state === 'done'
+                                ? (isWaivedNode ? 'border-gray-300 bg-gray-300 text-white' : 'border-emerald-500 bg-emerald-500 text-white')
+                                : state === 'current'
+                                  ? 'border-blue-500 bg-blue-50 text-blue-600'
+                                  : 'border-gray-200 bg-white text-gray-300'
+                            }`}>
+                              <StepIcon className="h-4 w-4" />
+                            </div>
+                            <span className={`text-[10px] font-medium text-center whitespace-nowrap ${
+                              state === 'upcoming' ? 'text-gray-300' : state === 'current' ? 'text-blue-600' : 'text-gray-500'
+                            }`}>
+                              {step.label}
+                            </span>
+                          </div>
+                        </React.Fragment>
+                      );
+                    })}
                   </div>
 
-                  {salespersonsList.length > 0 && (
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <select
-                        value={switchSalespersonId}
-                        onChange={(e) => setSwitchSalespersonId(e.target.value)}
-                        className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
-                      >
-                        <option value="">
-                          {clientSalesperson?.current ? '— Reassign to —' : '— No salesperson assigned —'}
-                        </option>
-                        {salespersonsList
-                          .filter((sp) => sp.id !== clientSalesperson?.current?.salesperson_id)
-                          .map((sp) => (
-                            <option key={sp.id} value={sp.id}>{sp.full_name}</option>
-                          ))}
-                      </select>
-                      <button
-                        type="button"
-                        onClick={handleSwitchClientSalesperson}
-                        disabled={!switchSalespersonId || !clientSalesperson?.current || salespersonActionLoading}
-                        title={!clientSalesperson?.current ? 'Pick a salesperson below when confirming payment first' : ''}
-                        className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-                      >
-                        {salespersonActionLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                        Reassign
-                      </button>
+                  {feeStatus === 'PAID' && daysUntilExpiry !== null && (
+                    <div className={`mt-4 flex items-center justify-between rounded-md border px-3.5 py-3 ${
+                      expiryTone === 'rose' ? 'border-rose-200 bg-rose-50'
+                      : expiryTone === 'amber' ? 'border-amber-200 bg-amber-50'
+                      : 'border-emerald-200 bg-emerald-50'
+                    }`}>
+                      <div>
+                        <p className={`text-2xl font-extrabold leading-none ${
+                          expiryTone === 'rose' ? 'text-rose-600' : expiryTone === 'amber' ? 'text-amber-600' : 'text-emerald-600'
+                        }`}>
+                          {daysUntilExpiry > 0 ? daysUntilExpiry : daysUntilExpiry === 0 ? 'Today' : 0}
+                        </p>
+                        <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                          {daysUntilExpiry > 1 ? 'days until renewal' : daysUntilExpiry === 1 ? 'day until renewal' : daysUntilExpiry === 0 ? 'renews today' : 'renewal overdue'}
+                        </p>
+                        <p className="mt-1 text-[11px] text-gray-400">on {formatDateTime(clientProfile.reg_fee_expires_at)}</p>
+                      </div>
+                      {expiryTone !== 'emerald' && (
+                        <AlertTriangle className={`h-6 w-6 shrink-0 ${expiryTone === 'rose' ? 'text-rose-500' : 'text-amber-500'}`} />
+                      )}
                     </div>
                   )}
 
-                  {salespersonError && (
-                    <p className="mt-2 text-xs text-red-600">{salespersonError}</p>
+                  {!isExpired && (
+                    <p className="mt-4 text-sm text-gray-700">{statusSentence}</p>
                   )}
+                  <p className="mt-1 text-xs text-gray-400">
+                    Managed by {clientSalesperson?.current?.salesperson_name || 'no one yet'}
+                  </p>
 
-                  {regFeeError && (
-                    <p className="mt-3 text-xs text-red-600">{regFeeError}</p>
-                  )}
+                  {regFeeError && <p className="mt-3 text-xs text-red-600">{regFeeError}</p>}
+                  {salespersonError && <p className="mt-3 text-xs text-red-600">{salespersonError}</p>}
 
                   {lastInvoicePdfUrl && (
                     <div className="mt-3">
@@ -3038,165 +3242,320 @@ const ClientDetailPage = () => {
                     </div>
                   )}
 
-                  {canViewReceipt && (
-                    <div className="mt-4 rounded-md border border-violet-200 bg-violet-50 p-3">
-                      <p className="text-xs font-semibold text-violet-700 mb-2">Receipt submitted â€” review before verifying</p>
-                      {!clientSalesperson?.origin && salespersonsList.length > 0 && (
-                        <select
-                          value={salespersonForCredit}
-                          onChange={(e) => setSalespersonForCredit(e.target.value)}
-                          className="mb-2 px-2.5 py-1.5 text-xs border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
-                        >
-                          <option value="">Credit registration to salesperson (optional)</option>
-                          {salespersonsList.map((sp) => (
-                            <option key={sp.id} value={sp.id}>{sp.full_name}</option>
-                          ))}
-                        </select>
-                      )}
-                      <div className="flex flex-wrap items-center gap-2">
-                        <a
-                          href={clientProfile.reg_fee_receipt_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
-                        >
-                          <Download className="h-3.5 w-3.5" /> View Receipt
-                        </a>
-                        <button
-                          type="button"
-                          onClick={handleVerifyRegFeePayment}
-                          disabled={regFeeLoading}
-                          className="inline-flex items-center gap-1.5 rounded bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
-                        >
-                          {regFeeLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                          Verify Payment
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {!isSettled && (
-                    <div className="mt-4 rounded-md border border-gray-200 bg-gray-50 p-3">
-                      <p className="text-xs font-semibold text-gray-700 mb-2">
-                        {canViewReceipt ? 'Received a different proof of payment? Replace the receipt' : 'Upload the payment receipt on the client\'s behalf'}
-                      </p>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <input
-                          ref={regFeeReceiptInputRef}
-                          type="file"
-                          accept="image/*,.pdf"
-                          className="hidden"
-                          id="admin-reg-fee-receipt-upload"
-                          onChange={(e) => handleAdminUploadRegFeeReceipt(e.target.files?.[0])}
-                        />
-                        <label
-                          htmlFor="admin-reg-fee-receipt-upload"
-                          className={`inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 cursor-pointer ${uploadingRegFeeReceipt ? 'opacity-60 pointer-events-none' : ''}`}
-                        >
-                          {uploadingRegFeeReceipt ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                          {uploadingRegFeeReceipt ? 'Uploadingâ€¦' : canViewReceipt ? 'Replace Receipt' : 'Upload Receipt'}
-                        </label>
-                      </div>
-                    </div>
-                  )}
-
-                  {!isSettled && canSendInvoice && (
-                    <div className="mt-4 space-y-3 border-t border-gray-100 pt-4">
-                      {!clientSalesperson?.origin && salespersonsList.length > 0 && (
-                        <div>
-                          <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 block mb-1">Credit Registration To (optional)</label>
-                          <select
-                            value={salespersonForCredit}
-                            onChange={(e) => setSalespersonForCredit(e.target.value)}
-                            className="w-full sm:w-64 px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
-                          >
-                            <option value="">â€” No salesperson â€”</option>
-                            {salespersonsList.map((sp) => (
-                              <option key={sp.id} value={sp.id}>{sp.full_name}</option>
-                            ))}
-                          </select>
-                        </div>
-                      )}
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <div>
-                          <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 block mb-1">Fee Amount (LKR)</label>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={regFeeAmount}
-                            onChange={(e) => setRegFeeAmount(e.target.value)}
-                            onWheel={(e) => e.target.blur()}
-                            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 block mb-1">Bank Account</label>
-                          {bankAccountsLoading ? (
-                            <p className="text-xs text-gray-400 py-2">Loading accountsâ€¦</p>
-                          ) : (
-                            <select
-                              value={selectedBankAccountId}
-                              onChange={(e) => setSelectedBankAccountId(e.target.value)}
-                              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
-                            >
-                              <option value="">â€” Select account â€”</option>
-                              {bankAccounts.map((acc) => (
-                                <option key={acc.account_id} value={acc.account_id}>
-                                  {acc.account_nickname} Â· {acc.bank_name} Â· {acc.account_number}
-                                </option>
-                              ))}
-                            </select>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={handleSendRegFeeInvoice}
-                          disabled={regFeeLoading || !selectedBankAccountId || !clientProfile.mobile_number}
-                          title={!clientProfile.mobile_number ? 'Client has no mobile number on record' : ''}
-                          className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
-                        >
-                          {regFeeLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <SendHorizontal className="h-3 w-3" />}
-                          Send Invoice via WhatsApp
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleRegFeeStatusUpdate('WAIVED')}
-                          disabled={regFeeLoading}
-                          className="inline-flex items-center gap-1.5 rounded border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-60"
-                        >
-                          {regFeeLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <X className="h-3 w-3" />}
-                          Mark as Waived
-                        </button>
-                        {feeStatus !== 'PENDING' && (
-                          <button
-                            type="button"
-                            onClick={() => handleRegFeeStatusUpdate('PAID')}
-                            disabled={regFeeLoading}
-                            className="inline-flex items-center gap-1.5 rounded border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
-                          >
-                            {regFeeLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                            Mark as Paid
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {isSettled && (
-                    <div className="mt-3">
+                  {/* Primary action - one clear next step at a time */}
+                  <div className="mt-4 border-t border-gray-100 pt-4">
+                    {(feeStatus === 'PENDING' || isExpired) && !showSendRegFeePanel && (
                       <button
                         type="button"
-                        onClick={() => handleRegFeeStatusUpdate('PENDING')}
-                        disabled={regFeeLoading}
-                        className="inline-flex items-center gap-1.5 rounded border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-60"
+                        onClick={() => {
+                          setShowSendRegFeePanel(true);
+                          setRegFeeAmount(String(clientProfile.reg_fee_amount || '10000.00'));
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
                       >
-                        Reset to Pending
+                        <SendHorizontal className="h-4 w-4" /> {isExpired ? 'Send New Invoice' : 'Send Invoice'}
                       </button>
-                    </div>
-                  )}
+                    )}
+
+                    {(feeStatus === 'PENDING' || isExpired) && showSendRegFeePanel && (
+                      <div className="space-y-3 rounded-md border border-blue-100 bg-blue-50/50 p-3">
+                        {!clientSalesperson?.origin && salespersonsList.length > 0 && (
+                          <div>
+                            <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 block mb-1">Credit Registration To (optional)</label>
+                            <select
+                              value={salespersonForCredit}
+                              onChange={(e) => setSalespersonForCredit(e.target.value)}
+                              className="w-full @md:w-64 px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
+                            >
+                              <option value="">No salesperson</option>
+                              {salespersonsList.map((sp) => (
+                                <option key={sp.id} value={sp.id}>{sp.full_name}</option>
+                              ))}
+                            </select>
+                            <p className="mt-1 text-[11px] text-gray-400">Credited immediately once the invoice is sent.</p>
+                          </div>
+                        )}
+                        <div className="grid gap-3 @md:grid-cols-2">
+                          <div>
+                            <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 block mb-1">Fee Amount (LKR)</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={regFeeAmount}
+                              onChange={(e) => setRegFeeAmount(e.target.value)}
+                              onWheel={(e) => e.target.blur()}
+                              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 block mb-1">Bank Account</label>
+                            {bankAccountsLoading ? (
+                              <p className="text-xs text-gray-400 py-2">Loading accounts...</p>
+                            ) : (
+                              <select
+                                value={selectedBankAccountId}
+                                onChange={(e) => setSelectedBankAccountId(e.target.value)}
+                                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
+                              >
+                                <option value="">Select account</option>
+                                {bankAccounts.map((acc) => (
+                                  <option key={acc.account_id} value={acc.account_id}>
+                                    {acc.account_nickname} - {acc.bank_name} - {acc.account_number}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={handleSendRegFeeInvoice}
+                            disabled={regFeeLoading || !selectedBankAccountId || !clientProfile.mobile_number}
+                            title={!clientProfile.mobile_number ? 'Client has no mobile number on record' : ''}
+                            className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                          >
+                            {regFeeLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <SendHorizontal className="h-3 w-3" />}
+                            Send Invoice via WhatsApp
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShowSendRegFeePanel(false)}
+                            disabled={regFeeLoading}
+                            className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {feeStatus === 'INVOICED' && (
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => handleRegFeeStatusUpdate('PAID')}
+                          disabled={regFeeLoading}
+                          className="inline-flex items-center gap-1.5 rounded bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                        >
+                          {regFeeLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                          Mark as Paid
+                        </button>
+                        <div className="mt-2">
+                          <button
+                            type="button"
+                            onClick={() => setShowUploadRegFeePanel((v) => !v)}
+                            className="text-xs font-medium text-blue-600 hover:text-blue-700"
+                          >
+                            {showUploadRegFeePanel ? 'Cancel' : "Or upload the client's payment slip for them"}
+                          </button>
+                        </div>
+                        {showUploadRegFeePanel && uploadReceiptWidget}
+                      </div>
+                    )}
+
+                    {feeStatus === 'RECEIPT_UPLOADED' && (
+                      <div>
+                        <div className="flex flex-wrap gap-2">
+                          <a
+                            href={clientProfile.reg_fee_receipt_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                          >
+                            <Download className="h-4 w-4" /> View Receipt
+                          </a>
+                          <button
+                            type="button"
+                            onClick={handleVerifyRegFeePayment}
+                            disabled={regFeeLoading}
+                            className="inline-flex items-center gap-1.5 rounded bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                          >
+                            {regFeeLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                            Confirm Payment
+                          </button>
+                        </div>
+                        <div className="mt-2">
+                          <button
+                            type="button"
+                            onClick={() => setShowUploadRegFeePanel((v) => !v)}
+                            className="text-xs font-medium text-blue-600 hover:text-blue-700"
+                          >
+                            {showUploadRegFeePanel ? 'Cancel' : 'Replace the receipt'}
+                          </button>
+                        </div>
+                        {showUploadRegFeePanel && uploadReceiptWidget}
+                      </div>
+                    )}
+
+                    {isSettled && (
+                      <p className="flex items-center gap-1.5 text-sm font-medium text-emerald-700">
+                        <Check className="h-4 w-4" /> {feeStatus === 'WAIVED' ? 'Waived' : 'Paid in full'}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Less common actions, tucked away so the primary flow stays uncluttered */}
+                  <div className="mt-3 border-t border-gray-100 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => setRegFeeMoreOpen((v) => !v)}
+                      className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-700"
+                    >
+                      More options
+                      <ChevronDown className={`h-3 w-3 transition-transform ${regFeeMoreOpen ? 'rotate-180' : ''}`} />
+                    </button>
+
+                    {regFeeMoreOpen && (
+                      <div className="mt-3 space-y-4">
+                        {salespersonsList.length > 0 && (
+                          <div>
+                            <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 block mb-1">Reassign Salesperson</label>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <select
+                                value={switchSalespersonId}
+                                onChange={(e) => setSwitchSalespersonId(e.target.value)}
+                                className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
+                              >
+                                <option value="">
+                                  {clientSalesperson?.current ? 'Reassign to...' : 'No salesperson assigned'}
+                                </option>
+                                {salespersonsList
+                                  .filter((sp) => sp.id !== clientSalesperson?.current?.salesperson_id)
+                                  .map((sp) => (
+                                    <option key={sp.id} value={sp.id}>{sp.full_name}</option>
+                                  ))}
+                              </select>
+                              <button
+                                type="button"
+                                onClick={handleSwitchClientSalesperson}
+                                disabled={!switchSalespersonId || !clientSalesperson?.current || salespersonActionLoading}
+                                title={!clientSalesperson?.current ? 'Pick a salesperson when confirming payment instead' : ''}
+                                className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                              >
+                                {salespersonActionLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                                Reassign
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="flex flex-wrap gap-2">
+                          {!isSettled && (
+                            <button
+                              type="button"
+                              onClick={() => handleRegFeeStatusUpdate('WAIVED')}
+                              disabled={regFeeLoading}
+                              className="inline-flex items-center gap-1.5 rounded border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+                            >
+                              <X className="h-3 w-3" /> Mark as Waived
+                            </button>
+                          )}
+                          {isSettled && (
+                            <button
+                              type="button"
+                              onClick={() => handleRegFeeStatusUpdate('PENDING')}
+                              disabled={regFeeLoading}
+                              className="inline-flex items-center gap-1.5 rounded border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-60"
+                            >
+                              Reset to Pending
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Backdated (historical) payment entry - for a client who paid
+                            their reg fee before this was tracked in-system, or before
+                            this feature existed. Once the fee is settled (paid/waived)
+                            there's nothing left to backdate. */}
+                        {!isSettled && (
+                        <div>
+                          {!showBackdateRegFeeForm ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowBackdateRegFeeForm(true);
+                                setBackdateRegFeeAmount(String(clientProfile.reg_fee_amount || '10000.00'));
+                                setBackdateRegFeeError('');
+                              }}
+                              className="text-xs font-medium text-blue-600 hover:text-blue-700"
+                            >
+                              Record a payment from the past
+                            </button>
+                          ) : (
+                            <div className="space-y-3 rounded-md border border-gray-200 bg-gray-50 p-3">
+                              <p className="text-xs font-semibold text-gray-700">Record a Past Payment</p>
+                              <p className="text-[11px] text-gray-400">
+                                For a client who already paid before this was tracked here. Membership expiry is
+                                calculated 365 days from the date entered below, not from today.
+                              </p>
+                              <div className="grid gap-3 @md:grid-cols-2">
+                                <div>
+                                  <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 block mb-1">Amount Paid (LKR)</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={backdateRegFeeAmount}
+                                    onChange={(e) => setBackdateRegFeeAmount(e.target.value)}
+                                    onWheel={(e) => e.target.blur()}
+                                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 block mb-1">Date Paid</label>
+                                  <DateInput
+                                    value={backdateRegFeeDate}
+                                    onChange={(e) => setBackdateRegFeeDate(e.target.value)}
+                                    max={todayISO()}
+                                    className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
+                                  />
+                                </div>
+                              </div>
+                              {salespersonsList.length > 0 && (
+                                <div>
+                                  <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 block mb-1">Credit Registration To (optional)</label>
+                                  <select
+                                    value={backdateRegFeeSalespersonId}
+                                    onChange={(e) => setBackdateRegFeeSalespersonId(e.target.value)}
+                                    className="w-full @md:w-64 px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
+                                  >
+                                    <option value="">No salesperson</option>
+                                    {salespersonsList.map((sp) => (
+                                      <option key={sp.id} value={sp.id}>{sp.full_name}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              )}
+                              {backdateRegFeeError && (
+                                <p className="text-xs text-red-600">{backdateRegFeeError}</p>
+                              )}
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={handleBackdateRegFeePayment}
+                                  disabled={backdateRegFeeLoading}
+                                  className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                                >
+                                  {backdateRegFeeLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                                  Save Past Payment
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => { setShowBackdateRegFeeForm(false); setBackdateRegFeeError(''); }}
+                                  disabled={backdateRegFeeLoading}
+                                  className="inline-flex items-center gap-1.5 rounded border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </DataCard>
               );
             })()}
@@ -3217,7 +3576,7 @@ const ClientDetailPage = () => {
 
                 {editingProfile ? (
                   <div className="space-y-3">
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="grid gap-3 @md:grid-cols-2 @4xl:grid-cols-4">
                       <div>
                         <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Full Name</label>
                         <input
@@ -3257,7 +3616,7 @@ const ClientDetailPage = () => {
                           <option value="OTHER">Other</option>
                         </select>
                       </div>
-                      <div className="sm:col-span-2 lg:col-span-4">
+                      <div className="@md:col-span-2 @4xl:col-span-4">
                         <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Address</label>
                         <input
                           type="text"
@@ -3266,7 +3625,7 @@ const ClientDetailPage = () => {
                           className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
                         />
                       </div>
-                      <div className="sm:col-span-2 lg:col-span-4">
+                      <div className="@md:col-span-2 @4xl:col-span-4">
                         <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Secondary Phone Numbers</label>
                         <div className="space-y-2">
                           {profileForm.secondary_phone_numbers.map((phone, idx) => (
@@ -3317,24 +3676,24 @@ const ClientDetailPage = () => {
                     </div>
                   </div>
                 ) : (
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="grid gap-4 @md:grid-cols-2 @4xl:grid-cols-4">
                     <InfoRow label="Client Code" value={clientProfile.client_code || clientProfile.client_profile_id} />
                     <InfoRow label="User ID"     value={clientProfile.user_id} />
                     <InfoRow label="Full Name"   value={clientProfile.full_name || '-'} />
                     <InfoRow label="Email"       value={clientProfile.email || '-'} />
-                    <InfoRow label="Phone"       value={clientProfile.mobile_number || '-'} />
+                    <InfoRow label="Phone"       value={formatMobileNumber(clientProfile.mobile_number) || '-'} />
                     <InfoRow label="Address"     value={clientProfile.primary_address || '-'} />
                     <InfoRow label="Type"        value={clientProfile.client_type || '-'} />
                     <InfoRow label="Gender"      value={clientProfile.gender || '-'} />
                     <InfoRow label="Active"      value={clientProfile.is_active ? 'Yes' : 'No'} />
                     {!!clientProfile.secondary_phone_numbers?.length && (
-                      <div className="sm:col-span-2 lg:col-span-4">
+                      <div className="@md:col-span-2 @4xl:col-span-4">
                         <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Secondary Phone Numbers</span>
                         <div className="flex flex-wrap gap-1.5">
                           {clientProfile.secondary_phone_numbers.map((phone, idx) => (
                             <span key={idx} className="inline-flex items-center gap-1 px-2 py-1 bg-gray-50 border border-gray-200 rounded-md text-xs text-gray-700">
                               <Phone className="w-3 h-3 text-gray-400" />
-                              {phone}
+                              {formatMobileNumber(phone)}
                             </span>
                           ))}
                         </div>
@@ -3458,7 +3817,7 @@ const ClientDetailPage = () => {
                       </div>
                     </div>
                   ) : (
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="grid gap-3 @md:grid-cols-2 @4xl:grid-cols-4">
                       <div>
                         <p className="text-[11px] text-gray-400 mb-0.5">Company Name</p>
                         <p className="text-sm font-medium text-gray-800">{clientProfile.company_name || <span className="text-gray-400 italic">Not set (personal billing)</span>}</p>
@@ -3468,7 +3827,7 @@ const ClientDetailPage = () => {
                         <p className="text-sm font-medium text-gray-800">{clientProfile.honorific || <span className="text-gray-400 italic">None</span>}</p>
                       </div>
                       {clientProfile.company_name && (
-                        <div className="sm:col-span-2 lg:col-span-2">
+                        <div className="@md:col-span-2">
                           <p className="text-[11px] text-gray-400 mb-0.5">Display Name (on documents)</p>
                           <p className="text-sm font-medium text-gray-800">
                             {clientProfile.display_name_source === 'COMPANY_NAME' ? clientProfile.company_name : clientProfile.full_name}
@@ -3484,7 +3843,7 @@ const ClientDetailPage = () => {
               </DataCard>
 
               <DataCard title="Quick Summary">
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="grid gap-4 @md:grid-cols-2 @3xl:grid-cols-3">
                   <InfoRow label="Bookings"         value={`${bookingSummary.total_bookings || 0} total`} />
                   <InfoRow label="Care Profiles"    value={patientSummary.total_patients || 0} />
                   <InfoRow label="Quotes"           value={quotationSummary.total_quotes || 0} />
@@ -3503,7 +3862,7 @@ const ClientDetailPage = () => {
     return (
       <AdminLayout title="Client Details" subtitle="Loading client profile...">
         <div className="flex items-start gap-4">
-          <aside className="sticky top-6 hidden h-[calc(100vh-8rem)] w-64 shrink-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white lg:flex">
+          <aside className="sticky top-6 hidden h-[calc(100vh-8rem)] w-64 shrink-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white 2xl:flex">
             <div className="border-b border-gray-100 px-4 py-2.5">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">All Clients</p>
             </div>
@@ -3524,7 +3883,7 @@ const ClientDetailPage = () => {
     return (
       <AdminLayout title="Client Details" subtitle="Unable to load client profile">
         <div className="flex items-start gap-4">
-          <aside className="sticky top-6 hidden h-[calc(100vh-8rem)] w-64 shrink-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white lg:flex">
+          <aside className="sticky top-6 hidden h-[calc(100vh-8rem)] w-64 shrink-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white 2xl:flex">
             <div className="border-b border-gray-100 px-4 py-2.5">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">All Clients</p>
             </div>
@@ -3555,7 +3914,7 @@ const ClientDetailPage = () => {
     >
       <div className="flex items-start gap-4">
         {/* Client switcher sidebar (desktop) */}
-        <aside className="sticky top-6 hidden h-[calc(100vh-8rem)] w-64 shrink-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white lg:flex">
+        <aside className="sticky top-6 hidden h-[calc(100vh-8rem)] w-64 shrink-0 flex-col overflow-hidden rounded-lg border border-gray-200 bg-white 2xl:flex">
           <div className="border-b border-gray-100 px-4 py-2.5">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">All Clients</p>
           </div>
@@ -3564,7 +3923,7 @@ const ClientDetailPage = () => {
 
         {/* Client switcher sidebar (mobile drawer) */}
         {mobileClientSidebarOpen && (
-          <div className="fixed inset-0 z-50 flex lg:hidden">
+          <div className="fixed inset-0 z-50 flex 2xl:hidden">
             <div className="absolute inset-0 bg-black/40" onClick={() => setMobileClientSidebarOpen(false)} />
             <div className="relative flex h-full w-72 max-w-[85vw] flex-col bg-white shadow-2xl">
               <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
@@ -3585,14 +3944,14 @@ const ClientDetailPage = () => {
           </div>
         )}
 
-      <div className="min-w-0 flex-1 space-y-4">
+      <div className="@container min-w-0 flex-1 space-y-4">
         {/* Top action bar */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => setMobileClientSidebarOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-2.5 py-1.5 text-[13px] font-medium text-gray-600 hover:bg-gray-50 lg:hidden"
+              className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-2.5 py-1.5 text-[13px] font-medium text-gray-600 hover:bg-gray-50 2xl:hidden"
               aria-label="Browse clients"
             >
               <Menu className="h-4 w-4" />
@@ -3654,14 +4013,14 @@ const ClientDetailPage = () => {
         {/* â”€â”€ Zoho Books-style profile header â”€â”€ */}
         <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
           {/* Top row: identity + actions */}
-          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-100 px-6 py-4">
-            <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-100 px-4 py-4 @xl:px-6">
+            <div className="flex min-w-0 items-center gap-3 @xl:gap-4">
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-blue-600 text-lg font-bold text-white">
                 {(clientProfile.full_name || 'C').charAt(0).toUpperCase()}
               </div>
-              <div>
+              <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="text-[17px] font-semibold text-gray-900">
+                  <h1 className="text-[15px] font-semibold text-gray-900 break-words @xl:text-[17px]">
                     {clientProfile.honorific ? `${clientProfile.honorific} ` : ''}{clientProfile.full_name || 'Client Profile'}
                   </h1>
                   {clientProfile.company_name && (
@@ -3678,9 +4037,9 @@ const ClientDetailPage = () => {
                     </span>
                   )}
                 </div>
-                <div className="mt-1.5 flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-gray-400">
-                  <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5" />{clientProfile.mobile_number || 'â€”'}</span>
-                  <span className="flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" />{clientProfile.primary_address || 'â€”'}</span>
+                <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-gray-400">
+                  <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5" />{formatMobileNumber(clientProfile.mobile_number) || 'â€”'}</span>
+                  <span className="flex min-w-0 items-start gap-1.5"><MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span className="break-words">{clientProfile.primary_address || 'â€”'}</span></span>
                   <span className="flex items-center gap-1.5"><Crown className="h-3.5 w-3.5" />{clientProfile.client_type || 'â€”'}</span>
                 </div>
               </div>
@@ -3688,36 +4047,56 @@ const ClientDetailPage = () => {
           </div>
 
           {/* Financial snapshot strip */}
-          <div className="grid grid-cols-2 divide-x divide-gray-100 sm:grid-cols-5">
-            <div className="px-5 py-3">
-              <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">Payments Made</p>
-              <p className="mt-0.5 text-sm font-semibold text-gray-900">{formatMoney(paymentSummary.total_paid)}</p>
-            </div>
-            <div className="px-5 py-3">
-              <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">Total Invoiced</p>
-              <p className="mt-0.5 text-sm font-semibold text-gray-900">{formatMoney(statementSummary.total_invoiced)}</p>
-            </div>
-            <div className="px-5 py-3">
-              <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">Overdue Amount</p>
-              <p className={`mt-0.5 text-sm font-semibold ${isOverdue ? 'text-red-600' : 'text-gray-900'}`}>
-                {overdueDisplayValue}
-              </p>
-            </div>
-            <div className="px-5 py-3">
-              <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">Total Bookings</p>
-              <p className="mt-0.5 text-sm font-semibold text-gray-900">{bookingSummary.total_bookings || 0}</p>
-            </div>
-            <div className="px-5 py-3">
-              <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">Wallet Balance</p>
-              <p className="mt-0.5 text-sm font-semibold text-amber-600">{formatMoney(clientProfile.wallet_balance)}</p>
-            </div>
+          {/* gap-px over a grey backdrop draws the cell separators, so they stay
+              correct at every column count — divide-x only lines up for one row. */}
+          <div className="grid grid-cols-2 gap-px bg-gray-100 @xl:grid-cols-3 @4xl:grid-cols-6">
+            {[
+              { label: 'Payments Made',    value: formatMoney(paymentSummary.total_paid),        cls: 'text-gray-900' },
+              { label: 'Total Invoiced',   value: formatMoney(statementSummary.total_invoiced),  cls: 'text-gray-900' },
+              { label: 'Overdue Amount',   value: overdueDisplayValue,                           cls: isOverdue ? 'text-red-600' : 'text-gray-900' },
+              { label: 'Overdue Invoices', value: formatMoney(overdueInvoicesAmount),             cls: overdueInvoicesAmount > 0 ? 'text-red-600' : 'text-gray-900' },
+              { label: 'Total Bookings',   value: String(bookingSummary.total_bookings || 0),    cls: 'text-gray-900' },
+              { label: 'Wallet Balance',   value: formatMoney(clientProfile.wallet_balance),     cls: 'text-amber-600' },
+            ].map(({ label, value, cls }) => (
+              <div key={label} className="min-w-0 bg-white px-4 py-3 @xl:px-5">
+                <p className="truncate text-[11px] font-medium uppercase tracking-wider text-gray-400">{label}</p>
+                <p title={value} className={`mt-0.5 break-words text-[13px] font-semibold leading-tight @xl:text-sm ${cls}`}>
+                  {value}
+                </p>
+              </div>
+            ))}
           </div>
         </div>
 
         {/* â”€â”€ Sidebar + content â”€â”€ */}
-        <div className="flex items-start gap-4">
-          {/* Vertical nav */}
-          <aside className="w-48 shrink-0">
+        <div className="flex flex-col gap-4 @3xl:flex-row @3xl:items-start">
+          {/* Section nav — horizontal scroller when the content column is narrow,
+              vertical rail once there is room for one beside the content. */}
+          <div className="-mx-1 overflow-x-auto px-1 pb-1 @3xl:hidden">
+            <nav className="flex w-max items-center gap-1.5">
+              {sectionConfig.map((section) => {
+                const Icon = section.icon;
+                const active = activeSection === section.id;
+                return (
+                  <button
+                    key={section.id}
+                    type="button"
+                    onClick={() => setActiveSection(section.id)}
+                    className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] transition-colors ${
+                      active
+                        ? 'border-blue-600 bg-blue-600 text-white font-semibold'
+                        : 'border-gray-200 bg-white text-gray-600 font-medium hover:bg-gray-50 hover:text-gray-900'
+                    }`}
+                  >
+                    <Icon className="h-3.5 w-3.5 shrink-0" />
+                    {section.label}
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+
+          <aside className="hidden w-44 shrink-0 @5xl:w-48 @3xl:block">
             <div className="sticky top-6 overflow-hidden rounded-lg border border-gray-200 bg-white">
               <div className="border-b border-gray-100 px-4 py-2.5">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">Sections</p>
@@ -3736,14 +4115,15 @@ const ClientDetailPage = () => {
             </div>
           </aside>
 
-          {/* Main content */}
-          <div className="min-w-0 flex-1">
+          {/* Main content — its own query container, so every grid inside
+              renderSection() reacts to this column's width, not the viewport's. */}
+          <div className="@container min-w-0 flex-1">
             <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-              <div className="flex items-center gap-2.5 border-b border-gray-100 bg-gray-50 px-5 py-3">
-                {ActiveSectionIcon && <ActiveSectionIcon className="h-4 w-4 text-gray-400" />}
+              <div className="flex items-center gap-2.5 border-b border-gray-100 bg-gray-50 px-4 py-3 @xl:px-5">
+                {ActiveSectionIcon && <ActiveSectionIcon className="h-4 w-4 shrink-0 text-gray-400" />}
                 <h2 className="text-[13px] font-semibold text-gray-700">{activeNavSection?.label}</h2>
               </div>
-              <div className="p-5">
+              <div className="p-4 @xl:p-5">
                 {renderSection()}
               </div>
             </div>
@@ -3945,17 +4325,18 @@ const ClientDetailPage = () => {
   );
 };
 
-const DataCard = ({ title, children }) => (
+const DataCard = ({ title, headerRight, children }) => (
   <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-    <div className="border-b border-gray-100 bg-gray-50 px-5 py-3">
+    <div className="flex items-center justify-between border-b border-gray-100 bg-gray-50 px-4 py-3 @xl:px-5">
       <h3 className="text-[13px] font-semibold text-gray-700">{title}</h3>
+      {headerRight}
     </div>
-    <div className="p-5">{children}</div>
+    <div className="p-4 @xl:p-5">{children}</div>
   </div>
 );
 
 const EmptyState = ({ title }) => (
-  <div className="rounded-md border border-dashed border-gray-200 bg-gray-50 p-10 text-center">
+  <div className="rounded-md border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center @xl:p-10">
     <p className="text-sm text-gray-400">{title}</p>
   </div>
 );
@@ -3970,11 +4351,11 @@ const ExpandableRow = ({ summary, actions, children }) => {
   const [open, setOpen] = useState(false);
   return (
     <div>
-      <div className="flex w-full items-center gap-2 px-5 py-3.5 transition-colors hover:bg-gray-50">
+      <div className="flex w-full items-center gap-2 px-4 py-3.5 transition-colors hover:bg-gray-50 @xl:px-5">
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="flex min-w-0 flex-1 items-center gap-4 text-left"
+          className="flex min-w-0 flex-1 items-center gap-2 text-left @xl:gap-4"
         >
           <div className="min-w-0 flex-1">{summary}</div>
           <ChevronDown className={`h-4 w-4 shrink-0 text-gray-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
@@ -3982,7 +4363,7 @@ const ExpandableRow = ({ summary, actions, children }) => {
         {actions}
       </div>
       {open && (
-        <div className="border-t border-gray-100 bg-gray-50 px-5 py-4">
+        <div className="border-t border-gray-100 bg-gray-50 px-4 py-4 @xl:px-5">
           {children}
         </div>
       )}

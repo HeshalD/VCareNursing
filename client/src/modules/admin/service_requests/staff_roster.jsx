@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import { 
   Users,
   Filter,
@@ -402,7 +403,7 @@ const StaffRoster = () => {
                 </div>
                 <div className="flex items-center gap-2">
                   <Phone className="w-4 h-4 text-blue-600" />
-                  <span className="text-blue-800">Contact: {serviceRequest.payer_mobile}</span>
+                  <span className="text-blue-800">Contact: {formatMobileNumber(serviceRequest.payer_mobile)}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <MapPin className="w-4 h-4 text-blue-600" />
@@ -680,7 +681,7 @@ const StaffRoster = () => {
                       <div className="space-y-1">
                         <div className="flex items-center gap-1 text-sm text-slate-600">
                           <Phone className="w-3 h-3" />
-                          {staffMember.mobile_number}
+                          {formatMobileNumber(staffMember.mobile_number)}
                         </div>
                         <div className="text-sm text-slate-500">{staffMember.email}</div>
                       </div>
@@ -815,7 +816,7 @@ const StaffRoster = () => {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Phone</label>
-                  <p className="text-sm text-slate-900">{selectedStaff.mobile_number}</p>
+                  <p className="text-sm text-slate-900">{formatMobileNumber(selectedStaff.mobile_number)}</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Gender</label>
@@ -929,7 +930,7 @@ const StaffRoster = () => {
                       </div>
                       <div className="flex items-center gap-2">
                         <Phone className="w-4 h-4 text-blue-600" />
-                        <span className="text-blue-800">Contact: {serviceRequest.payer_mobile}</span>
+                        <span className="text-blue-800">Contact: {formatMobileNumber(serviceRequest.payer_mobile)}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <MapPin className="w-4 h-4 text-blue-600" />
@@ -1024,7 +1025,7 @@ const StaffRoster = () => {
                                 </div>
                                 <div>
                                   <div className="font-medium text-slate-900">{staffMember.full_name}</div>
-                                  <div className="text-sm text-slate-600">{staffMember.mobile_number}</div>
+                                  <div className="text-sm text-slate-600">{formatMobileNumber(staffMember.mobile_number)}</div>
                                   <div className="text-sm text-slate-500">{staffMember.email}</div>
                                   <div className="flex items-center gap-2 mt-1">
                                     <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(staffMember.current_status)}`}>
@@ -1076,7 +1077,7 @@ const StaffRoster = () => {
                         </div>
                         <div>
                           <div className="font-medium text-green-900">{selectedStaffForAssignment.full_name}</div>
-                          <div className="text-sm text-green-700">{selectedStaffForAssignment.mobile_number}</div>
+                          <div className="text-sm text-green-700">{formatMobileNumber(selectedStaffForAssignment.mobile_number)}</div>
                           <div className="text-sm text-green-600">{selectedStaffForAssignment.email}</div>
                         </div>
                       </div>
@@ -1213,7 +1214,7 @@ const StaffRoster = () => {
                             <div className="flex items-center gap-4 text-xs text-slate-600">
                               <span className="flex items-center gap-1">
                                 <Phone className="w-3 h-3" />
-                                {selectedStaffForAssignment.mobile_number}
+                                {formatMobileNumber(selectedStaffForAssignment.mobile_number)}
                               </span>
                               <span className="flex items-center gap-1">
                                 <Mail className="w-3 h-3" />

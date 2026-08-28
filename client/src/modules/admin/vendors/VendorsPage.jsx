@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import DateInput from '../../../components/common/DateInput';
 import PhoneInput from '../../../components/common/PhoneInput';
 
@@ -354,7 +355,7 @@ const VendorsPage = () => {
 												</td>
 												<td className="px-5 py-3 text-slate-600">
 													{vendor.contact_person || '—'}
-													{vendor.phone && <span className="block text-xs text-slate-400">{vendor.phone}</span>}
+													{vendor.phone && <span className="block text-xs text-slate-400">{formatMobileNumber(vendor.phone)}</span>}
 												</td>
 												<td className={`px-5 py-3 text-right font-medium ${outstanding > 0 ? 'text-red-600' : 'text-slate-500'}`}>
 													{formatMoney(outstanding)}

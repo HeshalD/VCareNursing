@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Users, Save, Zap, Lock, KeySquare, CheckSquare, Square } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import PermissionModuleList from './PermissionModuleList';
 
 // Must match the internal/office role labels used on the Internal Staff page.
@@ -244,7 +245,7 @@ const StaffPermissionsPage = () => {
                     {selectedUser.full_name}
                   </h2>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    {selectedUser.mobile_number} · {getUserRoles(selectedUser).map(roleDisplayLabel).join(', ') || '—'}
+                    {formatMobileNumber(selectedUser.mobile_number)} · {getUserRoles(selectedUser).map(roleDisplayLabel).join(', ') || '—'}
                   </p>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">

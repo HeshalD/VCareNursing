@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import StaffScheduleTimeline from '../components/StaffScheduleTimeline';
 import RequestPipelineStepper from '../components/RequestPipelineStepper';
 
@@ -55,6 +56,7 @@ const BookingStaffRosterPage = () => {
   const [detailsOpen, setDetailsOpen] = useState(false);
 
   const [searchTerm,   setSearchTerm]   = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [genderFilter, setGenderFilter] = useState('all');
   const [liveInFilter, setLiveInFilter] = useState('all');
@@ -179,6 +181,7 @@ const BookingStaffRosterPage = () => {
       const params = { page: targetPage, limit: STAFF_PAGE_SIZE };
       if (statusFilter !== 'all') params.status = statusFilter;
       if (roleFilter   !== 'all') params.role   = roleFilter;
+      if (debouncedSearch) params.search = debouncedSearch;
       const res = await apiClient.getAllStaff(params);
       setStaff(res.data || []);
       setPagination(res.pagination || {
@@ -191,7 +194,17 @@ const BookingStaffRosterPage = () => {
     }
   };
 
-  useEffect(() => { fetchStaff(page); }, [page, statusFilter, roleFilter]);
+  // Debounce the free-text search box (matches staff code — with or without the
+  // "EMP-" prefix — full name, phone number, or designation server-side).
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(searchTerm.trim());
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+
+  useEffect(() => { fetchStaff(page); }, [page, statusFilter, roleFilter, debouncedSearch]);
 
   // Batched schedule lookup for whoever's on the current page — lets the admin see
   // each candidate's existing/upcoming commitments before picking them for this booking.
@@ -214,19 +227,15 @@ const BookingStaffRosterPage = () => {
 
   const filteredStaff = useMemo(() =>
     staff.filter((m) => {
-      const q = searchTerm.toLowerCase();
-      const matchesSearch = !searchTerm ||
-        [m.full_name, m.designation, m.home_address, m.location, m.email, m.mobile_number]
-          .filter(Boolean).some((v) => String(v).toLowerCase().includes(q));
       const matchesGender = genderFilter === 'all' || m.gender === genderFilter;
       const matchesLiveIn = liveInFilter === 'all' ||
         (liveInFilter === 'yes' ? m.willing_to_live_in === true : m.willing_to_live_in === false);
-      return matchesSearch && matchesGender && matchesLiveIn;
+      return matchesGender && matchesLiveIn;
     }),
-  [staff, searchTerm, genderFilter, liveInFilter]);
+  [staff, genderFilter, liveInFilter]);
 
   const activeFilters = [statusFilter, genderFilter, liveInFilter, roleFilter].filter((f) => f !== 'all').length;
-  const clearFilters  = () => { setStatusFilter('all'); setRoleFilter('all'); setGenderFilter('all'); setLiveInFilter('all'); setSearchTerm(''); setPage(1); };
+  const clearFilters  = () => { setStatusFilter('all'); setRoleFilter('all'); setGenderFilter('all'); setLiveInFilter('all'); setSearchTerm(''); setDebouncedSearch(''); setPage(1); };
 
   // Derived display values
   const clientName   = request?.payer_name       || booking?.client_name   || '—';
@@ -349,7 +358,7 @@ const BookingStaffRosterPage = () => {
                   <SectionHeading icon={User} label="Client / Payer" />
                   <dl className="mt-3 space-y-3">
                     <DetailRow label="Name"     value={request?.payer_name      || booking?.client_name} />
-                    <DetailRow label="Mobile"   value={request?.payer_mobile    || booking?.client_mobile} />
+                    <DetailRow label="Mobile"   value={formatMobileNumber(request?.payer_mobile    || booking?.client_mobile)} />
                     <DetailRow label="Location" value={request?.location_address || booking?.client_address} />
                   </dl>
                 </section>
@@ -416,7 +425,7 @@ const BookingStaffRosterPage = () => {
             <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
             <input
               type="text"
-              placeholder="Search by name, location…"
+              placeholder="Search by name, staff ID (EMP-0081), or phone…"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full rounded-md border border-gray-200 bg-white py-1.5 pl-9 pr-3 text-sm text-gray-800 placeholder-gray-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
@@ -575,7 +584,7 @@ const BookingStaffRosterPage = () => {
 
                         {/* Contact */}
                         <td className="px-4 py-3 whitespace-nowrap">
-                          <p className="text-gray-700">{member.mobile_number || '—'}</p>
+                          <p className="text-gray-700">{formatMobileNumber(member.mobile_number) || '—'}</p>
                           <p className="text-xs text-gray-400">{humanize(member.gender)}</p>
                         </td>
 

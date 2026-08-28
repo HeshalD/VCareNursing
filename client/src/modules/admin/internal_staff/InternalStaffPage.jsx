@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, Pencil, Trash2, X, Loader2, ShieldCheck, Smartphone, Copy, Search, RefreshCw, KeySquare, Check } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { formatMobileNumber } from '../../../utils/phoneFormat';
 import DateInput from '../../../components/common/DateInput';
 import PhoneInput, { isValidPhoneNumber } from '../../../components/common/PhoneInput';
 
@@ -491,7 +492,7 @@ const InternalStaffPage = () => {
                     </div>
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
-                    <p className="text-slate-700">{member.phone || '—'}</p>
+                    <p className="text-slate-700">{formatMobileNumber(member.phone) || '—'}</p>
                     <p className="text-xs text-slate-400">{member.email}</p>
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
