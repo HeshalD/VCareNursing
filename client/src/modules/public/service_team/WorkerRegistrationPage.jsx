@@ -390,7 +390,6 @@ const WorkerRegistrationPage = () => {
     }
   };
 
-  // Check if form is valid
   // Every field the submit gate checks, with the step it lives on and the label
   // shown to the applicant. The gate and the warning panel are both derived from
   // this one list, so the panel can never disagree with the disabled button —
