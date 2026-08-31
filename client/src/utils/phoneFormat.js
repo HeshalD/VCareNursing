@@ -5,6 +5,11 @@ import { parsePhoneNumber } from 'libphonenumber-js';
  * e.g. "+94 77 700 4068". Falls back to the raw value if it can't be parsed
  * (empty, malformed, legacy non-E.164 data, etc.) so display never breaks.
  */
+export function formatMobileNumbers(values) {
+  if (!Array.isArray(values)) return [];
+  return values.filter(Boolean).map(formatMobileNumber);
+}
+
 export function formatMobileNumber(value) {
   if (!value) return value;
   try {

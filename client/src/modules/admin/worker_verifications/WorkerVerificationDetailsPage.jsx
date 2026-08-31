@@ -12,7 +12,9 @@ import ImageCropModal from '../../../components/common/ImageCropModal';
 import DateInput from '../../../components/common/DateInput';
 import PhoneInput from '../../../components/common/PhoneInput';
 import LanguageMultiSelect from '../../../components/common/LanguageMultiSelect';
-import { formatMobileNumber } from '../../../utils/phoneFormat';
+import PhoneNumbersField from '../../../components/common/PhoneNumbersField';
+import { formatMobileNumber, formatMobileNumbers } from '../../../utils/phoneFormat';
+import { sanitizeNicInput, validateNic } from '../../../utils/nicFormat';
 
 const STAFF_ROLES = ['CARETAKER', 'NURSING_ASSISTANT', 'NURSE', 'PHYSIOTHERAPIST', 'NANNY', 'COUNSELLOR'];
 const GENDERS = ['MALE', 'FEMALE', 'OTHER'];
@@ -70,11 +72,14 @@ const SectionHeader = ({ title, children }) => (
   </div>
 );
 
-const EditField = ({ label, value, onChange, type = 'text' }) => (
+const EditField = ({ label, value, onChange, type = 'text', maxLength, error }) => (
   <div>
     <label className="block text-xs font-medium text-slate-500 mb-1">{label}</label>
-    <input type={type} value={value} onChange={e => onChange(e.target.value)}
-      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:border-blue-400 focus:ring-1 focus:ring-blue-100 outline-none" />
+    <input type={type} value={value} onChange={e => onChange(e.target.value)} maxLength={maxLength}
+      className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-1 outline-none ${
+        error ? 'border-red-300 focus:border-red-400 focus:ring-red-100' : 'border-slate-200 focus:border-blue-400 focus:ring-blue-100'
+      }`} />
+    {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
   </div>
 );
 
@@ -235,6 +240,7 @@ const WorkerVerificationDetailsPage = () => {
         date_of_birth: data.date_of_birth ? data.date_of_birth.substring(0, 10) : '',
         experience_level: data.experience_level || '',
         languages: Array.isArray(data.languages) ? data.languages : [],
+        secondary_phone_numbers: Array.isArray(data.secondary_phone_numbers) ? data.secondary_phone_numbers : [],
       });
     } catch (err) {
       setError(err.message || 'Error fetching application');
@@ -248,6 +254,11 @@ const WorkerVerificationDetailsPage = () => {
   }, [adminToken, applicationId]);
 
   const handleSaveEdit = async () => {
+    const nicMessage = validateNic(editData.nic_number, { required: true });
+    if (nicMessage) {
+      setActionError(nicMessage);
+      return;
+    }
     setSavingEdit(true);
     setActionError('');
     try {
@@ -285,6 +296,7 @@ const WorkerVerificationDetailsPage = () => {
       date_of_birth: application.date_of_birth ? application.date_of_birth.substring(0, 10) : '',
       experience_level: application.experience_level || '',
       languages: Array.isArray(application.languages) ? application.languages : [],
+      secondary_phone_numbers: Array.isArray(application.secondary_phone_numbers) ? application.secondary_phone_numbers : [],
     });
     setIsEditing(false);
     setActionError('');
@@ -642,13 +654,24 @@ const WorkerVerificationDetailsPage = () => {
                       onChange={e => setEditData(p => ({ ...p, date_of_birth: e.target.value }))}
                       className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:border-blue-400 outline-none" />
                   </div>
-                  <EditField label="NIC Number" value={editData.nic_number}
-                    onChange={v => setEditData(p => ({ ...p, nic_number: v }))} />
+                  {/* NIC is filtered as it is typed so only the two valid formats can be entered. */}
+                  <EditField label="NIC Number" value={editData.nic_number} maxLength={12}
+                    error={validateNic(editData.nic_number, { required: true })}
+                    onChange={v => setEditData(p => ({ ...p, nic_number: sanitizeNicInput(v) }))} />
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-medium text-slate-500 mb-1">Additional Phone Numbers</label>
+                    <PhoneNumbersField
+                      value={editData.secondary_phone_numbers}
+                      onChange={(nums) => setEditData(p => ({ ...p, secondary_phone_numbers: nums }))}
+                      primaryNumber={editData.mobile_number}
+                    />
+                  </div>
                 </div>
               ) : (
                 <div className="divide-y divide-slate-50">
                   <InfoRow label="Full Name" value={application.full_name} />
                   <InfoRow label="Mobile" value={formatMobileNumber(application.mobile_number)} />
+                  <InfoRow label="Other Numbers" value={formatMobileNumbers(application.secondary_phone_numbers).join(', ')} />
                   <InfoRow label="Email" value={application.email} />
                   <InfoRow label="Gender" value={application.gender} />
                   <InfoRow label="Date of Birth" value={formatDate(application.date_of_birth)} />

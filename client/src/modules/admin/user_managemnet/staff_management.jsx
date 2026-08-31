@@ -5,7 +5,7 @@ import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
 import useDebouncedValue from '../../../hooks/useDebouncedValue';
-import { formatMobileNumber } from '../../../utils/phoneFormat';
+import { formatMobileNumber, formatMobileNumbers } from '../../../utils/phoneFormat';
 
 const PAGE_SIZE = 50;
 
@@ -388,6 +388,9 @@ const StaffManagement = () => {
                   {/* Contact */}
                   <td className="px-4 py-3 whitespace-nowrap">
                     <p className="text-slate-700">{formatMobileNumber(worker.mobile_number) ?? '—'}</p>
+                    {formatMobileNumbers(worker.secondary_phone_numbers).map(num => (
+                      <p key={num} className="text-xs text-slate-500">{num}</p>
+                    ))}
                     <p className="text-xs text-slate-400">{worker.email ?? '—'}</p>
                   </td>
 

@@ -2,9 +2,11 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import DateInput from '../../../components/common/DateInput';
 import PhoneInput from '../../../components/common/PhoneInput';
-import { formatMobileNumber } from '../../../utils/phoneFormat';
+import { formatMobileNumber, formatMobileNumbers } from '../../../utils/phoneFormat';
+import { sanitizeNicInput, validateNic } from '../../../utils/nicFormat';
 import LanguageMultiSelect from '../../../components/common/LanguageMultiSelect';
 import YoutubeLinksField from '../../../components/common/YoutubeLinksField';
+import PhoneNumbersField from '../../../components/common/PhoneNumbersField';
 import {
   Activity,
   AlertCircle,
@@ -1047,6 +1049,7 @@ const StaffDetailPageV2 = () => {
       roles: parseRoles(profile.role),
       languages: Array.isArray(profile.languages) ? profile.languages : [],
       youtube_links: Array.isArray(profile.youtube_links) ? profile.youtube_links : [],
+      secondary_phone_numbers: Array.isArray(profile.secondary_phone_numbers) ? profile.secondary_phone_numbers : [],
     },
     files: {
       profile_picture: null,
@@ -1077,17 +1080,23 @@ const StaffDetailPageV2 = () => {
       setEditModal(p => ({ ...p, error: 'Select at least one role.' }));
       return;
     }
+    const nicMessage = validateNic(form.nic_number);
+    if (nicMessage) {
+      setEditModal(p => ({ ...p, error: nicMessage }));
+      return;
+    }
     setEditModal(p => ({ ...p, saving: true, error: '' }));
     try {
       const fd = new FormData();
       Object.entries(form).forEach(([key, value]) => {
-        if (key === 'roles' || key === 'languages' || key === 'youtube_links') return; // sent separately as JSON below
+        if (key === 'roles' || key === 'languages' || key === 'youtube_links' || key === 'secondary_phone_numbers') return; // sent separately as JSON below
         // Skip blanks so the backend keeps the existing value instead of wiping it
         if (String(value).trim() !== '') fd.append(key, String(value).trim());
       });
       fd.append('roles', JSON.stringify(form.roles));
       fd.append('languages', JSON.stringify(form.languages || []));
       fd.append('youtube_links', JSON.stringify(form.youtube_links || []));
+      fd.append('secondary_phone_numbers', JSON.stringify(form.secondary_phone_numbers || []));
       if (files.profile_picture) fd.append('profile_picture', files.profile_picture);
       if (files.nic_front) fd.append('nic_front', files.nic_front);
       if (files.nic_back) fd.append('nic_back', files.nic_back);
@@ -1284,6 +1293,10 @@ const StaffDetailPageV2 = () => {
               <Field label="Roles" value={formatRoles(profile.role)} />
               <Field label="Email" value={profile.email} />
               <Field label="Phone" value={formatMobileNumber(profile.mobile_number)} />
+              <Field
+                label="Other phones"
+                value={formatMobileNumbers(safeArray(profile.secondary_phone_numbers)).join(', ')}
+              />
               <Field label="Location" value={profile.location || profile.home_address} />
               <Field
                 label="Verification"
@@ -2339,7 +2352,11 @@ const StaffDetailPageV2 = () => {
   );
 
   // ── edit profile modal ──────────────────────────────────────────────────────
-  const editField = (key, value) => setEditModal(p => ({ ...p, form: { ...p.form, [key]: value } }));
+  const editField = (key, value) => setEditModal(p => ({
+    ...p,
+    // NIC is filtered as it is typed so only the two valid formats can be entered.
+    form: { ...p.form, [key]: key === 'nic_number' ? sanitizeNicInput(value) : value },
+  }));
   const editToggleRole = (roleKey) => setEditModal(p => {
     const has = p.form.roles.includes(roleKey);
     return {
@@ -2399,7 +2416,10 @@ const StaffDetailPageV2 = () => {
               </EditField>
               <EditField label="NIC Number">
                 <input value={editModal.form.nic_number} onChange={e => editField('nic_number', e.target.value)}
-                  placeholder="e.g. 199012345678" className={editInputCls} />
+                  maxLength={12} placeholder="e.g. 000000000V or 200332112486" className={editInputCls} />
+                {validateNic(editModal.form.nic_number) && (
+                  <p className="text-xs text-red-500 mt-1">{validateNic(editModal.form.nic_number)}</p>
+                )}
               </EditField>
             </div>
             <EditField label="Full Name" required>
@@ -2416,6 +2436,13 @@ const StaffDetailPageV2 = () => {
                   placeholder="e.g. 0771234567" />
               </EditField>
             </div>
+            <EditField label="Additional Phone Numbers">
+              <PhoneNumbersField
+                value={editModal.form.secondary_phone_numbers}
+                onChange={(nums) => editField('secondary_phone_numbers', nums)}
+                primaryNumber={editModal.form.mobile_number}
+              />
+            </EditField>
             <div className="grid grid-cols-2 gap-3">
               <EditField label="Gender">
                 <select value={editModal.form.gender} onChange={e => editField('gender', e.target.value)} className={editInputCls}>

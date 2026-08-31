@@ -10,7 +10,9 @@ import apiClient from '../../../api/api';
 import useDebouncedValue from '../../../hooks/useDebouncedValue';
 import LanguageMultiSelect from '../../../components/common/LanguageMultiSelect';
 import YoutubeLinksField from '../../../components/common/YoutubeLinksField';
+import PhoneNumbersField from '../../../components/common/PhoneNumbersField';
 import { DEFAULT_LANGUAGES } from '../../../data/languages';
+import { sanitizeNicInput, validateNic } from '../../../utils/nicFormat';
 
 const PAGE_SIZE = 50;
 
@@ -175,7 +177,7 @@ const ProxyUserManagement = () => {
     willing_to_live_in: false, date_of_birth: '',
     nic_number: '', nic_front: null, nic_back: null,
     staff_code: '', admin_remarks: '', recruiter_id: '',
-    languages: [...DEFAULT_LANGUAGES], youtube_links: []
+    languages: [...DEFAULT_LANGUAGES], youtube_links: [], secondary_phone_numbers: []
   });
   const [recruiters, setRecruiters] = useState([]);
 
@@ -184,6 +186,7 @@ const ProxyUserManagement = () => {
   }, []);
 
   const [profilePicturePreview, setProfilePicturePreview] = useState('');
+  const [nicError, setNicError] = useState('');
   const [nicFrontPreview, setNicFrontPreview] = useState('');
   const [nicBackPreview, setNicBackPreview] = useState('');
   const [gramaNiladhariUrl, setGramaNiladhariUrl] = useState('');
@@ -228,7 +231,7 @@ const ProxyUserManagement = () => {
     willing_to_live_in: false, date_of_birth: '',
     nic_number: '', nic_front: null, nic_back: null,
     staff_code: '', admin_remarks: '', recruiter_id: '',
-    languages: [...DEFAULT_LANGUAGES], youtube_links: []
+    languages: [...DEFAULT_LANGUAGES], youtube_links: [], secondary_phone_numbers: []
   });
 
   const openAdd = () => {
@@ -236,6 +239,7 @@ const ProxyUserManagement = () => {
     setProfilePicturePreview('');
     setNicFrontPreview('');
     setNicBackPreview('');
+    setNicError('');
     setGramaNiladhariUrl('');
     setPoliceReportUrl('');
     setFieldConflicts({ mobile_number: '', staff_code: '' });
@@ -273,6 +277,7 @@ const ProxyUserManagement = () => {
       staff_code: worker.staff_code || '',
       admin_remarks: worker.admin_remarks || '',
       languages: Array.isArray(worker.languages) ? worker.languages : [],
+      secondary_phone_numbers: Array.isArray(worker.secondary_phone_numbers) ? worker.secondary_phone_numbers : [],
       youtube_links: Array.isArray(worker.youtube_links) ? worker.youtube_links : [],
       grama_niladhari: null,
       police_report: null
@@ -280,6 +285,7 @@ const ProxyUserManagement = () => {
     setProfilePicturePreview(worker.profile_picture_url || '');
     setNicFrontPreview(worker.nic_front_url || '');
     setNicBackPreview(worker.nic_back_url || '');
+    setNicError('');
     setGramaNiladhariUrl(worker.grama_niladhari_url || '');
     setPoliceReportUrl(worker.police_report_url || '');
     setFieldConflicts({ mobile_number: '', staff_code: '' });
@@ -337,7 +343,10 @@ const ProxyUserManagement = () => {
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target;
     if (name === 'mobile_number' || name === 'staff_code') setFieldConflicts(p => ({ ...p, [name]: '' }));
-    setFormData(p => ({ ...p, [name]: type === 'checkbox' ? checked : value }));
+    // NIC is filtered as it is typed so only the two valid formats can be entered.
+    const nextValue = name === 'nic_number' ? sanitizeNicInput(value) : value;
+    if (name === 'nic_number') setNicError(validateNic(nextValue));
+    setFormData(p => ({ ...p, [name]: type === 'checkbox' ? checked : nextValue }));
   };
 
   const toggleRole = (roleOption) => {
@@ -403,6 +412,7 @@ const ProxyUserManagement = () => {
     if (formData.admin_remarks) fd.append('admin_remarks', formData.admin_remarks);
     fd.append('languages', JSON.stringify(formData.languages || []));
     fd.append('youtube_links', JSON.stringify(formData.youtube_links || []));
+    fd.append('secondary_phone_numbers', JSON.stringify(formData.secondary_phone_numbers || []));
     if (!isEditMode && formData.recruiter_id) fd.append('recruiter_id', formData.recruiter_id);
     if (formData.profile_picture) fd.append('profile_picture', formData.profile_picture);
     if (formData.nic_front) fd.append('nic_front', formData.nic_front);
@@ -430,6 +440,13 @@ const ProxyUserManagement = () => {
           setFormLoading(false);
           return;
         }
+      }
+      const nicMessage = validateNic(formData.nic_number);
+      if (nicMessage) {
+        setFormError(nicMessage);
+        setNicError(nicMessage);
+        setFormLoading(false);
+        return;
       }
       const fd = buildFormData();
       if (isEditMode && selectedWorker?.id) {
@@ -684,6 +701,13 @@ const ProxyUserManagement = () => {
                     onChange={handleInputChange} onBlur={() => handleMobileBlur(formData.mobile_number)}
                     required={!isEditMode} className={fieldConflicts.mobile_number ? 'vcare-phone-input--error' : ''} />
                 </Field>
+                <Field label="Additional Phone Numbers">
+                  <PhoneNumbersField
+                    value={formData.secondary_phone_numbers}
+                    onChange={(nums) => setFormData(p => ({ ...p, secondary_phone_numbers: nums }))}
+                    primaryNumber={formData.mobile_number}
+                  />
+                </Field>
                 <Field label="Gender" required>
                   <select name="gender" value={formData.gender} onChange={handleInputChange} required className={inputCls(false)}>
                     <option value="">Select</option>
@@ -772,7 +796,9 @@ const ProxyUserManagement = () => {
                   </Field>
                   <Field label="NIC Number">
                     <input type="text" name="nic_number" value={formData.nic_number} onChange={handleInputChange}
-                      placeholder="e.g. 123456789V" className={inputCls(false)} />
+                      maxLength={12} placeholder="e.g. 000000000V or 200332112486"
+                      className={inputCls(!!nicError)} />
+                    {nicError && <p className="text-xs text-red-500 mt-1">{nicError}</p>}
                   </Field>
                 </div>
                 <div className="grid grid-cols-2 gap-3">

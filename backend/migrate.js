@@ -2731,19 +2731,33 @@ async function runMigration() {
   await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS secondary_phone_numbers TEXT[] NOT NULL DEFAULT '{}'`);
 
   // Phase 3: 365-day membership expiry. reg_fee_paid_at anchors the countdown
-  // (set whenever reg_fee_status transitions to PAID); reg_fee_expires_at is the
-  // denormalized paid_at + 365 days, kept alongside it purely so the expiry cron
-  // (cron/regFeeExpiry.js) and admin UI can query/display it directly without
-  // recomputing the interval every time. WAIVED clients are exempt — there's no
-  // payment to anchor an expiry to, so they're left permanent until an admin
-  // changes it manually.
+  // (set whenever reg_fee_status transitions to PAID or WAIVED); reg_fee_expires_at
+  // is the denormalized paid_at/waived_at + 365 days, kept alongside it purely so
+  // the expiry cron (cron/regFeeExpiry.js) and admin UI can query/display it
+  // directly without recomputing the interval every time. WAIVED clients get the
+  // same 365-day countdown as PAID ones — a waiver isn't permanent, it just lapses
+  // like a payment would, and the cron flips it to EXPIRED for admin re-review.
   await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_paid_at TIMESTAMPTZ`);
   await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS reg_fee_expires_at TIMESTAMPTZ`);
 
+  // Recreated (not just IF NOT EXISTS) because the WHERE predicate changed to
+  // include WAIVED once waived memberships also started expiring after 365 days.
+  await db.query(`DROP INDEX IF EXISTS idx_client_profiles_reg_fee_expires_at`);
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_client_profiles_reg_fee_expires_at
     ON client_profiles(reg_fee_expires_at)
-    WHERE reg_fee_status = 'PAID';
+    WHERE reg_fee_status IN ('PAID', 'WAIVED');
+  `);
+
+  // One-time backfill: pre-existing WAIVED clients from before waivers had an
+  // expiry were left with reg_fee_expires_at = NULL (permanent). Anchor them to
+  // 365 days from their existing reg_fee_paid_at (or now, if that's also unset)
+  // so they start expiring like every other membership going forward.
+  await db.query(`
+    UPDATE client_profiles
+    SET reg_fee_paid_at = COALESCE(reg_fee_paid_at, NOW()),
+        reg_fee_expires_at = COALESCE(reg_fee_paid_at, NOW()) + INTERVAL '365 days'
+    WHERE reg_fee_status = 'WAIVED' AND reg_fee_expires_at IS NULL
   `);
 
   // Persistent record of every registration fee invoice PDF ever sent, so admins
@@ -3138,6 +3152,18 @@ async function runMigration() {
   await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS languages TEXT[] DEFAULT '{}'`);
   await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS youtube_links TEXT[] DEFAULT '{}'`);
   await db.query(`ALTER TABLE staff_applications ADD COLUMN IF NOT EXISTS languages TEXT[] DEFAULT '{}'`);
+
+  // =========================================================
+  // SECONDARY PHONE NUMBERS
+  // Extra contact numbers for a staff member, stored E.164-normalized (same
+  // shape as users.mobile_number). These are contact-only: the primary number
+  // on users.mobile_number remains the login identity and the UNIQUE one, so
+  // secondary numbers are deliberately not constrained and may be shared
+  // (e.g. a household landline listed by two staff members).
+  // =========================================================
+
+  await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS secondary_phone_numbers TEXT[] DEFAULT '{}'`);
+  await db.query(`ALTER TABLE staff_applications ADD COLUMN IF NOT EXISTS secondary_phone_numbers TEXT[] DEFAULT '{}'`);
 
   // =========================================================
   // PER-BOOKING WALLET EARMARKING

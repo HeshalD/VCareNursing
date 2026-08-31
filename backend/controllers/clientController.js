@@ -1978,11 +1978,10 @@ exports.updateRegFeeStatus = async (req, res) => {
     }
     const wasAlreadyPaid = current.rows[0].reg_fee_status === 'PAID';
 
-    // PAID starts the 365-day membership countdown; PENDING/WAIVED clear it
-    // (WAIVED has no payment to anchor an expiry to, so it just stays exempt).
-    const isPaidNow = status === 'PAID';
-    const paidAt = isPaidNow ? new Date() : null;
-    const expiresAt = isPaidNow ? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) : null;
+    // PAID and WAIVED both start the 365-day membership countdown; PENDING clears it.
+    const startsCountdown = status === 'PAID' || status === 'WAIVED';
+    const paidAt = startsCountdown ? new Date() : null;
+    const expiresAt = startsCountdown ? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) : null;
 
     const updated = await db.query(
       `UPDATE client_profiles

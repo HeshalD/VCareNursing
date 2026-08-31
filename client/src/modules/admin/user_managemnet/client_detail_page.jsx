@@ -3073,11 +3073,11 @@ const ClientDetailPage = () => {
               const REG_FEE_RANK = { PENDING: 0, EXPIRED: 0, INVOICED: 1, RECEIPT_UPLOADED: 2, PAID: 3, WAIVED: 3 };
               const rank = REG_FEE_RANK[feeStatus] ?? 0;
 
-              // Membership is valid for 365 days from payment (see
+              // Membership is valid for 365 days from payment or waiver (see
               // backend/cron/regFeeExpiry.js) - once reg_fee_expires_at passes,
               // the daily cron flips reg_fee_status to EXPIRED so the client
               // re-enters the admin's re-invoicing queue.
-              const daysUntilExpiry = (feeStatus === 'PAID' && clientProfile.reg_fee_expires_at)
+              const daysUntilExpiry = (['PAID', 'WAIVED'].includes(feeStatus) && clientProfile.reg_fee_expires_at)
                 ? Math.ceil((new Date(clientProfile.reg_fee_expires_at) - Date.now()) / (1000 * 60 * 60 * 24))
                 : null;
               // Colors the expiry callout/pill by urgency so a soon-to-lapse
@@ -3089,6 +3089,7 @@ const ClientDetailPage = () => {
 
               const statusSentence = feeStatus === 'WAIVED'
                 ? 'Registration fee waived - no payment required from this client.'
+                  + (clientProfile.reg_fee_expires_at ? ` Waiver valid until ${formatDateTime(clientProfile.reg_fee_expires_at)}.` : '')
                 : feeStatus === 'PAID'
                   ? 'Active member.'
                   : isExpired

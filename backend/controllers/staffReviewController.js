@@ -720,8 +720,18 @@ exports.getClientBookingsForAdmin = async (req, res) => {
     }
 
     const rows = await db.pool.query(
-      `SELECT b.booking_id, b.service_type, b.service_model, b.start_date, b.status
+      `SELECT b.booking_id, b.booking_code, b.service_type, b.service_model, b.service_mode,
+              b.start_date, b.status, b.created_at, b.scheduled_end_time, b.actual_end_time,
+              b.daily_rate, b.amount_quotated, b.amount_paid, b.preferred_gender,
+              p.full_name AS patient_name, p.age AS patient_age, p.gender AS patient_gender,
+              p.relationship_to_client, p.residential_address,
+              sp.full_name AS assigned_staff_name, sp.staff_code AS assigned_staff_code,
+              (SELECT COUNT(DISTINCT bsa.staff_profile_id)
+                 FROM booking_staff_assignments bsa
+                WHERE bsa.booking_id = b.booking_id) AS staff_count
        FROM bookings b
+       LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
+       LEFT JOIN staff_profiles sp ON b.assigned_staff_id = sp.staff_profile_id
        WHERE b.client_id = $1
        ORDER BY b.start_date DESC NULLS LAST, b.created_at DESC`,
       [client_id]
@@ -747,11 +757,12 @@ exports.getBookingStaffForReview = async (req, res) => {
     }
 
     const assignedRes = await db.pool.query(
-      `SELECT sp.staff_profile_id, sp.full_name, sp.designation, MAX(bsa.assigned_on) as last_assigned_on
+      `SELECT sp.staff_profile_id, sp.full_name, sp.designation, sp.staff_code, sp.gender,
+              MAX(bsa.assigned_on) as last_assigned_on
        FROM booking_staff_assignments bsa
        JOIN staff_profiles sp ON bsa.staff_profile_id = sp.staff_profile_id
        WHERE bsa.booking_id = $1
-       GROUP BY sp.staff_profile_id, sp.full_name, sp.designation
+       GROUP BY sp.staff_profile_id, sp.full_name, sp.designation, sp.staff_code, sp.gender
        ORDER BY last_assigned_on DESC`,
       [booking_id]
     );
@@ -760,7 +771,7 @@ exports.getBookingStaffForReview = async (req, res) => {
     const assignedStaffId = bookingRes.rows[0].assigned_staff_id;
     if (assignedStaffId && !staff.some(s => s.staff_profile_id === assignedStaffId)) {
       const directRes = await db.pool.query(
-        'SELECT staff_profile_id, full_name, designation FROM staff_profiles WHERE staff_profile_id = $1',
+        'SELECT staff_profile_id, full_name, designation, staff_code, gender FROM staff_profiles WHERE staff_profile_id = $1',
         [assignedStaffId]
       );
       if (directRes.rows.length > 0) {

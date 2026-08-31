@@ -276,6 +276,14 @@ const BookingDetailPage = () => {
   const maxPayoff        = Math.min(walletBalance, overdueAmount);
   const canPayoff        = walletBalance > 0 && overdueAmount > 0;
   const statementClientId = clientDetails.client_profile_id || bookingSummary.client_profile_id || bookingSummary.client_id;
+
+  // Header identity links: the hero name opens whichever profile it is showing
+  // (care profile when the booking has one, else the client it fell back to).
+  const heroName          = patientDetails.patient_name || clientDetails.client_name || 'Booking';
+  const clientProfilePath = statementClientId ? `/admin/users/${statementClientId}/detail` : null;
+  const heroProfilePath   = patientDetails.patient_id
+    ? `/admin/patients/${patientDetails.patient_id}/detail`
+    : clientProfilePath;
   const lastInvoiceDate  = invoiceSummary.last_invoice_at   || invoiceSummary.last_invoice_date || null;
   const lastPaymentDate  = paymentSummary.last_payment_at   || paymentSummary.last_payment_date || null;
   const requiresBankAccount = ['BANK_TRANSFER', 'CASH_DEPOSIT'].includes(paymentForm.payment_method);
@@ -703,7 +711,16 @@ const BookingDetailPage = () => {
           {/* hero text */}
           <div className="flex items-center gap-3 flex-wrap mb-2">
             <h1 className="text-2xl font-extrabold text-[#2A2722] tracking-tight">
-              {patientDetails.patient_name || clientDetails.client_name || 'Booking'}
+              {heroProfilePath ? (
+                <button
+                  type="button"
+                  onClick={() => navigate(heroProfilePath)}
+                  title={patientDetails.patient_id ? 'Open care profile' : 'Open client profile'}
+                  className="hover:text-[#137A6B] hover:underline underline-offset-4 transition-colors"
+                >
+                  {heroName}
+                </button>
+              ) : heroName}
               {bookingSummary.service_type ? ` · ${bookingSummary.service_type}` : ''}
             </h1>
             <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${statusTone}`}>
@@ -711,12 +728,36 @@ const BookingDetailPage = () => {
               {bookingSummary.status || 'Unknown'}
             </span>
           </div>
-          <p className="text-sm text-[#6F6A60]">
-            {[
-              bookingSummary.service_model,
-              clientDetails.client_name && `for ${clientDetails.client_name}`,
-              bookingSummary.start_date  && `Started ${formatDate(bookingSummary.start_date)}`,
-            ].filter(Boolean).join(' · ') || '—'}
+          <p className="text-sm text-[#6F6A60] flex flex-wrap items-center gap-1.5">
+            {(() => {
+              const parts = [];
+              if (bookingSummary.service_model) parts.push(<span key="model">{bookingSummary.service_model}</span>);
+              if (clientDetails.client_name) {
+                parts.push(
+                  <span key="client">
+                    for{' '}
+                    {clientProfilePath ? (
+                      <button
+                        type="button"
+                        onClick={() => navigate(clientProfilePath)}
+                        title="Open client profile"
+                        className="font-semibold hover:text-[#137A6B] hover:underline underline-offset-2 transition-colors"
+                      >
+                        {clientDetails.client_name}
+                      </button>
+                    ) : clientDetails.client_name}
+                  </span>
+                );
+              }
+              if (bookingSummary.start_date) parts.push(<span key="start">Started {formatDate(bookingSummary.start_date)}</span>);
+              if (!parts.length) return '—';
+              return parts.map((p, i) => (
+                <React.Fragment key={i}>
+                  {i > 0 && <span className="text-[#C9C3B7]">·</span>}
+                  {p}
+                </React.Fragment>
+              ));
+            })()}
           </p>
         </div>
 

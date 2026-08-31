@@ -7,6 +7,7 @@ const { creditRecruiterForStaff } = require('../services/recruiterService');
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const { logActivity } = require('../utils/activityLogger');
 const { toE164, isValidPhone } = require('../utils/phone');
+const { isValidNic, normalizeNic, NIC_FORMAT_MESSAGE } = require('../utils/nic');
 
 const SHEET_NAMES = {
   staff: 'Staff',
@@ -135,7 +136,8 @@ function normalizeStaffRow(row) {
   if (Number.isNaN(current_earnings_opening)) errors.push('current_earnings_opening must be a number');
 
   const designation = row.designation ? String(row.designation).trim() : null;
-  const nic_number = row.nic_number ? String(row.nic_number).trim() : null;
+  const nic_number = normalizeNic(row.nic_number);
+  if (nic_number && !isValidNic(nic_number)) errors.push(`nic_number is invalid — ${NIC_FORMAT_MESSAGE}`);
   const staff_code = row.staff_code ? String(row.staff_code).trim() : null;
   const experience_level = row.experience_level ? String(row.experience_level).trim() : null;
   const admin_remarks = row.admin_remarks ? String(row.admin_remarks).trim() : null;

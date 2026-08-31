@@ -1,8 +1,9 @@
 // cron/regFeeExpiry.js
 // Runs once a day. Membership (the client registration fee) is valid for
-// 365 days from payment. Any client_profiles row that's PAID and past its
-// reg_fee_expires_at gets flipped to EXPIRED — a distinct terminal state from
-// PENDING (a client who never paid) — so they show up again in the admin's
+// 365 days from payment or waiver. Any client_profiles row that's PAID or
+// WAIVED and past its reg_fee_expires_at gets flipped to EXPIRED — a distinct
+// terminal state from PENDING (a client who never paid) — so they show up
+// again in the admin's
 // "Registration Fees" queue (AdminInvoicesPage) for manual re-invoicing, with
 // the UI able to tell "never registered" and "membership lapsed" apart.
 //
@@ -27,7 +28,7 @@ const runRegFeeExpiry = async () => {
   try {
     const expiredResult = await client.query(
       `SELECT client_profile_id, full_name FROM client_profiles
-       WHERE reg_fee_status = 'PAID' AND reg_fee_expires_at IS NOT NULL AND reg_fee_expires_at <= NOW()`
+       WHERE reg_fee_status IN ('PAID', 'WAIVED') AND reg_fee_expires_at IS NOT NULL AND reg_fee_expires_at <= NOW()`
     );
 
     for (const row of expiredResult.rows) {

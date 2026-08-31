@@ -126,6 +126,7 @@ exports.getQuotesByRequest = async (req, res) => {
         const result = await db.query(`
             SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type,
                    s.status as request_status, s.active_quote_id, s.client_id as request_client_id,
+                   cp.honorific as client_honorific,
                    pq.quote_id as product_quote_id,
                    COALESCE((
                        SELECT SUM(amount_received)
@@ -139,6 +140,7 @@ exports.getQuotesByRequest = async (req, res) => {
                    ), 0) as payment_count
             FROM quotations q
             JOIN service_requests s ON q.request_id = s.request_id
+            LEFT JOIN client_profiles cp ON s.client_id = cp.client_profile_id
             LEFT JOIN quotations pq ON pq.linked_quote_id = q.quote_id AND pq.quote_type = 'PRODUCT'
             WHERE q.request_id = $1
             ORDER BY q.created_at DESC

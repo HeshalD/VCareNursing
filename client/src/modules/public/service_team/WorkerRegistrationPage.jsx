@@ -14,7 +14,9 @@ import apiClient from '../../../api/api';
 import DateInput, { isoToDisplay } from '../../../components/common/DateInput';
 import PhoneInput, { isValidPhoneNumber } from '../../../components/common/PhoneInput';
 import LanguageMultiSelect from '../../../components/common/LanguageMultiSelect';
+import PhoneNumbersField from '../../../components/common/PhoneNumbersField';
 import { DEFAULT_LANGUAGES } from '../../../data/languages';
+import { sanitizeNicInput, validateNic } from '../../../utils/nicFormat';
 
 // Parses an ISO (YYYY-MM-DD) string into a Date, or null if invalid/empty
 const parseDateOfBirth = (value) => {
@@ -46,7 +48,7 @@ const WorkerRegistrationPage = () => {
   const { user, isAuthenticated } = useAuth();
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState({
-    full_name: '', email: '', mobile_number: '', applied_roles: [],
+    full_name: '', email: '', mobile_number: '', secondary_phone_numbers: [], applied_roles: [],
     qualifications: '', home_address: '', location: '', latitude: '', longitude: '',
     documents: [], profile_picture: null, gender: '', willing_to_live_in: false, date_of_birth: '',
     nic_number: '', nic_front: null, nic_back: null, experience_level: '', languages: [...DEFAULT_LANGUAGES]
@@ -346,11 +348,7 @@ const WorkerRegistrationPage = () => {
         }
         break;
       case 'nic_number':
-        if (!value || value.trim() === '') {
-          error = 'NIC number is required';
-        } else if (value.trim().length < 5) {
-          error = 'NIC number must be at least 5 characters';
-        }
+        error = validateNic(value, { required: true });
         break;
       case 'nic_front':
         if (!value) {
@@ -369,6 +367,9 @@ const WorkerRegistrationPage = () => {
 
   // Handle input change with validation
   const handleInputChange = (name, value) => {
+    // NIC is filtered as it is typed, so characters outside the two valid
+    // formats never make it into the field at all.
+    if (name === 'nic_number') value = sanitizeNicInput(value);
     setFormData(prev => ({ ...prev, [name]: value }));
     const error = validateField(name, value);
     setFieldErrors(prev => ({ ...prev, [name]: error }));
@@ -390,32 +391,38 @@ const WorkerRegistrationPage = () => {
   };
 
   // Check if form is valid
-  const isFormValid = () => {
-    const requiredFields = {
-      full_name: formData.full_name,
-      mobile_number: formData.mobile_number,
-      applied_roles: formData.applied_roles,
-      qualifications: formData.qualifications,
-      home_address: formData.home_address,
-      location: formData.location,
-      gender: formData.gender,
-      date_of_birth: formData.date_of_birth,
-      documents: formData.documents,
-      profile_picture: formData.profile_picture,
-      nic_number: formData.nic_number,
-      nic_front: formData.nic_front,
-      nic_back: formData.nic_back
-    };
-    
-    // Check if all fields have values and no errors
-    for (const [field, value] of Object.entries(requiredFields)) {
-      const error = validateField(field, value);
-      if (error || !value || (Array.isArray(value) && value.length === 0)) {
-        return false;
-      }
-    }
-    return true;
-  };
+  // Every field the submit gate checks, with the step it lives on and the label
+  // shown to the applicant. The gate and the warning panel are both derived from
+  // this one list, so the panel can never disagree with the disabled button —
+  // previously the gate also rejected *invalid* values while the panel listed
+  // only *empty* ones, which showed "fields are required" above an empty list.
+  const REQUIRED_FIELDS = [
+    { field: 'full_name',       label: 'Full Name',         step: 1 },
+    { field: 'mobile_number',   label: 'Mobile Number',     step: 1 },
+    { field: 'gender',          label: 'Gender',            step: 1 },
+    { field: 'date_of_birth',   label: 'Date of Birth',     step: 1 },
+    { field: 'applied_roles',   label: 'Applied Roles',     step: 1 },
+    { field: 'nic_number',      label: 'NIC Number',        step: 2 },
+    { field: 'nic_front',       label: 'NIC Front Photo',   step: 2 },
+    { field: 'nic_back',        label: 'NIC Back Photo',    step: 2 },
+    { field: 'location',        label: 'City',              step: 3 },
+    { field: 'home_address',    label: 'Home Address',      step: 3 },
+    { field: 'qualifications',  label: 'Qualifications',    step: 4 },
+    { field: 'documents',       label: 'Documents',         step: 4 },
+    { field: 'profile_picture', label: 'Profile Picture',   step: 4 },
+  ];
+
+  // Returns one entry per field currently blocking submission, carrying the real
+  // reason so the applicant is told *why* — "NIC must be 9 digits followed by
+  // V or X", not just that something is wrong.
+  const getBlockingIssues = () => REQUIRED_FIELDS.reduce((issues, { field, label, step }) => {
+    const value = formData[field];
+    const isEmpty = !value || (Array.isArray(value) && value.length === 0);
+    const reason = validateField(field, value) || (isEmpty ? `${label} is required` : '');
+    if (reason) issues.push({ field, label, step, reason });
+    return issues;
+  }, []);
+
 
   const totalSteps = 5;
 
@@ -445,6 +452,7 @@ const WorkerRegistrationPage = () => {
         full_name: formData.full_name,
         email: formData.email,
         mobile_number: formData.mobile_number,
+        secondary_phone_numbers: formData.secondary_phone_numbers || [],
         applied_roles: formData.applied_roles,
         qualifications: formData.qualifications,
         home_address: formData.home_address,
@@ -515,6 +523,10 @@ const WorkerRegistrationPage = () => {
       setIsSubmitting(false);
     }
   };
+
+  // Computed once per render and used for both the warning panel and the submit
+  // button, so the two can never disagree about whether the form is ready.
+  const blockingIssues = getBlockingIssues();
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -695,6 +707,20 @@ const WorkerRegistrationPage = () => {
                             <p className="text-xs text-red-500 mt-1">{mobileConflict || fieldErrors.mobile_number}</p>
                           )}
                         </div>
+                        <div className="md:col-span-2">
+                          <label className="text-sm font-semibold text-slate-600 block mb-1">
+                            Additional Phone Numbers
+                            <span className="ml-2 text-xs text-slate-400 font-normal">(Optional)</span>
+                          </label>
+                          <p className="text-xs text-slate-400 mb-2">
+                            Add any other numbers we can reach you on. Your mobile number above stays your login number.
+                          </p>
+                          <PhoneNumbersField
+                            value={formData.secondary_phone_numbers}
+                            onChange={(nums) => setFormData(prev => ({ ...prev, secondary_phone_numbers: nums }))}
+                            primaryNumber={formData.mobile_number}
+                          />
+                        </div>
                         <div>
                           <label className="text-sm font-semibold text-slate-600 block mb-1">
                             Gender
@@ -820,7 +846,8 @@ const WorkerRegistrationPage = () => {
                             }`}
                             value={formData.nic_number}
                             onChange={e => handleInputChange('nic_number', e.target.value)}
-                            placeholder="e.g. 123456789V or 123456789012"
+                            placeholder="e.g. 000000000V or 200332112486"
+                            maxLength={12}
                             required
                           />
                           {fieldErrors.nic_number && (
@@ -1274,6 +1301,11 @@ const WorkerRegistrationPage = () => {
                           <div className="flex-1">
                             <h3 className="font-bold text-slate-900">{formData.full_name || "Not provided"}</h3>
                             <p className="text-sm text-slate-500">{formData.email} • {formData.mobile_number}</p>
+                            {formData.secondary_phone_numbers?.length > 0 && (
+                              <p className="text-xs text-slate-400 mt-1">
+                                Also: {formData.secondary_phone_numbers.join(', ')}
+                              </p>
+                            )}
                             {formData.gender && (
                               <p className="text-xs text-slate-400 mt-1">Gender: {formData.gender.charAt(0) + formData.gender.slice(1).toLowerCase()}</p>
                             )}
@@ -1328,35 +1360,31 @@ const WorkerRegistrationPage = () => {
                         </div>
                       </div>
 
-                      {/* Missing Fields Warning */}
-                      {!isFormValid() && (
+                      {/* Missing / invalid fields warning */}
+                      {blockingIssues.length > 0 && (
                         <div className="flex items-start gap-3 p-4 bg-amber-50 rounded-xl border border-amber-100 mt-4">
                           <span className="text-amber-600">⚠️</span>
                           <div className="flex-1">
                             <p className="text-sm font-semibold text-amber-900 mb-2">
-                              Required fields missing
+                              {blockingIssues.length === 1
+                                ? '1 field still needs attention'
+                                : `${blockingIssues.length} fields still need attention`}
                             </p>
-                            <p className="text-sm text-amber-700 mb-2">
-                              The following fields are required to submit your application:
-                            </p>
-                            <ul className="text-xs text-amber-600 space-y-1">
-                              {!formData.full_name && <li>• Full Name</li>}
-                              {!formData.mobile_number && <li>• Mobile Number</li>}
-                              {!formData.nic_number && <li>• NIC Number</li>}
-                              {!formData.nic_front && <li>• NIC Front Photo</li>}
-                              {!formData.nic_back && <li>• NIC Back Photo</li>}
-                              {(!formData.applied_roles || formData.applied_roles.length === 0) && <li>• Applied Roles</li>}
-                              {!formData.qualifications && <li>• Qualifications</li>}
-                              {!formData.home_address && <li>• Home Address</li>}
-                              {!formData.location && <li>• Location</li>}
-                              {!formData.gender && <li>• Gender</li>}
-                              {!formData.date_of_birth && <li>• Date of Birth</li>}
-                              {(!formData.documents || formData.documents.length === 0) && <li>• Documents</li>}
-                              {!formData.profile_picture && <li>• Profile Picture</li>}
+                            <ul className="text-xs text-amber-700 space-y-1.5">
+                              {blockingIssues.map(({ field, label, step, reason }) => (
+                                <li key={field}>
+                                  <button
+                                    type="button"
+                                    onClick={() => setCurrentStep(step)}
+                                    className="text-left hover:underline"
+                                  >
+                                    <span className="font-semibold">{label}</span>
+                                    <span className="text-amber-600"> — {reason}</span>
+                                    <span className="text-amber-500"> (step {step})</span>
+                                  </button>
+                                </li>
+                              ))}
                             </ul>
-                            <p className="text-xs text-amber-600 mt-2">
-                              Please go back and complete these fields to submit your application.
-                            </p>
                           </div>
                         </div>
                       )}
@@ -1468,7 +1496,7 @@ const WorkerRegistrationPage = () => {
                 ) : (
                   <button
                     type="submit"
-                    disabled={isSubmitting || !isConfirmed || !isFormValid()}
+                    disabled={isSubmitting || !isConfirmed || blockingIssues.length > 0}
                     className="flex items-center gap-2 px-8 py-3 bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-500/30 hover:bg-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
                   >
                     {isSubmitting ? 'Submitting...' : 'Submit Application'} <CheckCircle className="w-5 h-5" />

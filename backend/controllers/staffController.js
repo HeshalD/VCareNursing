@@ -6,7 +6,8 @@ const { logActivity } = require('../utils/activityLogger');
 const { generateAndUploadSalarySheet } = require('../utils/salaryPdf');
 const { creditRecruiterForStaff } = require('../services/recruiterService');
 const { resolveBankAccountId } = require('../utils/pettyCash');
-const { toE164, isValidPhone } = require('../utils/phone');
+const { toE164, toE164List, isValidPhone } = require('../utils/phone');
+const { isValidNic, normalizeNic, NIC_FORMAT_MESSAGE } = require('../utils/nic');
 
 const _MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const _METHOD_LABELS = { BANK_TRANSFER: 'Bank Transfer', CASH: 'Cash', CHEQUE: 'Cheque' };
@@ -352,6 +353,7 @@ exports.getStaffByID = async (req, res) => {
                 sp.grama_niladhari_url,
                 sp.police_report_url,
                 sp.languages,
+                sp.secondary_phone_numbers,
                 sp.youtube_links,
                 sp.created_at,
                 sp.advance_threshold_amount,
@@ -417,6 +419,7 @@ exports.getStaffByUserID = async (req, res) => {
                 sp.grama_niladhari_url,
                 sp.police_report_url,
                 sp.languages,
+                sp.secondary_phone_numbers,
                 sp.youtube_links,
                 sp.location,
                 sp.nic_number,
@@ -1443,12 +1446,17 @@ exports.getAllStaff = async (req, res) => {
                 }
             }
 
+            // Secondary numbers are matched by flattening the array to a string, so a
+            // staff member is findable by any of their contact numbers, not just the
+            // primary/login one.
+            const secondaryMatch = `array_to_string(COALESCE(sp.secondary_phone_numbers, '{}'), ',')`;
+
             if (phoneVariant) {
-                whereClause += ` AND (sp.full_name ILIKE $${paramIndex} OR u.mobile_number ILIKE $${paramIndex} OR sp.staff_code ILIKE $${paramIndex} OR sp.designation ILIKE $${paramIndex} OR u.mobile_number ILIKE $${paramIndex + 1})`;
+                whereClause += ` AND (sp.full_name ILIKE $${paramIndex} OR u.mobile_number ILIKE $${paramIndex} OR sp.staff_code ILIKE $${paramIndex} OR sp.designation ILIKE $${paramIndex} OR ${secondaryMatch} ILIKE $${paramIndex} OR u.mobile_number ILIKE $${paramIndex + 1} OR ${secondaryMatch} ILIKE $${paramIndex + 1})`;
                 queryParams.push(`%${trimmedSearch}%`, `%${phoneVariant}%`);
                 paramIndex += 2;
             } else {
-                whereClause += ` AND (sp.full_name ILIKE $${paramIndex} OR u.mobile_number ILIKE $${paramIndex} OR sp.staff_code ILIKE $${paramIndex} OR sp.designation ILIKE $${paramIndex})`;
+                whereClause += ` AND (sp.full_name ILIKE $${paramIndex} OR u.mobile_number ILIKE $${paramIndex} OR sp.staff_code ILIKE $${paramIndex} OR sp.designation ILIKE $${paramIndex} OR ${secondaryMatch} ILIKE $${paramIndex})`;
                 queryParams.push(`%${trimmedSearch}%`);
                 paramIndex++;
             }
@@ -1498,6 +1506,7 @@ exports.getAllStaff = async (req, res) => {
                 sp.grama_niladhari_url,
                 sp.police_report_url,
                 sp.languages,
+                sp.secondary_phone_numbers,
                 sp.youtube_links,
                 sp.admin_remarks,
                 sp.created_at,
@@ -2597,8 +2606,13 @@ exports.updateStaffProfile = async (req, res) => {
         experience_level,
         remove_document_urls,
         languages: languagesRaw,
-        youtube_links: youtubeLinksRaw
+        youtube_links: youtubeLinksRaw,
+        secondary_phone_numbers: secondaryPhonesRaw
     } = req.body;
+
+    // Undefined means "leave unchanged"; anything else is normalized to a deduped
+    // E.164 array, with unparseable entries dropped.
+    const secondaryPhonesToSet = toE164List(secondaryPhonesRaw);
 
     if (experience_level && !VALID_EXPERIENCE_LEVELS.includes(experience_level)) {
         return res.status(400).json({
@@ -2611,6 +2625,12 @@ exports.updateStaffProfile = async (req, res) => {
         return res.status(400).json({ status: 'error', message: 'Enter a valid mobile number.' });
     }
     const mobile_number = rawMobileNumber ? toE164(rawMobileNumber) : rawMobileNumber;
+
+    // A blank NIC is the "leave unchanged" signal for the COALESCE below; a
+    // non-blank one must match one of the two valid Sri Lankan NIC formats.
+    if (normalizeNic(nic_number) && !isValidNic(nic_number)) {
+        return res.status(400).json({ status: 'error', message: NIC_FORMAT_MESSAGE });
+    }
 
     // Extract file URLs from multer/S3
     const uploadedDocuments = req.files && req.files.documents ? req.files.documents.map(file => file.location) : [];
@@ -2831,6 +2851,7 @@ exports.updateStaffProfile = async (req, res) => {
                 experience_level = COALESCE($18, experience_level),
                 languages = COALESCE($19, languages),
                 youtube_links = COALESCE($20, youtube_links),
+                secondary_phone_numbers = COALESCE($21, secondary_phone_numbers),
                 onboarding_status = CASE
                     WHEN onboarding_status = 'PENDING_MIGRATION'
                      AND (SELECT is_complete FROM completeness)
@@ -2870,6 +2891,7 @@ exports.updateStaffProfile = async (req, res) => {
                 experience_level,
                 languages,
                 youtube_links,
+                secondary_phone_numbers,
                 created_at
         `;
 
@@ -2886,14 +2908,15 @@ exports.updateStaffProfile = async (req, res) => {
             willing_to_live_in !== undefined ? willing_to_live_in : null,
             date_of_birth || null,
             staff_code ? String(staff_code).trim() : null,
-            nic_number || null,
+            normalizeNic(nic_number),
             finalNicFront || null,
             finalNicBack || null,
             finalGramaNiladhari || null,
             finalPoliceReport || null,
             experience_level || null,
             languagesToSet,
-            youtubeLinksToSet
+            youtubeLinksToSet,
+            secondaryPhonesToSet
         ];
 
         const result = await db.query(updateQuery, updateValues);
@@ -2977,8 +3000,11 @@ exports.createStaffProfile = async (req, res) => {
         admin_remarks,
         recruiter_id,
         languages: languagesRaw,
-        youtube_links: youtubeLinksRaw
+        youtube_links: youtubeLinksRaw,
+        secondary_phone_numbers: secondaryPhonesRaw
     } = req.body;
+
+    const createSecondaryPhones = toE164List(secondaryPhonesRaw) || [];
 
     let createLanguages = [];
     if (languagesRaw !== undefined) {
@@ -3039,6 +3065,14 @@ exports.createStaffProfile = async (req, res) => {
             });
         }
         const mobile_number = toE164(rawMobileNumber);
+
+        // NIC is optional on admin proxy-create, but a supplied one must be well formed.
+        if (normalizeNic(nic_number) && !isValidNic(nic_number)) {
+            return res.status(400).json({
+                status: 'error',
+                message: NIC_FORMAT_MESSAGE
+            });
+        }
         const finalEmail = email && String(email).trim() ? String(email).trim() : null;
 
         // Check if user already exists by mobile (or email, when one was provided)
@@ -3147,11 +3181,12 @@ exports.createStaffProfile = async (req, res) => {
                 police_report_url,
                 languages,
                 youtube_links,
+                secondary_phone_numbers,
                 current_status,
                 verification_status,
                 created_at
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, 'AVAILABLE', 'VERIFIED', NOW()
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, 'AVAILABLE', 'VERIFIED', NOW()
             )
             RETURNING
                 staff_profile_id,
@@ -3162,6 +3197,7 @@ exports.createStaffProfile = async (req, res) => {
                 police_report_url,
                 languages,
                 youtube_links,
+                secondary_phone_numbers,
                 user_id,
                 full_name,
                 designation,
@@ -3190,7 +3226,7 @@ exports.createStaffProfile = async (req, res) => {
             home_address || null,
             location || null,
             uploadedProfilePicture || null,
-            nic_number || null,
+            normalizeNic(nic_number),
             uploadedNicFront || null,
             uploadedNicBack || null,
             gender.toUpperCase(),
@@ -3202,7 +3238,8 @@ exports.createStaffProfile = async (req, res) => {
             uploadedGramaNiladhari || null,
             uploadedPoliceReport || null,
             createLanguages,
-            createYoutubeLinks
+            createYoutubeLinks,
+            createSecondaryPhones
         ];
 
         const result = await db.query(insertQuery, insertValues);

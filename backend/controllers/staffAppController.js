@@ -7,7 +7,8 @@ const { sendSmsOtp, sendSms } = require('../utils/sms');
 const { sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected, sendStaffAgreement } = require('../utils/metaWhatsapp');
 const { logActivity } = require('../utils/activityLogger');
 const { creditRecruiterForStaff } = require('../services/recruiterService');
-const { toE164, isValidPhone } = require('../utils/phone');
+const { toE164, toE164List, isValidPhone } = require('../utils/phone');
+const { isValidNic, normalizeNic, NIC_FORMAT_MESSAGE } = require('../utils/nic');
 
 const getUploadedFileUrl = (files, fieldName) => (files && files[fieldName] && files[fieldName][0]) ? files[fieldName][0].location : null;
 
@@ -50,6 +51,12 @@ exports.submitApplication = async (req, res) => {
       return res.status(400).json({ message: 'Enter a valid mobile number.' });
     }
     const mobile_number = toE164(req.body.mobile_number);
+
+    // Optional extra contact numbers. Unparseable entries are dropped rather than
+    // rejecting the whole application over a secondary field, and the primary
+    // number is filtered out so it is never duplicated in the list.
+    const secondaryPhoneNumbers = (toE164List(req.body.secondary_phone_numbers) || [])
+      .filter(n => n !== mobile_number);
     
    
     let rolesArray = [];
@@ -95,6 +102,11 @@ exports.submitApplication = async (req, res) => {
       });
     }
 
+    if (!isValidNic(nic_number)) {
+      return res.status(400).json({ message: NIC_FORMAT_MESSAGE });
+    }
+    const normalizedNic = normalizeNic(nic_number);
+
     // Block if mobile is already registered under any non-CLIENT role
     if (mobile_number) {
       const existingUser = await db.query(
@@ -119,12 +131,12 @@ exports.submitApplication = async (req, res) => {
 
     const query = `
       INSERT INTO staff_applications
-      (full_name, email, mobile_number, applied_roles, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, date_of_birth, experience_level, languages)
+      (full_name, email, mobile_number, applied_roles, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, date_of_birth, experience_level, languages, secondary_phone_numbers)
       VALUES ($1, $2, $3, $4::user_role_enum[], $5, $6, $7, $8,
         CASE WHEN $9::float IS NOT NULL AND $10::float IS NOT NULL
              THEN point($10::float, $9::float)
              ELSE NULL
-        END, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18)
+        END, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18, $19)
       RETURNING *;
     `;
 
@@ -140,13 +152,14 @@ exports.submitApplication = async (req, res) => {
       (latitude && latitude !== "") ? latitude : null,
       (longitude && longitude !== "") ? longitude : null,
       profile_picture_url,
-      nic_number,
+      normalizedNic,
       nic_front_url,
       nic_back_url,
       gender,
       date_of_birth,
       experience_level || null,
-      languagesArray
+      languagesArray,
+      secondaryPhoneNumbers
     ]);
 
     const application = result.rows[0];
@@ -480,8 +493,8 @@ exports.acceptApplication = async (req, res) => {
         }
 
         const profileInsertQuery = `
-          INSERT INTO staff_profiles (staff_code, user_id, full_name, designation, verification_status, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, willing_to_live_in, date_of_birth, admin_remarks, experience_level, languages)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18, $19, $20)
+          INSERT INTO staff_profiles (staff_code, user_id, full_name, designation, verification_status, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, willing_to_live_in, date_of_birth, admin_remarks, experience_level, languages, secondary_phone_numbers)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18, $19, $20, $21)
           RETURNING staff_profile_id
         `;
         const profileResult = await client.query(profileInsertQuery, [
@@ -504,7 +517,8 @@ exports.acceptApplication = async (req, res) => {
           app.date_of_birth,
           admin_remarks || null,
           app.experience_level || null,
-          app.languages || []
+          app.languages || [],
+          app.secondary_phone_numbers || []
         ]);
 
         // Auto-create staff wallet on approval
@@ -850,6 +864,18 @@ exports.updateApplication = async (req, res) => {
   }
   const mobile_number = req.body.mobile_number ? toE164(req.body.mobile_number) : req.body.mobile_number;
 
+  // A blank NIC means "leave unchanged" (it is a required field on an
+  // application, so it must never be wiped); a non-blank one must be well formed.
+  if (normalizeNic(nic_number) && !isValidNic(nic_number)) {
+    return res.status(400).json({ message: NIC_FORMAT_MESSAGE });
+  }
+
+  // null (field absent) means "leave unchanged", matching the COALESCE below.
+  const secondaryPhonesToSet = toE164List(req.body.secondary_phone_numbers);
+  const secondaryPhoneNumbers = secondaryPhonesToSet
+    ? secondaryPhonesToSet.filter(n => n !== mobile_number)
+    : null;
+
   try {
     const appResult = await db.query(
       'SELECT * FROM staff_applications WHERE application_id = $1',
@@ -887,6 +913,8 @@ exports.updateApplication = async (req, res) => {
     const newProfilePicture = req.files?.profile_picture?.[0];
     const profilePictureUrl = newProfilePicture ? newProfilePicture.location : current.profile_picture_url;
 
+    const nicToStore = normalizeNic(nic_number) || current.nic_number;
+
     await db.query(
       `UPDATE staff_applications
        SET full_name = $1, email = $2, mobile_number = $3,
@@ -894,11 +922,13 @@ exports.updateApplication = async (req, res) => {
            home_address = $6, location = $7, nic_number = $8,
            gender = $9::gender_enum, date_of_birth = $10,
            profile_picture_url = $11, experience_level = $12,
-           languages = COALESCE($14, languages)
+           languages = COALESCE($14, languages),
+           secondary_phone_numbers = COALESCE($15, secondary_phone_numbers)
        WHERE application_id = $13`,
       [full_name, email, mobile_number, rolesArray, qualifications,
-       home_address, location, nic_number, gender, date_of_birth,
-       profilePictureUrl, experience_level || null, applicationId, languagesArray]
+       home_address, location, nicToStore, gender, date_of_birth,
+       profilePictureUrl, experience_level || null, applicationId, languagesArray,
+       secondaryPhoneNumbers]
     );
 
     const updated = await db.query(
@@ -919,7 +949,7 @@ exports.updateApplication = async (req, res) => {
     diff('qualifications',   current.qualifications,    qualifications);
     diff('home_address',     current.home_address,      home_address);
     diff('location',         current.location,          location);
-    diff('nic_number',       current.nic_number,        nic_number);
+    diff('nic_number',       current.nic_number,        nicToStore);
     diff('gender',           current.gender,            gender);
     diff('experience_level', current.experience_level,  experience_level || null);
 
@@ -936,6 +966,13 @@ exports.updateApplication = async (req, res) => {
     const newRoles = [...rolesArray].sort();
     if (oldRoles.join(',') !== newRoles.join(',')) {
       changes['applied_roles'] = { from: oldRoles, to: newRoles };
+    }
+
+    if (secondaryPhoneNumbers) {
+      const oldSecondary = Array.isArray(current.secondary_phone_numbers) ? current.secondary_phone_numbers : [];
+      if (oldSecondary.join(',') !== secondaryPhoneNumbers.join(',')) {
+        changes['secondary_phone_numbers'] = { from: oldSecondary, to: secondaryPhoneNumbers };
+      }
     }
 
     if (Object.keys(changes).length > 0) {

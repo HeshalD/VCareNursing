@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
+const { isValidNic, normalizeNic, NIC_FORMAT_MESSAGE } = require('../utils/nic');
 
 const ALLOWED_PROFILE_FIELDS = [
   'full_name', 'home_address', 'location', 'gender', 'date_of_birth',
@@ -61,6 +62,16 @@ exports.submitChangeRequest = async (req, res) => {
         [staff.staff_profile_id]
       );
       const currentData = current.rows[0];
+
+      // A requested NIC change is validated here, at submission, so a malformed
+      // value never sits in the queue waiting for an admin to approve it into
+      // staff_profiles. Stored normalized (uppercase, trimmed).
+      if (validFields.includes('nic_number')) {
+        if (!isValidNic(submitted.nic_number)) {
+          return res.status(400).json({ status: 'error', message: NIC_FORMAT_MESSAGE });
+        }
+        submitted.nic_number = normalizeNic(submitted.nic_number);
+      }
 
       for (const field of validFields) {
         requestedChanges[field] = { old_value: currentData[field], new_value: submitted[field] };

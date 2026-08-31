@@ -98,6 +98,16 @@ const money = (value) =>
     maximumFractionDigits: 2
   })}`;
 
+// Payer name as typed on the booking doesn't carry the client's honorific —
+// it lives separately on client_profiles, so it's prefixed for display only
+// when the payer wasn't already typed with one (e.g. "Mrs. Jane Silva").
+const withHonorific = (honorific, name) => {
+  if (!name) return name;
+  if (!honorific) return name;
+  if (name.trim().toLowerCase().startsWith(honorific.trim().toLowerCase())) return name;
+  return `${honorific} ${name}`;
+};
+
 const SectionHeader = ({ title }) => (
   <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">{title}</p>
 );
@@ -273,6 +283,7 @@ const QuotationsPage = () => {
               client_id: request.client_id || null,
               estimate_number: quote.estimate_number || '-',
               payer_name: quote.payer_name || request.payer_name,
+              client_honorific: quote.client_honorific || null,
               payer_mobile: quote.payer_mobile || request.payer_mobile,
               patient_name: quote.patient_name || request.patient_name,
               service_type: quote.service_type || request.service_type,
@@ -698,7 +709,7 @@ const QuotationsPage = () => {
                         >
                           <td className="px-4 py-3 font-semibold text-slate-900">{quote.estimate_number}</td>
                           <td className="px-4 py-3">
-                            <p className="text-slate-700">{quote.payer_name}</p>
+                            <p className="text-slate-700">{withHonorific(quote.client_honorific, quote.payer_name)}</p>
                             <p className="text-xs text-slate-400">{formatMobileNumber(quote.payer_mobile)}</p>
                           </td>
                           <td className="px-4 py-3 text-right text-slate-700">{money(quote.total_amount)}</td>
@@ -747,7 +758,7 @@ const QuotationsPage = () => {
                         <div className="flex items-start justify-between gap-2 px-5 py-4 border-b border-slate-100">
                           <div>
                             <h3 className="text-sm font-semibold text-slate-900">{selectedQuote.estimate_number}</h3>
-                            <p className="text-xs text-slate-400 mt-0.5">{selectedQuote.payer_name}</p>
+                            <p className="text-xs text-slate-400 mt-0.5">{withHonorific(selectedQuote.client_honorific, selectedQuote.payer_name)}</p>
                           </div>
                           <button
                             onClick={() => navigate(`/admin/quotations/${selectedQuote.quote_id}`)}

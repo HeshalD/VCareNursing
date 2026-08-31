@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Star, Eye, EyeOff, Search, X, BookOpen, ChevronLeft, ChevronRight, Plus, Phone, Check, Loader2, User, UserCheck } from 'lucide-react';
+import { Star, Eye, EyeOff, Search, X, BookOpen, ChevronLeft, ChevronRight, Plus, Phone, Check, Loader2, User, UserCheck, Mars, Venus, Calendar, MapPin, Users, Wallet } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -18,6 +18,59 @@ const StarDisplay = ({ rating }) => (
 
 const fmt = (d) =>
   d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+
+const humanize = (v) =>
+  v ? String(v).replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase()) : '';
+
+const money = (v) =>
+  v === null || v === undefined || v === '' ? null : `Rs. ${Number(v).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+// Male / female marker shown beside a staff member's name in the picker.
+const GenderBadge = ({ gender }) => {
+  if (!gender) return null;
+  const g = String(gender).toUpperCase();
+  if (g === 'MALE') {
+    return (
+      <span title="Male" className="inline-flex items-center gap-0.5 text-[10px] font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-full px-1.5 py-0.5">
+        <Mars className="w-2.5 h-2.5" /> M
+      </span>
+    );
+  }
+  if (g === 'FEMALE') {
+    return (
+      <span title="Female" className="inline-flex items-center gap-0.5 text-[10px] font-medium text-pink-600 bg-pink-50 border border-pink-200 rounded-full px-1.5 py-0.5">
+        <Venus className="w-2.5 h-2.5" /> F
+      </span>
+    );
+  }
+  return (
+    <span title={humanize(gender)} className="inline-flex items-center gap-0.5 text-[10px] font-medium text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-1.5 py-0.5">
+      {humanize(gender)}
+    </span>
+  );
+};
+
+const BOOKING_STATUS_CLS = {
+  ACTIVE: 'text-emerald-700 bg-emerald-50 border-emerald-200',
+  COMPLETED: 'text-blue-700 bg-blue-50 border-blue-200',
+  CANCELLED: 'text-red-700 bg-red-50 border-red-200',
+  PENDING: 'text-amber-700 bg-amber-50 border-amber-200',
+};
+
+const BookingStatusPill = ({ status }) => (
+  <span className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+    BOOKING_STATUS_CLS[String(status || '').toUpperCase()] || 'text-slate-600 bg-slate-100 border-slate-200'
+  }`}>
+    {status || '—'}
+  </span>
+);
+
+const DetailRow = ({ icon: Icon, children }) => (
+  <p className="flex items-start gap-1.5 text-xs text-slate-500">
+    <Icon className="w-3 h-3 mt-0.5 flex-shrink-0 text-slate-400" />
+    <span className="min-w-0">{children}</span>
+  </p>
+);
 
 const LIMIT = 10;
 
@@ -128,7 +181,8 @@ const AddReviewModal = ({ onClose, onCreated }) => {
 
   const filteredBookings = bookingFilter.trim()
     ? bookings.filter(b =>
-        `${b.service_type || ''} ${b.service_model || ''} ${b.status || ''}`.toLowerCase().includes(bookingFilter.trim().toLowerCase())
+        `${b.booking_code || ''} ${b.service_type || ''} ${b.service_model || ''} ${b.service_mode || ''} ${b.status || ''} ${b.patient_name || ''}`
+          .toLowerCase().includes(bookingFilter.trim().toLowerCase())
       )
     : bookings;
 
@@ -154,7 +208,7 @@ const AddReviewModal = ({ onClose, onCreated }) => {
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <div className="flex items-center gap-2">
             <Phone className="w-4 h-4 text-slate-500" />
@@ -179,7 +233,7 @@ const AddReviewModal = ({ onClose, onCreated }) => {
             {selectedBooking && (
               <StepCrumb
                 label="Booking"
-                value={`${selectedBooking.service_type || 'Booking'} · ${fmt(selectedBooking.start_date)}`}
+                value={selectedBooking.booking_code || `${selectedBooking.service_type || 'Booking'} · ${fmt(selectedBooking.start_date)}`}
                 active={step === STEP_BOOKING}
                 onChange={goToBookingStep}
               />
@@ -187,7 +241,7 @@ const AddReviewModal = ({ onClose, onCreated }) => {
             {selectedStaff && (
               <StepCrumb
                 label="Staff"
-                value={selectedStaff.full_name}
+                value={`${selectedStaff.full_name}${selectedStaff.staff_code ? ` · ${selectedStaff.staff_code}` : ''}`}
                 active={step === STEP_STAFF || step === STEP_DETAILS}
                 onChange={goToStaffStep}
               />
@@ -264,7 +318,7 @@ const AddReviewModal = ({ onClose, onCreated }) => {
                   className={inputCls}
                 />
               </div>
-              <div className="border border-slate-200 rounded-lg max-h-64 overflow-y-auto divide-y divide-slate-100">
+              <div className="border border-slate-200 rounded-lg max-h-[26rem] overflow-y-auto divide-y divide-slate-100">
                 {bookingsLoading ? (
                   <div className="flex items-center justify-center py-6 text-xs text-slate-400 gap-2">
                     <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading bookings…
@@ -277,14 +331,60 @@ const AddReviewModal = ({ onClose, onCreated }) => {
                       key={b.booking_id}
                       type="button"
                       onClick={() => chooseBooking(b)}
-                      className="w-full text-left px-3 py-2.5 hover:bg-slate-50 transition-colors flex items-center gap-2.5"
+                      className="w-full text-left px-3 py-3 hover:bg-slate-50 transition-colors flex items-start gap-2.5"
                     >
-                      <div className="w-7 h-7 rounded-full bg-slate-200 flex items-center justify-center flex-shrink-0">
+                      <div className="w-7 h-7 rounded-full bg-slate-200 flex items-center justify-center flex-shrink-0 mt-0.5">
                         <BookOpen className="w-3.5 h-3.5 text-slate-500" />
                       </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-slate-900 truncate">{b.service_type || 'Booking'}</p>
-                        <p className="text-xs text-slate-500 truncate">{fmt(b.start_date)} · {b.status}</p>
+                      <div className="min-w-0 flex-1 flex flex-col gap-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-semibold text-slate-900">{b.booking_code || 'Booking'}</span>
+                          <BookingStatusPill status={b.status} />
+                        </div>
+
+                        <p className="text-xs text-slate-600 truncate">
+                          {b.service_type || 'Service'}
+                          {b.service_model && <span className="text-slate-400"> · {humanize(b.service_model)}</span>}
+                          {b.service_mode && <span className="text-slate-400"> · {humanize(b.service_mode)}</span>}
+                        </p>
+
+                        {b.patient_name && (
+                          <DetailRow icon={User}>
+                            {b.patient_name}
+                            {b.patient_age ? `, ${b.patient_age} yrs` : ''}
+                            {b.patient_gender ? ` · ${humanize(b.patient_gender)}` : ''}
+                            {b.relationship_to_client ? ` · ${humanize(b.relationship_to_client)}` : ''}
+                          </DetailRow>
+                        )}
+
+                        <DetailRow icon={Calendar}>
+                          {fmt(b.start_date)}
+                          {(b.actual_end_time || b.scheduled_end_time) &&
+                            ` → ${fmt(b.actual_end_time || b.scheduled_end_time)}${b.actual_end_time ? '' : ' (scheduled)'}`}
+                        </DetailRow>
+
+                        {b.residential_address && (
+                          <DetailRow icon={MapPin}>
+                            <span className="line-clamp-1">{b.residential_address}</span>
+                          </DetailRow>
+                        )}
+
+                        <DetailRow icon={Users}>
+                          {b.assigned_staff_name
+                            ? <>{b.assigned_staff_name}{b.assigned_staff_code ? ` (${b.assigned_staff_code})` : ''}</>
+                            : 'No lead staff assigned'}
+                          {Number(b.staff_count) > 0 && (
+                            <span className="text-slate-400"> · {b.staff_count} staff on booking</span>
+                          )}
+                        </DetailRow>
+
+                        {(money(b.daily_rate) || money(b.amount_quotated) || money(b.amount_paid)) && (
+                          <DetailRow icon={Wallet}>
+                            {money(b.daily_rate) && <>{money(b.daily_rate)}/day</>}
+                            {money(b.amount_quotated) && <span className="text-slate-400"> · Quoted {money(b.amount_quotated)}</span>}
+                            {money(b.amount_paid) && <span className="text-slate-400"> · Paid {money(b.amount_paid)}</span>}
+                          </DetailRow>
+                        )}
                       </div>
                     </button>
                   ))
@@ -318,8 +418,15 @@ const AddReviewModal = ({ onClose, onCreated }) => {
                         <UserCheck className="w-3.5 h-3.5 text-slate-500" />
                       </div>
                       <div className="min-w-0">
-                        <p className="text-sm font-medium text-slate-900 truncate">{s.full_name}</p>
-                        <p className="text-xs text-slate-500 truncate">{s.designation || 'Staff'}</p>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="text-sm font-medium text-slate-900 truncate">{s.full_name}</p>
+                          <GenderBadge gender={s.gender} />
+                        </div>
+                        <p className="text-xs text-slate-500 truncate">
+                          {s.staff_code && <span className="font-medium text-slate-600">{s.staff_code}</span>}
+                          {s.staff_code && ' · '}
+                          {s.designation || 'Staff'}
+                        </p>
                       </div>
                     </button>
                   ))

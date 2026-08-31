@@ -2143,6 +2143,14 @@ const BookingDetailPageV2 = () => {
   const heroName    = patientDetails.patient_name || clientDetails.client_name || 'Booking';
   const heroInitials = initials(heroName);
 
+  // Hero name links through to whichever profile it is actually showing — the
+  // care profile when the booking has one, otherwise the client it fell back to.
+  const heroProfilePath = patientDetails.patient_id
+    ? `/admin/patients/${patientDetails.patient_id}/detail`
+    : (statementClientId ? `/admin/users/${statementClientId}/detail` : null);
+  const clientProfilePath = statementClientId ? `/admin/users/${statementClientId}/detail` : null;
+  const heroLinkCls = 'font-semibold text-gray-900 hover:text-[#137A6B] hover:underline underline-offset-2 transition-colors';
+
   // ── input style helper ───────────────────────────────────────────────────
   const inp = { width: '100%', border: '1px solid #e5e7eb', borderRadius: 8, padding: '9px 12px', fontFamily: 'inherit', fontSize: 13.5, color: '#111827', outline: 'none', background: '#fff', boxSizing: 'border-box' };
 
@@ -2313,7 +2321,16 @@ const BookingDetailPageV2 = () => {
               <div className="min-w-[260px] flex-1">
                 <div className="flex flex-wrap items-center gap-2 mb-1.5">
                   <h1 className="text-[17px] font-semibold text-gray-900">
-                    {heroName}
+                    {heroProfilePath ? (
+                      <button
+                        type="button"
+                        onClick={() => navigate(heroProfilePath)}
+                        title={patientDetails.patient_id ? 'Open care profile' : 'Open client profile'}
+                        className={heroLinkCls}
+                      >
+                        {heroName}
+                      </button>
+                    ) : heroName}
                     {bookingSummary.service_type ? ` · ${bookingSummary.service_type}` : ''}
                   </h1>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: sm.bg, color: sm.col, borderRadius: 999, padding: '4px 10px', fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap' }}>
@@ -2343,7 +2360,19 @@ const BookingDetailPageV2 = () => {
                   <span className="flex items-center gap-1.5"><Briefcase className="h-3.5 w-3.5" />{salesData?.current?.salesperson_name || 'Unassigned'}</span>
                   <span className="font-mono">{bookingSummary.booking_code || '—'}</span>
                   {clientDetails.client_name && (
-                    <span className="flex items-center gap-1.5"><User className="h-3.5 w-3.5" />{clientDetails.client_name}</span>
+                    <span className="flex items-center gap-1.5">
+                      <User className="h-3.5 w-3.5" />
+                      {clientProfilePath ? (
+                        <button
+                          type="button"
+                          onClick={() => navigate(clientProfilePath)}
+                          title="Open client profile"
+                          className="hover:text-[#137A6B] hover:underline underline-offset-2 transition-colors"
+                        >
+                          {clientDetails.client_name}
+                        </button>
+                      ) : clientDetails.client_name}
+                    </span>
                   )}
                   {bookingSummary.start_date && (
                     <span className="flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5" />Started {formatDate(bookingSummary.start_date)}</span>

@@ -480,7 +480,9 @@ const ClientManagement = () => {
                         </div>
                       )}
                       <div>
-                        <p className="font-semibold text-slate-900 leading-tight">{client.full_name ?? '—'}</p>
+                        <p className="font-semibold text-slate-900 leading-tight">
+                          {client.honorific ? `${client.honorific} ` : ''}{client.full_name ?? '—'}
+                        </p>
                         {client.client_code && (
                           <p className="text-xs text-slate-400 font-mono">{client.client_code}</p>
                         )}

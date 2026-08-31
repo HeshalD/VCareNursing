@@ -31,4 +31,24 @@ const toMessagingDigits = (raw, defaultCountry = DEFAULT_COUNTRY) => {
   return e164 ? e164.replace('+', '') : null;
 };
 
-module.exports = { toE164, isValidPhone, toMessagingDigits, DEFAULT_COUNTRY };
+// Normalizes a list of phone numbers to a deduped E.164 array. Accepts either a
+// real array or a JSON-array string (how arrays arrive through multipart form
+// data, same as `languages`/`roles`). Invalid or blank entries are dropped so
+// junk never reaches the DB. Returns null when `raw` is undefined/null — the
+// "leave unchanged" signal for COALESCE-style updates.
+const toE164List = (raw, defaultCountry = DEFAULT_COUNTRY) => {
+  if (raw === undefined || raw === null) return null;
+  let list = raw;
+  if (typeof list === 'string') {
+    try { list = JSON.parse(list); } catch { return []; }
+  }
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  for (const entry of list) {
+    const e164 = toE164(entry, defaultCountry);
+    if (e164) seen.add(e164);
+  }
+  return Array.from(seen);
+};
+
+module.exports = { toE164, toE164List, isValidPhone, toMessagingDigits, DEFAULT_COUNTRY };

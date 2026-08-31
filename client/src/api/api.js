@@ -885,7 +885,7 @@ class ApiClient {
 
     Object.keys(applicationData).forEach(key => {
 
-      if ((key === 'applied_roles' || key === 'languages') && Array.isArray(applicationData[key])) {
+      if ((key === 'applied_roles' || key === 'languages' || key === 'secondary_phone_numbers') && Array.isArray(applicationData[key])) {
 
         formData.append(key, JSON.stringify(applicationData[key]));
 
@@ -982,7 +982,7 @@ class ApiClient {
   async updateApplicationDetails(applicationId, data, profilePictureFile = null) {
     const formData = new FormData();
     Object.keys(data).forEach(key => {
-      if ((key === 'applied_roles' || key === 'languages') && Array.isArray(data[key])) {
+      if ((key === 'applied_roles' || key === 'languages' || key === 'secondary_phone_numbers') && Array.isArray(data[key])) {
         formData.append(key, JSON.stringify(data[key]));
       } else {
         formData.append(key, data[key] ?? '');

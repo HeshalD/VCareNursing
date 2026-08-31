@@ -8,6 +8,7 @@ import apiClient from '../../../api/api';
 import { useAuth } from '../../../context/AuthContext';
 import StaffSidebar from './StaffSidebar';
 import DateInput from '../../../components/common/DateInput';
+import { sanitizeNicInput, validateNic } from '../../../utils/nicFormat';
 
 const REQUEST_TYPE_META = [
   { id: 'PROFILE_UPDATE', icon: User },
@@ -48,7 +49,7 @@ const StatusBadge = ({ status }) => {
   );
 };
 
-const InputField = ({ label, value, onChange, type = 'text', options = [], placeholder = '' }) => {
+const InputField = ({ label, value, onChange, type = 'text', options = [], placeholder = '', maxLength, error }) => {
   const { t } = useTranslation('staffChangeRequest');
   if (type === 'textarea') {
     return (
@@ -117,8 +118,12 @@ const InputField = ({ label, value, onChange, type = 'text', options = [], place
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+        maxLength={maxLength}
+        className={`w-full rounded-xl border px-3 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:border-transparent ${
+          error ? 'border-red-300 focus:ring-red-500' : 'border-slate-200 focus:ring-blue-500'
+        }`}
       />
+      {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
     </div>
   );
 };
@@ -302,7 +307,9 @@ const StaffChangeRequestPage = () => {
   }, [user, authLoading]);
 
   const handleProfileFieldChange = (key, value) => {
-    setProfileChanges(prev => ({ ...prev, [key]: value }));
+    // NIC is filtered as it is typed so only the two valid formats can be entered.
+    const next = key === 'nic_number' ? sanitizeNicInput(value) : value;
+    setProfileChanges(prev => ({ ...prev, [key]: next }));
   };
 
   const resetForm = () => {
@@ -340,6 +347,14 @@ const StaffChangeRequestPage = () => {
           setSubmitError('No changes detected. Please modify at least one field.');
           setSubmitting(false);
           return;
+        }
+        if (changes.nic_number !== undefined) {
+          const nicMessage = validateNic(changes.nic_number, { required: true });
+          if (nicMessage) {
+            setSubmitError(nicMessage);
+            setSubmitting(false);
+            return;
+          }
         }
         payload = { request_type: 'PROFILE_UPDATE', changes };
 
@@ -459,6 +474,9 @@ const StaffChangeRequestPage = () => {
                         options={field.options}
                         value={profileChanges[field.key] ?? (field.type === 'boolean' ? false : '')}
                         onChange={val => handleProfileFieldChange(field.key, val)}
+                        maxLength={field.key === 'nic_number' ? 12 : undefined}
+                        placeholder={field.key === 'nic_number' ? 'e.g. 000000000V or 200332112486' : ''}
+                        error={field.key === 'nic_number' ? validateNic(profileChanges.nic_number) : ''}
                       />
                     </div>
                   ))}
