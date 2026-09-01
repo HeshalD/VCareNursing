@@ -977,7 +977,7 @@ const WorkerVerificationDetailsPage = () => {
                     value={approveModal.staffId}
                     onChange={e => setApproveModal(p => ({ ...p, staffId: e.target.value, staffIdConflict: '' }))}
                     onBlur={e => handleStaffIdBlur(e.target.value)}
-                    placeholder={approveModal.staffIdLoading ? 'Generating Staff ID...' : 'e.g. EMP-5000'}
+                    placeholder={approveModal.staffIdLoading ? 'Generating Staff ID...' : 'e.g. EMP-2700'}
                     className={`w-full px-4 py-2.5 border rounded-xl text-sm outline-none pr-10 ${
                       approveModal.staffIdConflict
                         ? 'border-red-300 bg-red-50 focus:border-red-400 focus:ring-2 focus:ring-red-100'

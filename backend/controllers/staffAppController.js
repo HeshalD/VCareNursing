@@ -303,12 +303,12 @@ exports.resendStaffApplicationOtp = async (req, res) => {
   }
 };
 
-// Suggests the next auto-generated Staff ID. Defaults to EMP-5000 onwards (used when
-// accepting worker applications); pass ?start=2700 for the manual "Add Staff" flow,
-// which reserves its own EMP-2700+ range. Either way the suggestion is always at least
-// one past the highest EMP-N code already in use, so the two ranges can never collide.
+// Suggests the next auto-generated Staff ID. Both the "Accept Application" flow and the
+// manual "Add Staff" (proxy mode) flow now share the same EMP-2700+ range: the suggestion
+// is always one past the highest EMP-N code already in use across all staff, regardless of
+// which flow created it, so the two flows can never generate a clashing code.
 exports.getNextStaffCode = async (req, res) => {
-  const START = parseInt(req.query.start, 10) || 5000;
+  const START = parseInt(req.query.start, 10) || 2700;
   try {
     const result = await db.query(`
       SELECT COALESCE(MAX(CAST(SUBSTRING(staff_code FROM 'EMP-([0-9]+)$') AS INTEGER)), 0) AS max_num
