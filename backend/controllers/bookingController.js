@@ -4559,15 +4559,16 @@ exports.hardDeleteBooking = async (req, res) => {
         }
         const booking = bookingRes.rows[0];
 
-        // Explicit ahead of the final CASCADE delete — both reference quote_id,
-        // which must be free of referencing rows before the quotation tree is
-        // torn down below.
-        await client.query(`DELETE FROM booking_payment_tracking WHERE booking_id = $1`, [booking_id]);
-        await client.query(`DELETE FROM booking_staff_assignments WHERE booking_id = $1`, [booking_id]);
+        // Deletion order below is dictated entirely by FK direction (a row can only
+        // be deleted once nothing still RESTRICTs it) — reordering any block here
+        // without re-checking migrate.js's FK graph will likely reintroduce a
+        // 23503 violation.
 
-        // Client payment records: delete the receipt itself only if every one of
-        // its allocations belongs to this booking; otherwise it's shared with
-        // another booking/wallet and must survive with just this allocation removed.
+        // 1. client_payment_allocations references both booking_payment_tracking
+        //    (booking_payment_id) and transactions (transaction_id) — must go before
+        //    either. Delete the underlying receipt too if every allocation on it
+        //    belongs solely to this booking; otherwise it's shared with another
+        //    booking/wallet and only this allocation is removed.
         const recordIdsRes = await client.query(
             `SELECT DISTINCT record_id FROM client_payment_allocations WHERE booking_id = $1`,
             [booking_id]
@@ -4584,24 +4585,43 @@ exports.hardDeleteBooking = async (req, res) => {
         }
         await client.query(`DELETE FROM client_payment_allocations WHERE booking_id = $1`, [booking_id]);
 
-        // An earmark is a reservation against a future use of this booking, not a
-        // transaction that belongs to it — unlink rather than delete.
-        await client.query(`UPDATE transactions SET earmarked_booking_id = NULL WHERE earmarked_booking_id = $1`, [booking_id]);
-        await client.query(`DELETE FROM transactions WHERE booking_id = $1`, [booking_id]);
+        // 2. scheduled_actions references service_terminations (termination_id) —
+        //    must go before it, even though scheduled_actions would otherwise just
+        //    cascade from the final bookings delete.
+        await client.query(`DELETE FROM scheduled_actions WHERE booking_id = $1`, [booking_id]);
 
-        // booking_id FKs with no ON DELETE clause (RESTRICT) — must be cleared
-        // explicitly or the final bookings delete fails.
+        // 3. booking_daily_invoices and staff_daily_attendance both reference
+        //    booking_staff_assignments (assignment_id), booking_shift_slots
+        //    (shift_slot_id), and shift_reschedules (reschedule_id) — must go
+        //    before all three.
+        await client.query(`DELETE FROM booking_daily_invoices WHERE booking_id = $1`, [booking_id]);
+        await client.query(`DELETE FROM staff_daily_attendance WHERE booking_id = $1`, [booking_id]);
+        await client.query(`DELETE FROM booking_day_drafts WHERE booking_id = $1`, [booking_id]);
+
+        // 4. Now safe: nothing left references service_terminations.
+        await client.query(`DELETE FROM service_terminations WHERE booking_id = $1`, [booking_id]);
         await client.query(`DELETE FROM staff_swaps WHERE booking_id = $1`, [booking_id]);
         await client.query(`DELETE FROM client_alerts WHERE booking_id = $1`, [booking_id]);
-        await client.query(`DELETE FROM service_terminations WHERE booking_id = $1`, [booking_id]);
-        await client.query(`DELETE FROM staff_daily_attendance WHERE booking_id = $1`, [booking_id]);
-        await client.query(`DELETE FROM booking_daily_invoices WHERE booking_id = $1`, [booking_id]);
-        await client.query(`DELETE FROM booking_day_drafts WHERE booking_id = $1`, [booking_id]);
+
+        // 5. shift_reschedules and booking_staff_assignments reference each other
+        //    (assignment_id / reschedule_id, both nullable) — null both sides first,
+        //    then shift_reschedules (also references booking_shift_slots, NOT NULL)
+        //    can be deleted safely ahead of booking_staff_assignments.
+        await client.query(`UPDATE booking_staff_assignments SET reschedule_id = NULL WHERE booking_id = $1`, [booking_id]);
+        await client.query(`DELETE FROM shift_reschedules WHERE booking_id = $1`, [booking_id]);
+
+        // 6. Now safe: client_payment_allocations, staff_daily_attendance and
+        //    shift_reschedules (the only referencers) are gone.
+        await client.query(`DELETE FROM booking_payment_tracking WHERE booking_id = $1`, [booking_id]);
+        await client.query(`DELETE FROM booking_staff_assignments WHERE booking_id = $1`, [booking_id]);
         // client_notes.booking_id and staff_reviews.booking_id are ON DELETE SET
         // NULL — they survive automatically, no action needed here.
 
-        // Quotation tree: full teardown including its invoices, rental agreements
-        // and deposits, per admin's explicit request — NOT just an unlink.
+        // 7. Quotation tree — full teardown including invoices, rental agreements
+        //    and deposits, per admin's explicit request, NOT just an unlink.
+        //    invoices.rental_agreement_id references rental_agreements, so invoices
+        //    must be deleted first; deposits/invoices both reference transactions,
+        //    so transactions for this quote can't go until both are gone.
         const quoteIdsRes = await client.query(`SELECT quote_id FROM quotations WHERE booking_id = $1`, [booking_id]);
         const deletedQuoteIds = [];
         for (const { quote_id } of quoteIdsRes.rows) {
@@ -4609,22 +4629,39 @@ exports.hardDeleteBooking = async (req, res) => {
             // Clear the sibling SERVICE/PRODUCT quote's back-pointer without touching the sibling itself.
             await client.query(`UPDATE quotations SET linked_quote_id = NULL WHERE linked_quote_id = $1`, [quote_id]);
             await client.query(`UPDATE service_requests SET active_quote_id = NULL WHERE active_quote_id = $1`, [quote_id]);
-            await client.query(`DELETE FROM payment_tracking WHERE quote_id = $1`, [quote_id]);
-            await client.query(`DELETE FROM payment_slips WHERE quote_id = $1`, [quote_id]);
+            await client.query(`DELETE FROM invoices WHERE quote_id = $1`, [quote_id]); // cascades invoice_payments
             await client.query(`DELETE FROM rental_agreements WHERE quote_id = $1`, [quote_id]); // cascades deposits
             await client.query(`DELETE FROM deposits WHERE quote_id = $1`, [quote_id]); // standalone deposits (no rental_agreement_id)
-            await client.query(`DELETE FROM invoices WHERE quote_id = $1`, [quote_id]); // cascades invoice_payments
-            // transactions has its own quote_id FK independent of booking_id (e.g. a
-            // registration-fee payment recorded straight against the quote) — must be
-            // cleared after deposits/invoices (which reference transactions) and before
-            // the quotation delete below, or the quote_id FK blocks it.
-            await client.query(`DELETE FROM transactions WHERE quote_id = $1`, [quote_id]);
-            await client.query(`DELETE FROM quotations WHERE quote_id = $1`, [quote_id]); // cascades quote_line_items
         }
 
-        // Final delete — cascades scheduled_actions, booking_pauses,
-        // booking_salesperson_assignments, booking_shift_patterns (→
-        // booking_shift_slots), shift_reschedules, booking_hospitalizations.
+        // 8. transactions: an earmark is a reservation against a future use of this
+        //    booking, not a transaction that belongs to it — unlink rather than
+        //    delete. Now safe for both booking_id and quote_id scoped rows (deposits/
+        //    invoices referencing them are gone); payment_tracking references
+        //    transactions too, so this must precede step 9.
+        await client.query(`UPDATE transactions SET earmarked_booking_id = NULL WHERE earmarked_booking_id = $1`, [booking_id]);
+        await client.query(`DELETE FROM transactions WHERE booking_id = $1`, [booking_id]);
+        for (const quote_id of deletedQuoteIds) {
+            await client.query(`DELETE FROM transactions WHERE quote_id = $1`, [quote_id]);
+        }
+
+        // 9. payment_tracking/booking_payment_tracking are referenced by
+        //    transactions.payment_tracking_id — now safe. payment_slips has no
+        //    inbound references.
+        for (const quote_id of deletedQuoteIds) {
+            await client.query(`DELETE FROM payment_tracking WHERE quote_id = $1`, [quote_id]);
+            await client.query(`DELETE FROM payment_slips WHERE quote_id = $1`, [quote_id]);
+        }
+
+        // 10. quotations — safe now that invoices/deposits/payment_tracking/
+        //     transactions/linked_quote_id/active_quote_id are all cleared.
+        //     Cascades quote_line_items.
+        for (const quote_id of deletedQuoteIds) {
+            await client.query(`DELETE FROM quotations WHERE quote_id = $1`, [quote_id]);
+        }
+
+        // 11. Final delete — cascades booking_pauses, booking_salesperson_assignments,
+        //     booking_shift_patterns (→ booking_shift_slots), booking_hospitalizations.
         await client.query(`DELETE FROM bookings WHERE booking_id = $1`, [booking_id]);
 
         await client.query('COMMIT');
