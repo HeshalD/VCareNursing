@@ -304,8 +304,8 @@ exports.resendStaffApplicationOtp = async (req, res) => {
 };
 
 // Suggests the next auto-generated Staff ID. Defaults to EMP-5000 onwards (used when
-// accepting worker applications); pass ?start=3000 for the manual "Add Staff" flow,
-// which reserves its own EMP-3000+ range. Either way the suggestion is always at least
+// accepting worker applications); pass ?start=2700 for the manual "Add Staff" flow,
+// which reserves its own EMP-2700+ range. Either way the suggestion is always at least
 // one past the highest EMP-N code already in use, so the two ranges can never collide.
 exports.getNextStaffCode = async (req, res) => {
   const START = parseInt(req.query.start, 10) || 5000;

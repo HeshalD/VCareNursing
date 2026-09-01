@@ -249,7 +249,7 @@ const ProxyUserManagement = () => {
     setIsEditMode(false);
     setSelectedWorker(null);
     setShowDrawer(true);
-    apiClient.getNextStaffCode(3000)
+    apiClient.getNextStaffCode(2700)
       .then(res => { if (res.staff_id) setFormData(p => ({ ...p, staff_code: res.staff_id })); })
       .catch(() => {});
   };
