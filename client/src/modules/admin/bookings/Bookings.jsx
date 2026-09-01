@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { XCircle, Loader2, Calendar, User, Clock, Search, RefreshCw, AlertTriangle, Plus, ChevronRight, Building2 } from 'lucide-react';
+import { XCircle, Loader2, Calendar, User, Clock, Search, RefreshCw, AlertTriangle, Plus, ChevronRight, Building2, Trash2, Lock } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
@@ -70,7 +70,7 @@ const TypeChip = ({ type }) => {
 };
 
 const Bookings = () => {
-  const { adminToken } = useAdminAuth();
+  const { adminToken, isSuperAdmin } = useAdminAuth();
   const navigate = useNavigate();
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -81,6 +81,34 @@ const Bookings = () => {
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [hospitalizedOnly, setHospitalizedOnly] = useState(false);
   const [showDirectBooking, setShowDirectBooking] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+  const [deleting, setDeleting] = useState(false);
+
+  const closeDeleteModal = () => {
+    setDeleteTarget(null);
+    setDeletePassword('');
+    setDeleteError('');
+    setDeleting(false);
+  };
+
+  const confirmHardDelete = async () => {
+    if (!deleteTarget || !deletePassword) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      const orig = apiClient.token;
+      apiClient.setToken(adminToken);
+      await apiClient.hardDeleteBooking(deleteTarget.booking_id, deletePassword);
+      apiClient.setToken(orig);
+      closeDeleteModal();
+      fetchBookings();
+    } catch (err) {
+      setDeleteError(err.message || 'Failed to delete booking.');
+      setDeleting(false);
+    }
+  };
 
   useEffect(() => {
     if (adminToken) fetchBookings();
@@ -417,7 +445,18 @@ const Bookings = () => {
 
                           {/* Arrow */}
                           <td className="px-4 py-3 text-right">
-                            <ChevronRight className="w-4 h-4 text-slate-300 ml-auto" />
+                            <div className="flex items-center justify-end gap-2">
+                              {isSuperAdmin && (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setDeleteTarget(b); }}
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                                  title="Permanently delete this booking"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
+                              <ChevronRight className="w-4 h-4 text-slate-300" />
+                            </div>
                           </td>
                         </tr>
                       );
@@ -477,6 +516,15 @@ const Bookings = () => {
                           {b.hospital_name ? b.hospital_name : 'Hospitalized'}
                         </span>
                       )}
+                      {isSuperAdmin && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setDeleteTarget(b); }}
+                          className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-red-600"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          Delete booking
+                        </button>
+                      )}
                     </div>
                   );
                 })}
@@ -495,6 +543,70 @@ const Bookings = () => {
         onClose={() => setShowDirectBooking(false)}
         onSuccess={() => fetchBookings()}
       />
+
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl">
+            <div className="p-6 space-y-4">
+              <div className="flex items-start gap-3">
+                <div className="bg-red-100 rounded-full p-2 flex-shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-red-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">Permanently delete this booking?</h3>
+                  <p className="text-sm text-slate-500 mt-1">
+                    This will irreversibly delete{' '}
+                    <span className="font-mono font-semibold text-slate-700">
+                      {deleteTarget.booking_code || `#${deleteTarget.booking_id}`}
+                    </span>{' '}
+                    and every related record — staff assignments, attendance, payments, transactions,
+                    quotation, invoices, and rentals. This cannot be undone.
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Confirm with your password
+                </label>
+                <div className="relative">
+                  <Lock className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="password"
+                    autoFocus
+                    value={deletePassword}
+                    onChange={(e) => setDeletePassword(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && deletePassword && !deleting) confirmHardDelete(); }}
+                    placeholder="Your login password"
+                    className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:border-red-400 focus:ring-2 focus:ring-red-100 outline-none"
+                  />
+                </div>
+                {deleteError && (
+                  <p className="text-xs text-red-600 mt-1.5">{deleteError}</p>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  onClick={closeDeleteModal}
+                  disabled={deleting}
+                  className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmHardDelete}
+                  disabled={!deletePassword || deleting}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                  Permanently Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 };

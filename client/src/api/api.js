@@ -2735,6 +2735,13 @@ class ApiClient {
     });
   }
 
+  async hardDeleteBooking(bookingId, password) {
+    return this.request(`/bookings/${bookingId}/hard-delete`, {
+      method: 'DELETE',
+      body: JSON.stringify({ password }),
+    });
+  }
+
   async getClientNotes(clientId, params = {}) {
     const query = new URLSearchParams(params).toString();
     const endpoint = query ? `/client/${clientId}/notes?${query}` : `/client/${clientId}/notes`;

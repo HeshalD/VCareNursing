@@ -4519,6 +4519,146 @@ exports.adminDirectBooking = async (req, res) => {
     }
 };
 
+/**
+ * @route   DELETE /api/bookings/:booking_id/hard-delete
+ * @desc    SUPER_ADMIN-only. Permanently deletes a booking and every record tied to
+ *          it (staff assignments, attendance, transactions, client payment
+ *          allocations — and the receipt itself if it belongs solely to this
+ *          booking, the linked quotation and everything under it including
+ *          invoices/rental agreements/deposits). Irreversible. Requires the
+ *          caller's own login password as a re-auth confirmation.
+ * @body    password (required)
+ * @access  Private (SUPER_ADMIN)
+ */
+exports.hardDeleteBooking = async (req, res) => {
+    const { booking_id } = req.params;
+    const { password } = req.body || {};
+
+    if (!password) {
+        return res.status(400).json({ status: 'error', message: 'Password is required to confirm this action.' });
+    }
+
+    const userRes = await db.query('SELECT password_hash FROM users WHERE user_id = $1', [req.user.user_id]);
+    const passwordHash = userRes.rows[0]?.password_hash;
+    const passwordOk = passwordHash && await bcrypt.compare(password, passwordHash);
+    if (!passwordOk) {
+        return res.status(401).json({ status: 'error', message: 'Incorrect password.' });
+    }
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const bookingRes = await client.query(
+            `SELECT booking_id, client_id, service_type, status FROM bookings WHERE booking_id = $1 FOR UPDATE`,
+            [booking_id]
+        );
+        if (bookingRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Booking not found' });
+        }
+        const booking = bookingRes.rows[0];
+
+        // Explicit ahead of the final CASCADE delete — both reference quote_id,
+        // which must be free of referencing rows before the quotation tree is
+        // torn down below.
+        await client.query(`DELETE FROM booking_payment_tracking WHERE booking_id = $1`, [booking_id]);
+        await client.query(`DELETE FROM booking_staff_assignments WHERE booking_id = $1`, [booking_id]);
+
+        // Client payment records: delete the receipt itself only if every one of
+        // its allocations belongs to this booking; otherwise it's shared with
+        // another booking/wallet and must survive with just this allocation removed.
+        const recordIdsRes = await client.query(
+            `SELECT DISTINCT record_id FROM client_payment_allocations WHERE booking_id = $1`,
+            [booking_id]
+        );
+        for (const { record_id } of recordIdsRes.rows) {
+            const sharedRes = await client.query(
+                `SELECT 1 FROM client_payment_allocations WHERE record_id = $1 AND booking_id IS DISTINCT FROM $2 LIMIT 1`,
+                [record_id, booking_id]
+            );
+            if (sharedRes.rows.length === 0) {
+                await client.query(`DELETE FROM payment_receipts WHERE source_type = 'CLIENT_PAYMENT' AND source_id = $1`, [record_id]);
+                await client.query(`DELETE FROM client_payment_records WHERE record_id = $1`, [record_id]);
+            }
+        }
+        await client.query(`DELETE FROM client_payment_allocations WHERE booking_id = $1`, [booking_id]);
+
+        // An earmark is a reservation against a future use of this booking, not a
+        // transaction that belongs to it — unlink rather than delete.
+        await client.query(`UPDATE transactions SET earmarked_booking_id = NULL WHERE earmarked_booking_id = $1`, [booking_id]);
+        await client.query(`DELETE FROM transactions WHERE booking_id = $1`, [booking_id]);
+
+        // booking_id FKs with no ON DELETE clause (RESTRICT) — must be cleared
+        // explicitly or the final bookings delete fails.
+        await client.query(`DELETE FROM staff_swaps WHERE booking_id = $1`, [booking_id]);
+        await client.query(`DELETE FROM client_alerts WHERE booking_id = $1`, [booking_id]);
+        await client.query(`DELETE FROM service_terminations WHERE booking_id = $1`, [booking_id]);
+        await client.query(`DELETE FROM staff_daily_attendance WHERE booking_id = $1`, [booking_id]);
+        await client.query(`DELETE FROM booking_daily_invoices WHERE booking_id = $1`, [booking_id]);
+        await client.query(`DELETE FROM booking_day_drafts WHERE booking_id = $1`, [booking_id]);
+        // client_notes.booking_id and staff_reviews.booking_id are ON DELETE SET
+        // NULL — they survive automatically, no action needed here.
+
+        // Quotation tree: full teardown including its invoices, rental agreements
+        // and deposits, per admin's explicit request — NOT just an unlink.
+        const quoteIdsRes = await client.query(`SELECT quote_id FROM quotations WHERE booking_id = $1`, [booking_id]);
+        const deletedQuoteIds = [];
+        for (const { quote_id } of quoteIdsRes.rows) {
+            deletedQuoteIds.push(quote_id);
+            // Clear the sibling SERVICE/PRODUCT quote's back-pointer without touching the sibling itself.
+            await client.query(`UPDATE quotations SET linked_quote_id = NULL WHERE linked_quote_id = $1`, [quote_id]);
+            await client.query(`UPDATE service_requests SET active_quote_id = NULL WHERE active_quote_id = $1`, [quote_id]);
+            await client.query(`DELETE FROM payment_tracking WHERE quote_id = $1`, [quote_id]);
+            await client.query(`DELETE FROM payment_slips WHERE quote_id = $1`, [quote_id]);
+            await client.query(`DELETE FROM rental_agreements WHERE quote_id = $1`, [quote_id]); // cascades deposits
+            await client.query(`DELETE FROM deposits WHERE quote_id = $1`, [quote_id]); // standalone deposits (no rental_agreement_id)
+            await client.query(`DELETE FROM invoices WHERE quote_id = $1`, [quote_id]); // cascades invoice_payments
+            // transactions has its own quote_id FK independent of booking_id (e.g. a
+            // registration-fee payment recorded straight against the quote) — must be
+            // cleared after deposits/invoices (which reference transactions) and before
+            // the quotation delete below, or the quote_id FK blocks it.
+            await client.query(`DELETE FROM transactions WHERE quote_id = $1`, [quote_id]);
+            await client.query(`DELETE FROM quotations WHERE quote_id = $1`, [quote_id]); // cascades quote_line_items
+        }
+
+        // Final delete — cascades scheduled_actions, booking_pauses,
+        // booking_salesperson_assignments, booking_shift_patterns (→
+        // booking_shift_slots), shift_reschedules, booking_hospitalizations.
+        await client.query(`DELETE FROM bookings WHERE booking_id = $1`, [booking_id]);
+
+        await client.query('COMMIT');
+
+        try {
+            const actorRole = extractActorRole(req.user.role);
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorRole,
+                actionType: 'BOOKING_HARD_DELETE',
+                entityType: 'BOOKING',
+                entityId: String(booking_id),
+                details: {
+                    booking_id,
+                    client_id: booking.client_id,
+                    service_type: booking.service_type,
+                    status: booking.status,
+                    deleted_quote_ids: deletedQuoteIds,
+                },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (hardDeleteBooking):', logErr.message);
+        }
+
+        res.status(200).json({ status: 'success', message: 'Booking and all related records permanently deleted.' });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('hardDeleteBooking error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to delete booking.' });
+    } finally {
+        client.release();
+    }
+};
+
 // Internal helpers reused by dailyDraftController.js's day-draft confirm flow —
 // not HTTP handlers themselves, see the doc comments above each for contract details.
 exports._internal = {

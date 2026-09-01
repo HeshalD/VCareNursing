@@ -234,4 +234,9 @@ router.get('/:booking_id/notes', protect, requirePermission('VIEW_BOOKINGS'), bo
 router.patch('/:booking_id/notes/:note_id', protect, requirePermission('BOOKING_EDIT_NOTE'), bookingNotesController.updateNote);
 router.delete('/:booking_id/notes/:note_id', protect, requirePermission('BOOKING_DELETE_NOTE'), bookingNotesController.deleteNote);
 
+// Permanently deletes the booking and every related record. Not a delegable
+// permission — SUPER_ADMIN only, on purpose, so it can never be granted via
+// Custom Roles.
+router.delete('/:booking_id/hard-delete', protect, restrictTo('SUPER_ADMIN'), bookingController.hardDeleteBooking);
+
 module.exports = router;
