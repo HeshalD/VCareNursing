@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const clientController = require('../controllers/clientController');
 const bookingNotesController = require('../controllers/bookingNotesController');
-const { protect, restrictTo, requirePermission, attachSalesScope, requireOwnSalesRecord } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission, requireOwnSalesRecord } = require('../middleware/authMiddleware');
 const { uploadPaymentReceipt } = require('../middleware/uploadMiddleware');
 
 // All routes below require login
@@ -67,6 +67,9 @@ router.patch('/update-me', clientController.updateMe);
 router.delete('/delete-me', clientController.deleteMe);
 
 // bookings endpoints
-router.get('/', protect, requirePermission('VIEW_USER_MANAGEMENT'), attachSalesScope, clientController.getAllClients);
+// No attachSalesScope here: VIEW_USER_MANAGEMENT grants the full client list,
+// including to SALES-role accounts. Sales scoping only applies to bookings and
+// to the per-client :client_id routes (notes, etc.) via requireOwnSalesRecord.
+router.get('/', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getAllClients);
 
 module.exports = router;
