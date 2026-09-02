@@ -214,12 +214,19 @@ const ClientProfile = () => {
                 <div style={styles.fieldWrap}>
                   <label style={styles.fieldLabel}>Secondary Phone Numbers</label>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {profile.secondary_phone_numbers.map((phone, idx) => (
-                      <div key={idx} style={styles.displayField}>
-                        <Phone size={15} style={styles.fieldIcon} />
-                        <span style={styles.displayValue}>{formatPhoneNumberIntl(phone) || phone}</span>
-                      </div>
-                    ))}
+                    {profile.secondary_phone_numbers.map((entry, idx) => {
+                      const phone = typeof entry === 'string' ? entry : entry?.number;
+                      const name = typeof entry === 'string' ? '' : entry?.name;
+                      return (
+                        <div key={idx} style={styles.displayField}>
+                          <Phone size={15} style={styles.fieldIcon} />
+                          <span style={styles.displayValue}>
+                            {formatPhoneNumberIntl(phone) || phone}
+                            {name && <span style={{ color: '#94a3b8', marginLeft: 6 }}>— {name}</span>}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>

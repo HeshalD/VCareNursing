@@ -205,7 +205,9 @@ const MetaPair = ({ label, value, mono, valueStyle }) => (
 
 // ─── PatientFormModal ─────────────────────────────────────────────────────────
 
-const PatientFormModal = ({ formData, onChange, onSubmit, onClose, saving }) => {
+const PatientFormModal = ({ formData, onChange, onSubmit, onClose, saving, clientAddress }) => {
+  const [sameAsClientAddress, setSameAsClientAddress] = useState(false);
+
   const field = (label, key, opts = {}) => (
     <div style={s.fieldWrap}>
       <label style={s.fieldLabel}>{label}</label>
@@ -268,7 +270,31 @@ const PatientFormModal = ({ formData, onChange, onSubmit, onClose, saving }) => 
           </div>
           {field('Relationship', 'relationship_to_client', { select: true, required: true, options: RELATIONSHIP_OPTIONS })}
           {field('Medical Condition', 'medical_condition', { textarea: true, required: true })}
-          {field('Residential Address', 'residential_address', { required: true, placeholder: 'e.g. 45/A, Galle Road, Dehiwala, Colombo' })}
+          <div style={s.fieldWrap}>
+            <label style={s.fieldLabel}>Residential Address</label>
+            <input
+              type="text"
+              value={formData.residential_address}
+              onChange={e => onChange('residential_address', e.target.value)}
+              placeholder="e.g. 45/A, Galle Road, Dehiwala, Colombo"
+              required
+              disabled={sameAsClientAddress}
+              style={{ ...s.input, ...(sameAsClientAddress ? { background: '#f8fafc', color: '#94a3b8', cursor: 'not-allowed' } : {}) }}
+            />
+            {clientAddress && (
+              <label style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#64748b' }}>
+                <input
+                  type="checkbox"
+                  checked={sameAsClientAddress}
+                  onChange={e => {
+                    setSameAsClientAddress(e.target.checked);
+                    if (e.target.checked) onChange('residential_address', clientAddress);
+                  }}
+                />
+                Same as my address
+              </label>
+            )}
+          </div>
 
           {/* Emergency contacts — dynamic list */}
           <div>
@@ -625,6 +651,7 @@ const ClientPatients = () => {
           onSubmit={handleAddPatient}
           onClose={() => { setShowAddModal(false); setFormData(FORM_EMPTY); }}
           saving={saving}
+          clientAddress={clientProfile?.primary_address}
         />
       )}
       {showDeleteModal && (

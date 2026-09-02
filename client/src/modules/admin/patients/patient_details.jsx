@@ -130,6 +130,7 @@ export default function PatientDetailPage() {
 
   const [editingProfile, setEditingProfile] = useState(false);
   const [profileForm, setProfileForm] = useState(null);
+  const [sameAsClientAddress, setSameAsClientAddress] = useState(false);
   const [saving, setSaving] = useState(false);
   const [profileError, setProfileError] = useState('');
   const [toast, setToast] = useState(null);
@@ -184,6 +185,7 @@ export default function PatientDetailPage() {
       emergency_contact_name: data.patient.emergency_contact_name || '',
       emergency_contact_number: data.patient.emergency_contact_number || '',
     });
+    setSameAsClientAddress(false);
     setProfileError('');
     setEditingProfile(true);
   };
@@ -310,7 +312,27 @@ export default function PatientDetailPage() {
               </div>
               <div className="col-span-2">
                 <label className={labelCls}>Residential Address</label>
-                <input className={inputCls} value={profileForm.residential_address} onChange={(e) => setProfileForm((f) => ({ ...f, residential_address: e.target.value }))} />
+                <input
+                  className={`${inputCls} ${sameAsClientAddress ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
+                  value={profileForm.residential_address}
+                  onChange={(e) => setProfileForm((f) => ({ ...f, residential_address: e.target.value }))}
+                  disabled={sameAsClientAddress}
+                />
+                {data.patient.client_address && (
+                  <label className="mt-1.5 flex items-center gap-1.5 text-xs text-slate-500">
+                    <input
+                      type="checkbox"
+                      checked={sameAsClientAddress}
+                      onChange={(e) => {
+                        setSameAsClientAddress(e.target.checked);
+                        if (e.target.checked) {
+                          setProfileForm((f) => ({ ...f, residential_address: data.patient.client_address }));
+                        }
+                      }}
+                    />
+                    Same as client's address
+                  </label>
+                )}
               </div>
               <div>
                 <label className={labelCls}>Emergency Contact Name</label>

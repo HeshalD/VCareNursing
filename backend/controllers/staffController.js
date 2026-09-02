@@ -1,12 +1,12 @@
 const db = require('../config/db');
 const { sendWhatsAppMessage } = require('../utils/whatsapp');
-const { sendStaffDeductionNotice, sendStaffSalarySheet } = require('../utils/metaWhatsapp');
+const { sendStaffDeductionNotice, sendStaffBonusNotice, sendStaffSalarySheet } = require('../utils/metaWhatsapp');
 const { sendSms } = require('../utils/sms');
 const { logActivity } = require('../utils/activityLogger');
 const { generateAndUploadSalarySheet } = require('../utils/salaryPdf');
 const { creditRecruiterForStaff } = require('../services/recruiterService');
 const { resolveBankAccountId } = require('../utils/pettyCash');
-const { toE164, toE164List, isValidPhone } = require('../utils/phone');
+const { toE164, toE164ListWithNames, isValidPhone } = require('../utils/phone');
 const { isValidNic, normalizeNic, NIC_FORMAT_MESSAGE } = require('../utils/nic');
 
 const _MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -1446,10 +1446,10 @@ exports.getAllStaff = async (req, res) => {
                 }
             }
 
-            // Secondary numbers are matched by flattening the array to a string, so a
-            // staff member is findable by any of their contact numbers, not just the
-            // primary/login one.
-            const secondaryMatch = `array_to_string(COALESCE(sp.secondary_phone_numbers, '{}'), ',')`;
+            // Secondary numbers are matched by casting the JSONB array to text, so a
+            // staff member is findable by any of their contact numbers (or the name
+            // labeled against one), not just the primary/login one.
+            const secondaryMatch = `COALESCE(sp.secondary_phone_numbers::text, '')`;
 
             if (phoneVariant) {
                 whereClause += ` AND (sp.full_name ILIKE $${paramIndex} OR u.mobile_number ILIKE $${paramIndex} OR sp.staff_code ILIKE $${paramIndex} OR sp.designation ILIKE $${paramIndex} OR ${secondaryMatch} ILIKE $${paramIndex} OR u.mobile_number ILIKE $${paramIndex + 1} OR ${secondaryMatch} ILIKE $${paramIndex + 1})`;
@@ -2021,6 +2021,156 @@ exports.getStaffDeductions = async (req, res) => {
         });
     } catch (error) {
         console.error('getStaffDeductions Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error' });
+    }
+};
+
+// Apply a manual bonus/salary increase to a staff member's earnings and wallet
+exports.createStaffBonus = async (req, res) => {
+    const { staff_profile_id } = req.params;
+    const { amount, reason } = req.body;
+
+    if (!amount || isNaN(amount) || Number(amount) <= 0) {
+        return res.status(400).json({ status: 'error', message: 'Invalid amount' });
+    }
+    if (!reason || !String(reason).trim()) {
+        return res.status(400).json({ status: 'error', message: 'Reason is required' });
+    }
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const sel = await client.query(
+            `SELECT sp.current_earnings, sp.full_name, u.mobile_number,
+                    COALESCE(sw.balance, 0) AS wallet_balance
+             FROM staff_profiles sp
+             JOIN users u ON u.user_id = sp.user_id
+             LEFT JOIN staff_wallet sw ON sw.staff_profile_id = sp.staff_profile_id
+             WHERE sp.staff_profile_id = $1
+             FOR UPDATE OF sp`,
+            [staff_profile_id]
+        );
+
+        if (!sel.rows.length) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Staff profile not found' });
+        }
+
+        const { current_earnings, full_name, mobile_number } = sel.rows[0];
+        const bonusAmount = parseFloat(amount);
+        const trimmedReason = String(reason).trim();
+
+        const newEarnings = (parseFloat(current_earnings || 0) + bonusAmount).toFixed(2);
+        await client.query(
+            `UPDATE staff_profiles SET current_earnings = $1 WHERE staff_profile_id = $2`,
+            [newEarnings, staff_profile_id]
+        );
+
+        await client.query(
+            `UPDATE staff_wallet SET balance = balance + $1, updated_at = NOW()
+             WHERE staff_profile_id = $2`,
+            [bonusAmount, staff_profile_id]
+        );
+
+        const insertTrans = await client.query(
+            `INSERT INTO transactions (staff_profile_id, category, amount, transaction_type, notes, created_by, verified_by, status, created_at)
+             VALUES ($1, 'STAFF_BONUS', $2, 'CREDIT', $3, $4, $4, 'COMPLETED', NOW())
+             RETURNING transaction_id`,
+            [staff_profile_id, bonusAmount, trimmedReason, req.user.user_id]
+        );
+        const transaction_id = insertTrans.rows[0].transaction_id;
+
+        await client.query(
+            `INSERT INTO staff_wallet_transactions (staff_profile_id, type, amount, reason, reference_id, created_at)
+             VALUES ($1, 'CREDIT', $2, 'MANUAL_BONUS', $3, NOW())`,
+            [staff_profile_id, bonusAmount, transaction_id]
+        );
+
+        await client.query('COMMIT');
+
+        try {
+            const actorNameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+            const actorName = actorNameRes.rows[0]?.full_name || 'Admin';
+            const actorRole = Array.isArray(req.user?.role) ? req.user.role[0] : req.user?.role;
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole),
+                actionType: 'BONUS_APPLIED',
+                entityType: 'STAFF',
+                entityId: String(staff_profile_id),
+                details: { staff_name: full_name, amount: bonusAmount, reason: trimmedReason },
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (createStaffBonus):', logErr.message);
+        }
+
+        if (mobile_number) {
+            const formattedDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+            const formattedAmount = `Rs. ${bonusAmount.toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+            try {
+                await sendStaffBonusNotice(mobile_number, full_name, formattedAmount, trimmedReason, formattedDate);
+            } catch (waErr) {
+                console.error('WhatsApp bonus notice failed:', waErr.message);
+            }
+
+            try {
+                await sendSms(mobile_number, `VCare: Dear ${full_name}, a bonus of ${formattedAmount} has been credited to your earnings. Reason: ${trimmedReason}. Date: ${formattedDate}. Contact us for queries.`);
+            } catch (smsErr) {
+                console.error('SMS bonus notice failed:', smsErr.message);
+            }
+        }
+
+        return res.status(201).json({ status: 'success', message: 'Bonus applied', data: { transaction_id } });
+
+    } catch (error) {
+        console.error('createStaffBonus Error:', error);
+        try { await client.query('ROLLBACK'); } catch (e) { /* ignore */ }
+        return res.status(500).json({ status: 'error', message: 'Server error while applying bonus' });
+    } finally {
+        client.release();
+    }
+};
+
+// Get bonus history for a staff member
+exports.getStaffBonuses = async (req, res) => {
+    const { staff_profile_id } = req.params;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
+
+    try {
+        const [countRes, dataRes] = await Promise.all([
+            db.query(
+                `SELECT COUNT(*) AS total_count FROM transactions WHERE staff_profile_id = $1 AND category = 'STAFF_BONUS'`,
+                [staff_profile_id]
+            ),
+            db.query(
+                `SELECT t.transaction_id, t.amount, t.notes AS reason, t.created_at, t.status,
+                        sp.full_name AS recorded_by
+                 FROM transactions t
+                 LEFT JOIN staff_profiles sp ON sp.user_id = t.created_by
+                 WHERE t.staff_profile_id = $1 AND t.category = 'STAFF_BONUS'
+                 ORDER BY t.created_at DESC
+                 LIMIT $2 OFFSET $3`,
+                [staff_profile_id, limit, offset]
+            ),
+        ]);
+
+        return res.json({
+            status: 'success',
+            data: dataRes.rows,
+            pagination: {
+                current_page: page,
+                per_page: limit,
+                total_count: parseInt(countRes.rows[0].total_count),
+                total_pages: Math.ceil(parseInt(countRes.rows[0].total_count) / limit),
+            },
+        });
+    } catch (error) {
+        console.error('getStaffBonuses Error:', error);
         return res.status(500).json({ status: 'error', message: 'Server error' });
     }
 };
@@ -2611,8 +2761,8 @@ exports.updateStaffProfile = async (req, res) => {
     } = req.body;
 
     // Undefined means "leave unchanged"; anything else is normalized to a deduped
-    // E.164 array, with unparseable entries dropped.
-    const secondaryPhonesToSet = toE164List(secondaryPhonesRaw);
+    // array of {number, name}, with unparseable numbers dropped.
+    const secondaryPhonesToSet = toE164ListWithNames(secondaryPhonesRaw);
 
     if (experience_level && !VALID_EXPERIENCE_LEVELS.includes(experience_level)) {
         return res.status(400).json({
@@ -2851,7 +3001,7 @@ exports.updateStaffProfile = async (req, res) => {
                 experience_level = COALESCE($18, experience_level),
                 languages = COALESCE($19, languages),
                 youtube_links = COALESCE($20, youtube_links),
-                secondary_phone_numbers = COALESCE($21, secondary_phone_numbers),
+                secondary_phone_numbers = COALESCE($21::jsonb, secondary_phone_numbers),
                 onboarding_status = CASE
                     WHEN onboarding_status = 'PENDING_MIGRATION'
                      AND (SELECT is_complete FROM completeness)
@@ -2916,7 +3066,7 @@ exports.updateStaffProfile = async (req, res) => {
             experience_level || null,
             languagesToSet,
             youtubeLinksToSet,
-            secondaryPhonesToSet
+            secondaryPhonesToSet === null ? null : JSON.stringify(secondaryPhonesToSet)
         ];
 
         const result = await db.query(updateQuery, updateValues);
@@ -3004,7 +3154,7 @@ exports.createStaffProfile = async (req, res) => {
         secondary_phone_numbers: secondaryPhonesRaw
     } = req.body;
 
-    const createSecondaryPhones = toE164List(secondaryPhonesRaw) || [];
+    const createSecondaryPhones = toE164ListWithNames(secondaryPhonesRaw) || [];
 
     let createLanguages = [];
     if (languagesRaw !== undefined) {
@@ -3186,7 +3336,7 @@ exports.createStaffProfile = async (req, res) => {
                 verification_status,
                 created_at
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, 'AVAILABLE', 'VERIFIED', NOW()
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, 'AVAILABLE', 'VERIFIED', NOW()
             )
             RETURNING
                 staff_profile_id,
@@ -3239,7 +3389,7 @@ exports.createStaffProfile = async (req, res) => {
             uploadedPoliceReport || null,
             createLanguages,
             createYoutubeLinks,
-            createSecondaryPhones
+            JSON.stringify(createSecondaryPhones)
         ];
 
         const result = await db.query(insertQuery, insertValues);
@@ -3626,6 +3776,8 @@ exports.getStaffSalariesOverview = async (req, res) => {
             SELECT
                 sp.staff_profile_id,
                 sp.full_name,
+                sp.staff_code,
+                sp.gender,
                 sp.designation,
                 sp.current_status,
                 COALESCE(sp.current_earnings, 0) AS current_earnings,

@@ -6,6 +6,7 @@ import apiClient from '../../../api/api';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
 import useDebouncedValue from '../../../hooks/useDebouncedValue';
 import PhoneInput from '../../../components/common/PhoneInput';
+import PhoneNumbersField from '../../../components/common/PhoneNumbersField';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 
 const PAGE_SIZE = 50;
@@ -238,22 +239,6 @@ const ClientManagement = () => {
       ...(name === 'client_type' && value !== 'CORPORATE_PROXY' ? { company_name: '', display_name_source: 'FULL_NAME' } : {}),
       ...(name === 'company_name' && !value ? { display_name_source: 'FULL_NAME' } : {}),
     }));
-  };
-
-  const handleSecondaryPhoneChange = (index, value) => {
-    setFormData(p => {
-      const next = [...p.secondary_phone_numbers];
-      next[index] = value;
-      return { ...p, secondary_phone_numbers: next };
-    });
-  };
-
-  const addSecondaryPhone = () => {
-    setFormData(p => ({ ...p, secondary_phone_numbers: [...p.secondary_phone_numbers, ''] }));
-  };
-
-  const removeSecondaryPhone = (index) => {
-    setFormData(p => ({ ...p, secondary_phone_numbers: p.secondary_phone_numbers.filter((_, i) => i !== index) }));
   };
 
   const handleSubmit = async (e) => {
@@ -557,7 +542,7 @@ const ClientManagement = () => {
         <div className="fixed inset-0 z-50 flex">
           <div className="flex-1 bg-black/30" onClick={!formSuccess ? closeDrawer : undefined} />
 
-          <div className="w-full max-w-md bg-white flex flex-col shadow-2xl overflow-hidden">
+          <div className="w-full max-w-xl bg-white flex flex-col shadow-2xl overflow-hidden">
             {/* Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 flex-shrink-0">
               <h2 className="text-sm font-semibold text-slate-900">Add New Client</h2>
@@ -657,33 +642,11 @@ const ClientManagement = () => {
                     placeholder="e.g. 0771234567" />
                 </Field>
                 <Field label="Secondary Phone Numbers">
-                  <div className="space-y-2">
-                    {formData.secondary_phone_numbers.map((phone, idx) => (
-                      <div key={idx} className="flex items-center gap-2">
-                        <div className="flex-1">
-                          <PhoneInput
-                            value={phone}
-                            onChange={(e) => handleSecondaryPhoneChange(idx, e.target.value)}
-                            placeholder="e.g. 0771234567"
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => removeSecondaryPhone(idx)}
-                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors flex-shrink-0"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={addSecondaryPhone}
-                      className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Add phone number
-                    </button>
-                  </div>
+                  <PhoneNumbersField
+                    value={formData.secondary_phone_numbers}
+                    onChange={(nums) => setFormData(p => ({ ...p, secondary_phone_numbers: nums }))}
+                    primaryNumber={formData.mobile_number}
+                  />
                 </Field>
               </div>
 

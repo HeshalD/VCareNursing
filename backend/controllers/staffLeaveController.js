@@ -121,7 +121,7 @@ const getAllLeaves = async (req, res) => {
     const result = await pool.query(
       `SELECT lr.leave_id, lr.staff_profile_id, lr.start_date::text AS start_date, lr.end_date::text AS end_date,
               lr.reason, lr.status, lr.requested_at, lr.reviewed_at, lr.reviewed_by_name, lr.rejected_reason,
-              sp.full_name, sp.staff_code, sp.designation
+              sp.full_name, sp.staff_code, sp.designation, sp.gender
        FROM staff_leave_requests lr
        JOIN staff_profiles sp ON sp.staff_profile_id = lr.staff_profile_id
        ${where}
@@ -141,7 +141,7 @@ const getPendingLeaves = async (req, res) => {
     const result = await pool.query(
       `SELECT lr.leave_id, lr.staff_profile_id, lr.start_date::text AS start_date, lr.end_date::text AS end_date,
               lr.reason, lr.status, lr.requested_at,
-              sp.full_name, sp.staff_code, sp.designation
+              sp.full_name, sp.staff_code, sp.designation, sp.gender
        FROM staff_leave_requests lr
        JOIN staff_profiles sp ON sp.staff_profile_id = lr.staff_profile_id
        WHERE lr.status = 'PENDING'
@@ -213,7 +213,7 @@ const getReplacementCandidates = async (req, res) => {
     const { staff_profile_id, start_date, end_date } = leaveRes.rows[0];
 
     const candidatesRes = await pool.query(
-      `SELECT sp.staff_profile_id, sp.full_name, sp.designation, sp.staff_code,
+      `SELECT sp.staff_profile_id, sp.full_name, sp.designation, sp.staff_code, sp.gender,
               sp.profile_picture_url, sp.current_status, u.mobile_number,
               CASE
                 WHEN EXISTS (

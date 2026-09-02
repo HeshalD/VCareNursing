@@ -287,9 +287,7 @@ const WorkerRegistrationPage = () => {
         }
         break;
       case 'qualifications':
-        if (!value || value.trim() === '') {
-          error = 'Qualifications are required';
-        } else if (value.trim().length < 10) {
+        if (value && value.trim() !== '' && value.trim().length < 10) {
           error = 'Qualifications must be at least 10 characters';
         }
         break;
@@ -338,9 +336,7 @@ const WorkerRegistrationPage = () => {
         }
         break;
       case 'documents':
-        if (!value || value.length === 0) {
-          error = 'At least one document must be uploaded';
-        }
+        // Optional — applicants can submit without qualification documents.
         break;
       case 'profile_picture':
         if (!value) {
@@ -406,8 +402,6 @@ const WorkerRegistrationPage = () => {
     { field: 'nic_back',        label: 'NIC Back Photo',    step: 2 },
     { field: 'location',        label: 'City',              step: 3 },
     { field: 'home_address',    label: 'Home Address',      step: 3 },
-    { field: 'qualifications',  label: 'Qualifications',    step: 4 },
-    { field: 'documents',       label: 'Documents',         step: 4 },
     { field: 'profile_picture', label: 'Profile Picture',   step: 4 },
   ];
 
@@ -1085,18 +1079,20 @@ const WorkerRegistrationPage = () => {
                       <h2 className="text-2xl font-bold text-slate-800 mb-6 hidden md:block">Professional Profile</h2>
                       <div className="space-y-6">
                         <div>
-                          <label className="text-sm font-semibold text-slate-600 block mb-1">Qualifications</label>
+                          <label className="text-sm font-semibold text-slate-600 block mb-1">
+                            Qualifications
+                            <span className="ml-2 text-xs text-slate-400 font-normal">(Optional)</span>
+                          </label>
                           <textarea
                             rows="3"
                             className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none resize-none text-slate-900 placeholder:text-slate-400 ${
-                              fieldErrors.qualifications 
-                                ? 'bg-red-50 border-red-300' 
+                              fieldErrors.qualifications
+                                ? 'bg-red-50 border-red-300'
                                 : 'bg-slate-50 border-slate-200'
                             }`}
                             value={formData.qualifications}
                             onChange={e => handleInputChange('qualifications', e.target.value)}
                             placeholder="Describe your qualifications, certifications, and relevant training."
-                            required
                           />
                           {fieldErrors.qualifications && (
                             <p className="text-xs text-red-500 mt-1">{fieldErrors.qualifications}</p>
@@ -1133,7 +1129,10 @@ const WorkerRegistrationPage = () => {
                         </div>
 
                         <div>
-                          <label className="text-sm font-semibold text-slate-600 block mb-1">Upload Certificates / CV</label>
+                          <label className="text-sm font-semibold text-slate-600 block mb-1">
+                            Upload Certificates / CV
+                            <span className="ml-2 text-xs text-slate-400 font-normal">(Optional)</span>
+                          </label>
                           
                           {/* Document Previews */}
                           {documentPreviews.length > 0 && (
@@ -1302,7 +1301,7 @@ const WorkerRegistrationPage = () => {
                             <p className="text-sm text-slate-500">{formData.email} • {formData.mobile_number}</p>
                             {formData.secondary_phone_numbers?.length > 0 && (
                               <p className="text-xs text-slate-400 mt-1">
-                                Also: {formData.secondary_phone_numbers.join(', ')}
+                                Also: {formData.secondary_phone_numbers.map(({ number, name }) => name ? `${number} (${name})` : number).join(', ')}
                               </p>
                             )}
                             {formData.gender && (

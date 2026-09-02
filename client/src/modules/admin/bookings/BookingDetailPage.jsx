@@ -1796,7 +1796,7 @@ const BookingDetailPage = () => {
               const designations = [...new Set(availableStaff.map((s) => s.designation).filter(Boolean))].sort();
               const q = swapModalSearch.toLowerCase();
               const filtered = availableStaff.filter((s) =>
-                (!q || s.full_name?.toLowerCase().includes(q) || s.designation?.toLowerCase().includes(q) || s.mobile_number?.includes(q)) &&
+                (!q || s.full_name?.toLowerCase().includes(q) || s.staff_code?.toLowerCase().includes(q) || s.designation?.toLowerCase().includes(q) || s.mobile_number?.includes(q)) &&
                 (!swapModalDesignation || s.designation === swapModalDesignation)
               );
               const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -1846,8 +1846,11 @@ const BookingDetailPage = () => {
                                 : <User className="w-5 h-5 text-slate-400" />}
                             </div>
                             <div className="min-w-0">
-                              <p className="text-sm font-semibold text-slate-900 truncate">{s.full_name}</p>
-                              {s.designation && <p className="text-xs text-slate-500">{s.designation}</p>}
+                              <p className="text-sm font-semibold text-slate-900 truncate">
+                                {s.full_name}
+                                {s.staff_code && <span className="ml-2 text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{s.staff_code}</span>}
+                              </p>
+                              {(s.designation || s.gender) && <p className="text-xs text-slate-500">{s.designation}{s.designation && s.gender ? ' · ' : ''}{s.gender ? (s.gender === 'MALE' ? 'Male' : s.gender === 'FEMALE' ? 'Female' : s.gender) : ''}</p>}
                               {s.mobile_number && (
                                 <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
                                   <Phone className="w-3 h-3" /> {formatMobileNumber(s.mobile_number)}

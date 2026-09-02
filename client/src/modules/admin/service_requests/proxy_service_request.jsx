@@ -10,7 +10,8 @@ import apiClient from '../../../api/api';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
 import PhoneInput, { isValidPhoneNumber } from '../../../components/common/PhoneInput';
 import useDebouncedValue from '../../../hooks/useDebouncedValue';
-import { formatMobileNumber } from '../../../utils/phoneFormat';
+import { formatMobileNumber, formatMobileNumbers } from '../../../utils/phoneFormat';
+import PhoneNumbersField from '../../../components/common/PhoneNumbersField';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -271,19 +272,6 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
     }));
   };
 
-  const handleSecondaryPhoneChange = (idx, value) =>
-    setFormData(prev => {
-      const next = [...prev.payer_secondary_phones];
-      next[idx] = value;
-      return { ...prev, payer_secondary_phones: next };
-    });
-
-  const addSecondaryPhone = () =>
-    setFormData(prev => ({ ...prev, payer_secondary_phones: [...prev.payer_secondary_phones, ''] }));
-
-  const removeSecondaryPhone = (idx) =>
-    setFormData(prev => ({ ...prev, payer_secondary_phones: prev.payer_secondary_phones.filter((_, i) => i !== idx) }));
-
   const updateEmergencyContact = (idx, key, value) =>
     setEmergencyContacts(prev => prev.map((c, i) => i === idx ? { ...c, [key]: value } : c));
 
@@ -349,10 +337,8 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
       if (missing.length) { setError(`Please fill in: ${missing.join(', ')}`); setFormLoading(false); return; }
       if (isNaN(formData.patient_age) || formData.patient_age <= 0) { setError('Age must be a positive number.'); setFormLoading(false); return; }
       if (!isValidPhoneNumber(formData.payer_mobile)) { setError('Enter a valid mobile number.'); setFormLoading(false); return; }
-      const trimmedSecondaryPhones = formData.payer_secondary_phones.map(p => p.trim()).filter(Boolean);
-      if (clientMode === 'new' && trimmedSecondaryPhones.some(p => !isValidPhoneNumber(p))) {
-        setError('Enter valid secondary phone numbers.'); setFormLoading(false); return;
-      }
+      // PhoneNumbersField already validates each entry as it's added.
+      const secondaryPhones = formData.payer_secondary_phones;
 
       // New Client mode: register the client account up front (rather than
       // deferring to booking-conversion time) so this request has a real
@@ -370,7 +356,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
             company_name: formData.company_name || undefined,
             honorific: formData.honorific || undefined,
             primary_address: formData.payer_primary_address || undefined,
-            secondary_phone_numbers: trimmedSecondaryPhones,
+            secondary_phone_numbers: secondaryPhones,
           });
           clientId = clientRes.data.clientProfileId;
         } catch (clientErr) {
@@ -634,33 +620,11 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                         <div className="flex items-center justify-between mb-1">
                           <label className="text-[11px] font-semibold text-slate-500">Secondary Phone Numbers</label>
                         </div>
-                        <div className="space-y-2">
-                          {formData.payer_secondary_phones.map((phone, idx) => (
-                            <div key={idx} className="flex items-center gap-2">
-                              <div className="flex-1">
-                                <PhoneInput
-                                  value={phone}
-                                  onChange={(e) => handleSecondaryPhoneChange(idx, e.target.value)}
-                                  placeholder="07XXXXXXXX"
-                                />
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => removeSecondaryPhone(idx)}
-                                className="flex h-9 w-9 items-center justify-center rounded-md border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 flex-shrink-0"
-                              >
-                                <X className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          ))}
-                          <button
-                            type="button"
-                            onClick={addSecondaryPhone}
-                            className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700"
-                          >
-                            <Plus className="w-3.5 h-3.5" /> Add phone number
-                          </button>
-                        </div>
+                        <PhoneNumbersField
+                          value={formData.payer_secondary_phones}
+                          onChange={(nums) => setFormData(prev => ({ ...prev, payer_secondary_phones: nums }))}
+                          primaryNumber={formData.payer_mobile}
+                        />
                       </div>
                       <p className="text-[11px] text-slate-400">
                         Registers them as a new client (login credentials sent via SMS) when this request is converted to a booking.
@@ -730,7 +694,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                       {selectedClient.secondary_phone_numbers?.length > 0 && (
                         <div className="col-span-2">
                           <p className="text-slate-400">Other Numbers</p>
-                          <p className="text-slate-800 font-medium">{selectedClient.secondary_phone_numbers.map(formatMobileNumber).join(', ')}</p>
+                          <p className="text-slate-800 font-medium">{formatMobileNumbers(selectedClient.secondary_phone_numbers).map(({ number, name }) => name ? `${number} (${name})` : number).join(', ')}</p>
                         </div>
                       )}
                       <div>

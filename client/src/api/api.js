@@ -1325,6 +1325,19 @@ class ApiClient {
     });
   }
 
+  async getStaffBonuses(staffProfileId, filters = {}) {
+    const queryParams = new URLSearchParams(filters).toString();
+    const url = queryParams ? `/staff/${staffProfileId}/bonuses?${queryParams}` : `/staff/${staffProfileId}/bonuses`;
+    return this.request(url);
+  }
+
+  async createStaffBonus(staffProfileId, data) {
+    return this.request(`/staff/${staffProfileId}/bonuses`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   async getStaffAdminNotes(staffProfileId) {
     return this.request(`/staff/${staffProfileId}/admin-notes`);
   }
@@ -1518,6 +1531,22 @@ class ApiClient {
 
   async markAttendanceAbsent(bookingId, attendanceData) {
     return this.request(`/bookings/${bookingId}/attendance/absent`, {
+      method: 'POST',
+      body: JSON.stringify(attendanceData),
+    });
+  }
+
+  // Flat "present" mark for a non-boundary day — no in/out time captured.
+  async markAttendancePresent(bookingId, attendanceData) {
+    return this.request(`/bookings/${bookingId}/attendance/present`, {
+      method: 'POST',
+      body: JSON.stringify(attendanceData),
+    });
+  }
+
+  // Admin exception reasons (ON_LEAVE, LEFT_WITHOUT_NOTICE) — like markAttendanceAbsent, with a mandatory reason.
+  async markAttendanceException(bookingId, attendanceData) {
+    return this.request(`/bookings/${bookingId}/attendance/exception`, {
       method: 'POST',
       body: JSON.stringify(attendanceData),
     });

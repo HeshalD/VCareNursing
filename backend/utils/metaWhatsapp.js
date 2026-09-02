@@ -250,6 +250,22 @@ const sendStaffForceTerminated = (mobileNumber, staffName, patientName, endDate)
 const sendStaffDeductionNotice = (mobileNumber, staffName, amount, reason, date) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_staff_deduction', 'en', [staffName, amount, reason, date]);
 
+// Sent to staff when a bonus/salary increase is applied — {{1}} = staff name, {{2}} = amount, {{3}} = reason, {{4}} = date
+// Template name: vcare_staff_bonus (must be created and approved in Meta Business Manager)
+// Template body:
+//   "Hi {{1}},
+//
+//   A bonus of {{2}} has been credited to your VCare earnings.
+//
+//   Reason: {{3}}
+//   Date: {{4}}
+//
+//   If you have any questions, please contact the VCare office.
+//
+//   Thank you for being part of the VCare team."
+const sendStaffBonusNotice = (mobileNumber, staffName, amount, reason, date) =>
+  sendTemplate(formatNumber(mobileNumber), 'vcare_staff_bonus', 'en', [staffName, amount, reason, date]);
+
 // Sent to client requesting a review for a completed booking — {{1}} = client name, {{2}} = service type, {{3}} = staff name
 const sendReviewRequest = (mobileNumber, clientName, serviceType, staffName) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_review_request', 'en', [clientName, serviceType, staffName]);
@@ -500,4 +516,4 @@ const sendRegFeeInvoice = (mobileNumber, clientName, amount, bankName, accountHo
 const sendStaffLeaveRejected = (mobileNumber, staffName, startDate, endDate, reason) =>
   sendTemplate(formatNumber(mobileNumber), 'vcare_leave_rejected', 'en', [staffName, startDate, endDate, reason]);
 
-module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendClientWelcomeNew, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendClientProductQuotation, sendPaymentRecorded, sendPaymentReceipt, sendClientInvoice, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected, sendClientBookingStatement, sendStaffAgreement, sendCandidateProfile, sendStaffLeaveApproved, sendStaffLeaveRejected, sendDocumentUploadRequest, sendRegFeeNotice, sendRegFeeInvoice, sendInternalStaffSalarySheet };
+module.exports = { sendDocument, sendStaffWelcomeNew, sendStaffWelcomeExisting, sendClientWelcomeNew, sendStaffApplicationRejected, sendServiceRequestConfirmed, sendClientQuotation, sendClientProductQuotation, sendPaymentRecorded, sendPaymentReceipt, sendClientInvoice, sendBookingConfirmed, sendStaffNewAssignment, sendClientTerminationRequested, sendClientTerminationApproved, sendStaffAssignmentTerminated, sendClientForceTerminated, sendStaffForceTerminated, sendClientStaffSwapped, sendStaffDeductionNotice, sendStaffBonusNotice, sendStaffSalarySheet, sendReviewRequest, sendStaffAdvanceRequestSent, sendStaffAdvanceApproved, sendStaffAdvanceRejected, sendClientBookingStatement, sendStaffAgreement, sendCandidateProfile, sendStaffLeaveApproved, sendStaffLeaveRejected, sendDocumentUploadRequest, sendRegFeeNotice, sendRegFeeInvoice, sendInternalStaffSalarySheet };

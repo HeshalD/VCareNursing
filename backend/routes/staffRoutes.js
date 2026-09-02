@@ -419,6 +419,21 @@ router.post(
   staffController.createStaffDeduction
 );
 
+// Bonuses / salary increases
+router.get(
+  '/:staff_profile_id/bonuses',
+  protect,
+  requirePermission('VIEW_USER_MANAGEMENT'),
+  staffController.getStaffBonuses
+);
+
+router.post(
+  '/:staff_profile_id/bonuses',
+  protect,
+  requirePermission('STAFF_APPLY_BONUS'),
+  staffController.createStaffBonus
+);
+
 // Admin Notes (multiple notes per staff, shown as a carousel on the staff detail page)
 router.get(
   '/:staff_profile_id/admin-notes',

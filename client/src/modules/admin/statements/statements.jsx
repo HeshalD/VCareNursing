@@ -1604,7 +1604,7 @@ const Statements = () => {
                       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-6 gap-y-2 flex-1 min-w-0">
                         <div>
                           <p className="text-xs text-slate-400 mb-0.5">Client</p>
-                          <p className="text-sm font-semibold text-slate-900 truncate">{client.full_name}</p>
+                          <p className="text-sm font-semibold text-slate-900 truncate">{client.honorific ? `${client.honorific} ` : ''}{client.full_name}</p>
                           <p className="text-xs text-slate-500 truncate">{client.client_code}</p>
                         </div>
                         <div>

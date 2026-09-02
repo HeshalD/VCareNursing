@@ -240,7 +240,7 @@ const AdvanceRequests = () => {
                           <div>
                             <p className="font-semibold text-slate-900 leading-tight">{request.full_name || '—'}</p>
                             <p className="text-xs text-slate-400 font-mono">
-                              {request.advance_code || (request.staff_code ? `#${request.staff_code}` : '—')}
+                              {request.advance_code || (request.staff_code ? `#${request.staff_code}` : '—')}{request.gender ? ` · ${request.gender === 'MALE' ? 'Male' : request.gender === 'FEMALE' ? 'Female' : request.gender}` : ''}
                             </p>
                           </div>
                         </div>

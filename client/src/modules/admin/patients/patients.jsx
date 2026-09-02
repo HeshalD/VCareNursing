@@ -154,14 +154,28 @@ const ClientCombobox = ({ clients, value, onChange, hasError }) => {
 
 // ─── Add / Edit Care Profile drawer ──────────────────────────────────────────
 
-const PatientDrawer = ({ mode, initial, clients, onClose, onSave, saving }) => {
+const PatientDrawer = ({ mode, initial, editingClientAddress, clients, onClose, onSave, saving }) => {
   const [form, setForm] = useState(initial || EMPTY_FORM);
   const [errors, setErrors] = useState({});
+  const [sameAsClientAddress, setSameAsClientAddress] = useState(false);
 
   const set = (k, v) => {
     setForm((f) => ({ ...f, [k]: v }));
     setErrors((e) => ({ ...e, [k]: undefined }));
   };
+
+  // The client's own address — from the selected client (add mode) or the
+  // profile's existing owner (edit mode, passed in via `editingClientAddress`).
+  const clientAddress = mode === 'add'
+    ? (clients.find((c) => c.client_profile_id === form.client_id)?.primary_address || '')
+    : (editingClientAddress || '');
+
+  // Keep the address in sync with the resolved client address while the box is
+  // checked (e.g. the admin picks a different client in add mode).
+  useEffect(() => {
+    if (sameAsClientAddress) set('residential_address', clientAddress);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sameAsClientAddress, clientAddress]);
 
   const validate = () => {
     const e = {};
@@ -262,8 +276,19 @@ const PatientDrawer = ({ mode, initial, clients, onClose, onSave, saving }) => {
                 type="text"
                 value={form.residential_address}
                 onChange={(e) => set('residential_address', e.target.value)}
-                className={inputCls(false)}
+                disabled={sameAsClientAddress}
+                className={inputCls(false) + (sameAsClientAddress ? ' bg-slate-50 text-slate-500 cursor-not-allowed' : '')}
               />
+              {clientAddress && (
+                <label className="mt-1.5 flex items-center gap-1.5 text-xs text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={sameAsClientAddress}
+                    onChange={(e) => setSameAsClientAddress(e.target.checked)}
+                  />
+                  Same as client's address
+                </label>
+              )}
             </Field>
           </div>
 
@@ -924,6 +949,7 @@ export default function PatientsPage() {
             emergency_contact_name: editTarget.emergency_contact_name || '',
             emergency_contact_number: editTarget.emergency_contact_number || '',
           }}
+          editingClientAddress={editTarget.client_address}
           clients={clients}
           onClose={() => setEditTarget(null)}
           onSave={handleEdit}

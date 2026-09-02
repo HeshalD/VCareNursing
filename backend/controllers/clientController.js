@@ -9,7 +9,7 @@ const { createOverdueInvoice, resolveOverdueInvoices } = require('../services/ov
 const html_to_pdf = require('html-pdf-node');
 const dailyInvoiceTemplate = require('../templates/dailyInvoiceTemplate');
 const { uploadBufferToS3 } = require('../config/s3Config');
-const { toE164, isValidPhone } = require('../utils/phone');
+const { toE164, isValidPhone, toE164ListWithNames } = require('../utils/phone');
 const { userHasPermission } = require('../middleware/authMiddleware');
 
 async function getActorName(userId) {
@@ -890,15 +890,14 @@ exports.updateClientProfile = async (req, res) => {
   }
 
   const rawSecondaryPhones = Array.isArray(req.body.secondary_phone_numbers) ? req.body.secondary_phone_numbers : [];
-  const secondaryPhones = [];
   for (const raw of rawSecondaryPhones) {
-    const trimmed = String(raw || '').trim();
-    if (!trimmed) continue;
-    if (!isValidPhone(trimmed)) {
+    const rawNumber = raw && typeof raw === 'object' ? raw.number : raw;
+    const trimmed = String(rawNumber || '').trim();
+    if (trimmed && !isValidPhone(trimmed)) {
       return res.status(400).json({ message: 'One of the secondary phone numbers is invalid.' });
     }
-    secondaryPhones.push(toE164(trimmed));
   }
+  const secondaryPhones = toE164ListWithNames(rawSecondaryPhones) || [];
 
   const dbClient = await db.pool.connect();
   try {
@@ -917,14 +916,14 @@ exports.updateClientProfile = async (req, res) => {
     await dbClient.query(
       `UPDATE client_profiles
        SET full_name = $1, primary_address = $2, gender = $3::gender_enum, updated_at = NOW(),
-           secondary_phone_numbers = $5,
+           secondary_phone_numbers = $5::jsonb,
            onboarding_status = CASE
                WHEN onboarding_status = 'CONTACT_PENDING' THEN 'ACTIVE'
                WHEN onboarding_status = 'PENDING_MIGRATION' AND $2 IS NOT NULL AND $3 IS NOT NULL THEN 'ACTIVE'
                ELSE onboarding_status
            END
        WHERE client_profile_id = $4`,
-      [full_name.trim(), primary_address?.trim() || null, gender || null, client_id, secondaryPhones]
+      [full_name.trim(), primary_address?.trim() || null, gender || null, client_id, JSON.stringify(secondaryPhones)]
     );
 
     await dbClient.query(
@@ -1322,15 +1321,14 @@ exports.proxyCreateClient = async (req, res) => {
   const rawMobile = String(req.body.mobile_number || '').trim();
 
   const rawSecondaryPhones = Array.isArray(req.body.secondary_phone_numbers) ? req.body.secondary_phone_numbers : [];
-  const secondaryPhones = [];
   for (const raw of rawSecondaryPhones) {
-    const trimmed = String(raw || '').trim();
-    if (!trimmed) continue;
-    if (!isValidPhone(trimmed)) {
+    const rawNumber = raw && typeof raw === 'object' ? raw.number : raw;
+    const trimmed = String(rawNumber || '').trim();
+    if (trimmed && !isValidPhone(trimmed)) {
       return res.status(400).json({ message: 'One of the secondary phone numbers is invalid.' });
     }
-    secondaryPhones.push(toE164(trimmed));
   }
+  const secondaryPhones = toE164ListWithNames(rawSecondaryPhones) || [];
   // A corporate client's contact person may not be known yet — company_name
   // anchors the record instead. If any contact-person field is being entered,
   // still require gender alongside it for data consistency.
@@ -1391,12 +1389,12 @@ exports.proxyCreateClient = async (req, res) => {
 
     const profileRes = await dbClient.query(
       `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address, company_name, honorific, display_name_source, onboarding_status, secondary_phone_numbers)
-       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8, $9, $10) RETURNING client_profile_id`,
+       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8, $9, $10::jsonb) RETURNING client_profile_id`,
       [
         userId, resolvedFullName, resolvedClientType,
         gender ? gender.toUpperCase() : null, primary_address || null,
         company_name || null, honorific || null, resolvedDisplayNameSource, onboardingStatus,
-        secondaryPhones,
+        JSON.stringify(secondaryPhones),
       ]
     );
     const clientProfileId = profileRes.rows[0].client_profile_id;

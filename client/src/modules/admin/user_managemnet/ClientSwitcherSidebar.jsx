@@ -90,7 +90,7 @@ const ClientSwitcherSidebar = ({ activeClientId, onNavigate }) => {
                   </div>
                   <div className="min-w-0">
                     <p className={`truncate text-[13px] font-semibold ${active ? 'text-blue-700' : 'text-gray-800'}`}>
-                      {c.full_name || 'Unnamed'}
+                      {c.honorific ? `${c.honorific} ` : ''}{c.full_name || 'Unnamed'}
                     </p>
                     <p className="truncate text-[11px] text-gray-400">
                       {c.client_code || '—'}{c.mobile_number ? ` · ${formatMobileNumber(c.mobile_number)}` : ''}

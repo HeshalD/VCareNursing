@@ -34,6 +34,7 @@ import {
   Pencil,
   Phone,
   Plus,
+  PlusCircle,
   Save,
   Send,
   Star,
@@ -625,6 +626,11 @@ const StaffDetailPageV2 = () => {
   const [deductionSubmitting, setDeductionSubmitting] = useState(false);
   const [deductionError, setDeductionError] = useState('');
   const [deductionSuccess, setDeductionSuccess] = useState('');
+  const [bonuses, setBonuses] = useState([]);
+  const [bonusForm, setBonusForm] = useState({ amount: '', reason: '' });
+  const [bonusSubmitting, setBonusSubmitting] = useState(false);
+  const [bonusError, setBonusError] = useState('');
+  const [bonusSuccess, setBonusSuccess] = useState('');
   const [reviewToggles, setReviewToggles] = useState({});
   const [togglingReviewId, setTogglingReviewId] = useState(null);
   const [attendanceCalendar, setAttendanceCalendar] = useState({ assignments: [], attendance: [], reschedules: [], pendingResumptions: [] });
@@ -671,6 +677,7 @@ const StaffDetailPageV2 = () => {
     { id: 'reviews',         label: 'Reviews',         icon: Star },
     { id: 'payouts',         label: 'Payouts',         icon: Wallet },
     { id: 'deductions',      label: 'Deductions',      icon: MinusCircle },
+    { id: 'bonuses',         label: 'Bonuses',         icon: PlusCircle },
     { id: 'bank-accounts',   label: 'Bank Accounts',   icon: Landmark },
     { id: 'documents',       label: 'Documents',       icon: FileText },
     { id: 'change-history',  label: 'Change History',  icon: ClipboardList },
@@ -705,6 +712,7 @@ const StaffDetailPageV2 = () => {
       runAdminRequest(() => apiClient.getBankAccounts()),
       runAdminRequest(() => apiClient.getAllChangeRequests({ staff_profile_id: staffProfileId })),
       runAdminRequest(() => apiClient.getStaffDeductions(staffProfileId, { page: 1, limit: 50 })),
+      runAdminRequest(() => apiClient.getStaffBonuses(staffProfileId, { page: 1, limit: 50 })),
       runAdminRequest(() => apiClient.getStaffAttendanceCalendar(staffProfileId)),
       runAdminRequest(() => apiClient.getStaffAdminNotes(staffProfileId)),
       runAdminRequest(() => apiClient.getStaffLeaveSummary(staffProfileId)),
@@ -716,7 +724,7 @@ const StaffDetailPageV2 = () => {
     const [
       detailRes, earningsRes, earningsTxRes, currentBookingRes, historyRes,
       futureBookingsRes, payoutsSummaryRes, payoutsRes, bankAccountsRes, companyBankAccountsRes,
-      changeRequestsRes, deductionsRes, attendanceCalendarRes, adminNotesRes,
+      changeRequestsRes, deductionsRes, bonusesRes, attendanceCalendarRes, adminNotesRes,
       leaveSummaryRes, recruitersRes, staffRecruiterRes,
     ] = results;
 
@@ -777,6 +785,9 @@ const StaffDetailPageV2 = () => {
 
     if (deductionsRes.status === 'fulfilled') setDeductions(safeArray(deductionsRes.value?.data));
     else nextErrors.deductions = deductionsRes.reason?.message;
+
+    if (bonusesRes.status === 'fulfilled') setBonuses(safeArray(bonusesRes.value?.data));
+    else nextErrors.bonuses = bonusesRes.reason?.message;
 
     if (attendanceCalendarRes.status === 'fulfilled') {
       const cal = attendanceCalendarRes.value?.data || {};
@@ -948,6 +959,25 @@ const StaffDetailPageV2 = () => {
       setDeductionError(err?.message || 'Failed to apply deduction');
     } finally {
       setDeductionSubmitting(false);
+    }
+  };
+
+  const submitBonus = async (e) => {
+    e.preventDefault();
+    setBonusError('');
+    setBonusSuccess('');
+    try {
+      setBonusSubmitting(true);
+      await runAdminRequest(() => apiClient.createStaffBonus(staffProfileId, {
+        amount: bonusForm.amount, reason: bonusForm.reason,
+      }));
+      setBonusSuccess('Bonus applied. WhatsApp and SMS sent to staff member.');
+      setBonusForm({ amount: '', reason: '' });
+      await loadPage();
+    } catch (err) {
+      setBonusError(err?.message || 'Failed to apply bonus');
+    } finally {
+      setBonusSubmitting(false);
     }
   };
 
@@ -1295,7 +1325,7 @@ const StaffDetailPageV2 = () => {
               <Field label="Phone" value={formatMobileNumber(profile.mobile_number)} />
               <Field
                 label="Other phones"
-                value={formatMobileNumbers(safeArray(profile.secondary_phone_numbers)).join(', ')}
+                value={formatMobileNumbers(safeArray(profile.secondary_phone_numbers)).map(({ number, name }) => name ? `${number} (${name})` : number).join(', ')}
               />
               <Field label="Location" value={profile.location || profile.home_address} />
               <Field
@@ -1973,6 +2003,81 @@ const StaffDetailPageV2 = () => {
     );
   };
 
+  const renderBonuses = () => {
+    const totalBonused = bonuses.reduce((s, b) => s + parseFloat(b.amount || 0), 0);
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="grid grid-cols-2 gap-3">
+          <MiniCard label="Total bonused" value={formatMoney(totalBonused)} color="#059669" />
+          <MiniCard label="Total entries" value={bonuses.length} />
+        </div>
+
+        <Card>
+          <CardHead title="Apply bonus" sub="Credits earnings. A WhatsApp message and SMS are sent automatically." />
+          <CardBody>
+            <form onSubmit={submitBonus}>
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_1.5fr_auto] gap-3 items-end">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">Amount (LKR)</label>
+                  <input
+                    type="number" min="0.01" step="0.01" value={bonusForm.amount}
+                    onChange={e => { setBonusForm(f => ({ ...f, amount: e.target.value })); setBonusError(''); setBonusSuccess(''); }}
+                    onWheel={e => e.target.blur()}
+                    placeholder="0.00" className={inputCls} required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">Reason</label>
+                  <input
+                    type="text" value={bonusForm.reason}
+                    onChange={e => { setBonusForm(f => ({ ...f, reason: e.target.value })); setBonusError(''); setBonusSuccess(''); }}
+                    placeholder="e.g. Performance bonus, salary increase" className={inputCls} required
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={bonusSubmitting}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-500 transition-colors whitespace-nowrap disabled:opacity-60"
+                >
+                  {bonusSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  Apply bonus
+                </button>
+              </div>
+              {bonusError && <div className="mt-3 bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-sm text-red-700">{bonusError}</div>}
+              {bonusSuccess && <div className="mt-3 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2.5 text-sm text-emerald-700">{bonusSuccess}</div>}
+            </form>
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHead title="Bonus history" />
+          <CardBody className="p-0">
+            {sectionErrors.bonuses ? (
+              <div className="p-5"><Empty title="Failed to load bonuses" subtitle={sectionErrors.bonuses} /></div>
+            ) : bonuses.length === 0 ? (
+              <div className="p-5"><Empty title="No bonuses recorded" /></div>
+            ) : (
+              <div className="px-5 pb-5 pt-4">
+                <TableHead cols="1fr 1.6fr 1fr 0.9fr 1fr">
+                  <span>Date</span><span>Reason</span><span>Recorded by</span><span>Status</span><span className="text-right">Amount</span>
+                </TableHead>
+                {bonuses.map((b, i) => (
+                  <TableRow key={b.transaction_id || i} cols="1fr 1.6fr 1fr 0.9fr 1fr">
+                    <div className="text-xs text-slate-500">{formatDateTime(b.created_at)}</div>
+                    <div className="text-sm font-semibold text-slate-900">{b.reason || '-'}</div>
+                    <div className="text-sm text-slate-600">{b.recorded_by || 'Admin'}</div>
+                    <div><StatusPill value={b.status} /></div>
+                    <div className="text-right text-sm font-bold text-emerald-600">{formatMoney(b.amount)}</div>
+                  </TableRow>
+                ))}
+              </div>
+            )}
+          </CardBody>
+        </Card>
+      </div>
+    );
+  };
+
   const renderBankAccounts = () => (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -2375,7 +2480,7 @@ const StaffDetailPageV2 = () => {
       <div className="flex-1 bg-black/30" onClick={() => !editModal.saving && setEditModal(p => ({ ...p, isOpen: false }))} />
 
       {/* Panel */}
-      <div className="w-full max-w-xl bg-white flex flex-col shadow-2xl overflow-hidden">
+      <div className="w-full max-w-2xl bg-white flex flex-col shadow-2xl overflow-hidden">
         {/* Drawer header */}
         <div className="flex items-start justify-between gap-3 px-6 py-4 border-b border-slate-200 flex-shrink-0">
           <div className="flex items-start gap-3">
@@ -2885,6 +2990,7 @@ const StaffDetailPageV2 = () => {
       {activeSection === 'reviews'         && renderReviews()}
       {activeSection === 'payouts'         && renderPayouts()}
       {activeSection === 'deductions'      && renderDeductions()}
+      {activeSection === 'bonuses'         && renderBonuses()}
       {activeSection === 'bank-accounts'   && renderBankAccounts()}
       {activeSection === 'documents'       && renderDocuments()}
       {activeSection === 'change-history'  && renderChangeHistory()}

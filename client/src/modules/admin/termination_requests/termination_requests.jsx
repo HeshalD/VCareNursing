@@ -121,6 +121,7 @@ const TerminationRequests = () => {
       req.client_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       req.patient_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       req.staff_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      req.staff_code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       req.booking_id?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesUrgency = urgencyFilter === 'all' || req.urgency === urgencyFilter;
     return matchesSearch && matchesUrgency;
@@ -376,7 +377,7 @@ const TerminationRequests = () => {
                                     </div>
                                     <div>
                                       <p className="text-sm font-semibold text-slate-900">{request.staff_name || 'Not assigned'}</p>
-                                      <p className="text-xs text-slate-400 font-mono">{request.staff_code || request.staff_profile_id || ''}</p>
+                                      <p className="text-xs text-slate-400 font-mono">{request.staff_code || request.staff_profile_id || ''}{request.gender ? ` · ${request.gender === 'MALE' ? 'Male' : request.gender === 'FEMALE' ? 'Female' : request.gender}` : ''}</p>
                                     </div>
                                   </div>
                                   <div>

@@ -26,15 +26,17 @@ const inputCls  = 'w-full rounded-md border border-gray-200 px-3 py-2 text-sm ou
 const selectCls = `${inputCls} bg-white`;
 const labelCls  = 'mb-1 block text-[11px] font-semibold uppercase tracking-wider text-gray-400';
 
-export default function AddCareProfileDrawer({ open, clientProfileId, onClose, onSuccess }) {
+export default function AddCareProfileDrawer({ open, clientProfileId, clientAddress, onClose, onSuccess }) {
   const [form, setForm]         = useState(emptyForm);
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState('');
+  const [sameAsClientAddress, setSameAsClientAddress] = useState(false);
 
   useEffect(() => {
     if (!open) {
       setForm(emptyForm);
       setError('');
+      setSameAsClientAddress(false);
     }
   }, [open]);
 
@@ -172,9 +174,23 @@ export default function AddCareProfileDrawer({ open, clientProfileId, onClose, o
                   type="text"
                   value={form.residential_address}
                   onChange={e => updateField('residential_address', e.target.value)}
-                  className={inputCls}
+                  disabled={sameAsClientAddress}
+                  className={inputCls + (sameAsClientAddress ? ' bg-gray-50 text-gray-500 cursor-not-allowed' : '')}
                   placeholder="e.g. 45/A, Galle Road, Dehiwala, Colombo"
                 />
+                {clientAddress && (
+                  <label className="mt-1.5 flex items-center gap-1.5 text-xs text-gray-500">
+                    <input
+                      type="checkbox"
+                      checked={sameAsClientAddress}
+                      onChange={e => {
+                        setSameAsClientAddress(e.target.checked);
+                        if (e.target.checked) updateField('residential_address', clientAddress);
+                      }}
+                    />
+                    Same as client's address
+                  </label>
+                )}
               </div>
 
               <div className="sm:col-span-2">

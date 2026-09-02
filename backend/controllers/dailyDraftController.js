@@ -4,7 +4,7 @@
 // decisions, invoice decisions/waives — is cached here via PUT and never touches
 // staff_daily_attendance/booking_daily_invoices/wallets/transactions until the
 // admin explicitly hits Confirm (POST .../confirm), which applies every entry
-// atomically and deletes the draft row. See applyAttendanceTime/applyAttendanceAbsent/
+// atomically and deletes the draft row. See applyAttendanceTime/applyAttendanceException/
 // applySalaryDecision (dailyAttendanceController.js) and applyInvoiceDecision/
 // applyWaiveDecision (bookingController.js) for the actual business-table writes
 // this composes — this file owns none of that logic itself, only orchestration.
@@ -15,7 +15,7 @@ const { maybeAutoCompleteVisitingBooking } = require('../services/visitingBookin
 const dailyAttendanceController = require('./dailyAttendanceController');
 const bookingController = require('./bookingController');
 
-const { applyAttendanceTime, applyAttendanceAbsent, applySalaryDecision, getDeciderName } = dailyAttendanceController._internal;
+const { applyAttendanceTime, applyAttendanceException, applyAttendancePresentFlat, applySalaryDecision, getDeciderName, EXCEPTION_ACTION_TYPES } = dailyAttendanceController._internal;
 const { applyInvoiceDecision, applyWaiveDecision, getActorName } = bookingController._internal;
 
 /**
@@ -183,9 +183,9 @@ exports.confirmDayDraft = async (req, res) => {
 
         for (const entry of staffEntries) {
             if (entry.action === 'ABSENT') {
-                const { attendance, absentNotes } = await applyAttendanceAbsent(client, {
+                const { attendance, notes: absentNotes } = await applyAttendanceException(client, {
                     booking_id, assignment_id: entry.assignment_id, service_date,
-                    shift_slot_id: entry.shift_slot_id || null, notes: entry.notes,
+                    shift_slot_id: entry.shift_slot_id || null, attendance_status: 'ABSENT', notes: entry.notes,
                     deciderUserId, deciderName
                 });
                 attendanceResults.push(attendance);
@@ -206,6 +206,47 @@ exports.confirmDayDraft = async (req, res) => {
                     actionType: 'SHIFT_OCCURRENCE_WAIVED',
                     details: { service_date, shift_slot_id: entry.shift_slot_id, assignment_id: entry.assignment_id }
                 });
+                continue;
+            }
+
+            if (entry.action === 'EXCEPTION') {
+                const { attendance, notes: exceptionNotes } = await applyAttendanceException(client, {
+                    booking_id, assignment_id: entry.assignment_id, service_date,
+                    shift_slot_id: entry.shift_slot_id || null, attendance_status: entry.attendance_status, notes: entry.notes,
+                    deciderUserId, deciderName
+                });
+                attendanceResults.push(attendance);
+                activityEntries.push({
+                    actionType: EXCEPTION_ACTION_TYPES[entry.attendance_status],
+                    details: { assignment_id: entry.assignment_id, service_date, notes: exceptionNotes }
+                });
+                continue;
+            }
+
+            if (entry.action === 'PRESENT') {
+                const { attendance } = await applyAttendancePresentFlat(client, {
+                    booking_id, assignment_id: entry.assignment_id, service_date,
+                    shift_slot_id: entry.shift_slot_id || null
+                });
+                attendanceResults.push(attendance);
+                activityEntries.push({
+                    actionType: 'ATTENDANCE_RECORDED',
+                    details: { assignment_id: entry.assignment_id, service_date, attendance_status: 'PRESENT' }
+                });
+
+                if (entry.salary_decision && typeof entry.salary_decision.approve === 'boolean') {
+                    const { attendance: decided, salaryAmount } = await applySalaryDecision(client, {
+                        attendance_id: attendance.attendance_id,
+                        approve: entry.salary_decision.approve,
+                        amount: entry.salary_decision.amount,
+                        deciderUserId, deciderName
+                    });
+                    attendanceResults[attendanceResults.length - 1] = decided;
+                    activityEntries.push({
+                        actionType: entry.salary_decision.approve ? 'STAFF_SALARY_CONFIRMED' : 'STAFF_SALARY_SKIPPED',
+                        details: { attendance_id: attendance.attendance_id, service_date, amount: salaryAmount }
+                    });
+                }
                 continue;
             }
 

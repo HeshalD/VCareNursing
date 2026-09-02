@@ -3,6 +3,35 @@ const bcrypt = require('bcrypt');
 
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+// One-time TEXT[] -> JSONB conversion for a table's secondary_phone_numbers
+// column. Postgres's ALTER COLUMN TYPE ... USING clause can't contain a
+// subquery (rules out unnest()-based per-element rebuilding), so legacy rows
+// are cast straight to a JSON array of plain strings via to_jsonb() instead of
+// being rewritten as {number, name} objects here. The application layer
+// (PhoneNumbersField, formatMobileNumbers, toE164ListWithNames) already reads
+// a plain string as {number: str, name: ''}, so old data keeps displaying
+// correctly; every new write goes through those and stores proper objects.
+// Guarded on the live column type (via information_schema) rather than a
+// migrations-log table, since re-running ALTER COLUMN TYPE JSONB on an
+// already-JSONB column is a harmless no-op anyway, but this skips the work.
+async function migrateSecondaryPhonesToJsonb(table) {
+  const colType = await db.query(
+    `SELECT data_type FROM information_schema.columns WHERE table_name = $1 AND column_name = 'secondary_phone_numbers'`,
+    [table]
+  );
+  if (colType.rows.length === 0 || colType.rows[0].data_type !== 'ARRAY') return;
+
+  // The existing TEXT[] DEFAULT '{}' can't be auto-cast to jsonb, so it has to
+  // go before the type change; SET DEFAULT below replaces it.
+  await db.query(`ALTER TABLE ${table} ALTER COLUMN secondary_phone_numbers DROP DEFAULT`);
+  await db.query(`
+    ALTER TABLE ${table}
+    ALTER COLUMN secondary_phone_numbers TYPE JSONB
+    USING COALESCE(to_jsonb(secondary_phone_numbers), '[]'::jsonb)
+  `);
+  await db.query(`ALTER TABLE ${table} ALTER COLUMN secondary_phone_numbers SET DEFAULT '[]'::jsonb`);
+}
+
 async function migrate(retries = 5, delay = 3000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -226,6 +255,19 @@ async function runMigration() {
   await db.query(`
     DO $$ BEGIN
       ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'STAFF_DEDUCTION';
+    EXCEPTION
+      WHEN duplicate_object THEN null;
+    END $$;
+  `);
+
+  // Manual bonuses/salary increases credited to staff earnings. CREDIT, kept
+  // NEUTRAL cash-flow (like STAFF_SALARY) — only wallet payout via
+  // STAFF_SALARY_PAID represents real cash leaving the company, so this is
+  // deliberately left out of IN_CATEGORIES/OUT_CATEGORIES in
+  // utils/transactionFlow.js, mirroring STAFF_DEDUCTION.
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'STAFF_BONUS';
     EXCEPTION
       WHEN duplicate_object THEN null;
     END $$;
@@ -3006,6 +3048,19 @@ async function runMigration() {
   await db.query(`ALTER TABLE staff_daily_attendance ADD COLUMN IF NOT EXISTS revoke_reason TEXT`);
   await db.query(`ALTER TABLE staff_daily_attendance ADD COLUMN IF NOT EXISTS reversal_transaction_id UUID REFERENCES transactions(transaction_id)`);
 
+  // =========================================================
+  // SIMPLIFIED ATTENDANCE MARKING (flat present/absent mark for non-boundary
+  // days, plus admin exception reasons) — attendance_status distinguishes a
+  // flat PRESENT mark (no in/out time, salary decided off the flat daily_rate)
+  // from the existing timed rows (still required on a booking-start/end day)
+  // and from the exception statuses ON_LEAVE / LEFT_WITHOUT_NOTICE, which
+  // behave like ABSENT (salary_status SKIPPED) but carry a distinct, admin-
+  // supplied reason. leave_request_id optionally links an ON_LEAVE row to a
+  // real staff_leave_requests entry.
+  // =========================================================
+  await db.query(`ALTER TABLE staff_daily_attendance ADD COLUMN IF NOT EXISTS attendance_status VARCHAR(20) NOT NULL DEFAULT 'PRESENT'`);
+  await db.query(`ALTER TABLE staff_daily_attendance ADD COLUMN IF NOT EXISTS leave_request_id UUID REFERENCES staff_leave_requests(leave_id)`);
+
   await db.query(`ALTER TABLE booking_daily_invoices ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP WITH TIME ZONE`);
   await db.query(`ALTER TABLE booking_daily_invoices ADD COLUMN IF NOT EXISTS revoked_by_user_id UUID REFERENCES users(user_id)`);
   await db.query(`ALTER TABLE booking_daily_invoices ADD COLUMN IF NOT EXISTS revoked_by_name VARCHAR(255)`);
@@ -3263,6 +3318,15 @@ async function runMigration() {
   // booking-conversion time for a brand-new care profile.
   await db.query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS emergency_contact_name TEXT`);
   await db.query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS emergency_contact_number TEXT`);
+
+  // =========================================================
+  // Secondary phone numbers: TEXT[] -> JSONB, so each entry can optionally
+  // carry a name (e.g. "Son - Kasun") for numbers that aren't the person's
+  // own. Existing plain-string entries are wrapped as {number, name: ''}.
+  // =========================================================
+  await migrateSecondaryPhonesToJsonb('client_profiles');
+  await migrateSecondaryPhonesToJsonb('staff_profiles');
+  await migrateSecondaryPhonesToJsonb('staff_applications');
 
   // =========================================================
 

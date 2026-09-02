@@ -334,7 +334,7 @@ const rejectAdvance = async (req, res) => {
 const getAllAdvances = async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT sa.*, sp.full_name, sp.staff_code, sp.advance_threshold_amount,
+      `SELECT sa.*, sp.full_name, sp.staff_code, sp.gender, sp.advance_threshold_amount,
               COALESCE(sw.balance, 0) AS current_balance
        FROM staff_advances sa
        JOIN staff_profiles sp ON sp.staff_profile_id = sa.staff_profile_id
@@ -404,7 +404,7 @@ const updateAdvanceThreshold = async (req, res) => {
 const getPendingAdvances = async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT sa.*, sp.full_name, sp.staff_code, sp.advance_threshold_amount,
+      `SELECT sa.*, sp.full_name, sp.staff_code, sp.gender, sp.advance_threshold_amount,
               COALESCE(sw.balance, 0) AS current_balance
        FROM staff_advances sa
        JOIN staff_profiles sp ON sp.staff_profile_id = sa.staff_profile_id

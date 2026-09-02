@@ -544,6 +544,9 @@ const BookingDetailPageV2 = () => {
   const [dayModalStep, setDayModalStep] = useState('edit'); // 'edit' | 'preview'
   const [draftTimeSaved, setDraftTimeSaved] = useState({}); // assignment_id -> { service_date, in_time (ISO), out_time (ISO), hours_served, shift_slot_id, reschedule_id }
   const [draftAbsent, setDraftAbsent] = useState({}); // assignment_id -> { shift_slot_id, reschedule_id, notes }
+  const [draftPresent, setDraftPresent] = useState({}); // assignment_id -> { shift_slot_id, reschedule_id } — flat "present" mark, no in/out time
+  const [draftException, setDraftException] = useState({}); // assignment_id -> { shift_slot_id, reschedule_id, attendance_status, notes }
+  const [exceptionForm, setExceptionForm] = useState(null); // { assignmentId, attendance_status, notes } — inline reason form for On Leave / Left Without Notice
   const [draftSalaryDecisions, setDraftSalaryDecisions] = useState({}); // assignment_id -> { approve, amount }
   const [draftInvoiceDecisions, setDraftInvoiceDecisions] = useState({}); // key ('day' | shift_slot_id) -> { approve, amount, shift_slot_id, reschedule_id }
   const [draftWaives, setDraftWaives] = useState({}); // shift_slot_id -> { assignment_id, reschedule_id }
@@ -823,6 +826,40 @@ const BookingDetailPageV2 = () => {
       return { ...row, effectiveEnd, dayStart, dayEnd, dayCount: dayStart !== null && dayEnd !== null ? dayEnd - dayStart + 1 : null, isOngoing: !effectiveEnd, color: staffColorMap.get(row.colorKey) || null };
     });
   }, [normStaffHistory, bookingSummary.start_date, staffColorMap]);
+
+  // Flags each allocation row for a missing swap-boundary time. Only a row that
+  // has another row immediately before/after it in the *same shift slot's*
+  // timeline (grouping by shiftSlotId so concurrent SHIFT_BASED slots don't
+  // cross-contaminate) represents a staff transition — the very first row's
+  // in_time and the currently-ongoing last row's out_time are never "missing",
+  // they're just not applicable yet.
+  const allocationHistoryWithTimeStatus = useMemo(() => {
+    const bySlot = new Map();
+    sortedAllocationHistory.forEach(row => {
+      const key = row.shiftSlotId || '__default__';
+      if (!bySlot.has(key)) bySlot.set(key, []);
+      bySlot.get(key).push(row);
+    });
+    const flagged = [];
+    bySlot.forEach(rows => {
+      rows.forEach((row, i) => {
+        const startISO = row.startDate ? row.startDate.slice(0, 10) : null;
+        const endISO = row.effectiveEnd ? row.effectiveEnd.slice(0, 10) : null;
+        const inRecord = startISO ? attendanceRecords.find(a => a.assignment_id === row.id && a.service_date?.slice(0, 10) === startISO) : null;
+        const outRecord = endISO ? attendanceRecords.find(a => a.assignment_id === row.id && a.service_date?.slice(0, 10) === endISO) : null;
+        const missingInTime = i > 0 && !inRecord?.in_time;
+        const missingOutTime = i < rows.length - 1 && !!row.effectiveEnd && !outRecord?.out_time;
+        flagged.push({ ...row, inRecord, outRecord, missingInTime, missingOutTime, needsTimeAction: missingInTime || missingOutTime });
+      });
+    });
+    flagged.sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
+    return flagged;
+  }, [sortedAllocationHistory, attendanceRecords]);
+
+  const rowsNeedingSwapTime = useMemo(
+    () => allocationHistoryWithTimeStatus.filter(r => r.needsTimeAction),
+    [allocationHistoryWithTimeStatus]
+  );
 
   // ── effects ──────────────────────────────────────────────────────────────
 
@@ -1155,6 +1192,9 @@ const BookingDetailPageV2 = () => {
     setEditingAttendanceIds(new Set());
     setDraftTimeSaved({});
     setDraftAbsent({});
+    setDraftPresent({});
+    setDraftException({});
+    setExceptionForm(null);
     setDraftSalaryDecisions({});
     setDraftInvoiceDecisions({});
     setDraftWaives({});
@@ -1168,7 +1208,7 @@ const BookingDetailPageV2 = () => {
       const payload = res?.data?.payload;
       if (!payload) return;
 
-      const timeSaved = {}, absent = {}, salaryDecisions = {}, waives = {};
+      const timeSaved = {}, absent = {}, present = {}, exception = {}, salaryDecisions = {}, waives = {};
       (payload.staff || []).forEach(entry => {
         if (entry.action === 'TIME') {
           timeSaved[entry.assignment_id] = {
@@ -1179,6 +1219,11 @@ const BookingDetailPageV2 = () => {
           if (entry.salary_decision) salaryDecisions[entry.assignment_id] = entry.salary_decision;
         } else if (entry.action === 'ABSENT') {
           absent[entry.assignment_id] = { shift_slot_id: entry.shift_slot_id || null, reschedule_id: entry.reschedule_id || null, notes: entry.notes };
+        } else if (entry.action === 'PRESENT') {
+          present[entry.assignment_id] = { shift_slot_id: entry.shift_slot_id || null, reschedule_id: entry.reschedule_id || null };
+          if (entry.salary_decision) salaryDecisions[entry.assignment_id] = entry.salary_decision;
+        } else if (entry.action === 'EXCEPTION') {
+          exception[entry.assignment_id] = { shift_slot_id: entry.shift_slot_id || null, reschedule_id: entry.reschedule_id || null, attendance_status: entry.attendance_status, notes: entry.notes };
         } else if (entry.action === 'WAIVE') {
           waives[entry.shift_slot_id] = { assignment_id: entry.assignment_id, reschedule_id: entry.reschedule_id || null };
         }
@@ -1190,6 +1235,8 @@ const BookingDetailPageV2 = () => {
       });
       setDraftTimeSaved(timeSaved);
       setDraftAbsent(absent);
+      setDraftPresent(present);
+      setDraftException(exception);
       setDraftSalaryDecisions(salaryDecisions);
       setDraftInvoiceDecisions(invoiceDecisions);
       setDraftWaives(waives);
@@ -1200,7 +1247,8 @@ const BookingDetailPageV2 = () => {
   const closeDayModal = () => {
     setDayModal(null); setDayModalError(''); setAttendanceInputs({}); setInvoiceAmountInput(''); setInvoiceAmountInputsBySlot({});
     setEditingAttendanceIds(new Set()); setDayModalStep('edit');
-    setDraftTimeSaved({}); setDraftAbsent({}); setDraftSalaryDecisions({}); setDraftInvoiceDecisions({}); setDraftWaives({});
+    setDraftTimeSaved({}); setDraftAbsent({}); setDraftPresent({}); setDraftException({}); setExceptionForm(null);
+    setDraftSalaryDecisions({}); setDraftInvoiceDecisions({}); setDraftWaives({});
   };
 
   // Persists the day's cached draft to the backend (booking_day_drafts) — pure cache
@@ -1211,6 +1259,8 @@ const BookingDetailPageV2 = () => {
     if (!dayModal) return;
     const timeSaved = overrides.timeSaved ?? draftTimeSaved;
     const absent = overrides.absent ?? draftAbsent;
+    const present = overrides.present ?? draftPresent;
+    const exception = overrides.exception ?? draftException;
     const salaryDecisions = overrides.salaryDecisions ?? draftSalaryDecisions;
     const invoiceDecisions = overrides.invoiceDecisions ?? draftInvoiceDecisions;
     const waives = overrides.waives ?? draftWaives;
@@ -1227,6 +1277,17 @@ const BookingDetailPageV2 = () => {
     Object.entries(absent).forEach(([assignmentId, info]) => {
       if (info.shift_slot_id && waives[info.shift_slot_id]) return;
       staff.push({ assignment_id: assignmentId, shift_slot_id: info.shift_slot_id || null, reschedule_id: info.reschedule_id || null, action: 'ABSENT', notes: info.notes });
+    });
+    Object.entries(present).forEach(([assignmentId, info]) => {
+      if (info.shift_slot_id && waives[info.shift_slot_id]) return;
+      staff.push({
+        assignment_id: assignmentId, shift_slot_id: info.shift_slot_id || null, reschedule_id: info.reschedule_id || null,
+        action: 'PRESENT', salary_decision: salaryDecisions[assignmentId] || null,
+      });
+    });
+    Object.entries(exception).forEach(([assignmentId, info]) => {
+      if (info.shift_slot_id && waives[info.shift_slot_id]) return;
+      staff.push({ assignment_id: assignmentId, shift_slot_id: info.shift_slot_id || null, reschedule_id: info.reschedule_id || null, action: 'EXCEPTION', attendance_status: info.attendance_status, notes: info.notes });
     });
     Object.entries(waives).forEach(([slotId, w]) => {
       staff.push({ assignment_id: w.assignment_id, shift_slot_id: slotId, reschedule_id: w.reschedule_id || null, action: 'WAIVE' });
@@ -1339,6 +1400,62 @@ const BookingDetailPageV2 = () => {
     setDraftAbsent(nextAbsent);
     persistDraftWith({ absent: nextAbsent });
   };
+
+  // Flat "present" mark for a non-boundary day — no in/out time needed. Cached as a
+  // draft entry; salary is still decided manually (off the flat daily_rate) once
+  // this is confirmed, same as a timed day.
+  const markPresentFlat = (assignment) => {
+    const assignmentId = assignment.assignment_id;
+    const nextPresent = { ...draftPresent, [assignmentId]: { shift_slot_id: assignment.shift_slot_id || null, reschedule_id: assignment.reschedule_id || null } };
+    const nextTimeSaved = { ...draftTimeSaved }; delete nextTimeSaved[assignmentId];
+    const nextException = { ...draftException }; delete nextException[assignmentId];
+    setDayModalError('');
+    setDraftPresent(nextPresent);
+    setDraftTimeSaved(nextTimeSaved);
+    setDraftException(nextException);
+    persistDraftWith({ present: nextPresent, timeSaved: nextTimeSaved, exception: nextException });
+  };
+
+  const undoPresent = (assignmentId) => {
+    const nextPresent = { ...draftPresent }; delete nextPresent[assignmentId];
+    const nextSalary = { ...draftSalaryDecisions }; delete nextSalary[assignmentId];
+    setDraftPresent(nextPresent);
+    setDraftSalaryDecisions(nextSalary);
+    persistDraftWith({ present: nextPresent, salaryDecisions: nextSalary });
+  };
+
+  // Admin exception reasons (staff went on leave mid-assignment, or left without
+  // telling anyone) — like markAbsent (skips salary, no in/out time), but requires
+  // a reason and is labeled/audited distinctly. Opens/closes/submits the small
+  // inline reason form rendered next to the row.
+  const openExceptionForm = (assignmentId, attendance_status) => {
+    setExceptionForm({ assignmentId, attendance_status, notes: '' });
+  };
+  const cancelExceptionForm = () => setExceptionForm(null);
+  const submitExceptionForm = () => {
+    if (!exceptionForm) return;
+    const { assignmentId, attendance_status, notes } = exceptionForm;
+    if (!notes.trim()) { setDayModalError('A reason is required'); return; }
+    const assignment = dayModal.assignments.find(a => a.assignment_id === assignmentId);
+    const nextException = { ...draftException, [assignmentId]: { shift_slot_id: assignment?.shift_slot_id || null, reschedule_id: assignment?.reschedule_id || null, attendance_status, notes: notes.trim() } };
+    const nextTimeSaved = { ...draftTimeSaved }; delete nextTimeSaved[assignmentId];
+    const nextPresent = { ...draftPresent }; delete nextPresent[assignmentId];
+    const nextSalary = { ...draftSalaryDecisions }; delete nextSalary[assignmentId];
+    setDayModalError('');
+    setDraftException(nextException);
+    setDraftTimeSaved(nextTimeSaved);
+    setDraftPresent(nextPresent);
+    setDraftSalaryDecisions(nextSalary);
+    setExceptionForm(null);
+    persistDraftWith({ exception: nextException, timeSaved: nextTimeSaved, present: nextPresent, salaryDecisions: nextSalary });
+  };
+  const undoException = (assignmentId) => {
+    const nextException = { ...draftException }; delete nextException[assignmentId];
+    setDraftException(nextException);
+    persistDraftWith({ exception: nextException });
+  };
+
+  const EXCEPTION_LABELS = { ON_LEAVE: 'On Leave', LEFT_WITHOUT_NOTICE: 'Left Without Notice' };
 
   // Caches the salary approve/skip + amount decision for an already-logged day —
   // no wallet credit happens until Confirm Day.
@@ -1633,7 +1750,7 @@ const BookingDetailPageV2 = () => {
       } else {
         response = await apiClient.swapBookingStaff(bookingId, { new_staff_id: swapModalSelectedStaff.staff_profile_id, swap_reason: swapModalReason.trim(), new_staff_start_date: swapModalStartDate, old_staff_out_time: oldOutTime, new_staff_in_time: newInTime });
       }
-      closeSwapModal(); await fetchDetail(); await fetchScheduledActions(); if (isShiftBased) await fetchShiftData();
+      closeSwapModal(); await fetchDetail(); await fetchDailyRecords(); await fetchScheduledActions(); if (isShiftBased) await fetchShiftData();
       if (response?.scheduled) {
         window.alert(response.message || 'Change scheduled for the future date.');
       }
@@ -2250,6 +2367,26 @@ const BookingDetailPageV2 = () => {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 13, color: '#991b1b' }}>
               <span>{error}</span>
               <button onClick={() => setError('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#991b1b', lineHeight: 1 }}><XCircle style={{ width: 15, height: 15 }} /></button>
+            </div>
+          )}
+
+          {/* ── Swap in/out time action-needed banner ── */}
+          {rowsNeedingSwapTime.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', background: '#FEF6E7', border: '1px solid #F4C77A', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 13, color: '#7A5209' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                <AlertTriangle style={{ width: 16, height: 16, flexShrink: 0 }} />
+                <span>
+                  {rowsNeedingSwapTime.length === 1
+                    ? `A staff swap on this booking is missing an in/out time for ${rowsNeedingSwapTime[0].name}.`
+                    : `${rowsNeedingSwapTime.length} staff swaps on this booking are missing an in/out time.`} Please enter it in Allocation history.
+                </span>
+              </div>
+              <button
+                onClick={() => { setActiveSection('staff'); openEditTimes(rowsNeedingSwapTime[0]); }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#9A6A12', border: 'none', borderRadius: 6, padding: '6px 12px', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 700, color: '#fff', cursor: 'pointer', flexShrink: 0 }}
+              >
+                Enter times
+              </button>
             </div>
           )}
 
@@ -3127,10 +3264,10 @@ const BookingDetailPageV2 = () => {
               {/* Allocation history */}
               <Card>
                 <CardTitle>Allocation history</CardTitle>
-                {sortedAllocationHistory.length === 0 ? <Empty icon={Users} text="No allocation history available." /> : (
+                {allocationHistoryWithTimeStatus.length === 0 ? <Empty icon={Users} text="No allocation history available." /> : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {sortedAllocationHistory.map((row, i) => (
-                      <div key={row.id || i} style={{ display: 'flex', alignItems: 'center', gap: 12, borderRadius: 12, padding: '12px 14px', background: row.color ? row.color.tint : '#FBF9F4', border: `1px solid ${row.color ? row.color.border : '#EFEAE0'}`, borderLeft: `4px solid ${row.color ? row.color.solid : '#E7E1D6'}` }}>
+                    {allocationHistoryWithTimeStatus.map((row, i) => (
+                      <div key={row.id || i} style={{ display: 'flex', alignItems: 'center', gap: 12, borderRadius: 12, padding: '12px 14px', background: row.color ? row.color.tint : '#FBF9F4', border: `1px solid ${row.needsTimeAction ? '#F4C77A' : (row.color ? row.color.border : '#EFEAE0')}`, borderLeft: `4px solid ${row.color ? row.color.solid : '#E7E1D6'}` }}>
                         <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 800, background: row.color ? row.color.solid : '#D5CFC4' }}>
                           {initials(row.name)}
                         </div>
@@ -3139,25 +3276,28 @@ const BookingDetailPageV2 = () => {
                             <span style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>{row.name}</span>
                             {row.designation !== '-' && <span style={{ fontSize: 12, color: '#A39D91' }}>{row.designation}</span>}
                             {row.isOngoing && <span style={{ fontSize: 10, fontWeight: 700, background: '#E3F1E8', color: '#2F7A53', border: '1px solid #DCEEDD', borderRadius: 999, padding: '2px 7px' }}>Active</span>}
+                            {row.needsTimeAction && (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 700, background: '#FCEFD4', color: '#9A6A12', border: '1px solid #F4C77A', borderRadius: 999, padding: '2px 7px' }}>
+                                <AlertTriangle style={{ width: 10, height: 10 }} /> Action needed
+                              </span>
+                            )}
                           </div>
                           <div style={{ fontSize: 12, color: '#6F6A60', marginTop: 3 }}>
                             {formatDate(row.startDate)} <span style={{ color: '#C4BFB5', margin: '0 4px' }}>→</span>
                             {row.effectiveEnd ? formatDate(row.effectiveEnd) : <span style={{ color: '#2F8A5B', fontWeight: 600 }}>Ongoing</span>}
                           </div>
-                          {(() => {
-                            const startISO = row.startDate ? row.startDate.slice(0, 10) : null;
-                            const endISO = row.effectiveEnd ? row.effectiveEnd.slice(0, 10) : null;
-                            const inRecord = startISO ? attendanceRecords.find(a => a.assignment_id === row.id && a.service_date?.slice(0, 10) === startISO) : null;
-                            const outRecord = endISO ? attendanceRecords.find(a => a.assignment_id === row.id && a.service_date?.slice(0, 10) === endISO) : null;
-                            if (!inRecord?.in_time && !outRecord?.out_time) return null;
-                            return (
-                              <div style={{ fontSize: 11, color: '#8B857A', marginTop: 2 }}>
-                                {inRecord?.in_time && <>In {formatDT(inRecord.in_time)}</>}
-                                {inRecord?.in_time && outRecord?.out_time && <span style={{ margin: '0 5px' }}>·</span>}
-                                {outRecord?.out_time && <>Out {formatDT(outRecord.out_time)}</>}
-                              </div>
-                            );
-                          })()}
+                          {(row.inRecord?.in_time || row.outRecord?.out_time) && (
+                            <div style={{ fontSize: 11, color: '#8B857A', marginTop: 2 }}>
+                              {row.inRecord?.in_time && <>In {formatDT(row.inRecord.in_time)}</>}
+                              {row.inRecord?.in_time && row.outRecord?.out_time && <span style={{ margin: '0 5px' }}>·</span>}
+                              {row.outRecord?.out_time && <>Out {formatDT(row.outRecord.out_time)}</>}
+                            </div>
+                          )}
+                          {row.needsTimeAction && (
+                            <div style={{ fontSize: 11, color: '#9A6A12', marginTop: 2 }}>
+                              Missing {[row.missingInTime && 'in time', row.missingOutTime && 'out time'].filter(Boolean).join(' & ')} for this swap
+                            </div>
+                          )}
                         </div>
                         <div style={{ textAlign: 'right', flexShrink: 0 }}>
                           <div style={{ fontSize: 12, fontWeight: 700, padding: '4px 10px', borderRadius: 8, background: row.color ? row.color.solid : '#E7E1D6', color: row.color ? '#fff' : '#5A554B', marginBottom: 4 }}>
@@ -3167,8 +3307,8 @@ const BookingDetailPageV2 = () => {
                             {row.dayCount !== null ? `${row.dayCount} day${row.dayCount !== 1 ? 's' : ''}` : row.isOngoing && row.dayStart && plannedDays ? `${plannedDays - row.dayStart + 1} planned` : '—'}
                           </div>
                           {row.amountAllocated > 0 && <div style={{ fontSize: 11, fontWeight: 600, color: '#5A554B', marginTop: 2 }}>{formatMoney(row.amountAllocated)}</div>}
-                          <button onClick={() => openEditTimes(row)} style={{ marginTop: 6, fontSize: 11, fontWeight: 600, color: '#8C5AA6', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-                            Edit times
+                          <button onClick={() => openEditTimes(row)} style={{ marginTop: 6, fontSize: 11, fontWeight: 600, color: row.needsTimeAction ? '#9A6A12' : '#8C5AA6', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                            {row.needsTimeAction ? 'Enter times' : 'Edit times'}
                           </button>
                         </div>
                       </div>
@@ -4290,7 +4430,7 @@ const BookingDetailPageV2 = () => {
                                   {s.full_name}
                                   {s.staff_code && <span className="ml-2 text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{s.staff_code}</span>}
                                 </p>
-                                {s.designation && <p className="text-xs text-slate-500">{s.designation}</p>}
+                                {(s.designation || s.gender) && <p className="text-xs text-slate-500">{s.designation}{s.designation && s.gender ? ' · ' : ''}{s.gender ? (s.gender === 'MALE' ? 'Male' : s.gender === 'FEMALE' ? 'Female' : s.gender) : ''}</p>}
                                 {s.mobile_number && <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5"><Phone className="w-3 h-3" /> {formatMobileNumber(s.mobile_number)}</p>}
                               </div>
                             </div>
@@ -4771,6 +4911,8 @@ const BookingDetailPageV2 = () => {
         const HISTORY_ACTION_LABEL = {
           ATTENDANCE_RECORDED: 'Logged Time',
           STAFF_MARKED_ABSENT: 'Marked Absent',
+          STAFF_ON_LEAVE_MARKED: 'On Leave',
+          STAFF_LEFT_WITHOUT_NOTICE: 'Left Without Notice',
           STAFF_SALARY_CONFIRMED: 'Salary Calculated',
           STAFF_SALARY_SKIPPED: 'Salary Skipped',
           DAY_REVOKED: 'Revoked',
@@ -4959,7 +5101,14 @@ const BookingDetailPageV2 = () => {
                               const isEditing = editingAttendanceIds.has(a.assignment_id);
                               const draftSaved = draftTimeSaved[a.assignment_id];
                               const draftAbsentInfo = draftAbsent[a.assignment_id];
+                              const draftPresentInfo = draftPresent[a.assignment_id];
+                              const draftExceptionInfo = draftException[a.assignment_id];
                               const draftWaiveInfo = a.shift_slot_id ? draftWaives[a.shift_slot_id] : null;
+                              // Only a LIVE_IN assignment with no fixed start/end boundary on this day
+                              // gets the flat present/absent/exception mark — boundary days (and every
+                              // SHIFT_BASED/VISITING day) still need a real in/out time.
+                              const { onlyStart: liveInOnlyStart, onlyEnd: liveInOnlyEnd } = liveInBoundary(a, dayModal.dateISO);
+                              const isFlatMarkDay = isLiveIn && !a.shift_slot_id && !liveInOnlyStart && !liveInOnlyEnd;
 
                               // Assigned reference — shift start/duration for SHIFT_BASED, else the
                               // assignment's own service_start_time/assigned_hours (VISITING/LIVE_IN).
@@ -4985,30 +5134,42 @@ const BookingDetailPageV2 = () => {
                                 const revoked = record.salary_status === 'REVOKED';
                                 // A true no-show (Absent — no times ever logged), still on a shift
                                 // slot, that nobody has covered yet — offer Cover Shift right here
-                                // instead of sending the admin to the Client Invoice section.
-                                const isAbsent = !paid && !revoked && record.hours_served === null;
+                                // instead of sending the admin to the Client Invoice section. Exception
+                                // days (ON_LEAVE/LEFT_WITHOUT_NOTICE) also skip salary but aren't a
+                                // plain no-show, so they get their own label instead of "Absent".
+                                const isAbsent = !paid && !revoked && record.attendance_status === 'ABSENT';
+                                const exceptionLabel = !paid && !revoked ? EXCEPTION_LABELS[record.attendance_status] : null;
                                 const alreadyCovered = a.shift_slot_id && dayModal.assignments.some(other => other.shift_slot_id === a.shift_slot_id && other.reschedule_id);
                                 const canCover = isAbsent && a.shift_slot_id && !alreadyCovered;
+                                const statusBadge = (
+                                  <span
+                                    title={revoked ? [record.revoke_reason, record.revoked_by_name ? `by ${record.revoked_by_name}` : null].filter(Boolean).join(' — ') : undefined}
+                                    className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${paid ? 'bg-green-50 text-green-700' : revoked ? 'bg-red-50 text-red-700' : 'bg-gray-100 text-gray-500'}`}
+                                  >
+                                    <span className={`w-1.5 h-1.5 rounded-full ${paid ? 'bg-green-500' : revoked ? 'bg-red-500' : 'bg-gray-400'}`} />
+                                    {paid ? `Salary Calculated · Rs.${Number(record.salary_amount).toLocaleString()}` : revoked ? 'Revoked' : (exceptionLabel || (isAbsent ? 'Absent' : 'Skipped'))}
+                                  </span>
+                                );
                                 return (
                                   <tr key={a.assignment_id} style={rowBorder}>
                                     <td className={tdCls}>
                                       <span className="font-medium text-gray-900">{staffName}</span>
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
-                                    {assignedCell}
-                                    <td className={tdCls + ' text-gray-500 text-xs'}>{record.service_date?.slice(0, 10)}</td>
-                                    <td className={tdCls + ' tabular-nums'}>{fmtTime(record.in_time)}</td>
-                                    <td className={tdCls + ' tabular-nums'}>{fmtTime(record.out_time)}</td>
-                                    <td className={tdCls}><HoursBadge served={record.hours_served !== null ? Number(record.hours_served) : null} assigned={assignedHours} /></td>
+                                    {isFlatMarkDay ? (
+                                      <td className={tdCls} colSpan={5}>{statusBadge}</td>
+                                    ) : (
+                                      <>
+                                        {assignedCell}
+                                        <td className={tdCls + ' text-gray-500 text-xs'}>{record.service_date?.slice(0, 10)}</td>
+                                        <td className={tdCls + ' tabular-nums'}>{fmtTime(record.in_time)}</td>
+                                        <td className={tdCls + ' tabular-nums'}>{fmtTime(record.out_time)}</td>
+                                        <td className={tdCls}><HoursBadge served={record.hours_served !== null ? Number(record.hours_served) : null} assigned={assignedHours} /></td>
+                                      </>
+                                    )}
                                     <td className={tdCls}>
                                       <div className="flex items-center gap-1.5 flex-wrap">
-                                        <span
-                                          title={revoked ? [record.revoke_reason, record.revoked_by_name ? `by ${record.revoked_by_name}` : null].filter(Boolean).join(' — ') : undefined}
-                                          className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${paid ? 'bg-green-50 text-green-700' : revoked ? 'bg-red-50 text-red-700' : 'bg-gray-100 text-gray-500'}`}
-                                        >
-                                          <span className={`w-1.5 h-1.5 rounded-full ${paid ? 'bg-green-500' : revoked ? 'bg-red-500' : 'bg-gray-400'}`} />
-                                          {paid ? `Salary Calculated · Rs.${Number(record.salary_amount).toLocaleString()}` : revoked ? 'Revoked' : (isAbsent ? 'Absent' : 'Skipped')}
-                                        </span>
+                                        {isFlatMarkDay ? null : statusBadge}
                                         {canCover && (
                                           <button onClick={() => openRescheduleModal(a.shift_slot_id, true)} title="Hand today's shift to a different staff member — client still billed normally, that staff member's salary is calculated instead" className="px-2.5 py-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded transition">Cover Shift</button>
                                         )}
@@ -5052,8 +5213,8 @@ const BookingDetailPageV2 = () => {
                                       <span className="font-medium text-gray-900">{staffName}</span>
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
-                                    {assignedCell}
-                                    <td className={tdCls} colSpan={3}>
+                                    {isFlatMarkDay ? null : assignedCell}
+                                    <td className={tdCls} colSpan={isFlatMarkDay ? 5 : 3}>
                                       <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-red-50 text-red-700">
                                         <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
                                         Absent (draft)
@@ -5066,6 +5227,84 @@ const BookingDetailPageV2 = () => {
                                           <button onClick={() => openRescheduleModal(a.shift_slot_id, true)} title="Hand today's shift to a different staff member — client still billed normally, that staff member's salary is calculated instead" className="px-2.5 py-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded transition">Cover Shift</button>
                                         )}
                                       </div>
+                                    </td>
+                                  </tr>
+                                );
+                              }
+
+                              // DRAFT — EXCEPTION: staff went on leave mid-assignment, or left without
+                              // telling anyone. Behaves like Absent (skips salary, no in/out time) but
+                              // carries a distinct label + the admin's reason. Cover Shift is still
+                              // offered on a shift slot, same as Absent.
+                              if (draftExceptionInfo) {
+                                const alreadyCovered = a.shift_slot_id && dayModal.assignments.some(other => other.shift_slot_id === a.shift_slot_id && other.reschedule_id);
+                                const canCover = a.shift_slot_id && !alreadyCovered;
+                                return (
+                                  <tr key={a.assignment_id} style={{ ...rowBorder, background: '#fff7ed' }}>
+                                    <td className={tdCls}>
+                                      <span className="font-medium text-gray-900">{staffName}</span>
+                                      {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
+                                    </td>
+                                    {isFlatMarkDay ? null : assignedCell}
+                                    <td className={tdCls} colSpan={isFlatMarkDay ? 5 : 3}>
+                                      <span title={draftExceptionInfo.notes} className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-orange-50 text-orange-700">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-orange-400" />
+                                        {EXCEPTION_LABELS[draftExceptionInfo.attendance_status]} (draft)
+                                      </span>
+                                    </td>
+                                    <td className={tdCls}>
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <button onClick={() => undoException(a.assignment_id)} className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition">Undo</button>
+                                        {canCover && (
+                                          <button onClick={() => openRescheduleModal(a.shift_slot_id, true)} title="Hand today's shift to a different staff member — client still billed normally, that staff member's salary is calculated instead" className="px-2.5 py-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded transition">Cover Shift</button>
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              }
+
+                              // DRAFT — PRESENT (flat mark): cached, not yet confirmed. No hours
+                              // captured — salary decision still uses the flat daily_rate, same UI
+                              // as a TIME-saved day's salary step.
+                              if (draftPresentInfo) {
+                                const salaryDecision = draftSalaryDecisions[a.assignment_id];
+                                return (
+                                  <tr key={a.assignment_id} style={rowBorder}>
+                                    <td className={tdCls}>
+                                      <span className="font-medium text-gray-900">{staffName}</span>
+                                      {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
+                                    </td>
+                                    <td className={tdCls} colSpan={5}>
+                                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                        Present (draft)
+                                      </span>
+                                    </td>
+                                    <td className={tdCls}>
+                                      {salaryDecision ? (
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${salaryDecision.approve ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+                                            <span className={`w-1.5 h-1.5 rounded-full ${salaryDecision.approve ? 'bg-blue-400' : 'bg-gray-400'}`} />
+                                            {salaryDecision.approve ? `Salary (draft) · Rs.${Number(salaryDecision.amount).toLocaleString()}` : 'Salary Skipped (draft)'}
+                                          </span>
+                                          <button onClick={() => undoSalaryDecision(a.assignment_id)} className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition">Undo</button>
+                                        </div>
+                                      ) : (
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <input
+                                            type="number" min="0" step="0.01"
+                                            value={salaryAmountInputs[a.assignment_id] ?? (a.daily_rate ?? '')}
+                                            onChange={e => setSalaryAmountInputs(p => ({ ...p, [a.assignment_id]: e.target.value }))}
+                                            onWheel={e => e.currentTarget.blur()}
+                                            className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-24"
+                                            placeholder="0.00"
+                                          />
+                                          <button onClick={() => decideSalary(a.assignment_id, true, a.daily_rate)} title="Calculates their earnings for this day off the flat daily rate" className="px-2.5 py-1 text-[11px] font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded transition">Calculate Salary</button>
+                                          <button onClick={() => decideSalary(a.assignment_id, false)} className="px-2.5 py-1 text-[11px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded transition">Skip</button>
+                                          <button onClick={() => undoPresent(a.assignment_id)} className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition">Undo</button>
+                                        </div>
+                                      )}
                                     </td>
                                   </tr>
                                 );
@@ -5116,10 +5355,65 @@ const BookingDetailPageV2 = () => {
                                 );
                               }
 
-                              const { onlyStart, onlyEnd } = liveInBoundary(a, dayModal.dateISO);
+                              const onlyStart = liveInOnlyStart, onlyEnd = liveInOnlyEnd;
                               const livePreviewHours = onlyEnd
                                 ? computeWorkedHours('00:00', inputs.out_time)
                                 : computeWorkedHours(inputs.in_time, inputs.out_time);
+
+                              // Inline reason form — replaces the row's action controls while the
+                              // admin is picking On Leave / Left Without Notice for this assignment.
+                              if (exceptionForm?.assignmentId === a.assignment_id) {
+                                return (
+                                  <tr key={a.assignment_id} style={{ ...rowBorder, background: '#fff7ed' }}>
+                                    <td className={tdCls}>
+                                      <span className="font-medium text-gray-900">{staffName}</span>
+                                      {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
+                                    </td>
+                                    {isFlatMarkDay ? null : assignedCell}
+                                    <td className={tdCls} colSpan={isFlatMarkDay ? 5 : 4}>
+                                      <p className="text-[11px] font-semibold text-orange-700 mb-1">{EXCEPTION_LABELS[exceptionForm.attendance_status]} — reason (required)</p>
+                                      <textarea
+                                        rows={2} autoFocus value={exceptionForm.notes}
+                                        onChange={e => setExceptionForm(f => ({ ...f, notes: e.target.value }))}
+                                        placeholder="What happened?"
+                                        className="w-full rounded border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-orange-500 resize-none"
+                                      />
+                                    </td>
+                                    <td className={tdCls}>
+                                      <div className="flex items-center gap-1.5">
+                                        <button onClick={submitExceptionForm} className="px-3 py-1 text-[11px] font-semibold text-white bg-orange-600 hover:bg-orange-700 rounded transition">Save</button>
+                                        <button onClick={cancelExceptionForm} className="px-3 py-1 text-[11px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded transition">Cancel</button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              }
+
+                              // Non-boundary LIVE_IN day — a flat present/absent/exception mark, no
+                              // in/out time. Boundary days (and every SHIFT_BASED/VISITING day) keep
+                              // the timed flow below since partial-day billing depends on the hour.
+                              if (isFlatMarkDay) {
+                                return (
+                                  <tr key={a.assignment_id} style={{ ...rowBorder, background: '#fafafa' }}>
+                                    <td className={tdCls}>
+                                      <span className="font-medium text-gray-900">{staffName}</span>
+                                      {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
+                                    </td>
+                                    <td className={tdCls} colSpan={5}>
+                                      <span className="text-xs text-gray-400">No time entry needed for this day</span>
+                                    </td>
+                                    <td className={tdCls}>
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <button onClick={() => markPresentFlat(a)} className="px-3 py-1 text-[11px] font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded transition">Present</button>
+                                        <button onClick={() => markAbsent(a)} title="No-show — skips their salary only" className="px-3 py-1 text-[11px] font-semibold text-red-700 bg-red-50 hover:bg-red-100 rounded transition">Absent</button>
+                                        <button onClick={() => openExceptionForm(a.assignment_id, 'ON_LEAVE')} title="Staff went on leave mid-assignment" className="px-2.5 py-1 text-[11px] font-semibold text-orange-700 bg-orange-50 hover:bg-orange-100 rounded transition">On Leave</button>
+                                        <button onClick={() => openExceptionForm(a.assignment_id, 'LEFT_WITHOUT_NOTICE')} title="Staff left without telling anyone" className="px-2.5 py-1 text-[11px] font-semibold text-orange-700 bg-orange-50 hover:bg-orange-100 rounded transition">Left w/o Notice</button>
+                                        <button onClick={() => { closeDayModal(); openPauseModal(); }} title="Pause the whole booking — stops billing/accrual until resumed" className="px-2.5 py-1 text-[11px] font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 rounded transition">Pause Booking</button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              }
 
                               return (
                                 <tr key={a.assignment_id} style={{ ...rowBorder, background: '#fafafa' }}>
@@ -5153,12 +5447,16 @@ const BookingDetailPageV2 = () => {
                                   </td>
                                   <td className={tdCls}><HoursBadge served={onlyStart ? null : livePreviewHours} assigned={assignedHours} /></td>
                                   <td className={tdCls}>
-                                    <div className="flex items-center gap-1.5">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
                                       <button onClick={() => saveAttendanceTimes(a)} className="px-3 py-1 text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded transition">Save</button>
                                       {isEditing ? (
                                         <button onClick={() => cancelEditAttendance(a.assignment_id)} className="px-3 py-1 text-[11px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded transition">Cancel</button>
                                       ) : (
-                                        <button onClick={() => markAbsent(a)} title="No-show — skips their salary only, no in/out time needed" className="px-3 py-1 text-[11px] font-semibold text-red-700 bg-red-50 hover:bg-red-100 rounded transition">Absent</button>
+                                        <>
+                                          <button onClick={() => markAbsent(a)} title="No-show — skips their salary only, no in/out time needed" className="px-3 py-1 text-[11px] font-semibold text-red-700 bg-red-50 hover:bg-red-100 rounded transition">Absent</button>
+                                          <button onClick={() => openExceptionForm(a.assignment_id, 'ON_LEAVE')} title="Staff went on leave mid-assignment" className="px-2 py-1 text-[11px] font-semibold text-orange-700 bg-orange-50 hover:bg-orange-100 rounded transition">On Leave</button>
+                                          <button onClick={() => openExceptionForm(a.assignment_id, 'LEFT_WITHOUT_NOTICE')} title="Staff left without telling anyone" className="px-2 py-1 text-[11px] font-semibold text-orange-700 bg-orange-50 hover:bg-orange-100 rounded transition">Left w/o Notice</button>
+                                        </>
                                       )}
                                     </div>
                                   </td>

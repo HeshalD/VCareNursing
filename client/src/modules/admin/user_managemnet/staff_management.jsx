@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, Mars, Venus, Trash2 } from 'lucide-react';
+import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, Mars, Venus, Trash2, CheckCircle2 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
@@ -98,6 +98,9 @@ const StaffManagement = () => {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const [availabilityError, setAvailabilityError] = useState(null);
+  const [selectAllLoading, setSelectAllLoading] = useState(false);
 
   // Reset back to page 1 whenever a filter/search changes underneath the current page.
   useEffect(() => { setPage(1); }, [activeTab, debouncedSearch, pendingMigrationOnly]);
@@ -152,10 +155,33 @@ const StaffManagement = () => {
     });
   };
 
-  const toggleSelectAll = () => {
-    setSelectedIds(prev =>
-      prev.size === workers.length ? new Set() : new Set(workers.map(w => w.staff_profile_id))
-    );
+  const toggleSelectAll = async () => {
+    const totalCount = pagination?.total_count ?? workers.length;
+    const allSelected = totalCount > 0 && selectedIds.size === totalCount;
+
+    if (allSelected) {
+      setSelectedIds(new Set());
+      return;
+    }
+
+    // Everything matching the current filters is already on this single page.
+    if (totalCount <= workers.length) {
+      setSelectedIds(new Set(workers.map(w => w.staff_profile_id)));
+      return;
+    }
+
+    // Otherwise fetch every staff member matching the current filters (not just this page)
+    // so "select all" covers the whole filtered result set, not one page of it.
+    setSelectAllLoading(true);
+    try {
+      const response = await apiClient.getAllStaff({ ...buildFilters(), page: 1, limit: totalCount });
+      const ids = (response.data || []).map(w => w.staff_profile_id);
+      setSelectedIds(new Set(ids));
+    } catch (err) {
+      console.error('Failed to select all matching staff:', err);
+    } finally {
+      setSelectAllLoading(false);
+    }
   };
 
   const openDeleteConfirm = () => {
@@ -199,6 +225,31 @@ const StaffManagement = () => {
     }
   };
 
+  const handleMarkSelectedAvailable = async () => {
+    setAvailabilityLoading(true);
+    setAvailabilityError(null);
+    try {
+      const ids = Array.from(selectedIds);
+      const results = await Promise.allSettled(
+        ids.map(id => apiClient.updateStaffStatus(id, 'AVAILABLE'))
+      );
+      const failed = results.filter(r => r.status === 'rejected');
+      if (failed.length > 0) {
+        setAvailabilityError(
+          failed.length === ids.length
+            ? (failed[0].reason?.message || 'Failed to update selected staff member(s).')
+            : `${failed.length} of ${ids.length} staff member(s) could not be updated.`
+        );
+      }
+      setSelectedIds(new Set());
+      await fetchWorkers();
+    } catch (err) {
+      setAvailabilityError(err.message || 'Failed to update selected staff member(s).');
+    } finally {
+      setAvailabilityLoading(false);
+    }
+  };
+
   const pendingMigrationCount = counts.pending_migration || 0;
   const totalCount = pagination?.total_count ?? workers.length;
   const totalPages = pagination?.total_pages ?? 1;
@@ -229,6 +280,20 @@ const StaffManagement = () => {
       subtitle="View and manage all active staff members."
       actions={
         <div className="flex items-center gap-2">
+          {selectMode && selectedIds.size > 0 && (
+            <button
+              onClick={handleMarkSelectedAvailable}
+              disabled={availabilityLoading}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {availabilityLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="w-4 h-4" />
+              )}
+              Mark Available ({selectedIds.size})
+            </button>
+          )}
           {selectMode && selectedIds.size > 0 && (
             <button
               onClick={openDeleteConfirm}
@@ -301,6 +366,12 @@ const StaffManagement = () => {
         </div>
       </div>
 
+      {availabilityError && (
+        <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg">
+          {availabilityError}
+        </div>
+      )}
+
       {/* Table */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
@@ -309,12 +380,16 @@ const StaffManagement = () => {
               <tr className="border-b border-slate-200 bg-slate-50">
                 {selectMode && (
                   <th className="px-4 py-3 w-10">
-                    <input
-                      type="checkbox"
-                      checked={workers.length > 0 && selectedIds.size === workers.length}
-                      onChange={toggleSelectAll}
-                      className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                    />
+                    {selectAllLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                    ) : (
+                      <input
+                        type="checkbox"
+                        checked={totalCount > 0 && selectedIds.size === totalCount}
+                        onChange={toggleSelectAll}
+                        className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                      />
+                    )}
                   </th>
                 )}
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Staff</th>
@@ -388,8 +463,10 @@ const StaffManagement = () => {
                   {/* Contact */}
                   <td className="px-4 py-3 whitespace-nowrap">
                     <p className="text-slate-700">{formatMobileNumber(worker.mobile_number) ?? '—'}</p>
-                    {formatMobileNumbers(worker.secondary_phone_numbers).map(num => (
-                      <p key={num} className="text-xs text-slate-500">{num}</p>
+                    {formatMobileNumbers(worker.secondary_phone_numbers).map(({ number, name }) => (
+                      <p key={number} className="text-xs text-slate-500">
+                        {number}{name && <span className="text-slate-400"> — {name}</span>}
+                      </p>
                     ))}
                     <p className="text-xs text-slate-400">{worker.email ?? '—'}</p>
                   </td>

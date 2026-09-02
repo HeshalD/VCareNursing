@@ -12,6 +12,7 @@ import {
   Info,
   Loader2,
   MinusCircle,
+  PlusCircle,
   Wallet,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -67,6 +68,7 @@ const SummaryCard = ({ icon: Icon, label, value, sub, tone }) => {
 const LedgerRow = ({ entry }) => {
   const isCredit = entry.transaction_type === 'CREDIT';
   const isDeduction = entry.category === 'STAFF_DEDUCTION';
+  const isBonus = entry.category === 'STAFF_BONUS';
   const isAdvance = entry.category === 'STAFF_ADVANCE';
   const isRevocation = entry.category === 'STAFF_SALARY' && entry.transaction_type === 'DEBIT';
 
@@ -76,7 +78,12 @@ const LedgerRow = ({ entry }) => {
         {formatDateTime(entry.created_at)}
       </td>
       <td className="px-4 py-3">
-        {isCredit ? (
+        {isBonus ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
+            <PlusCircle className="h-3 w-3" />
+            Bonus
+          </span>
+        ) : isCredit ? (
           <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
             <ArrowUpRight className="h-3 w-3" />
             Earned
@@ -104,7 +111,14 @@ const LedgerRow = ({ entry }) => {
         )}
       </td>
       <td className="px-4 py-3">
-        {isCredit ? (
+        {isBonus ? (
+          <div>
+            <p className="text-sm font-medium text-slate-800">{entry.reason || 'Manual bonus'}</p>
+            {entry.recorded_by && (
+              <p className="text-xs text-slate-400">By: {entry.recorded_by}</p>
+            )}
+          </div>
+        ) : isCredit ? (
           <div>
             <p className="text-sm font-medium text-slate-800">
               {entry.client_name || 'Daily Salary'}
@@ -175,19 +189,22 @@ export default function CurrentEarningsBreakdownPage() {
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
   const [deductions, setDeductions] = useState([]);
+  const [bonuses, setBonuses] = useState([]);
   const [page, setPage] = useState(1);
 
   const fetchData = async (p = 1) => {
     setLoading(true);
     setError(null);
     try {
-      const [res, dedRes] = await Promise.allSettled([
+      const [res, dedRes, bonRes] = await Promise.allSettled([
         apiClient.getStaffCurrentEarningsBreakdown(staffProfileId, { page: p, limit: 50 }),
         apiClient.getStaffDeductions(staffProfileId, { page: 1, limit: 100 }),
+        apiClient.getStaffBonuses(staffProfileId, { page: 1, limit: 100 }),
       ]);
       if (res.status === 'fulfilled' && res.value.status === 'success') setData(res.value.data);
       else setError((res.reason?.message) || res.value?.message || 'Failed to load');
       if (dedRes.status === 'fulfilled' && dedRes.value.status === 'success') setDeductions(dedRes.value.data || []);
+      if (bonRes.status === 'fulfilled' && bonRes.value.status === 'success') setBonuses(bonRes.value.data || []);
     } catch (err) {
       setError(err.message || 'Failed to load');
     } finally {
@@ -213,6 +230,16 @@ export default function CurrentEarningsBreakdownPage() {
       created_at: d.created_at,
       running_balance: null,
     }));
+    const bonusEntries = bonuses.map((b) => ({
+      transaction_id: b.transaction_id,
+      category: 'STAFF_BONUS',
+      transaction_type: 'CREDIT',
+      amount: b.amount,
+      reason: b.reason,
+      recorded_by: b.recorded_by,
+      created_at: b.created_at,
+      running_balance: null,
+    }));
     const advanceEntries = (data?.advances || []).map((a) => ({
       transaction_id: a.advance_id,
       category: 'STAFF_ADVANCE',
@@ -223,7 +250,7 @@ export default function CurrentEarningsBreakdownPage() {
       running_balance: null,
     }));
 
-    const combined = [...ledgerEntries, ...deductionEntries, ...advanceEntries].sort(
+    const combined = [...ledgerEntries, ...deductionEntries, ...bonusEntries, ...advanceEntries].sort(
       (a, b) => new Date(a.created_at) - new Date(b.created_at)
     );
 
@@ -234,7 +261,7 @@ export default function CurrentEarningsBreakdownPage() {
     });
 
     return combined.reverse();
-  }, [data?.ledger, deductions]);
+  }, [data?.ledger, deductions, bonuses]);
 
   const exportToExcel = () => {
     if (!data) return;
@@ -244,11 +271,14 @@ export default function CurrentEarningsBreakdownPage() {
     const ledgerRows = mergedLedger.map((e) => {
       const isCredit = e.transaction_type === 'CREDIT';
       const isDeduction = e.category === 'STAFF_DEDUCTION';
+      const isBonus = e.category === 'STAFF_BONUS';
       const isAdvance = e.category === 'STAFF_ADVANCE';
       const isRevocation = e.category === 'STAFF_SALARY' && e.transaction_type === 'DEBIT';
-      const type = isCredit ? 'Earned' : isDeduction ? 'Deduction' : isAdvance ? 'Advance' : isRevocation ? 'Salary Revoked' : 'Payout';
+      const type = isBonus ? 'Bonus' : isCredit ? 'Earned' : isDeduction ? 'Deduction' : isAdvance ? 'Advance' : isRevocation ? 'Salary Revoked' : 'Payout';
       let description = '';
-      if (isCredit) {
+      if (isBonus) {
+        description = [e.reason || 'Manual bonus', e.recorded_by && `By: ${e.recorded_by}`].filter(Boolean).join(' | ');
+      } else if (isCredit) {
         description = [e.client_name || 'Daily Salary', e.patient_name && `Care Profile: ${e.patient_name}`, e.service_type].filter(Boolean).join(' | ');
       } else if (isDeduction) {
         description = [e.reason || 'Manual deduction', e.recorded_by && `By: ${e.recorded_by}`].filter(Boolean).join(' | ');
@@ -275,8 +305,9 @@ export default function CurrentEarningsBreakdownPage() {
       const d = new Date(e.created_at);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       const label = d.toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
-      if (!monthMap[key]) monthMap[key] = { month: label, earned: 0, deducted: 0, paid_out: 0, closing_balance: 0 };
-      if (e.transaction_type === 'CREDIT') monthMap[key].earned += parseFloat(e.amount);
+      if (!monthMap[key]) monthMap[key] = { month: label, earned: 0, bonused: 0, deducted: 0, paid_out: 0, closing_balance: 0 };
+      if (e.category === 'STAFF_BONUS') monthMap[key].bonused += parseFloat(e.amount);
+      else if (e.transaction_type === 'CREDIT') monthMap[key].earned += parseFloat(e.amount);
       else if (e.category === 'STAFF_DEDUCTION') monthMap[key].deducted += parseFloat(e.amount);
       else monthMap[key].paid_out += parseFloat(e.amount);
       monthMap[key].closing_balance = parseFloat(e.running_balance ?? 0);
@@ -284,9 +315,10 @@ export default function CurrentEarningsBreakdownPage() {
     const monthRows = Object.values(monthMap).map((m) => ({
       'Month': m.month,
       'Total Earned (LKR)': m.earned,
+      'Total Bonused (LKR)': m.bonused,
       'Total Deducted (LKR)': m.deducted,
       'Total Paid Out (LKR)': m.paid_out,
-      'Net Movement (LKR)': m.earned - m.deducted - m.paid_out,
+      'Net Movement (LKR)': m.earned + m.bonused - m.deducted - m.paid_out,
       'Closing Balance (LKR)': m.closing_balance,
     }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(monthRows.length ? monthRows : [{ Note: 'No data' }]), 'Monthly Summary');
@@ -299,6 +331,15 @@ export default function CurrentEarningsBreakdownPage() {
       'Amount (LKR)': parseFloat(d.amount),
     }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dedRows.length ? dedRows : [{ Note: 'No deductions' }]), 'Deductions');
+
+    // Sheet 3b: Bonuses
+    const bonRows = bonuses.map((b) => ({
+      'Date': formatDateTime(b.created_at),
+      'Reason': b.reason || '-',
+      'Recorded By': b.recorded_by || 'Admin',
+      'Amount (LKR)': parseFloat(b.amount),
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(bonRows.length ? bonRows : [{ Note: 'No bonuses' }]), 'Bonuses');
 
     // Sheet 4: Advances
     const advRows = (data.advances || []).map((a) => ({
@@ -315,6 +356,7 @@ export default function CurrentEarningsBreakdownPage() {
       { Metric: 'Total Earned (All Time)', 'Value (LKR)': parseFloat(data.summary.total_earned) },
       { Metric: 'Total Paid Out', 'Value (LKR)': parseFloat(data.summary.total_paid_out) },
       { Metric: 'Total Deducted', 'Value (LKR)': deductions.reduce((s, d) => s + parseFloat(d.amount || 0), 0) },
+      { Metric: 'Total Bonused', 'Value (LKR)': bonuses.reduce((s, b) => s + parseFloat(b.amount || 0), 0) },
       { Metric: 'Advances Approved', 'Value (LKR)': parseFloat(data.summary.total_advances_approved) },
     ];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sumRows), 'Summary');
@@ -359,7 +401,7 @@ export default function CurrentEarningsBreakdownPage() {
         {data && (
           <>
             {/* Summary Cards */}
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
               <SummaryCard
                 icon={BadgeDollarSign}
                 label="Current Balance"
@@ -389,6 +431,13 @@ export default function CurrentEarningsBreakdownPage() {
                 tone="rose"
               />
               <SummaryCard
+                icon={PlusCircle}
+                label="Total Bonused"
+                value={formatMoney(bonuses.reduce((s, b) => s + parseFloat(b.amount || 0), 0))}
+                sub="Manual bonuses applied"
+                tone="emerald"
+              />
+              <SummaryCard
                 icon={Wallet}
                 label="Advances Approved"
                 value={formatMoney(data.summary.total_advances_approved)}
@@ -408,6 +457,11 @@ export default function CurrentEarningsBreakdownPage() {
                 </p>
                 <p>
                   <strong>Deductions</strong> reduce both the current earnings balance and the wallet
+                  balance directly. They are listed in their own section below and are reflected in
+                  the Current Balance above.
+                </p>
+                <p>
+                  <strong>Bonuses</strong> increase both the current earnings balance and the wallet
                   balance directly. They are listed in their own section below and are reflected in
                   the Current Balance above.
                 </p>
@@ -441,6 +495,10 @@ export default function CurrentEarningsBreakdownPage() {
                     <span className="inline-flex items-center gap-1">
                       <span className="h-2.5 w-2.5 rounded-full bg-rose-400" />
                       Deduction
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+                      Bonus
                     </span>
                     <span className="inline-flex items-center gap-1">
                       <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />
@@ -600,6 +658,57 @@ export default function CurrentEarningsBreakdownPage() {
                         <td colSpan={3} className="px-4 py-3 text-sm font-semibold text-slate-700 text-right">Total Deducted</td>
                         <td className="px-4 py-3 text-right font-bold text-rose-700">
                           -{formatMoney(deductions.reduce((s, d) => s + parseFloat(d.amount || 0), 0))}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Bonuses Section */}
+            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
+                <PlusCircle className="h-4 w-4 text-emerald-500" />
+                <div>
+                  <h2 className="font-semibold text-slate-900">Applied Bonuses</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Manual bonuses that increase current earnings and wallet balance
+                  </p>
+                </div>
+              </div>
+              {bonuses.length === 0 ? (
+                <div className="p-8 text-center text-slate-500 text-sm">
+                  No bonuses recorded.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-100 bg-slate-50">
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Date</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Reason</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Recorded By</th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {bonuses.map((b, i) => (
+                        <tr key={b.transaction_id || i} className="hover:bg-slate-50">
+                          <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{formatDateTime(b.created_at)}</td>
+                          <td className="px-4 py-3 text-slate-800">{b.reason || '-'}</td>
+                          <td className="px-4 py-3 text-slate-600">{b.recorded_by || 'Admin'}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-emerald-700 whitespace-nowrap">
+                            +{formatMoney(b.amount)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-slate-200 bg-slate-50">
+                        <td colSpan={3} className="px-4 py-3 text-sm font-semibold text-slate-700 text-right">Total Bonused</td>
+                        <td className="px-4 py-3 text-right font-bold text-emerald-700">
+                          +{formatMoney(bonuses.reduce((s, b) => s + parseFloat(b.amount || 0), 0))}
                         </td>
                       </tr>
                     </tfoot>

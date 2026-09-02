@@ -661,7 +661,7 @@ const ProxyUserManagement = () => {
           <div className="flex-1 bg-black/30" onClick={closeDrawer} />
 
           {/* Panel */}
-          <div className="w-full max-w-lg bg-white flex flex-col shadow-2xl overflow-hidden">
+          <div className="w-full max-w-2xl bg-white flex flex-col shadow-2xl overflow-hidden">
             {/* Drawer Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 flex-shrink-0">
               <h2 className="text-sm font-semibold text-slate-900">
@@ -701,13 +701,15 @@ const ProxyUserManagement = () => {
                     onChange={handleInputChange} onBlur={() => handleMobileBlur(formData.mobile_number)}
                     required={!isEditMode} className={fieldConflicts.mobile_number ? 'vcare-phone-input--error' : ''} />
                 </Field>
-                <Field label="Additional Phone Numbers">
-                  <PhoneNumbersField
-                    value={formData.secondary_phone_numbers}
-                    onChange={(nums) => setFormData(p => ({ ...p, secondary_phone_numbers: nums }))}
-                    primaryNumber={formData.mobile_number}
-                  />
-                </Field>
+                <div className="col-span-2">
+                  <Field label="Additional Phone Numbers">
+                    <PhoneNumbersField
+                      value={formData.secondary_phone_numbers}
+                      onChange={(nums) => setFormData(p => ({ ...p, secondary_phone_numbers: nums }))}
+                      primaryNumber={formData.mobile_number}
+                    />
+                  </Field>
+                </div>
                 <Field label="Gender" required>
                   <select name="gender" value={formData.gender} onChange={handleInputChange} required className={inputCls(false)}>
                     <option value="">Select</option>

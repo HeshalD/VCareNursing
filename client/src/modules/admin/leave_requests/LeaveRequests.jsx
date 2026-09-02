@@ -299,7 +299,7 @@ const LeaveRequests = () => {
                   <tr key={leave.leave_id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-3">
                       <p className="font-semibold text-slate-900 leading-tight">{leave.full_name || '—'}</p>
-                      <p className="text-xs text-slate-400 mt-0.5 font-mono">{leave.staff_code || ''}</p>
+                      <p className="text-xs text-slate-400 mt-0.5 font-mono">{leave.staff_code || ''}{leave.gender ? ` · ${leave.gender === 'MALE' ? 'Male' : leave.gender === 'FEMALE' ? 'Female' : leave.gender}` : ''}</p>
                     </td>
                     <td className="px-4 py-3 text-slate-700 whitespace-nowrap">
                       {fmt(leave.start_date)} <span className="text-slate-400">→</span> {fmt(leave.end_date)}
@@ -479,7 +479,7 @@ const LeaveRequests = () => {
                           <div className="min-w-0">
                             <p className="text-sm font-semibold text-slate-900 truncate">{s.full_name}</p>
                             <p className="text-xs text-slate-400 mt-0.5">
-                              {s.designation || '—'}{s.staff_code ? ` · ${s.staff_code}` : ''}
+                              {s.designation || '—'}{s.staff_code ? ` · ${s.staff_code}` : ''}{s.gender ? ` · ${s.gender === 'MALE' ? 'Male' : s.gender === 'FEMALE' ? 'Female' : s.gender}` : ''}
                             </p>
                             {s.unavailable && (
                               <p className="text-xs text-amber-600 mt-0.5 flex items-center gap-1">

@@ -1173,6 +1173,7 @@ const StaffPicker = ({ staff, value, onChange, compact = false }) => {
                         </span>
                       </span>
                       <span className="mt-0.5 flex items-center gap-2 text-xs text-gray-400">
+                        {s.gender && <span>{s.gender === 'MALE' ? 'Male' : s.gender === 'FEMALE' ? 'Female' : s.gender}</span>}
                         {s.mobile_number && <span><HighlightMatch text={s.mobile_number} query={q} /></span>}
                         {s.specialization && <span>{s.specialization}</span>}
                       </span>

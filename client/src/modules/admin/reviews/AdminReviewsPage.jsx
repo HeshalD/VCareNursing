@@ -225,7 +225,7 @@ const AddReviewModal = ({ onClose, onCreated }) => {
             {selectedClient && (
               <StepCrumb
                 label="Client"
-                value={selectedClient.full_name}
+                value={selectedClient.honorific ? `${selectedClient.honorific} ${selectedClient.full_name}` : selectedClient.full_name}
                 active={step === STEP_CLIENT}
                 onChange={goToClientStep}
               />
@@ -292,7 +292,7 @@ const AddReviewModal = ({ onClose, onCreated }) => {
                         <User className="w-3.5 h-3.5 text-slate-500" />
                       </div>
                       <div className="min-w-0">
-                        <p className="text-sm font-medium text-slate-900 truncate">{c.full_name}</p>
+                        <p className="text-sm font-medium text-slate-900 truncate">{c.honorific ? `${c.honorific} ` : ''}{c.full_name}</p>
                         <p className="text-xs text-slate-500 truncate">{formatMobileNumber(c.mobile_number) || c.email || '—'}</p>
                       </div>
                     </button>

@@ -1,13 +1,17 @@
 import { parsePhoneNumber } from 'libphonenumber-js';
 
 /**
- * Formats a stored phone number (E.164, e.g. "+94771234567") for display,
- * e.g. "+94 77 700 4068". Falls back to the raw value if it can't be parsed
- * (empty, malformed, legacy non-E.164 data, etc.) so display never breaks.
+ * Formats a list of secondary phone numbers for display. Accepts the current
+ * { number, name } object shape as well as legacy plain E.164 strings, and
+ * returns a normalized array of { number: <formatted>, name } so callers
+ * don't need to branch on the two shapes.
  */
 export function formatMobileNumbers(values) {
   if (!Array.isArray(values)) return [];
-  return values.filter(Boolean).map(formatMobileNumber);
+  return values
+    .map(v => (typeof v === 'string' ? { number: v, name: '' } : { number: v?.number || '', name: v?.name || '' }))
+    .filter(v => v.number)
+    .map(v => ({ number: formatMobileNumber(v.number), name: v.name }));
 }
 
 export function formatMobileNumber(value) {

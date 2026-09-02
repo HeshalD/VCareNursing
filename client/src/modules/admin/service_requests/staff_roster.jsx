@@ -166,6 +166,7 @@ const StaffRoster = () => {
             // Search across all relevant staff_profiles columns
             return (
               staff.full_name?.toLowerCase().includes(searchLower) ||
+              staff.staff_code?.toLowerCase().includes(searchLower) ||
               staff.designation?.toLowerCase().includes(searchLower) ||
               staff.home_address?.toLowerCase().includes(searchLower) ||
               staff.location?.toLowerCase().includes(searchLower) ||
@@ -253,6 +254,7 @@ const StaffRoster = () => {
     
     const matchesSearch = !currentSearchTerm || (
       staffMember.full_name?.toLowerCase().includes(currentSearchTerm.toLowerCase()) ||
+      staffMember.staff_code?.toLowerCase().includes(currentSearchTerm.toLowerCase()) ||
       staffMember.email?.toLowerCase().includes(currentSearchTerm.toLowerCase()) ||
       staffMember.mobile_number?.includes(currentSearchTerm) ||
       staffMember.home_address?.toLowerCase().includes(currentSearchTerm.toLowerCase())
@@ -673,7 +675,7 @@ const StaffRoster = () => {
                         </div>
                         <div>
                           <div className="font-medium text-slate-900">{staffMember.full_name}</div>
-                          <div className="text-sm text-slate-500">ID: {staffMember.staff_profile_id}</div>
+                          <div className="text-sm text-slate-500">{staffMember.staff_code || `ID: ${staffMember.staff_profile_id}`}</div>
                         </div>
                       </div>
                     </td>
@@ -1024,8 +1026,8 @@ const StaffRoster = () => {
                                   )}
                                 </div>
                                 <div>
-                                  <div className="font-medium text-slate-900">{staffMember.full_name}</div>
-                                  <div className="text-sm text-slate-600">{formatMobileNumber(staffMember.mobile_number)}</div>
+                                  <div className="font-medium text-slate-900">{staffMember.full_name}{staffMember.staff_code ? ` (${staffMember.staff_code})` : ''}</div>
+                                  <div className="text-sm text-slate-600">{formatMobileNumber(staffMember.mobile_number)}{staffMember.gender ? ` · ${staffMember.gender === 'MALE' ? 'Male' : staffMember.gender === 'FEMALE' ? 'Female' : staffMember.gender}` : ''}</div>
                                   <div className="text-sm text-slate-500">{staffMember.email}</div>
                                   <div className="flex items-center gap-2 mt-1">
                                     <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(staffMember.current_status)}`}>

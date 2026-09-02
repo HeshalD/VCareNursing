@@ -30,6 +30,8 @@ exports.getBookingAttendance = async (req, res) => {
                 a.out_time,
                 a.hours_served,
                 a.entry_mode,
+                a.attendance_status,
+                a.leave_request_id,
                 a.salary_status,
                 a.salary_amount,
                 a.salary_transaction_id,
@@ -44,6 +46,8 @@ exports.getBookingAttendance = async (req, res) => {
                 ss.label as shift_label,
                 ss.duration_hours as shift_duration_hours,
                 bsa.assigned_hours,
+                bsa.service_start_date as assignment_start_date,
+                bsa.service_end_date as assignment_end_date,
                 sp.full_name as staff_name
              FROM staff_daily_attendance a
              JOIN staff_profiles sp ON a.staff_profile_id = sp.staff_profile_id
@@ -70,6 +74,8 @@ exports.getBookingAttendance = async (req, res) => {
 const ATTENDANCE_HISTORY_ACTION_TYPES = [
     'ATTENDANCE_RECORDED',
     'STAFF_MARKED_ABSENT',
+    'STAFF_ON_LEAVE_MARKED',
+    'STAFF_LEFT_WITHOUT_NOTICE',
     'STAFF_SALARY_CONFIRMED',
     'STAFF_SALARY_SKIPPED',
     'DAY_REVOKED',
@@ -463,11 +469,13 @@ exports.upsertAttendance = async (req, res) => {
  * @body    assignment_id, service_date, shift_slot_id (optional), notes (optional)
  */
 /**
- * Core validation + upsert for marking a no-show. Shared by the single-shot
- * `markAbsent` endpoint and the day-draft confirm flow. See applyAttendanceTime
- * above for the `client`/error-throwing conventions.
+ * Core validation + upsert for marking a day where no work was performed —
+ * a plain no-show (ABSENT) or one of the admin exception reasons (ON_LEAVE,
+ * LEFT_WITHOUT_NOTICE). Shared by the single-shot `markAbsent`/`markException`
+ * endpoints and the day-draft confirm flow. See applyAttendanceTime above for
+ * the `client`/error-throwing conventions.
  */
-async function applyAttendanceAbsent(client, { booking_id, assignment_id, service_date, shift_slot_id, notes, deciderUserId, deciderName }) {
+async function applyAttendanceException(client, { booking_id, assignment_id, service_date, shift_slot_id, attendance_status, notes, leave_request_id, deciderUserId, deciderName }) {
     if (!assignment_id || !service_date) {
         const err = new Error('assignment_id and service_date are required');
         err.statusCode = 400;
@@ -518,18 +526,24 @@ async function applyAttendanceAbsent(client, { booking_id, assignment_id, servic
     }
 
     const staffProfileId = assignmentCheck.rows[0].staff_profile_id;
-    const absentNotes = notes || 'Marked absent — no-show';
+    const finalNotes = notes || (attendance_status === 'ABSENT' ? 'Marked absent — no-show' : null);
+    if (!finalNotes) {
+        const err = new Error('A reason is required for this exception');
+        err.statusCode = 400;
+        throw err;
+    }
 
     const result = assignmentShiftSlotId
         ? await client.query(
             `INSERT INTO staff_daily_attendance (
                 booking_id, assignment_id, staff_profile_id, service_date,
-                entry_mode, salary_status, decided_by_user_id, decided_by_name, decided_at, notes, shift_slot_id
-            ) VALUES ($1, $2, $3, $4, 'MANUAL', 'SKIPPED', $5, $6, NOW(), $7, $8)
+                entry_mode, attendance_status, salary_status, decided_by_user_id, decided_by_name, decided_at, notes, shift_slot_id, leave_request_id
+            ) VALUES ($1, $2, $3, $4, 'MANUAL', $5, 'SKIPPED', $6, $7, NOW(), $8, $9, $10)
             ON CONFLICT (assignment_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL
             DO UPDATE SET in_time = NULL,
                           out_time = NULL,
                           hours_served = NULL,
+                          attendance_status = EXCLUDED.attendance_status,
                           salary_status = 'SKIPPED',
                           salary_amount = NULL,
                           salary_transaction_id = NULL,
@@ -537,19 +551,21 @@ async function applyAttendanceAbsent(client, { booking_id, assignment_id, servic
                           decided_by_name = EXCLUDED.decided_by_name,
                           decided_at = NOW(),
                           notes = EXCLUDED.notes,
+                          leave_request_id = EXCLUDED.leave_request_id,
                           updated_at = NOW()
             RETURNING *`,
-            [booking_id, assignment_id, staffProfileId, service_date, deciderUserId || null, deciderName, absentNotes, assignmentShiftSlotId]
+            [booking_id, assignment_id, staffProfileId, service_date, attendance_status, deciderUserId || null, deciderName, finalNotes, assignmentShiftSlotId, leave_request_id || null]
         )
         : await client.query(
             `INSERT INTO staff_daily_attendance (
                 booking_id, assignment_id, staff_profile_id, service_date,
-                entry_mode, salary_status, decided_by_user_id, decided_by_name, decided_at, notes
-            ) VALUES ($1, $2, $3, $4, 'MANUAL', 'SKIPPED', $5, $6, NOW(), $7)
+                entry_mode, attendance_status, salary_status, decided_by_user_id, decided_by_name, decided_at, notes, leave_request_id
+            ) VALUES ($1, $2, $3, $4, 'MANUAL', $5, 'SKIPPED', $6, $7, NOW(), $8, $9)
             ON CONFLICT (assignment_id, service_date) WHERE shift_slot_id IS NULL
             DO UPDATE SET in_time = NULL,
                           out_time = NULL,
                           hours_served = NULL,
+                          attendance_status = EXCLUDED.attendance_status,
                           salary_status = 'SKIPPED',
                           salary_amount = NULL,
                           salary_transaction_id = NULL,
@@ -557,26 +573,33 @@ async function applyAttendanceAbsent(client, { booking_id, assignment_id, servic
                           decided_by_name = EXCLUDED.decided_by_name,
                           decided_at = NOW(),
                           notes = EXCLUDED.notes,
+                          leave_request_id = EXCLUDED.leave_request_id,
                           updated_at = NOW()
             RETURNING *`,
-            [booking_id, assignment_id, staffProfileId, service_date, deciderUserId || null, deciderName, absentNotes]
+            [booking_id, assignment_id, staffProfileId, service_date, attendance_status, deciderUserId || null, deciderName, finalNotes, leave_request_id || null]
         );
 
-    return { attendance: result.rows[0], absentNotes };
+    return { attendance: result.rows[0], notes: finalNotes };
 }
 
-exports.markAbsent = async (req, res) => {
+const EXCEPTION_ACTION_TYPES = {
+    ABSENT: 'STAFF_MARKED_ABSENT',
+    ON_LEAVE: 'STAFF_ON_LEAVE_MARKED',
+    LEFT_WITHOUT_NOTICE: 'STAFF_LEFT_WITHOUT_NOTICE',
+};
+
+async function handleAttendanceException(req, res, attendance_status) {
     const { booking_id } = req.params;
-    const { assignment_id, service_date, shift_slot_id, notes } = req.body;
+    const { assignment_id, service_date, shift_slot_id, notes, leave_request_id } = req.body;
 
     try {
         const decidedByName = await getDeciderName(req.user?.user_id);
-        const { attendance, absentNotes } = await applyAttendanceAbsent(db, {
-            booking_id, assignment_id, service_date, shift_slot_id, notes,
+        const { attendance, notes: finalNotes } = await applyAttendanceException(db, {
+            booking_id, assignment_id, service_date, shift_slot_id, attendance_status, notes, leave_request_id,
             deciderUserId: req.user?.user_id, deciderName: decidedByName
         });
 
-        // Marking absent still "decides" the day (salary_status -> SKIPPED) — a VISITING
+        // This still "decides" the day (salary_status -> SKIPPED) — a VISITING
         // booking's one-time visit may now be fully decided (salary + invoice), in which
         // case it should auto-complete rather than sit ACTIVE waiting for a manual close-out.
         const autoCompleteClient = await db.pool.connect();
@@ -586,7 +609,7 @@ exports.markAbsent = async (req, res) => {
             await autoCompleteClient.query('COMMIT');
         } catch (autoCompleteErr) {
             await autoCompleteClient.query('ROLLBACK');
-            console.error('Auto-complete check failed after markAbsent:', autoCompleteErr);
+            console.error('Auto-complete check failed after attendance exception:', autoCompleteErr);
         } finally {
             autoCompleteClient.release();
         }
@@ -594,10 +617,10 @@ exports.markAbsent = async (req, res) => {
         logActivity({
             actorUserId: req.user?.user_id,
             actorRole: req.user?.role,
-            actionType: 'STAFF_MARKED_ABSENT',
+            actionType: EXCEPTION_ACTION_TYPES[attendance_status],
             entityType: 'BOOKING',
             entityId: String(booking_id),
-            details: { assignment_id, service_date, notes: absentNotes },
+            details: { assignment_id, service_date, notes: finalNotes },
         }).catch(err => console.error('Activity log failed:', err));
 
         res.status(200).json({ status: 'success', data: attendance });
@@ -605,8 +628,172 @@ exports.markAbsent = async (req, res) => {
         if (error.statusCode) {
             return res.status(error.statusCode).json({ status: 'error', message: error.message });
         }
-        console.error('Mark attendance absent error:', error);
-        res.status(500).json({ status: 'error', message: 'Failed to mark absent' });
+        console.error(`Mark attendance ${attendance_status} error:`, error);
+        res.status(500).json({ status: 'error', message: 'Failed to save attendance exception' });
+    }
+}
+
+exports.markAbsent = (req, res) => handleAttendanceException(req, res, 'ABSENT');
+
+/**
+ * @route   POST /api/bookings/:booking_id/attendance/exception
+ * @desc    Records why a day is unusual beyond a plain no-show — the staff
+ *          member went on leave mid-assignment, or left without telling
+ *          anyone. Behaves like markAbsent (salary_status -> SKIPPED, no
+ *          in/out time) but requires a reason and is labeled/audited
+ *          distinctly. Does not itself trigger a staff swap — use the
+ *          existing Swap Staff action separately if a replacement is needed.
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ * @body    assignment_id, service_date, shift_slot_id (optional),
+ *          attendance_status ('ON_LEAVE' | 'LEFT_WITHOUT_NOTICE'), notes (required),
+ *          leave_request_id (optional)
+ */
+exports.markException = (req, res) => {
+    const { attendance_status } = req.body;
+    if (!['ON_LEAVE', 'LEFT_WITHOUT_NOTICE'].includes(attendance_status)) {
+        return res.status(400).json({ status: 'error', message: "attendance_status must be 'ON_LEAVE' or 'LEFT_WITHOUT_NOTICE'" });
+    }
+    return handleAttendanceException(req, res, attendance_status);
+};
+
+/**
+ * Core validation + upsert for a flat "present" mark — no in/out time, salary
+ * decided later off the assignment's flat daily_rate. Only valid for a day
+ * that isn't this assignment's own start/end date (those still need a real
+ * in/out time via applyAttendanceTime, since partial-day billing depends on
+ * the hour).
+ */
+async function applyAttendancePresentFlat(client, { booking_id, assignment_id, service_date, shift_slot_id }) {
+    if (!assignment_id || !service_date) {
+        const err = new Error('assignment_id and service_date are required');
+        err.statusCode = 400;
+        throw err;
+    }
+
+    const assignmentCheck = await client.query(
+        `SELECT assignment_id, staff_profile_id, shift_slot_id,
+                service_start_date::text as service_start_date,
+                service_end_date::text as service_end_date
+         FROM booking_staff_assignments WHERE assignment_id = $1 AND booking_id = $2`,
+        [assignment_id, booking_id]
+    );
+
+    if (assignmentCheck.rows.length === 0) {
+        const err = new Error('Assignment not found for this booking');
+        err.statusCode = 404;
+        throw err;
+    }
+
+    const assignment = assignmentCheck.rows[0];
+    const assignmentShiftSlotId = assignment.shift_slot_id;
+
+    if (assignmentShiftSlotId) {
+        if (!shift_slot_id) {
+            const err = new Error('shift_slot_id is required for shift-based attendance');
+            err.statusCode = 400;
+            throw err;
+        }
+        if (shift_slot_id !== assignmentShiftSlotId) {
+            const err = new Error("shift_slot_id does not match this assignment's shift");
+            err.statusCode = 400;
+            throw err;
+        }
+    } else if (shift_slot_id) {
+        const err = new Error('This assignment is not shift-based; shift_slot_id must not be provided');
+        err.statusCode = 400;
+        throw err;
+    }
+
+    const isBoundaryDay = (assignment.service_start_date && assignment.service_start_date === service_date)
+        || (assignment.service_end_date && assignment.service_end_date === service_date);
+
+    if (isBoundaryDay) {
+        const err = new Error('This is a boundary day for the assignment (start or end date) — log an in/out time instead of a flat present mark');
+        err.statusCode = 400;
+        throw err;
+    }
+
+    const existing = await client.query(
+        `SELECT attendance_id, salary_status FROM staff_daily_attendance
+         WHERE assignment_id = $1 AND service_date = $2 AND reschedule_id IS NULL`,
+        [assignment_id, service_date]
+    );
+
+    if (existing.rows.length > 0 && existing.rows[0].salary_status !== 'PENDING') {
+        const err = new Error('This day has already been decided and cannot be edited');
+        err.statusCode = 409;
+        throw err;
+    }
+
+    const staffProfileId = assignment.staff_profile_id;
+
+    const result = assignmentShiftSlotId
+        ? await client.query(
+            `INSERT INTO staff_daily_attendance (
+                booking_id, assignment_id, staff_profile_id, service_date,
+                entry_mode, attendance_status, shift_slot_id
+            ) VALUES ($1, $2, $3, $4, 'MANUAL', 'PRESENT', $5)
+            ON CONFLICT (assignment_id, service_date, shift_slot_id) WHERE shift_slot_id IS NOT NULL
+            DO UPDATE SET in_time = NULL,
+                          out_time = NULL,
+                          hours_served = NULL,
+                          attendance_status = 'PRESENT',
+                          notes = NULL,
+                          updated_at = NOW()
+            RETURNING *`,
+            [booking_id, assignment_id, staffProfileId, service_date, assignmentShiftSlotId]
+        )
+        : await client.query(
+            `INSERT INTO staff_daily_attendance (
+                booking_id, assignment_id, staff_profile_id, service_date,
+                entry_mode, attendance_status
+            ) VALUES ($1, $2, $3, $4, 'MANUAL', 'PRESENT')
+            ON CONFLICT (assignment_id, service_date) WHERE shift_slot_id IS NULL
+            DO UPDATE SET in_time = NULL,
+                          out_time = NULL,
+                          hours_served = NULL,
+                          attendance_status = 'PRESENT',
+                          notes = NULL,
+                          updated_at = NOW()
+            RETURNING *`,
+            [booking_id, assignment_id, staffProfileId, service_date]
+        );
+
+    return { attendance: result.rows[0] };
+}
+
+/**
+ * @route   POST /api/bookings/:booking_id/attendance/present
+ * @desc    One-tap flat "present" mark for a non-boundary day — no in/out
+ *          time captured. Salary is decided later off the assignment's flat
+ *          daily_rate via confirmSalary. Rejects boundary (assignment
+ *          start/end) days — use upsertAttendance for those.
+ * @access  Private (SUPER_ADMIN, COORDINATOR, ACCOUNTS)
+ * @body    assignment_id, service_date, shift_slot_id (optional)
+ */
+exports.markPresent = async (req, res) => {
+    const { booking_id } = req.params;
+    const { assignment_id, service_date, shift_slot_id } = req.body;
+
+    try {
+        const { attendance } = await applyAttendancePresentFlat(db, { booking_id, assignment_id, service_date, shift_slot_id });
+
+        logActivity({
+            actorUserId: req.user?.user_id,
+            actorRole: req.user?.role,
+            actionType: 'ATTENDANCE_RECORDED',
+            entityType: 'BOOKING',
+            entityId: String(booking_id),
+            details: { assignment_id, service_date, attendance_status: 'PRESENT' },
+        }).catch(err => console.error('Activity log failed:', err));
+
+        res.status(200).json({ status: 'success', data: attendance });
+    } catch (error) {
+        if (error.statusCode) {
+            return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        }
+        console.error('Mark attendance present error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to mark present' });
     }
 };
 
@@ -642,7 +829,7 @@ async function applySalaryDecision(client, { attendance_id, approve, amount, dec
         throw err;
     }
 
-    if (attendance.hours_served === null) {
+    if (attendance.hours_served === null && attendance.attendance_status !== 'PRESENT') {
         const err = new Error('In/out time must be logged before confirming salary');
         err.statusCode = 400;
         throw err;
@@ -951,7 +1138,9 @@ exports.revokeDays = async (req, res) => {
 exports._internal = {
     applyAttendanceTime,
     applyPartialAttendanceTime,
-    applyAttendanceAbsent,
+    applyAttendanceException,
+    applyAttendancePresentFlat,
     applySalaryDecision,
     getDeciderName,
+    EXCEPTION_ACTION_TYPES,
 };

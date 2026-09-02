@@ -2768,6 +2768,8 @@ exports.getPendingTerminationRequests = async (req, res) => {
                 p.full_name as patient_name,
                 s.staff_profile_id,
                 s.full_name as staff_name,
+                s.staff_code,
+                s.gender,
                 COALESCE(fin.total_paid, 0) AS total_paid,
                 COALESCE(fin.total_invoiced, 0) AS total_invoiced,
                 COALESCE(fin.total_paid, 0) - COALESCE(fin.total_invoiced, 0) AS remaining_balance
@@ -2828,6 +2830,8 @@ exports.getTerminationHistory = async (req, res) => {
                 p.full_name as patient_name,
                 s.staff_profile_id,
                 s.full_name as staff_name,
+                s.staff_code,
+                s.gender,
                 COALESCE(fin.total_paid, 0) AS total_paid,
                 COALESCE(fin.total_invoiced, 0) AS total_invoiced,
                 COALESCE(fin.total_paid, 0) - COALESCE(fin.total_invoiced, 0) AS remaining_balance

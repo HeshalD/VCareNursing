@@ -105,7 +105,7 @@ const ClientSelect = ({ clients, value, onChange, disabled }) => {
         }`}
       >
         <span className={selected ? 'text-slate-800' : 'text-slate-400'}>
-          {selected ? `${selected.full_name} — ${selected.mobile_number ? formatMobileNumber(selected.mobile_number) : 'no phone on file'}` : 'Select a client…'}
+          {selected ? `${selected.honorific ? `${selected.honorific} ` : ''}${selected.full_name} — ${selected.mobile_number ? formatMobileNumber(selected.mobile_number) : 'no phone on file'}` : 'Select a client…'}
         </span>
         <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
       </button>
@@ -134,7 +134,7 @@ const ClientSelect = ({ clients, value, onChange, disabled }) => {
                     c.client_profile_id === value ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-800'
                   }`}
                 >
-                  {c.full_name} — {c.mobile_number ? formatMobileNumber(c.mobile_number) : 'no phone on file'}
+                  {c.honorific ? `${c.honorific} ` : ''}{c.full_name} — {c.mobile_number ? formatMobileNumber(c.mobile_number) : 'no phone on file'}
                 </button>
               ))
             )}
@@ -200,6 +200,10 @@ const AdminDirectBookingDrawer = ({
   const [selfLoading, setSelfLoading] = useState(false);
   const [isSelfPatient, setIsSelfPatient] = useState(false);
 
+  // "Same as client's address" for the new-patient residential address
+  const [sameAsClientAddress, setSameAsClientAddress] = useState(false);
+  const [clientAddressLoading, setClientAddressLoading] = useState(false);
+
   // ── Sync preselectedClientId when prop changes ───────────────────────────
   useEffect(() => {
     setSelectedClientId(preselectedClientId || '');
@@ -219,9 +223,15 @@ const AdminDirectBookingDrawer = ({
       setStartDate(''); setScheduledEndDate(''); setDailyRate('');
       setAdminNotes('');
       setIsSelfPatient(false);
+      setSameAsClientAddress(false);
       setErrors({});
     }
   }, [open, preselectedClientId, preselectedPatientId]);
+
+  // ── Reset "same as client's address" if the client selection changes ─────
+  useEffect(() => {
+    setSameAsClientAddress(false);
+  }, [selectedClientId]);
 
   // ── Fetch clients (only when no preselected client) ──────────────────────
   useEffect(() => {
@@ -265,6 +275,21 @@ const AdminDirectBookingDrawer = ({
       setNpRelationship('Self');
     } finally {
       setSelfLoading(false);
+    }
+  };
+
+  // ── "Same as client's address" toggle for the new-patient residential address ──
+  const handleToggleSameAsClientAddress = async (checked) => {
+    setSameAsClientAddress(checked);
+    if (!checked || !selectedClientId) return;
+    setClientAddressLoading(true);
+    try {
+      const res = await apiClient.getClientProfile(selectedClientId);
+      setNpResidentialAddress(res?.data?.primary_address || '');
+    } catch {
+      // non-fatal — leave whatever address was already entered
+    } finally {
+      setClientAddressLoading(false);
     }
   };
 
@@ -554,10 +579,21 @@ const AdminDirectBookingDrawer = ({
                       type="text"
                       value={npResidentialAddress}
                       onChange={(e) => setNpResidentialAddress(e.target.value)}
-                      disabled={isSelfPatient}
-                      className={inputCls(false) + (isSelfPatient ? ' bg-slate-50 text-slate-500 cursor-not-allowed' : '')}
+                      disabled={isSelfPatient || sameAsClientAddress}
+                      className={inputCls(false) + ((isSelfPatient || sameAsClientAddress) ? ' bg-slate-50 text-slate-500 cursor-not-allowed' : '')}
                       placeholder="Patient's residential address"
                     />
+                    {!isSelfPatient && (
+                      <label className="mt-1.5 flex items-center gap-1.5 text-xs text-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={sameAsClientAddress}
+                          onChange={(e) => handleToggleSameAsClientAddress(e.target.checked)}
+                          disabled={!selectedClientId || clientAddressLoading}
+                        />
+                        Same as client's address
+                      </label>
+                    )}
                   </Field>
                   <div>
                     <div className="mb-2 flex items-center justify-between">

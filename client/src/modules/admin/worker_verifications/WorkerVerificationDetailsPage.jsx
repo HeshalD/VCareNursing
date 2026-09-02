@@ -671,7 +671,7 @@ const WorkerVerificationDetailsPage = () => {
                 <div className="divide-y divide-slate-50">
                   <InfoRow label="Full Name" value={application.full_name} />
                   <InfoRow label="Mobile" value={formatMobileNumber(application.mobile_number)} />
-                  <InfoRow label="Other Numbers" value={formatMobileNumbers(application.secondary_phone_numbers).join(', ')} />
+                  <InfoRow label="Other Numbers" value={formatMobileNumbers(application.secondary_phone_numbers).map(({ number, name }) => name ? `${number} (${name})` : number).join(', ')} />
                   <InfoRow label="Email" value={application.email} />
                   <InfoRow label="Gender" value={application.gender} />
                   <InfoRow label="Date of Birth" value={formatDate(application.date_of_birth)} />

@@ -51,4 +51,33 @@ const toE164List = (raw, defaultCountry = DEFAULT_COUNTRY) => {
   return Array.from(seen);
 };
 
-module.exports = { toE164, toE164List, isValidPhone, toMessagingDigits, DEFAULT_COUNTRY };
+// Same idea as toE164List, but for the {number, name} shape used by
+// secondary_phone_numbers (JSONB) columns — `name` is an optional label for
+// numbers that aren't the account holder's own (e.g. "Son - Kasun"). Accepts
+// a real array, a JSON-array string, or (for backward compatibility with
+// pre-JSONB data) a mix of plain strings and {number, name} objects.
+// Invalid/duplicate numbers are dropped; names are trimmed and length-capped.
+// Returns null when `raw` is undefined/null — the "leave unchanged" signal
+// for COALESCE-style updates, same as toE164List.
+const toE164ListWithNames = (raw, defaultCountry = DEFAULT_COUNTRY) => {
+  if (raw === undefined || raw === null) return null;
+  let list = raw;
+  if (typeof list === 'string') {
+    try { list = JSON.parse(list); } catch { return []; }
+  }
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  const result = [];
+  for (const entry of list) {
+    const isObj = entry && typeof entry === 'object';
+    const rawNumber = isObj ? entry.number : entry;
+    const e164 = toE164(rawNumber, defaultCountry);
+    if (!e164 || seen.has(e164)) continue;
+    seen.add(e164);
+    const name = isObj && entry.name ? String(entry.name).trim().slice(0, 100) : '';
+    result.push({ number: e164, name });
+  }
+  return result;
+};
+
+module.exports = { toE164, toE164List, toE164ListWithNames, isValidPhone, toMessagingDigits, DEFAULT_COUNTRY };

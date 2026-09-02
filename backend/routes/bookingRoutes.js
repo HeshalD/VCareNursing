@@ -189,6 +189,10 @@ router.get('/:booking_id/attendance', protect, requirePermission('VIEW_BOOKINGS'
 router.get('/:booking_id/attendance/history', protect, requirePermission('VIEW_BOOKINGS'), dailyAttendanceController.getAttendanceHistory);
 router.post('/:booking_id/attendance', protect, requirePermission('ATTENDANCE_RECORD'), dailyAttendanceController.upsertAttendance);
 router.post('/:booking_id/attendance/absent', protect, requirePermission('ATTENDANCE_MARK_ABSENT'), dailyAttendanceController.markAbsent);
+// Flat "present" mark for a non-boundary day — no in/out time captured.
+router.post('/:booking_id/attendance/present', protect, requirePermission('ATTENDANCE_RECORD'), dailyAttendanceController.markPresent);
+// Admin exception reasons (ON_LEAVE, LEFT_WITHOUT_NOTICE) — like Absent, but with a mandatory reason.
+router.post('/:booking_id/attendance/exception', protect, requirePermission('ATTENDANCE_MARK_ABSENT'), dailyAttendanceController.markException);
 // Set/edit just the in_time and/or out_time on one assignment's day (used by the
 // staff-swap out/in time capture and by editing a past swap's recorded times).
 router.patch('/:booking_id/attendance/time', protect, requirePermission('ATTENDANCE_RECORD'), dailyAttendanceController.setAttendanceTime);

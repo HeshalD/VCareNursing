@@ -970,6 +970,7 @@ const StaffSalariesPage = () => {
     if (q) {
       list = list.filter(s =>
         s.full_name?.toLowerCase().includes(q) ||
+        s.staff_code?.toLowerCase().includes(q) ||
         s.designation?.toLowerCase().includes(q) ||
         s.mobile_number?.includes(q)
       );
@@ -1304,8 +1305,8 @@ const StaffSalariesPage = () => {
                         </button>
                       </td>
                       <td className="px-4 py-3">
-                        <p className="font-semibold text-slate-800">{s.full_name}</p>
-                        <p className="text-xs text-slate-500">{s.designation} · {formatMobileNumber(s.mobile_number) || '—'}</p>
+                        <p className="font-semibold text-slate-800">{s.full_name}{s.staff_code && <span className="ml-1.5 text-xs font-mono font-normal text-slate-400">{s.staff_code}</span>}</p>
+                        <p className="text-xs text-slate-500">{s.designation}{s.gender ? ` · ${s.gender === 'MALE' ? 'Male' : s.gender === 'FEMALE' ? 'Female' : s.gender}` : ''} · {formatMobileNumber(s.mobile_number) || '—'}</p>
                       </td>
                       <td className="px-4 py-3 text-right">
                         <span className={`font-medium ${hasBalance ? 'text-rose-600' : 'text-slate-400'}`}>

@@ -7,7 +7,7 @@ const { sendSmsOtp, sendSms } = require('../utils/sms');
 const { sendStaffWelcomeNew, sendStaffWelcomeExisting, sendStaffApplicationRejected, sendStaffAgreement } = require('../utils/metaWhatsapp');
 const { logActivity } = require('../utils/activityLogger');
 const { creditRecruiterForStaff } = require('../services/recruiterService');
-const { toE164, toE164List, isValidPhone } = require('../utils/phone');
+const { toE164, toE164ListWithNames, isValidPhone } = require('../utils/phone');
 const { isValidNic, normalizeNic, NIC_FORMAT_MESSAGE } = require('../utils/nic');
 
 const getUploadedFileUrl = (files, fieldName) => (files && files[fieldName] && files[fieldName][0]) ? files[fieldName][0].location : null;
@@ -52,11 +52,12 @@ exports.submitApplication = async (req, res) => {
     }
     const mobile_number = toE164(req.body.mobile_number);
 
-    // Optional extra contact numbers. Unparseable entries are dropped rather than
+    // Optional extra contact numbers, each with an optional name label (e.g. a
+    // family member's number). Unparseable entries are dropped rather than
     // rejecting the whole application over a secondary field, and the primary
     // number is filtered out so it is never duplicated in the list.
-    const secondaryPhoneNumbers = (toE164List(req.body.secondary_phone_numbers) || [])
-      .filter(n => n !== mobile_number);
+    const secondaryPhoneNumbers = (toE164ListWithNames(req.body.secondary_phone_numbers) || [])
+      .filter(({ number }) => number !== mobile_number);
     
    
     let rolesArray = [];
@@ -136,7 +137,7 @@ exports.submitApplication = async (req, res) => {
         CASE WHEN $9::float IS NOT NULL AND $10::float IS NOT NULL
              THEN point($10::float, $9::float)
              ELSE NULL
-        END, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18, $19)
+        END, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18, $19::jsonb)
       RETURNING *;
     `;
 
@@ -159,7 +160,7 @@ exports.submitApplication = async (req, res) => {
       date_of_birth,
       experience_level || null,
       languagesArray,
-      secondaryPhoneNumbers
+      JSON.stringify(secondaryPhoneNumbers)
     ]);
 
     const application = result.rows[0];
@@ -494,7 +495,7 @@ exports.acceptApplication = async (req, res) => {
 
         const profileInsertQuery = `
           INSERT INTO staff_profiles (staff_code, user_id, full_name, designation, verification_status, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, willing_to_live_in, date_of_birth, admin_remarks, experience_level, languages, secondary_phone_numbers)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18, $19, $20, $21)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18, $19, $20, $21::jsonb)
           RETURNING staff_profile_id
         `;
         const profileResult = await client.query(profileInsertQuery, [
@@ -518,7 +519,7 @@ exports.acceptApplication = async (req, res) => {
           admin_remarks || null,
           app.experience_level || null,
           app.languages || [],
-          app.secondary_phone_numbers || []
+          JSON.stringify(app.secondary_phone_numbers || [])
         ]);
 
         // Auto-create staff wallet on approval
@@ -871,9 +872,9 @@ exports.updateApplication = async (req, res) => {
   }
 
   // null (field absent) means "leave unchanged", matching the COALESCE below.
-  const secondaryPhonesToSet = toE164List(req.body.secondary_phone_numbers);
+  const secondaryPhonesToSet = toE164ListWithNames(req.body.secondary_phone_numbers);
   const secondaryPhoneNumbers = secondaryPhonesToSet
-    ? secondaryPhonesToSet.filter(n => n !== mobile_number)
+    ? secondaryPhonesToSet.filter(({ number }) => number !== mobile_number)
     : null;
 
   try {
@@ -923,12 +924,12 @@ exports.updateApplication = async (req, res) => {
            gender = $9::gender_enum, date_of_birth = $10,
            profile_picture_url = $11, experience_level = $12,
            languages = COALESCE($14, languages),
-           secondary_phone_numbers = COALESCE($15, secondary_phone_numbers)
+           secondary_phone_numbers = COALESCE($15::jsonb, secondary_phone_numbers)
        WHERE application_id = $13`,
       [full_name, email, mobile_number, rolesArray, qualifications,
        home_address, location, nicToStore, gender, date_of_birth,
        profilePictureUrl, experience_level || null, applicationId, languagesArray,
-       secondaryPhoneNumbers]
+       secondaryPhoneNumbers === null ? null : JSON.stringify(secondaryPhoneNumbers)]
     );
 
     const updated = await db.query(
