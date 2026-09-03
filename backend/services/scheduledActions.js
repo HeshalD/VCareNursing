@@ -525,6 +525,80 @@ const executeAssignmentStart = async (client, payload) => {
     return { result: { booking_id, assignment_id, status: 'ACTIVE' }, notify };
 };
 
+// ─── ASSIGNMENT END ────────────────────────────────────────────────────────────
+// Closes a single assignment on its own end date, without touching anyone else on
+// the booking. Used by an OVERLAP handoff, where the outgoing staff keeps working
+// after the incoming staff has already started: their assignment stays ACTIVE past
+// the swap and nothing else in the system closes an assignment when its
+// service_end_date passes.
+//
+// Post-billing (see cron/scheduledActions.js), matching TERMINATION/COMPLETION —
+// the effective date is the staff member's final served day, so they must still be
+// on duty while that night's attendance/invoice decisions are seeded.
+
+const executeAssignmentEnd = async (client, payload) => {
+    const {
+        booking_id,
+        assignment_id,
+        staff_profile_id,
+        effective_date,
+        staff_out_time = null,
+        actor = SYSTEM_ACTOR,
+    } = payload;
+
+    const upd = await client.query(
+        `UPDATE booking_staff_assignments
+         SET status = 'COMPLETED', service_end_date = COALESCE(service_end_date, $2::date)
+         WHERE assignment_id = $1 AND status = 'ACTIVE'
+         RETURNING assignment_id, service_end_date`,
+        [assignment_id, toDateStr(effective_date)]
+    );
+    if (upd.rows.length === 0) {
+        // Already closed by a termination/completion/another swap that landed first.
+        return { result: { booking_id, skipped: 'assignment no longer active' }, notify: null };
+    }
+
+    if (staff_out_time) {
+        await applyPartialAttendanceTime(client, {
+            booking_id, assignment_id,
+            service_date: toDateStr(upd.rows[0].service_end_date), out_time: staff_out_time,
+        });
+    }
+
+    // Only release the staff member if this was their last commitment — during an
+    // overlap they may already hold the next booking's assignment.
+    if (staff_profile_id) {
+        await client.query(
+            `UPDATE staff_profiles sp
+             SET current_status = 'AVAILABLE'
+             WHERE sp.staff_profile_id = $1
+               AND NOT EXISTS (
+                 SELECT 1 FROM booking_staff_assignments
+                 WHERE staff_profile_id = $1 AND status IN ('ACTIVE', 'SCHEDULED')
+               )`,
+            [staff_profile_id]
+        );
+    }
+
+    const notify = async () => {
+        try {
+            await logActivity({
+                actorUserId: actor.user_id,
+                actorName: actor.name,
+                actorRole: actor.role,
+                actionType: 'STAFF_ASSIGNMENT_ENDED',
+                entityType: 'BOOKING',
+                entityId: String(booking_id),
+                details: { booking_id, assignment_id, staff_profile_id, effective_date: toDateStr(effective_date), overlap_end: true },
+            });
+        } catch (e) {
+            console.error('[executeAssignmentEnd] notify error:', e.message);
+        }
+    };
+
+    return { result: { booking_id, assignment_id, status: 'COMPLETED' }, notify };
+};
+
 // ─── SHIFT REASSIGNMENT ────────────────────────────────────────────────────────
 // Shift-scoped sibling of executeStaffSwap: swaps staff on one shift_slot_id only,
 // leaving other slots on the same booking untouched. Does not touch
@@ -628,6 +702,8 @@ const dispatchScheduledAction = async (client, action, actor = SYSTEM_ACTOR) => 
             return executeStaffSwap(client, { booking_id: action.booking_id, effective_date: action.effective_date, ...payload });
         case 'ASSIGNMENT_START':
             return executeAssignmentStart(client, { booking_id: action.booking_id, ...payload });
+        case 'ASSIGNMENT_END':
+            return executeAssignmentEnd(client, { booking_id: action.booking_id, effective_date: action.effective_date, ...payload });
         case 'SHIFT_REASSIGNMENT':
             return executeShiftReassignment(client, { booking_id: action.booking_id, effective_date: action.effective_date, ...payload });
         case 'SHIFT_PATTERN_CHANGE': {
@@ -652,6 +728,7 @@ module.exports = {
     executeCompletion,
     executeStaffSwap,
     executeAssignmentStart,
+    executeAssignmentEnd,
     executeShiftReassignment,
     dispatchScheduledAction,
 };

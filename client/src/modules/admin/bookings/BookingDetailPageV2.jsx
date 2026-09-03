@@ -47,6 +47,22 @@ const addHoursToTime = (timeStr, hours) => {
   return `${String(Math.floor(totalMins / 60)).padStart(2, '0')}:${String(totalMins % 60).padStart(2, '0')}`;
 };
 const initials     = (name) => (name || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
+// Staff handoff shapes — mirrors services/coverageEvents.js. The server re-derives
+// this from the same two dates and rejects a mismatch, so this copy exists only to
+// tell the admin what the dates they picked actually mean before they submit.
+const MAX_GAP_DAYS = 3;
+const MAX_OVERLAP_DAYS = 7;
+const deriveHandoff = (oldEndISO, newStartISO) => {
+  if (!oldEndISO || !newStartISO) return { type: 'IMMEDIATE', days: 0, start: null, end: null };
+  const delta = Math.round((new Date(`${newStartISO}T12:00:00`) - new Date(`${oldEndISO}T12:00:00`)) / 86400000);
+  if (delta > 1) {
+    return { type: 'GAP', days: delta - 1, start: toDateInput(addDays(new Date(`${oldEndISO}T12:00:00`), 1)), end: toDateInput(addDays(new Date(`${newStartISO}T12:00:00`), -1)) };
+  }
+  if (delta <= 0) {
+    return { type: 'OVERLAP', days: Math.abs(delta) + 1, start: newStartISO, end: oldEndISO };
+  }
+  return { type: 'IMMEDIATE', days: 0, start: null, end: null };
+};
 // 'HH:MM' in + 'HH:MM' out -> hours worked, wrapping past midnight if out <= in (overnight shift).
 const computeWorkedHours = (inTime, outTime) => {
   if (!inTime || !outTime) return null;
@@ -406,6 +422,11 @@ const BookingDetailPageV2 = () => {
   const [swapModalIsAssign, setSwapModalIsAssign]     = useState(false); // true => slot has no current staff (assign, not reassign)
   const [swapModalOldOutTime, setSwapModalOldOutTime] = useState(''); // HH:mm — outgoing staff's out time on swapModalStartDate (optional)
   const [swapModalNewInTime, setSwapModalNewInTime]   = useState(''); // HH:mm — incoming staff's in time on swapModalStartDate (optional)
+  // Handoff shape (LIVE_IN whole-booking swaps only). 'IMMEDIATE' keeps the original
+  // one-date behaviour; 'GAP'/'OVERLAP' reveal a second date so the outgoing staff's
+  // last day and the incoming staff's first day can be set independently.
+  const [swapModalHandoff, setSwapModalHandoff]       = useState('IMMEDIATE'); // 'IMMEDIATE' | 'GAP' | 'OVERLAP'
+  const [swapModalOldEndDate, setSwapModalOldEndDate] = useState(toDateInput(new Date()));
   // Sharing a candidate's profile with the client happens straight from the staff
   // picker — it's a "show the client who's available" step, independent of whether
   // this staff member ends up being the one assigned.
@@ -526,6 +547,9 @@ const BookingDetailPageV2 = () => {
   const [attendanceHistory, setAttendanceHistory]   = useState([]);
   const [dailyInvoiceRecords, setDailyInvoiceRecords] = useState([]);
   const [shiftReschedules, setShiftReschedules]     = useState([]);
+  // Gap/overlap ranges from staff handoffs — [{ event_type, start_date, end_date,
+  // old_staff_name, new_staff_name, ... }]. See services/coverageEvents.js.
+  const [coverageEvents, setCoverageEvents]         = useState([]);
   const [reschedulesBusy, setReschedulesBusy]       = useState('');
   const [reschedulesError, setReschedulesError]     = useState('');
   const [dayModal, setDayModal]                     = useState(null); // { dateISO, dayNum }
@@ -1088,18 +1112,20 @@ const BookingDetailPageV2 = () => {
       // Always fetched (not gated on isShiftBased) — bookingSummary may not have
       // resolved yet on the very first call, and this query is a cheap no-op
       // for non-shift bookings anyway (no shift_slot_id rows to match).
-      const [attRes, invRes, rescheduleRes, historyRes, draftsRes] = await Promise.all([
+      const [attRes, invRes, rescheduleRes, historyRes, draftsRes, coverageRes] = await Promise.all([
         apiClient.getBookingAttendance(bookingId),
         apiClient.getBookingDailyInvoices(bookingId),
         apiClient.getBookingShiftReschedules(bookingId),
         apiClient.getAttendanceHistory(bookingId),
         apiClient.getBookingDayDrafts(bookingId),
+        apiClient.getBookingCoverageEvents(bookingId),
       ]);
       setAttendanceRecords(Array.isArray(attRes?.data) ? attRes.data : []);
       setDailyInvoiceRecords(Array.isArray(invRes?.data) ? invRes.data : []);
       setShiftReschedules(Array.isArray(rescheduleRes?.data) ? rescheduleRes.data : []);
       setAttendanceHistory(Array.isArray(historyRes?.data) ? historyRes.data : []);
       setDraftDates(new Set((Array.isArray(draftsRes?.data) ? draftsRes.data : []).map(d => d.service_date)));
+      setCoverageEvents(Array.isArray(coverageRes?.data) ? coverageRes.data : []);
     } catch {
       // non-fatal — the timeline still renders without these
     }
@@ -1186,7 +1212,10 @@ const BookingDetailPageV2 = () => {
     });
     setAttendanceInputs(inputs);
     setInvoiceAmountInputsBySlot(invoiceInputs);
-    setInvoiceAmountInput(String(dailyRate || ''));
+    // A coverage-gap day had no staff on site, so it starts at Rs.0 — the admin can
+    // still type the daily rate in and invoice it, but charging must be the deliberate
+    // choice, not the default. Mirrors the PENDING row the cron seeds for the same day.
+    setInvoiceAmountInput(coverageForDate(dateISO)?.event_type === 'GAP' ? '0' : String(dailyRate || ''));
     setDayModalError('');
     setDayModalStep('edit');
     setEditingAttendanceIds(new Set());
@@ -1320,6 +1349,11 @@ const BookingDetailPageV2 = () => {
     );
     return { onlyStart: isFirstDay && !isLastDay, onlyEnd: isLastDay && !isFirstDay };
   };
+
+  // The open gap/overlap covering a date, if any. Ranges never overlap each other in
+  // practice (a booking can only be handed off one way at a time), so the first hit wins.
+  const coverageForDate = (dateISO) =>
+    coverageEvents.find(e => dateISO >= e.start_date && dateISO <= e.end_date) || null;
 
   // Validates the typed in/out time and caches it into the day's draft — does NOT
   // write staff_daily_attendance. Nothing is real until confirmDay().
@@ -1713,7 +1747,7 @@ const BookingDetailPageV2 = () => {
     finally { setPaymentSubmitting(false); }
   };
 
-  const closeSwapModal = () => { setShowSwapModal(false); setSwapModalStep(1); setSwapModalSearch(''); setSwapModalSelectedStaff(null); setSwapModalReason(''); setSwapModalError(''); setSwapModalPage(1); setSwapModalDesignation(''); setSwapModalStartDate(toDateInput(new Date())); setSwapModalSlotId(null); setSwapModalIsAssign(false); setSwapModalOldOutTime(''); setSwapModalNewInTime(''); setProfileSendingId(null); setProfileSentIds([]); setProfileSendError(''); };
+  const closeSwapModal = () => { setShowSwapModal(false); setSwapModalStep(1); setSwapModalSearch(''); setSwapModalSelectedStaff(null); setSwapModalReason(''); setSwapModalError(''); setSwapModalPage(1); setSwapModalDesignation(''); setSwapModalStartDate(toDateInput(new Date())); setSwapModalSlotId(null); setSwapModalIsAssign(false); setSwapModalOldOutTime(''); setSwapModalNewInTime(''); setSwapModalHandoff('IMMEDIATE'); setSwapModalOldEndDate(toDateInput(new Date())); setProfileSendingId(null); setProfileSentIds([]); setProfileSendError(''); };
   const selectSwapStaff = (s) => { setSwapModalSelectedStaff(s); setSwapModalStep(2); };
   // WhatsApp one candidate's profile to this booking's client, straight from the picker.
   // Deliberately independent of the swap itself: the admin can send several candidates
@@ -1734,13 +1768,41 @@ const BookingDetailPageV2 = () => {
     }
   };
   const openSlotAssignModal = (slot) => { setSwapModalSlotId(slot.shift_slot_id); setSwapModalIsAssign(!slot.assignment); setShowSwapModal(true); };
+
+  // A gap/overlap handoff only exists for a LIVE_IN whole-booking swap. Shift-slot
+  // assigns/reassigns keep the original single-date flow (each slot is its own
+  // occurrence, so there is no continuous coverage to break or double up).
+  const handoffPickerEnabled = isLiveIn && !swapModalSlotId && !swapModalIsAssign;
+  const handoffMode = handoffPickerEnabled ? swapModalHandoff : 'IMMEDIATE';
+  const swapHandoffPreview = handoffMode === 'IMMEDIATE'
+    ? null
+    : deriveHandoff(swapModalOldEndDate, swapModalStartDate);
+  const swapHandoffError = (() => {
+    if (!swapHandoffPreview) return '';
+    const { type, days } = swapHandoffPreview;
+    if (handoffMode === 'GAP') {
+      if (type === 'OVERLAP') return "The incoming staff starts on or before the outgoing staff's last day — that's an overlap, not a gap.";
+      if (type === 'IMMEDIATE') return 'These dates are back-to-back, so there are no uncovered days. Use Immediate instead.';
+      if (days > MAX_GAP_DAYS) return `A gap can be at most ${MAX_GAP_DAYS} days. These dates leave ${days}.`;
+    }
+    if (handoffMode === 'OVERLAP') {
+      if (type === 'GAP') return "The incoming staff starts after the outgoing staff's last day — that's a gap, not an overlap.";
+      if (type === 'IMMEDIATE') return 'These dates are back-to-back, so nobody doubles up. Use Immediate instead.';
+      if (days > MAX_OVERLAP_DAYS) return `An overlap can be at most ${MAX_OVERLAP_DAYS} days. These dates give ${days}.`;
+    }
+    return '';
+  })();
+
   const confirmSwap = async () => {
     if (!swapModalSelectedStaff || (!swapModalSlotId && !swapModalReason.trim())) return;
     try {
       setSwapModalSubmitting(true); setSwapModalError('');
       apiClient.setToken(adminToken);
-      // Time-only inputs — combine with the staff start date above into a full timestamp.
-      const oldOutTime = swapModalOldOutTime ? `${swapModalStartDate}T${swapModalOldOutTime}` : null;
+      // Time-only inputs — combine with the date each one belongs to into a full
+      // timestamp. On an immediate handoff both sit on the single swap date; on a
+      // gap/overlap the out-time belongs to the outgoing staff's own last day.
+      const outTimeDate = handoffMode === 'IMMEDIATE' ? swapModalStartDate : swapModalOldEndDate;
+      const oldOutTime = swapModalOldOutTime ? `${outTimeDate}T${swapModalOldOutTime}` : null;
       const newInTime = swapModalNewInTime ? `${swapModalStartDate}T${swapModalNewInTime}` : null;
       let response;
       if (swapModalSlotId) {
@@ -1748,7 +1810,17 @@ const BookingDetailPageV2 = () => {
           ? await apiClient.assignStaffToShiftSlot(bookingId, swapModalSlotId, { staff_profile_id: swapModalSelectedStaff.staff_profile_id, service_start_date: swapModalStartDate, notes: swapModalReason.trim() || null, staff_in_time: newInTime })
           : await apiClient.reassignShiftSlotStaff(bookingId, swapModalSlotId, { new_staff_id: swapModalSelectedStaff.staff_profile_id, effective_date: swapModalStartDate, reason: swapModalReason.trim() || null, old_staff_out_time: oldOutTime, new_staff_in_time: newInTime });
       } else {
-        response = await apiClient.swapBookingStaff(bookingId, { new_staff_id: swapModalSelectedStaff.staff_profile_id, swap_reason: swapModalReason.trim(), new_staff_start_date: swapModalStartDate, old_staff_out_time: oldOutTime, new_staff_in_time: newInTime });
+        response = await apiClient.swapBookingStaff(bookingId, {
+          new_staff_id: swapModalSelectedStaff.staff_profile_id,
+          swap_reason: swapModalReason.trim(),
+          new_staff_start_date: swapModalStartDate,
+          old_staff_out_time: oldOutTime,
+          new_staff_in_time: newInTime,
+          ...(handoffMode !== 'IMMEDIATE' && {
+            handoff_type: handoffMode,
+            old_staff_end_date: swapModalOldEndDate,
+          }),
+        });
       }
       closeSwapModal(); await fetchDetail(); await fetchDailyRecords(); await fetchScheduledActions(); if (isShiftBased) await fetchShiftData();
       if (response?.scheduled) {
@@ -2807,6 +2879,7 @@ const BookingDetailPageV2 = () => {
                     dailyInvoiceRecords={dailyInvoiceRecords}
                     draftDates={draftDates}
                     reschedules={shiftReschedules}
+                    coverageEvents={coverageEvents}
                     manualSalaryDay={manualSalaryDay}
                     manualInvoiceDay={manualInvoiceDay}
                     pauses={bookingPauses}
@@ -4519,6 +4592,39 @@ const BookingDetailPageV2 = () => {
                       referenceDate={swapModalStartDate}
                     />
                   </div>
+                  {handoffPickerEnabled && (
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Handoff type</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[
+                          { key: 'IMMEDIATE', label: 'Immediate', hint: 'Back-to-back' },
+                          { key: 'GAP',       label: 'Gap',       hint: 'Nobody on site' },
+                          { key: 'OVERLAP',   label: 'Overlap',   hint: 'Both on site' },
+                        ].map(opt => (
+                          <button
+                            key={opt.key}
+                            type="button"
+                            onClick={() => setSwapModalHandoff(opt.key)}
+                            className={`rounded-xl border px-3 py-2 text-left transition ${swapModalHandoff === opt.key ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:bg-slate-50'}`}
+                          >
+                            <span className={`block text-sm font-semibold ${swapModalHandoff === opt.key ? 'text-blue-700' : 'text-slate-700'}`}>{opt.label}</span>
+                            <span className="block text-[11px] text-slate-500 mt-0.5">{opt.hint}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {handoffMode !== 'IMMEDIATE' && (
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Outgoing staff's last day <span className="text-rose-500">*</span></label>
+                      <DateInput value={swapModalOldEndDate} onChange={e => setSwapModalOldEndDate(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                      {swapModalOldEndDate > toDateInput(new Date()) && (
+                        <p className="text-xs text-amber-600 mt-1.5">
+                          {normCurrentStaff?.name || 'The outgoing staff member'} keeps working until then — their assignment closes automatically on that date.
+                        </p>
+                      )}
+                    </div>
+                  )}
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">{swapModalIsAssign ? 'Service start date' : 'New staff start date'} <span className="text-rose-500">*</span></label>
                     <DateInput value={swapModalStartDate} onChange={e => setSwapModalStartDate(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
@@ -4533,6 +4639,24 @@ const BookingDetailPageV2 = () => {
                       </p>
                     )}
                   </div>
+                  {/* What the two chosen dates actually mean, before anything is submitted. */}
+                  {swapHandoffPreview && !swapHandoffError && swapHandoffPreview.type === 'GAP' && (
+                    <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-xs text-rose-700">
+                      <span className="font-semibold">{swapHandoffPreview.days} day{swapHandoffPreview.days === 1 ? '' : 's'} with no cover</span>
+                      {' '}({formatDate(swapHandoffPreview.start)}{swapHandoffPreview.days > 1 ? ` – ${formatDate(swapHandoffPreview.end)}` : ''}).
+                      {' '}No staff salary is payable for those days. Whether the client is invoiced for them is decided per day from the care timeline — the suggested amount starts at Rs.0.
+                    </div>
+                  )}
+                  {swapHandoffPreview && !swapHandoffError && swapHandoffPreview.type === 'OVERLAP' && (
+                    <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
+                      <span className="font-semibold">{swapHandoffPreview.days} day{swapHandoffPreview.days === 1 ? '' : 's'} with both staff on duty</span>
+                      {' '}({formatDate(swapHandoffPreview.start)}{swapHandoffPreview.days > 1 ? ` – ${formatDate(swapHandoffPreview.end)}` : ''}).
+                      {' '}Neither staff member is paid automatically for those days, and the client isn't auto-invoiced — both are confirmed per day from the care timeline.
+                    </div>
+                  )}
+                  {swapHandoffError && (
+                    <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-xs text-rose-700">{swapHandoffError}</div>
+                  )}
                   <div className={`grid ${swapModalIsAssign ? 'grid-cols-1' : 'grid-cols-2'} gap-3`}>
                     {!swapModalIsAssign && (
                       <div>
@@ -4545,7 +4669,11 @@ const BookingDetailPageV2 = () => {
                       <TimeInput value={swapModalNewInTime} onChange={e => setSwapModalNewInTime(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
                     </div>
                   </div>
-                  <p className="text-xs text-slate-400 -mt-2">Times use the staff start date above ({formatDate(swapModalStartDate)}).</p>
+                  <p className="text-xs text-slate-400 -mt-2">
+                    {handoffMode === 'IMMEDIATE'
+                      ? `Times use the staff start date above (${formatDate(swapModalStartDate)}).`
+                      : `Out time is on ${formatDate(swapModalOldEndDate)} (outgoing staff's last day); in time is on ${formatDate(swapModalStartDate)}.`}
+                  </p>
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">{swapModalIsAssign ? 'Notes (optional)' : 'Reason for swap'} {!swapModalIsAssign && <span className="text-rose-500">*</span>}</label>
                     <textarea rows={3} value={swapModalReason} onChange={e => setSwapModalReason(e.target.value)} placeholder="e.g. Staff requested leave, client preference…" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
@@ -4555,7 +4683,7 @@ const BookingDetailPageV2 = () => {
                 </div>
                 <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 shrink-0">
                   <button onClick={() => setSwapModalStep(1)} className="text-sm font-medium text-slate-600 hover:text-slate-900 transition">← Back</button>
-                  <button onClick={confirmSwap} disabled={swapModalSubmitting || (!swapModalIsAssign && !swapModalReason.trim()) || !swapModalStartDate} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
+                  <button onClick={confirmSwap} disabled={swapModalSubmitting || (!swapModalIsAssign && !swapModalReason.trim()) || !swapModalStartDate || (handoffMode !== 'IMMEDIATE' && (!swapModalOldEndDate || !!swapHandoffError))} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
                     {swapModalSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Repeat2 className="h-4 w-4" />}
                     {swapModalSubmitting ? 'Saving…' : swapModalIsAssign ? 'Confirm Assignment' : 'Confirm Swap'}
                   </button>
@@ -4930,7 +5058,13 @@ const BookingDetailPageV2 = () => {
           dayModal.assignments.some(a => !a.shift_slot_id && toLocalDateStr(a.service_start_date) === dayModal.dateISO);
         const isLastDayInvoiceDecision = isLiveIn && invoicingMode !== 'MANUAL' &&
           dayModal.assignments.some(a => liveInBoundary(a, dayModal.dateISO).onlyEnd);
-        const showInvoiceSection = manualInvoiceDay || isFirstDayInvoiceDecision || isLastDayInvoiceDecision;
+        // Same idea for a handoff's gap/overlap days — the cron leaves those PENDING
+        // too (see services/coverageEvents.js), so an AUTO-invoicing LIVE_IN booking
+        // still needs the invoice decision surfaced here on exactly those days.
+        const dayCoverage = isLiveIn ? coverageForDate(dayModal.dateISO) : null;
+        const isGapDay = dayCoverage?.event_type === 'GAP';
+        const isOverlapDay = dayCoverage?.event_type === 'OVERLAP';
+        const showInvoiceSection = manualInvoiceDay || isFirstDayInvoiceDecision || isLastDayInvoiceDecision || !!dayCoverage;
         const fmtTime = (ts) => ts ? new Date(ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : '—';
         const thCls = 'px-3 py-2 text-left text-[10.5px] font-semibold uppercase tracking-wider text-gray-400';
         const tdCls = 'px-3 py-3 text-sm text-gray-700 align-middle';
@@ -5058,6 +5192,23 @@ const BookingDetailPageV2 = () => {
                 );
               })() : (
               <>
+                {/* Mid-handoff day — explains why nobody (gap) or two people (overlap)
+                    show below, and what is still the admin's to decide. */}
+                {isGapDay && (
+                  <div className="mx-6 mt-4 rounded-lg border bg-rose-50 border-rose-200 px-4 py-2.5 text-xs text-rose-700">
+                    <span className="font-semibold">No staff on duty this day.</span>{' '}
+                    {dayCoverage.old_staff_name || 'The outgoing staff member'} finished on {formatDate(dayCoverage.start_date)} and{' '}
+                    {dayCoverage.new_staff_name || 'the incoming staff member'} had not started yet. No salary is payable — decide below whether the client is invoiced for the day.
+                  </div>
+                )}
+                {isOverlapDay && (
+                  <div className="mx-6 mt-4 rounded-lg border bg-amber-50 border-amber-200 px-4 py-2.5 text-xs text-amber-800">
+                    <span className="font-semibold">Two staff on duty this day.</span>{' '}
+                    {dayCoverage.old_staff_name || 'The outgoing staff member'} stayed on while {dayCoverage.new_staff_name || 'the incoming staff member'} started.
+                    Neither is paid automatically — confirm each one's attendance and pay separately below, then decide the client's invoice for the day.
+                  </div>
+                )}
+
                 {/* Shifts moved away from this date, or covered same-day by someone else — explains why fewer/different rows show below */}
                 {shiftReschedules.filter(r => r.original_date?.slice(0, 10) === dayModal.dateISO).map(r => {
                   const isSameDayCover = r.new_date?.slice(0, 10) === r.original_date?.slice(0, 10);
@@ -5076,7 +5227,11 @@ const BookingDetailPageV2 = () => {
                   <div className="px-6 pt-5 pb-2">
                     <p className="text-[10.5px] font-semibold uppercase tracking-widest text-gray-400 mb-3">Staff Attendance</p>
                     {dayModal.assignments.length === 0 ? (
-                      <p className="text-sm text-gray-400 py-4 text-center">No staff assigned on this day.</p>
+                      <p className="text-sm text-gray-400 py-4 text-center">
+                        {isGapDay
+                          ? 'Nobody was on duty — there is no salary to calculate for this day.'
+                          : 'No staff assigned on this day.'}
+                      </p>
                     ) : (
                       <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
                         <table className="w-full text-sm border-collapse">

@@ -1452,6 +1452,12 @@ class ApiClient {
     return this.request(`/bookings/${bookingId}/pauses`);
   }
 
+  // Gap/overlap ranges left behind by staff handoffs — days the nightly cron hands
+  // to the admin instead of auto-paying/auto-invoicing them.
+  async getBookingCoverageEvents(bookingId) {
+    return this.request(`/bookings/${bookingId}/coverage-events`);
+  }
+
   async swapBookingStaff(bookingId, swapData) {
     return this.request(`/bookings/${bookingId}/swap-staff`, {
       method: 'POST',

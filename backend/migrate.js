@@ -876,7 +876,7 @@ async function runMigration() {
     CREATE TABLE IF NOT EXISTS scheduled_actions (
       action_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
       booking_id UUID NOT NULL REFERENCES bookings(booking_id) ON DELETE CASCADE,
-      action_type VARCHAR(30) NOT NULL,        -- TERMINATION | COMPLETION | STAFF_SWAP | ASSIGNMENT_START | SHIFT_PATTERN_CHANGE | SHIFT_REASSIGNMENT
+      action_type VARCHAR(30) NOT NULL,        -- TERMINATION | COMPLETION | STAFF_SWAP | ASSIGNMENT_START | ASSIGNMENT_END | SHIFT_PATTERN_CHANGE | SHIFT_REASSIGNMENT
       effective_date DATE NOT NULL,
       status VARCHAR(20) DEFAULT 'SCHEDULED',   -- SCHEDULED | EXECUTED | CANCELLED | FAILED
       payload JSONB NOT NULL DEFAULT '{}',      -- action-specific args
@@ -3327,6 +3327,64 @@ async function runMigration() {
   await migrateSecondaryPhonesToJsonb('client_profiles');
   await migrateSecondaryPhonesToJsonb('staff_profiles');
   await migrateSecondaryPhonesToJsonb('staff_applications');
+
+  // =========================================================
+  // STAFF HANDOFF COVERAGE EVENTS (LIVE_IN)
+  // A staff swap no longer assumes the outgoing and incoming staff hand over
+  // back-to-back. Two exceptions are recorded here, each as a date range:
+  //   - GAP:     nobody is on site (incoming staff is late). Capped at 3 days.
+  //     Those days have zero ACTIVE assignments, so the nightly cron pays no
+  //     salary for them and seeds a PENDING client invoice suggesting Rs.0 —
+  //     whether to charge the client at all is the admin's call.
+  //   - OVERLAP: both staff are on site (outgoing stays on past the incoming
+  //     staff's start). Both assignments are ACTIVE over the range, so the cron
+  //     skips auto-pay for BOTH (nothing is credited until the admin confirms
+  //     each one) and leaves the client invoice PENDING too.
+  // Per-day decisions are NOT stored here — they live in their existing homes,
+  // staff_daily_attendance.salary_status and booking_daily_invoices.status, so
+  // there is exactly one source of truth for what was paid/invoiced. status here
+  // only distinguishes an event that stands from one the admin cancelled.
+  // =========================================================
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS booking_coverage_events (
+      coverage_event_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      booking_id UUID NOT NULL REFERENCES bookings(booking_id) ON DELETE CASCADE,
+      event_type VARCHAR(10) NOT NULL CHECK (event_type IN ('GAP', 'OVERLAP')),
+      start_date DATE NOT NULL,
+      end_date DATE NOT NULL,
+      old_staff_id UUID REFERENCES staff_profiles(staff_profile_id),
+      new_staff_id UUID REFERENCES staff_profiles(staff_profile_id),
+      old_assignment_id UUID REFERENCES booking_staff_assignments(assignment_id),
+      new_assignment_id UUID REFERENCES booking_staff_assignments(assignment_id),
+      swap_id UUID REFERENCES staff_swaps(swap_id),
+      old_staff_out_time TIMESTAMP WITH TIME ZONE,
+      new_staff_in_time TIMESTAMP WITH TIME ZONE,
+      status VARCHAR(20) NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'CANCELLED')),
+      reason TEXT,
+      created_by UUID REFERENCES users(user_id),
+      created_by_name VARCHAR(255),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_booking_coverage_events_booking_id
+    ON booking_coverage_events(booking_id);
+  `);
+  // The cron's one lookup per night is "which bookings have an open event covering
+  // today" — a range scan over open rows only.
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_booking_coverage_events_dates
+    ON booking_coverage_events(start_date, end_date) WHERE status = 'OPEN';
+  `);
+
+  // Which of the three handoff shapes produced this swap. Existing rows predate
+  // the feature and were all back-to-back handoffs, so IMMEDIATE is the correct
+  // backfill. billing_gap on this table is the abandoned first attempt at the
+  // same idea (written by swapStaff, never read by anything) — superseded by
+  // booking_coverage_events above and left alone rather than dropped.
+  await db.query(`ALTER TABLE staff_swaps ADD COLUMN IF NOT EXISTS handoff_type VARCHAR(10) NOT NULL DEFAULT 'IMMEDIATE'`);
 
   // =========================================================
 

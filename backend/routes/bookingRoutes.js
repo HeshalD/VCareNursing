@@ -104,6 +104,13 @@ router.get(
 );
 
 router.get(
+    '/:booking_id/coverage-events',
+    protect,
+    requirePermission('VIEW_BOOKINGS'),
+    bookingController.getBookingCoverageEvents
+);
+
+router.get(
     '/:booking_id/invoice-progress',
     protect,
     requirePermission('VIEW_BOOKINGS'),

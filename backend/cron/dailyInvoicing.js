@@ -9,6 +9,7 @@ const {
 } = require('../services/billingService');
 const { runPreBillingScheduledActions, runPostBillingScheduledActions } = require('./scheduledActions');
 const { drawWalletForBooking } = require('../services/walletService');
+const { getCoverageDaysForDate } = require('../services/coverageEvents');
 
 const getActiveBookingBalances = async (client) => {
   return client.query(
@@ -98,7 +99,7 @@ const startDailyInvoicing = () => {
 
       // Step 2 — Fetch active and overdue bookings, then their active staff assignments
       const activeBookingsRes = await client.query(
-        `SELECT booking_id, client_id, service_model, ot_rate, scheduled_end_time, actual_end_time, invoicing_mode
+        `SELECT booking_id, client_id, service_model, daily_rate, ot_rate, scheduled_end_time, actual_end_time, invoicing_mode
          FROM bookings
         WHERE status IN ('ACTIVE', 'OVERDUE')
          ORDER BY created_at DESC`
@@ -142,7 +143,15 @@ const startDailyInvoicing = () => {
 
       const activeAssignments = activeAssignmentsRes.rows;
 
-      if (activeAssignments.length === 0) {
+      // Which bookings are mid-handoff today — a gap (nobody on site) or an overlap
+      // (two staff on site). Read before the early return below, because a booking in
+      // a gap has NO active assignment by definition and still needs its invoice
+      // decision seeded for the admin.
+      const coverageToday = await getCoverageDaysForDate(client, today);
+      const isGapDay = (bookingId) => coverageToday.get(bookingId)?.gap === true;
+      const isOverlapDay = (bookingId) => coverageToday.get(bookingId)?.overlap === true;
+
+      if (activeAssignments.length === 0 && coverageToday.size === 0) {
         console.log('No active staff assignments to process today.');
         await client.query('COMMIT');
         return;
@@ -161,6 +170,16 @@ const startDailyInvoicing = () => {
       // those two boundary days are excluded from auto-pay below and left PENDING for
       // the admin to log the actual in/out time and decide manually, exactly like
       // SHIFT_BASED/VISITING. Every day in between still auto-pays as before.
+      //
+      // A staff handoff can produce two more days of the same kind (see
+      // services/coverageEvents.js), and they join the very same boundary-day sets:
+      //   - GAP:     nobody was on site. No salary is payable, and whether the client
+      //              is charged is the admin's call, so the invoice is seeded PENDING
+      //              at Rs.0 rather than auto-charged at the daily rate.
+      //   - OVERLAP: two staff were on site. Both assignments are ACTIVE, so without
+      //              this the cron would silently pay both a full day and invoice the
+      //              client once — instead neither is paid until the admin confirms
+      //              each, and the client invoice is left PENDING too.
       let staffEarningsCount = 0;
       let clientInvoiceCount = 0;
 
@@ -204,8 +223,10 @@ const startDailyInvoicing = () => {
 
         const isFirstDay = assignment.service_start_date === today;
         const isLastDay = bookingsEndingToday.has(assignment.booking_id);
-        if (isFirstDay || isLastDay) {
-          console.log(`⏭️  Staff Earnings: skipping auto-pay for ${assignment.staff_name} on ${today} (${isFirstDay ? 'first' : 'last'} day — needs manual in/out + pay decision)`);
+        const isOverlap = isOverlapDay(assignment.booking_id);
+        if (isFirstDay || isLastDay || isOverlap) {
+          const why = isFirstDay ? 'first' : isLastDay ? 'last' : 'overlap';
+          console.log(`⏭️  Staff Earnings: skipping auto-pay for ${assignment.staff_name} on ${today} (${why} day — needs manual in/out + pay decision)`);
           continue;
         }
 
@@ -260,8 +281,9 @@ const startDailyInvoicing = () => {
       // into manual invoicing via bookings.invoicing_mode = 'MANUAL'.
       for (const [bookingId, bookingData] of bookingMap.entries()) {
         if (bookingData.service_model !== 'LIVE_IN' || bookingData.invoicing_mode === 'MANUAL') continue;
-        if (bookingsStartingToday.has(bookingId) || bookingsEndingToday.has(bookingId)) {
-          console.log(`⏭️  Client Invoice: skipping auto-invoice for booking ${bookingId} on ${today} (${bookingsStartingToday.has(bookingId) ? 'first' : 'last'} day — needs manual invoice decision)`);
+        if (bookingsStartingToday.has(bookingId) || bookingsEndingToday.has(bookingId) || isOverlapDay(bookingId)) {
+          const why = bookingsStartingToday.has(bookingId) ? 'first' : bookingsEndingToday.has(bookingId) ? 'last' : 'overlap';
+          console.log(`⏭️  Client Invoice: skipping auto-invoice for booking ${bookingId} on ${today} (${why} day — needs manual invoice decision)`);
           continue;
         }
 
@@ -313,19 +335,46 @@ const startDailyInvoicing = () => {
       // LIVE_IN MANUAL: one PENDING row per booking per day. LIVE_IN AUTO bookings also
       // get one on their first/last day only (see bookingsStartingToday/bookingsEndingToday
       // above). VISITING gets exactly one, on its visit date (see visitingBookingsDueToday).
-      for (const [bookingId, bookingData] of bookingMap.entries()) {
+      //
+      // Iterates the BOOKINGS, not bookingMap: bookingMap is keyed off active staff
+      // assignments, and a booking in a coverage gap has none that day — driving the
+      // seed from it would skip exactly the days that most need an admin decision,
+      // leaving the gap silently uninvoiced and invisible in the queue.
+      for (const bookingRow of activeBookingsRes.rows) {
+        const bookingId = bookingRow.booking_id;
+        const bookingData = bookingMap.get(bookingId);
+        const serviceModel = bookingRow.service_model;
+        const gapDay = isGapDay(bookingId);
+        const overlapDay = isOverlapDay(bookingId);
+
         const isManualType =
-          (bookingData.service_model === 'VISITING' && visitingBookingsDueToday.has(bookingId)) ||
-          (bookingData.service_model === 'LIVE_IN' && bookingData.invoicing_mode === 'MANUAL') ||
-          (bookingData.service_model === 'LIVE_IN' && (bookingsStartingToday.has(bookingId) || bookingsEndingToday.has(bookingId)));
+          (serviceModel === 'VISITING' && visitingBookingsDueToday.has(bookingId)) ||
+          (serviceModel === 'LIVE_IN' && bookingRow.invoicing_mode === 'MANUAL') ||
+          (serviceModel === 'LIVE_IN' && (bookingsStartingToday.has(bookingId) || bookingsEndingToday.has(bookingId))) ||
+          (serviceModel === 'LIVE_IN' && (gapDay || overlapDay));
         if (!isManualType) continue;
+
+        // Suggested amount only — the admin can always type over it.
+        //   gap:     nobody served the day, so it starts at zero. Charging anyway has
+        //            to be a deliberate act, not the default.
+        //   overlap: total_daily_rate sums what the STAFF are paid, so with two of them
+        //            on site it would suggest billing the client double for a day they
+        //            received one day of care. The booking's own client rate is the
+        //            honest starting point; the admin can raise it if the second staff
+        //            member is genuinely billable.
+        const suggestedAmount = gapDay
+          ? 0
+          : overlapDay
+            ? bookingRow.daily_rate
+            : (bookingData?.total_daily_rate || bookingData?.daily_rate || bookingRow.daily_rate);
 
         try {
           await client.query(
-            `INSERT INTO booking_daily_invoices (booking_id, service_date, entry_mode, status, amount)
-             VALUES ($1, $2, 'MANUAL', 'PENDING', $3)
+            `INSERT INTO booking_daily_invoices (booking_id, service_date, entry_mode, status, amount, notes)
+             VALUES ($1, $2, 'MANUAL', 'PENDING', $3, $4)
              ON CONFLICT (booking_id, service_date) WHERE shift_slot_id IS NULL DO NOTHING`,
-            [bookingId, today, bookingData.total_daily_rate || bookingData.daily_rate]
+            [bookingId, today, suggestedAmount,
+             gapDay ? 'No staff on duty — coverage gap' : overlapDay ? 'Two staff on duty — handoff overlap' : null]
           );
           pendingSeededCount++;
         } catch (seedErr) {
