@@ -350,7 +350,7 @@ const isSuperAdminToken = (token) => {
 };
 
 const BookingDetailPageV2 = () => {
-  const { adminToken } = useAdminAuth();
+  const { adminToken, hasPermission } = useAdminAuth();
   const navigate = useNavigate();
   const { bookingId } = useParams();
   const [searchParams] = useSearchParams();
@@ -570,7 +570,10 @@ const BookingDetailPageV2 = () => {
   const [correctionReason, setCorrectionReason]  = useState('');
   const [correctionBusy, setCorrectionBusy]      = useState(false);
   const [correctionError, setCorrectionError]    = useState('');
-  const [corrections, setCorrections]            = useState([]); // booking_amount_corrections rows
+  // The correction audit trail is surfaced through the day History panel (the
+  // AMOUNT_CORRECTED activity-log entries) and the per-row "corrected" markers, so
+  // there's no separate fetch here. GET /bookings/:id/corrections remains available
+  // for reconciliation against the ledger.
 
   // Day-draft staging (Draft -> Preview -> Confirm): everything entered in the Day
   // Detail modal below is cached into these local maps + a backend-persisted
@@ -711,6 +714,25 @@ const BookingDetailPageV2 = () => {
     apiClient.setToken(adminToken);
     await apiClient.revokeAttendanceDays(bookingId, { targets, reason, password, settlement_action: settlementAction });
     await Promise.all([fetchDetail(), fetchDailyRecords()]);
+  };
+
+  // Correcting the amount on already-settled days. Unlike revoking, this is
+  // permission-gated rather than Super-Admin-only: it restates a figure instead of
+  // cancelling the day, and is itself undoable by a further correction.
+  // CareTimeline hides the bulk action for SHIFT_BASED itself (per-slot invoice rows
+  // aren't correctable yet), so the gate here is purely the permission.
+  const correctEnabled = hasPermission('BOOKING_CORRECT_AMOUNT');
+
+  const correctDays = async ({ service_dates, target, invoice_amount, salary_amount, reason }) => {
+    apiClient.setToken(adminToken);
+    const res = await apiClient.correctAmountsBulk(bookingId, {
+      service_dates, target, invoice_amount, salary_amount, reason,
+    });
+    await Promise.all([fetchDetail(), fetchDailyRecords()]);
+    const skipped = res?.data?.skipped?.length || 0;
+    if (skipped > 0) {
+      window.alert(`${res.data.applied.length} day(s) corrected. ${skipped} skipped — they weren't in a settled state.`);
+    }
   };
 
   // VISITING is a one-time visit — its lifecycle (scheduled / due today / awaiting
@@ -1124,14 +1146,13 @@ const BookingDetailPageV2 = () => {
       // Always fetched (not gated on isShiftBased) — bookingSummary may not have
       // resolved yet on the very first call, and this query is a cheap no-op
       // for non-shift bookings anyway (no shift_slot_id rows to match).
-      const [attRes, invRes, rescheduleRes, historyRes, draftsRes, coverageRes, correctionsRes] = await Promise.all([
+      const [attRes, invRes, rescheduleRes, historyRes, draftsRes, coverageRes] = await Promise.all([
         apiClient.getBookingAttendance(bookingId),
         apiClient.getBookingDailyInvoices(bookingId),
         apiClient.getBookingShiftReschedules(bookingId),
         apiClient.getAttendanceHistory(bookingId),
         apiClient.getBookingDayDrafts(bookingId),
         apiClient.getBookingCoverageEvents(bookingId),
-        apiClient.getBookingCorrections(bookingId),
       ]);
       setAttendanceRecords(Array.isArray(attRes?.data) ? attRes.data : []);
       setDailyInvoiceRecords(Array.isArray(invRes?.data) ? invRes.data : []);
@@ -1139,7 +1160,6 @@ const BookingDetailPageV2 = () => {
       setAttendanceHistory(Array.isArray(historyRes?.data) ? historyRes.data : []);
       setDraftDates(new Set((Array.isArray(draftsRes?.data) ? draftsRes.data : []).map(d => d.service_date)));
       setCoverageEvents(Array.isArray(coverageRes?.data) ? coverageRes.data : []);
-      setCorrections(Array.isArray(correctionsRes?.data) ? correctionsRes.data : []);
     } catch {
       // non-fatal — the timeline still renders without these
     }
@@ -2941,6 +2961,8 @@ const BookingDetailPageV2 = () => {
                     pauses={bookingPauses}
                     revokeEnabled={revokeEnabled}
                     onRevokeDays={revokeDays}
+                    correctEnabled={correctEnabled}
+                    onCorrectDays={correctDays}
                     hospitalizationPeriods={hospitalizationPeriods}
                   />
                 </div>

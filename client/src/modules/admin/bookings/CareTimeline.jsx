@@ -115,6 +115,11 @@ const CareTimeline = ({
   pauses = [],           // [{ paused_date, resume_date, resumed_date }] — booking_pauses rows, any order
   revokeEnabled = false, // true only for LIVE_IN/SHIFT_BASED + the viewer is a Super Admin
   onRevokeDays,          // async (targets: { service_date: string, shift_slot_id: string|null }[], reason: string, password: string, settlementAction: string) => void
+  // Correcting the AMOUNT on already-settled days — a different act from revoking
+  // them (the days stay paid/invoiced; only the difference moves). Permission-gated
+  // rather than Super-Admin-only, so the two flags are independent.
+  correctEnabled = false,
+  onCorrectDays,         // async ({ service_dates, target, invoice_amount, salary_amount, reason }) => void
   hospitalizationPeriods = [], // [{ started_date, ended_date }] — booking_hospitalizations rows, ended_date null = ongoing
 }) => {
   const [monthOffset,   setMonthOffset]   = useState(null);
@@ -132,6 +137,14 @@ const CareTimeline = ({
   const [revokeSettlementAction, setRevokeSettlementAction] = useState('WALLET_REFUND');
   const [revokeBusy,    setRevokeBusy]    = useState(false);
   const [revokeError,   setRevokeError]   = useState('');
+  // Bulk amount correction over the same day selection.
+  const [showCorrectConfirm, setShowCorrectConfirm] = useState(false);
+  const [correctTargetSide, setCorrectTargetSide]   = useState('INVOICE'); // 'INVOICE' | 'SALARY' | 'BOTH'
+  const [correctInvoiceAmt, setCorrectInvoiceAmt]   = useState('');
+  const [correctSalaryAmt,  setCorrectSalaryAmt]    = useState('');
+  const [correctReason,     setCorrectReason]       = useState('');
+  const [correctBusy,       setCorrectBusy]         = useState(false);
+  const [correctError,      setCorrectError]        = useState('');
   const isMobile = useIsMobile();
 
   const toggleSelectedDate = (dateISO) => {
@@ -965,11 +978,13 @@ const CareTimeline = ({
 
         <div className="flex items-center gap-2 flex-shrink-0">
 
-          {/* ── Revoke day(s) toggle ── */}
-          {revokeEnabled && (
+          {/* ── Day-selection toggle (revoke and/or correct) ── */}
+          {(revokeEnabled || correctEnabled) && (
             <button
               onClick={() => { if (selectMode) exitSelectMode(); else { setHoveredDay(null); setSelectMode(true); } }}
-              title="Correct a wrongly paid/invoiced day"
+              title={revokeEnabled && correctEnabled
+                ? 'Correct the amount on settled days, or revoke them outright'
+                : revokeEnabled ? 'Revoke a wrongly paid/invoiced day' : 'Correct a wrong amount on a settled day'}
               className="flex items-center gap-1.5 px-2.5 h-8 rounded-lg border text-xs font-semibold transition"
               style={selectMode
                 ? { background: '#FDECEA', borderColor: '#F3A9A0', color: '#B3261E' }
@@ -977,7 +992,7 @@ const CareTimeline = ({
               }
             >
               <Undo2 style={{ width: 13, height: 13 }} />
-              {selectMode ? 'Cancel' : 'Revoke days'}
+              {selectMode ? 'Cancel' : (revokeEnabled && correctEnabled) ? 'Fix days' : revokeEnabled ? 'Revoke days' : 'Correct amounts'}
             </button>
           )}
 
@@ -1159,8 +1174,11 @@ const CareTimeline = ({
               const pill         = PILL[cell.status];
               const isClickable  = Boolean(onDayClick) && cell.delivered;
               const multiShift   = isShiftBased && workingNurses.length > 1;
-              const isRevokable  = revokeEnabled && cell.delivered
+              // A day can be acted on once something on it is actually settled —
+              // the same bar for both revoking it and correcting its amount.
+              const hasSettledMoney = cell.delivered
                 && (cell.salaryMeta?.status === 'PAID' || cell.invoiceMeta?.status === 'INVOICED');
+              const isRevokable  = (revokeEnabled || correctEnabled) && hasSettledMoney;
               const isSelected   = selectedDates.has(cell.dateISO);
 
               // Background
@@ -1509,14 +1527,32 @@ const CareTimeline = ({
             <button onClick={exitSelectMode} className="px-3 h-8 rounded-lg border border-[#E7E1D6] bg-white text-xs font-semibold text-[#6F6A60] hover:bg-slate-50 transition">
               Cancel
             </button>
-            <button
-              onClick={() => { setShowRevokeConfirm(true); setRevokeStep(isShiftBased ? 'shifts' : 'details'); setSelectedShiftTargets(new Set()); }}
-              disabled={selectedDates.size === 0}
-              className="px-3 h-8 rounded-lg text-xs font-bold text-white transition disabled:opacity-40"
-              style={{ background: '#B3261E' }}
-            >
-              Revoke selected
-            </button>
+            {/* Correcting keeps the days; revoking cancels them. Two separate acts,
+                deliberately worded so they can't be mistaken for each other. */}
+            {correctEnabled && !isShiftBased && (
+              <button
+                onClick={() => {
+                  setShowCorrectConfirm(true);
+                  setCorrectTargetSide('INVOICE');
+                  setCorrectInvoiceAmt(''); setCorrectSalaryAmt(''); setCorrectReason(''); setCorrectError('');
+                }}
+                disabled={selectedDates.size === 0}
+                className="px-3 h-8 rounded-lg text-xs font-bold text-white transition disabled:opacity-40"
+                style={{ background: '#2563EB' }}
+              >
+                Correct amounts
+              </button>
+            )}
+            {revokeEnabled && (
+              <button
+                onClick={() => { setShowRevokeConfirm(true); setRevokeStep(isShiftBased ? 'shifts' : 'details'); setSelectedShiftTargets(new Set()); }}
+                disabled={selectedDates.size === 0}
+                className="px-3 h-8 rounded-lg text-xs font-bold text-white transition disabled:opacity-40"
+                style={{ background: '#B3261E' }}
+              >
+                Revoke selected
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1688,6 +1724,224 @@ const CareTimeline = ({
           </div>
         </div>
       )}
+
+      {/* ── Bulk amount-correction modal ──
+          Restates the figure on every selected day that is already settled. The
+          days stay paid/invoiced — this is not the revoke flow above, so there is
+          no settlement choice and no password. Every affected day is previewed
+          with its own before/after before anything is sent. */}
+      {showCorrectConfirm && (() => {
+        const dates = [...selectedDates].sort();
+        const wantsInvoice = correctTargetSide === 'INVOICE' || correctTargetSide === 'BOTH';
+        const wantsSalary  = correctTargetSide === 'SALARY'  || correctTargetSide === 'BOTH';
+        const newInvoice = correctInvoiceAmt === '' ? null : parseFloat(correctInvoiceAmt);
+        const newSalary  = correctSalaryAmt  === '' ? null : parseFloat(correctSalaryAmt);
+
+        // Preview is computed from the records already loaded for the timeline, so
+        // the admin sees exactly which days will move (and which will be skipped)
+        // before committing. The server re-validates and reports back regardless.
+        const rows = dates.map((dateISO) => {
+          const inv = invoiceByDate.get(dateISO);
+          const paidStaff = (attendanceByDate.get(dateISO) || []).filter(r => r.salary_status === 'PAID');
+          const invOld = inv && inv.status === 'INVOICED' ? Number(inv.amount || 0) : null;
+          const salOld = paidStaff.reduce((s, r) => s + Number(r.salary_amount || 0), 0);
+          return {
+            dateISO,
+            invOld,
+            invDelta: wantsInvoice && invOld !== null && newInvoice !== null && !Number.isNaN(newInvoice)
+              ? Math.round((newInvoice - invOld) * 100) / 100 : null,
+            invSkip: wantsInvoice && invOld === null ? (inv ? `invoice ${inv.status.toLowerCase()}` : 'never invoiced') : null,
+            salOld: paidStaff.length ? salOld : null,
+            salCount: paidStaff.length,
+            salDelta: wantsSalary && paidStaff.length === 1 && newSalary !== null && !Number.isNaN(newSalary)
+              ? Math.round((newSalary - Number(paidStaff[0].salary_amount || 0)) * 100) / 100 : null,
+            salSkip: wantsSalary && paidStaff.length === 0 ? 'no paid salary' : null,
+          };
+        });
+
+        const netInvoice = rows.reduce((s, r) => s + (r.invDelta || 0), 0);
+        const netSalary  = rows.reduce((s, r) => s + (r.salDelta || 0), 0);
+        const willChange = rows.some(r => (r.invDelta && r.invDelta !== 0) || (r.salDelta && r.salDelta !== 0));
+        const multiStaffDays = rows.filter(r => wantsSalary && r.salCount > 1);
+        const amountsMissing = (wantsInvoice && (newInvoice === null || Number.isNaN(newInvoice) || newInvoice < 0))
+          || (wantsSalary && (newSalary === null || Number.isNaN(newSalary) || newSalary < 0));
+
+        const submit = async () => {
+          if (!onCorrectDays) return;
+          setCorrectBusy(true); setCorrectError('');
+          try {
+            await onCorrectDays({
+              service_dates: dates,
+              target: correctTargetSide,
+              invoice_amount: wantsInvoice ? newInvoice : undefined,
+              salary_amount: wantsSalary ? newSalary : undefined,
+              reason: correctReason.trim(),
+            });
+            setShowCorrectConfirm(false);
+            exitSelectMode();
+          } catch (e) {
+            setCorrectError(e?.message || 'Failed to correct the selected days');
+          } finally {
+            setCorrectBusy(false);
+          }
+        };
+
+        return (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: 'rgba(28,23,15,.45)' }}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-5 max-h-[88vh] overflow-y-auto">
+              <h3 className="text-sm font-bold text-[#2A2722]">
+                Correct amounts on {dates.length} day{dates.length !== 1 ? 's' : ''}
+              </h3>
+              <p className="text-xs text-[#6F6A60] mt-1.5">
+                These days stay paid and invoiced — only the difference moves. To cancel a day
+                outright, use Revoke instead.
+              </p>
+
+              {/* Which side is wrong */}
+              <div className="grid grid-cols-3 gap-2 mt-4">
+                {[
+                  { key: 'INVOICE', label: 'Client invoice' },
+                  { key: 'SALARY',  label: 'Staff salary' },
+                  { key: 'BOTH',    label: 'Both' },
+                ].map(opt => (
+                  <button
+                    key={opt.key}
+                    onClick={() => setCorrectTargetSide(opt.key)}
+                    className="rounded-lg border px-2 py-2 text-xs font-semibold transition"
+                    style={correctTargetSide === opt.key
+                      ? { background: '#EFF6FF', borderColor: '#93C5FD', color: '#1D4ED8' }
+                      : { background: 'white', borderColor: '#E7E1D6', color: '#6F6A60' }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 mt-3">
+                {wantsInvoice && (
+                  <div>
+                    <label className="block text-[10.5px] font-bold uppercase tracking-wide text-[#A39D91] mb-1.5">Correct invoice (Rs.)</label>
+                    <input
+                      type="number" min="0" step="0.01" value={correctInvoiceAmt}
+                      onChange={(e) => setCorrectInvoiceAmt(e.target.value)}
+                      onWheel={(e) => e.currentTarget.blur()}
+                      className="w-full border border-[#E7E1D6] rounded-lg px-2.5 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-[#93C5FD]"
+                    />
+                  </div>
+                )}
+                {wantsSalary && (
+                  <div>
+                    <label className="block text-[10.5px] font-bold uppercase tracking-wide text-[#A39D91] mb-1.5">Correct salary (Rs.)</label>
+                    <input
+                      type="number" min="0" step="0.01" value={correctSalaryAmt}
+                      onChange={(e) => setCorrectSalaryAmt(e.target.value)}
+                      onWheel={(e) => e.currentTarget.blur()}
+                      className="w-full border border-[#E7E1D6] rounded-lg px-2.5 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-[#93C5FD]"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {multiStaffDays.length > 0 && (
+                <div className="mt-3 rounded-lg px-3 py-2 text-xs" style={{ background: 'rgba(224,164,74,.14)', color: '#8A5C12' }}>
+                  {multiStaffDays.length} of the selected day{multiStaffDays.length !== 1 ? 's have' : ' has'} more than one paid staff
+                  member. Every one of them would be set to the same amount — correct those days
+                  individually from the day view instead.
+                </div>
+              )}
+
+              {/* Exactly what moves, per day */}
+              <div className="mt-4 rounded-lg border border-[#E7E1D6] overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead style={{ background: '#FBF9F4' }}>
+                    <tr className="text-left text-[#A39D91]">
+                      <th className="px-2.5 py-1.5 font-bold uppercase tracking-wide text-[10px]">Day</th>
+                      {wantsInvoice && <th className="px-2.5 py-1.5 font-bold uppercase tracking-wide text-[10px]">Invoice</th>}
+                      {wantsSalary  && <th className="px-2.5 py-1.5 font-bold uppercase tracking-wide text-[10px]">Salary</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r) => (
+                      <tr key={r.dateISO} style={{ borderTop: '1px solid #F1EDE5' }}>
+                        <td className="px-2.5 py-1.5 text-[#3A362F] tabular-nums">{r.dateISO}</td>
+                        {wantsInvoice && (
+                          <td className="px-2.5 py-1.5 tabular-nums">
+                            {r.invSkip
+                              ? <span className="text-[#A39D91]">skipped — {r.invSkip}</span>
+                              : r.invDelta === null
+                                ? <span className="text-[#A39D91]">Rs.{r.invOld?.toLocaleString()}</span>
+                                : <span className={r.invDelta === 0 ? 'text-[#A39D91]' : r.invDelta > 0 ? 'text-[#8A5C12]' : 'text-[#137A6B]'}>
+                                    Rs.{r.invOld.toLocaleString()} → Rs.{Number(newInvoice).toLocaleString()}
+                                    {r.invDelta !== 0 && ` (${r.invDelta > 0 ? '+' : ''}${r.invDelta.toLocaleString()})`}
+                                  </span>}
+                          </td>
+                        )}
+                        {wantsSalary && (
+                          <td className="px-2.5 py-1.5 tabular-nums">
+                            {r.salSkip
+                              ? <span className="text-[#A39D91]">skipped — {r.salSkip}</span>
+                              : r.salCount > 1
+                                ? <span className="text-[#8A5C12]">{r.salCount} staff paid</span>
+                                : r.salDelta === null
+                                  ? <span className="text-[#A39D91]">Rs.{r.salOld?.toLocaleString()}</span>
+                                  : <span className={r.salDelta === 0 ? 'text-[#A39D91]' : r.salDelta > 0 ? 'text-[#8A5C12]' : 'text-[#137A6B]'}>
+                                      Rs.{r.salOld.toLocaleString()} → Rs.{Number(newSalary).toLocaleString()}
+                                      {r.salDelta !== 0 && ` (${r.salDelta > 0 ? '+' : ''}${r.salDelta.toLocaleString()})`}
+                                    </span>}
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {(netInvoice !== 0 || netSalary !== 0) && (
+                <div className="mt-3 rounded-lg px-3 py-2.5 text-xs" style={{ background: '#FBF9F4', color: '#3A362F' }}>
+                  {netInvoice !== 0 && (
+                    <div>
+                      Client: <strong>{netInvoice > 0 ? 'billed a further' : 'credited back'} Rs.{Math.abs(netInvoice).toLocaleString()}</strong> in total.
+                    </div>
+                  )}
+                  {netSalary !== 0 && (
+                    <div className={netInvoice !== 0 ? 'mt-1' : ''}>
+                      Staff: <strong>{netSalary > 0 ? 'paid a further' : 'clawed back'} Rs.{Math.abs(netSalary).toLocaleString()}</strong> in total.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <label className="block text-[10.5px] font-bold uppercase tracking-wide text-[#A39D91] mt-4 mb-1.5">Reason</label>
+              <textarea
+                rows={2} value={correctReason}
+                onChange={(e) => setCorrectReason(e.target.value)}
+                placeholder="e.g. billed at the old rate — agreed rate was Rs.4,000/day"
+                className="w-full border border-[#E7E1D6] rounded-lg px-2.5 py-1.5 text-sm text-[#2A2722] focus:outline-none focus:ring-2 focus:ring-[#93C5FD]"
+              />
+
+              {correctError && <div className="mt-2.5 text-xs font-semibold text-[#B3261E]">{correctError}</div>}
+
+              <div className="flex items-center justify-end gap-2 mt-5">
+                <button
+                  onClick={() => { setShowCorrectConfirm(false); setCorrectError(''); }}
+                  disabled={correctBusy}
+                  className="px-3 h-8 rounded-lg border border-[#E7E1D6] bg-white text-xs font-semibold text-[#6F6A60] hover:bg-slate-50 transition disabled:opacity-50"
+                >
+                  Back
+                </button>
+                <button
+                  onClick={submit}
+                  disabled={correctBusy || amountsMissing || !correctReason.trim() || !willChange}
+                  className="px-3.5 h-8 rounded-lg text-xs font-bold text-white transition disabled:opacity-40"
+                  style={{ background: '#2563EB' }}
+                >
+                  {correctBusy ? 'Correcting…' : 'Apply corrections'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Mobile detail panel ── */}
       {isMobile && activeCell && (() => {

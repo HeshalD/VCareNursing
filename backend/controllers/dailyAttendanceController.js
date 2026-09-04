@@ -1229,22 +1229,28 @@ exports.correctSalaryAmountForDay = async (req, res) => {
  * @route   POST /api/bookings/:booking_id/corrections/bulk
  * @desc    Restate a run of days at once — the case this feature exists for, where
  *          the cron billed at the wrong rate for a week before anyone noticed.
- *          Body: { target: 'INVOICE'|'SALARY'|'BOTH', from_date, to_date,
+ *          Body: { target: 'INVOICE'|'SALARY'|'BOTH',
+ *                  service_dates?: ['YYYY-MM-DD', ...]  OR  from_date + to_date,
  *                  invoice_amount?, salary_amount?, staff_profile_id?, reason }
- *          Every day lands in ONE transaction: a booking is never left half
+ *          Takes either an explicit list of dates (what the timeline's day-picker
+ *          sends — the days needing a fix are not always contiguous) or a plain
+ *          range. Every day lands in ONE transaction: a booking is never left half
  *          corrected. Days that aren't in a correctable state are reported back
  *          as skipped rather than failing the batch.
  * @access  Private (BOOKING_CORRECT_AMOUNT)
  */
 exports.correctAmountsBulk = async (req, res) => {
     const { booking_id } = req.params;
-    const { target, from_date, to_date, invoice_amount, salary_amount, staff_profile_id, reason } = req.body;
+    const { target, from_date, to_date, service_dates, invoice_amount, salary_amount, staff_profile_id, reason } = req.body;
 
     if (!['INVOICE', 'SALARY', 'BOTH'].includes(target)) {
         return res.status(400).json({ status: 'error', message: "target must be 'INVOICE', 'SALARY' or 'BOTH'" });
     }
-    if (!from_date || !to_date || from_date > to_date) {
-        return res.status(400).json({ status: 'error', message: 'from_date and to_date are required, and from_date must not be after to_date' });
+    const explicitDates = Array.isArray(service_dates) && service_dates.length > 0
+        ? [...new Set(service_dates.map(d => String(d).slice(0, 10)))].sort()
+        : null;
+    if (!explicitDates && (!from_date || !to_date || from_date > to_date)) {
+        return res.status(400).json({ status: 'error', message: 'Provide service_dates, or a from_date/to_date range with from_date no later than to_date' });
     }
     if (!reason || !reason.trim()) {
         return res.status(400).json({ status: 'error', message: 'A reason is required' });
@@ -1270,10 +1276,12 @@ exports.correctAmountsBulk = async (req, res) => {
             const daysRes = await client.query(
                 `SELECT service_date::text AS service_date, status
                  FROM booking_daily_invoices
-                 WHERE booking_id = $1 AND service_date BETWEEN $2::date AND $3::date
+                 WHERE booking_id = $1
+                   AND ($2::date[] IS NOT NULL AND service_date = ANY($2::date[])
+                        OR $2::date[] IS NULL AND service_date BETWEEN $3::date AND $4::date)
                    AND shift_slot_id IS NULL AND reschedule_id IS NULL
                  ORDER BY service_date`,
-                [booking_id, from_date, to_date]
+                [booking_id, explicitDates, from_date || null, to_date || null]
             );
             for (const day of daysRes.rows) {
                 if (day.status !== 'INVOICED') {
@@ -1292,10 +1300,12 @@ exports.correctAmountsBulk = async (req, res) => {
             const rowsRes = await client.query(
                 `SELECT attendance_id, service_date::text AS service_date, salary_status
                  FROM staff_daily_attendance
-                 WHERE booking_id = $1 AND service_date BETWEEN $2::date AND $3::date
-                   AND ($4::uuid IS NULL OR staff_profile_id = $4::uuid)
+                 WHERE booking_id = $1
+                   AND ($2::date[] IS NOT NULL AND service_date = ANY($2::date[])
+                        OR $2::date[] IS NULL AND service_date BETWEEN $3::date AND $4::date)
+                   AND ($5::uuid IS NULL OR staff_profile_id = $5::uuid)
                  ORDER BY service_date`,
-                [booking_id, from_date, to_date, staff_profile_id || null]
+                [booking_id, explicitDates, from_date || null, to_date || null, staff_profile_id || null]
             );
             for (const row of rowsRes.rows) {
                 if (row.salary_status !== 'PAID') {
