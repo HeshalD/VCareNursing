@@ -1668,6 +1668,7 @@ exports.getBookingDailyInvoices = async (req, res) => {
                 bdi.status, bdi.amount, bdi.transaction_id, bdi.decided_by_user_id, bdi.decided_by_name, bdi.decided_at,
                 bdi.notes, bdi.created_at, bdi.updated_at, bdi.shift_slot_id,
                 bdi.revoke_reason, bdi.revoked_by_name, bdi.revoked_at, bdi.settlement_action,
+                bdi.corrected_at,
                 ss.shift_number, ss.label as shift_label
              FROM booking_daily_invoices bdi
              LEFT JOIN booking_shift_slots ss ON bdi.shift_slot_id = ss.shift_slot_id

@@ -255,6 +255,9 @@ const PERMISSIONS = {
   ATTENDANCE_MARK_ABSENT:      { label: 'Mark Staff Absent',                module: 'Bookings', entity: 'Attendance', verb: 'Mark Absent',         category: 'action' },
   ATTENDANCE_CONFIRM_SALARY:   { label: 'Confirm/Skip Staff Daily Salary',  module: 'Bookings', entity: 'Attendance', verb: 'Confirm/Skip Salary', category: 'action' },
   ATTENDANCE_REVOKE:           { label: 'Revoke Wrongly Paid/Invoiced Day', module: 'Bookings', entity: 'Attendance', verb: 'Revoke',              category: 'action' },
+  // Restating a wrong figure on a day that stays paid/invoiced — a lighter act
+  // than ATTENDANCE_REVOKE, which cancels the day and returns the money.
+  BOOKING_CORRECT_AMOUNT:      { label: 'Correct Invoiced/Paid Amount',     module: 'Bookings', entity: 'Attendance', verb: 'Correct Amount',      category: 'action' },
   ATTENDANCE_CONFIRM_DAY:      { label: 'Confirm Day (Attendance + Salary + Invoice)', module: 'Bookings', entity: 'Attendance', verb: 'Confirm Day', category: 'action' },
 };
 
@@ -339,6 +342,7 @@ const ROLE_TEMPLATES = {
     'BOOKING_CANCEL_RESCHEDULE', 'BOOKING_MARK_OVERDUE', 'BOOKING_RESOLVE_OVERDUE',
     'BOOKING_UPDATE_INVOICING_MODE',
     'ATTENDANCE_RECORD', 'ATTENDANCE_MARK_ABSENT', 'ATTENDANCE_CONFIRM_SALARY', 'ATTENDANCE_CONFIRM_DAY',
+    'BOOKING_CORRECT_AMOUNT',
     'PRODUCT_CREATE', 'PRODUCT_EDIT', 'PRODUCT_CATEGORY_MANAGE',
     'RENTAL_UNIT_CREATE', 'RENTAL_UNIT_EDIT', 'RENTAL_AGREEMENT_CREATE', 'RENTAL_UNIT_RETURN',
     'RENTAL_DEPOSIT_REFUND', 'RENTAL_DEPOSIT_FORFEIT',

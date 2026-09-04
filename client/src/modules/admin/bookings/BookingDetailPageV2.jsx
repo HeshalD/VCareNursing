@@ -560,6 +560,18 @@ const BookingDetailPageV2 = () => {
   const [invoiceAmountInputsBySlot, setInvoiceAmountInputsBySlot] = useState({}); // shift_slot_id -> amount string
   const [salaryAmountInputs, setSalaryAmountInputs] = useState({}); // assignment_id -> amount string
 
+  // Correcting a wrong figure on a day that has ALREADY been decided. Deliberately
+  // separate from the draft/confirm flow above: a correction is a single immediate
+  // action on a settled day, not part of deciding one. See
+  // backend/services/amountCorrections.js — the day stays paid/invoiced and only
+  // the difference moves, unlike a revoke which cancels the day outright.
+  const [correctionTarget, setCorrectionTarget] = useState(null); // { kind:'INVOICE'|'SALARY', id, dateISO, currentAmount, who }
+  const [correctionAmount, setCorrectionAmount]  = useState('');
+  const [correctionReason, setCorrectionReason]  = useState('');
+  const [correctionBusy, setCorrectionBusy]      = useState(false);
+  const [correctionError, setCorrectionError]    = useState('');
+  const [corrections, setCorrections]            = useState([]); // booking_amount_corrections rows
+
   // Day-draft staging (Draft -> Preview -> Confirm): everything entered in the Day
   // Detail modal below is cached into these local maps + a backend-persisted
   // booking_day_drafts row (see dailyDraftController.js) — nothing here is a real
@@ -1112,13 +1124,14 @@ const BookingDetailPageV2 = () => {
       // Always fetched (not gated on isShiftBased) — bookingSummary may not have
       // resolved yet on the very first call, and this query is a cheap no-op
       // for non-shift bookings anyway (no shift_slot_id rows to match).
-      const [attRes, invRes, rescheduleRes, historyRes, draftsRes, coverageRes] = await Promise.all([
+      const [attRes, invRes, rescheduleRes, historyRes, draftsRes, coverageRes, correctionsRes] = await Promise.all([
         apiClient.getBookingAttendance(bookingId),
         apiClient.getBookingDailyInvoices(bookingId),
         apiClient.getBookingShiftReschedules(bookingId),
         apiClient.getAttendanceHistory(bookingId),
         apiClient.getBookingDayDrafts(bookingId),
         apiClient.getBookingCoverageEvents(bookingId),
+        apiClient.getBookingCorrections(bookingId),
       ]);
       setAttendanceRecords(Array.isArray(attRes?.data) ? attRes.data : []);
       setDailyInvoiceRecords(Array.isArray(invRes?.data) ? invRes.data : []);
@@ -1126,6 +1139,7 @@ const BookingDetailPageV2 = () => {
       setAttendanceHistory(Array.isArray(historyRes?.data) ? historyRes.data : []);
       setDraftDates(new Set((Array.isArray(draftsRes?.data) ? draftsRes.data : []).map(d => d.service_date)));
       setCoverageEvents(Array.isArray(coverageRes?.data) ? coverageRes.data : []);
+      setCorrections(Array.isArray(correctionsRes?.data) ? correctionsRes.data : []);
     } catch {
       // non-fatal — the timeline still renders without these
     }
@@ -1523,6 +1537,48 @@ const BookingDetailPageV2 = () => {
     };
     setDraftInvoiceDecisions(nextInvoiceDecisions);
     persistDraftWith({ invoiceDecisions: nextInvoiceDecisions });
+  };
+
+  // ── Amount corrections ─────────────────────────────────────────────────────
+  // Restates the figure on an already-decided day. Applies immediately (no draft
+  // staging): the day is already settled, so there is nothing to stage against.
+
+  const openCorrection = (target) => {
+    setCorrectionTarget(target);
+    setCorrectionAmount(String(target.currentAmount ?? ''));
+    setCorrectionReason('');
+    setCorrectionError('');
+  };
+  const closeCorrection = () => {
+    setCorrectionTarget(null); setCorrectionAmount(''); setCorrectionReason(''); setCorrectionError('');
+  };
+
+  const correctionDelta = (() => {
+    if (!correctionTarget || correctionAmount === '') return null;
+    const next = parseFloat(correctionAmount);
+    if (Number.isNaN(next)) return null;
+    return Math.round((next - Number(correctionTarget.currentAmount)) * 100) / 100;
+  })();
+
+  const submitCorrection = async () => {
+    if (!correctionTarget || !correctionReason.trim() || correctionAmount === '') return;
+    try {
+      setCorrectionBusy(true); setCorrectionError('');
+      apiClient.setToken(adminToken);
+      const payload = { new_amount: parseFloat(correctionAmount), reason: correctionReason.trim() };
+      if (correctionTarget.kind === 'INVOICE') {
+        await apiClient.correctInvoiceAmount(bookingId, correctionTarget.dateISO, payload);
+      } else {
+        await apiClient.correctSalaryAmount(bookingId, correctionTarget.id, payload);
+      }
+      closeCorrection();
+      await fetchDailyRecords();
+      await fetchDetail();
+    } catch (err) {
+      setCorrectionError(err?.message || 'Failed to correct the amount');
+    } finally {
+      setCorrectionBusy(false);
+    }
   };
 
   const undoInvoiceDecision = (key) => {
@@ -5325,6 +5381,23 @@ const BookingDetailPageV2 = () => {
                                     <td className={tdCls}>
                                       <div className="flex items-center gap-1.5 flex-wrap">
                                         {isFlatMarkDay ? null : statusBadge}
+                                        {/* Wrong figure on a day that WAS correctly worked — restate it
+                                            without cancelling the day (that's Revoke, on the timeline). */}
+                                        {paid && (
+                                          <button
+                                            onClick={() => openCorrection({
+                                              kind: 'SALARY', id: record.attendance_id, dateISO: dayModal.dateISO,
+                                              currentAmount: Number(record.salary_amount), who: staffName,
+                                            })}
+                                            title="The day was worked, but this amount is wrong — restate it"
+                                            className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition"
+                                          >
+                                            Correct
+                                          </button>
+                                        )}
+                                        {record.corrected_at && (
+                                          <span title={`Amount corrected on ${formatDT(record.corrected_at)}`} className="text-[10.5px] text-blue-600 font-medium">corrected</span>
+                                        )}
                                         {canCover && (
                                           <button onClick={() => openRescheduleModal(a.shift_slot_id, true)} title="Hand today's shift to a different staff member — client still billed normally, that staff member's salary is calculated instead" className="px-2.5 py-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded transition">Cover Shift</button>
                                         )}
@@ -5725,13 +5798,31 @@ const BookingDetailPageV2 = () => {
                                 <>
                                   <td className={tdCls + ' tabular-nums'}>{invoiceRecord.status === 'INVOICED' ? `Rs.${Number(invoiceRecord.amount).toLocaleString()}` : '—'}</td>
                                   <td className={tdCls}>
-                                    <span
-                                      title={invoiceRecord.status === 'REVOKED' ? [invoiceRecord.revoke_reason, SETTLEMENT_ACTION_LABELS[invoiceRecord.settlement_action], invoiceRecord.revoked_by_name ? `by ${invoiceRecord.revoked_by_name}` : null].filter(Boolean).join(' — ') : undefined}
-                                      className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${invoiceRecord.status === 'INVOICED' ? 'bg-green-50 text-green-700' : invoiceRecord.status === 'REVOKED' ? 'bg-red-50 text-red-700' : 'bg-gray-100 text-gray-500'}`}
-                                    >
-                                      <span className={`w-1.5 h-1.5 rounded-full ${invoiceRecord.status === 'INVOICED' ? 'bg-green-500' : invoiceRecord.status === 'REVOKED' ? 'bg-red-500' : 'bg-gray-400'}`} />
-                                      {invoiceRecord.status === 'INVOICED' ? 'Invoiced' : invoiceRecord.status === 'REVOKED' ? 'Revoked' : 'Skipped'}
-                                    </span>
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span
+                                        title={invoiceRecord.status === 'REVOKED' ? [invoiceRecord.revoke_reason, SETTLEMENT_ACTION_LABELS[invoiceRecord.settlement_action], invoiceRecord.revoked_by_name ? `by ${invoiceRecord.revoked_by_name}` : null].filter(Boolean).join(' — ') : undefined}
+                                        className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${invoiceRecord.status === 'INVOICED' ? 'bg-green-50 text-green-700' : invoiceRecord.status === 'REVOKED' ? 'bg-red-50 text-red-700' : 'bg-gray-100 text-gray-500'}`}
+                                      >
+                                        <span className={`w-1.5 h-1.5 rounded-full ${invoiceRecord.status === 'INVOICED' ? 'bg-green-500' : invoiceRecord.status === 'REVOKED' ? 'bg-red-500' : 'bg-gray-400'}`} />
+                                        {invoiceRecord.status === 'INVOICED' ? 'Invoiced' : invoiceRecord.status === 'REVOKED' ? 'Revoked' : 'Skipped'}
+                                      </span>
+                                      {/* The day was correctly billable — only the figure was wrong. */}
+                                      {invoiceRecord.status === 'INVOICED' && (
+                                        <button
+                                          onClick={() => openCorrection({
+                                            kind: 'INVOICE', id: invoiceRecord.daily_invoice_id, dateISO: dayModal.dateISO,
+                                            currentAmount: Number(invoiceRecord.amount), who: clientDetails.client_name || 'the client',
+                                          })}
+                                          title="The day was correctly billed, but this amount is wrong — restate it"
+                                          className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition"
+                                        >
+                                          Correct
+                                        </button>
+                                      )}
+                                      {invoiceRecord.corrected_at && (
+                                        <span title={`Amount corrected on ${formatDT(invoiceRecord.corrected_at)}`} className="text-[10.5px] text-blue-600 font-medium">corrected</span>
+                                      )}
+                                    </div>
                                   </td>
                                 </>
                               ) : draftInvoiceDecisions.day ? (
@@ -5835,6 +5926,119 @@ const BookingDetailPageV2 = () => {
                     </button>
                   )}
                 </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ══════════════════════════════════════════════════════
+          CORRECT AMOUNT MODAL
+          Restates a wrong figure on a day that stays paid/invoiced. Sits above
+          the Day Detail modal (z-60) since that's where it's opened from.
+          Not to be confused with Revoke (CareTimeline), which cancels the day
+          and hands the money back under a settlement choice.
+      ══════════════════════════════════════════════════════ */}
+      {correctionTarget && (() => {
+        const isSalary = correctionTarget.kind === 'SALARY';
+        const delta = correctionDelta;
+        const invalid = correctionAmount === '' || Number.isNaN(parseFloat(correctionAmount)) || parseFloat(correctionAmount) < 0;
+        return (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+            <div className="w-full max-w-md rounded-xl bg-white shadow-2xl" style={{ border: '1px solid #e5e7eb' }}>
+              <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900">
+                    Correct {isSalary ? 'salary' : 'invoice'} amount
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {formatDate(correctionTarget.dateISO)} · {correctionTarget.who}
+                  </p>
+                </div>
+                <button onClick={closeCorrection} className="p-1.5 rounded-lg hover:bg-gray-100 transition">
+                  <XCircle className="h-5 w-5 text-gray-400" />
+                </button>
+              </div>
+
+              <div className="px-5 py-4 space-y-4">
+                <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2.5 text-xs text-gray-600">
+                  This day stays {isSalary ? 'paid' : 'invoiced'} — only the difference moves.
+                  To cancel the day altogether, use Revoke on the care timeline instead.
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">Current</label>
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm tabular-nums text-gray-500">
+                      Rs.{Number(correctionTarget.currentAmount).toLocaleString()}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">
+                      Corrected <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="number" min="0" step="0.01" autoFocus
+                      value={correctionAmount}
+                      onChange={e => setCorrectionAmount(e.target.value)}
+                      onWheel={e => e.currentTarget.blur()}
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm tabular-nums outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+                </div>
+
+                {/* Exactly what will move, before anything is committed. */}
+                {delta !== null && delta !== 0 && (
+                  <div className={`rounded-lg border px-3 py-2.5 text-xs ${delta > 0 ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-emerald-50 border-emerald-200 text-emerald-800'}`}>
+                    {isSalary
+                      ? (delta > 0
+                          ? `Rs.${Math.abs(delta).toLocaleString()} will be added to ${correctionTarget.who}'s wallet.`
+                          : `Rs.${Math.abs(delta).toLocaleString()} will be clawed back from ${correctionTarget.who}'s wallet.`)
+                      : (delta > 0
+                          ? `The client will be charged an extra Rs.${Math.abs(delta).toLocaleString()}, drawn from their wallet if it holds enough.`
+                          : `Rs.${Math.abs(delta).toLocaleString()} will be credited back against this booking. No money leaves the company — settle any surplus when the booking closes.`)}
+                  </div>
+                )}
+                {delta === 0 && (
+                  <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2.5 text-xs text-gray-500">
+                    Same as the current amount — nothing to correct.
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-[10.5px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">
+                    Reason <span className="text-rose-500">*</span>
+                  </label>
+                  <textarea
+                    rows={2} value={correctionReason}
+                    onChange={e => setCorrectionReason(e.target.value)}
+                    placeholder="e.g. billed at the old rate, agreed rate was Rs.4,000"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  />
+                </div>
+
+                {!isSalary && (
+                  <p className="text-[11px] text-gray-400">
+                    Any invoice document already generated for this day is cleared and rebuilt on next download.
+                  </p>
+                )}
+
+                {correctionError && (
+                  <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2.5 text-xs text-rose-700">{correctionError}</div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 border-t border-gray-100 px-5 py-3">
+                <button onClick={closeCorrection} className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50">
+                  Cancel
+                </button>
+                <button
+                  onClick={submitCorrection}
+                  disabled={correctionBusy || invalid || !correctionReason.trim() || delta === 0}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-gray-800 px-4 py-2 text-xs font-semibold text-white hover:bg-gray-900 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {correctionBusy ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…</> : 'Apply correction'}
+                </button>
               </div>
             </div>
           </div>

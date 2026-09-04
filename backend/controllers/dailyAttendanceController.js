@@ -3,6 +3,7 @@ const bcrypt = require('bcrypt');
 const db = require('../config/db');
 const { creditStaffSalary, reverseStaffSalary, reverseServiceInvoice } = require('../services/billingService');
 const { maybeAutoCompleteVisitingBooking } = require('../services/visitingBookings');
+const { correctInvoiceAmount, correctSalaryAmount, getCorrectionsForBooking } = require('../services/amountCorrections');
 const { logActivity } = require('../utils/activityLogger');
 
 async function getDeciderName(userId) {
@@ -42,6 +43,7 @@ exports.getBookingAttendance = async (req, res) => {
                 a.revoke_reason,
                 a.revoked_by_name,
                 a.revoked_at,
+                a.corrected_at,
                 ss.shift_number,
                 ss.label as shift_label,
                 ss.duration_hours as shift_duration_hours,
@@ -86,6 +88,7 @@ const ATTENDANCE_HISTORY_ACTION_TYPES = [
     'SHIFT_OCCURRENCE_WAIVED',
     'DAY_CONFIRMED',
     'ATTENDANCE_TIME_EDITED',
+    'AMOUNT_CORRECTED',
 ];
 
 exports.getAttendanceHistory = async (req, res) => {
@@ -1130,6 +1133,227 @@ exports.revokeDays = async (req, res) => {
         res.status(500).json({ status: 'error', message: 'Failed to revoke selected day(s)' });
     } finally {
         client.release();
+    }
+};
+
+// ─── Amount corrections ───────────────────────────────────────────────────────
+// Restating a wrong figure on an already-decided day. Distinct from revokeDays
+// above: a revoke cancels the day and hands the money back under a settlement
+// choice; a correction keeps the day and moves only the difference. See
+// services/amountCorrections.js for why it posts a delta rather than reversing.
+
+const logCorrections = (req, booking_id, applied) => {
+    if (applied.length === 0) return;
+    logActivity({
+        actorUserId: req.user?.user_id,
+        actorRole: req.user?.role,
+        actionType: 'AMOUNT_CORRECTED',
+        entityType: 'BOOKING',
+        entityId: String(booking_id),
+        details: {
+            booking_id,
+            corrections: applied,
+            service_dates: applied.map(a => a.service_date),
+            net_delta: applied.reduce((sum, a) => sum + a.delta, 0),
+        },
+    }).catch(err => console.error('Activity log failed:', err));
+};
+
+/**
+ * @route   PATCH /api/bookings/:booking_id/invoices/:service_date/amount
+ * @desc    Restate one day's client invoice amount. Body: { new_amount, reason }
+ * @access  Private (BOOKING_CORRECT_AMOUNT)
+ */
+exports.correctInvoiceAmountForDay = async (req, res) => {
+    const { booking_id, service_date } = req.params;
+    const { new_amount, reason } = req.body;
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+        const actorName = await getDeciderName(req.user?.user_id);
+        const result = await correctInvoiceAmount(client, {
+            booking_id, service_date, new_amount, reason,
+            actorUserId: req.user?.user_id || null, actorName,
+        });
+        await client.query('COMMIT');
+
+        if (result.changed) logCorrections(req, booking_id, [result]);
+        res.status(200).json({ status: 'success', data: result });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (error.statusCode) {
+            return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        }
+        console.error('Correct invoice amount error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to correct the invoice amount' });
+    } finally {
+        client.release();
+    }
+};
+
+/**
+ * @route   PATCH /api/bookings/:booking_id/attendance/:attendance_id/amount
+ * @desc    Restate one day's staff salary amount. Body: { new_amount, reason }
+ * @access  Private (BOOKING_CORRECT_AMOUNT)
+ */
+exports.correctSalaryAmountForDay = async (req, res) => {
+    const { booking_id, attendance_id } = req.params;
+    const { new_amount, reason } = req.body;
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+        const actorName = await getDeciderName(req.user?.user_id);
+        const result = await correctSalaryAmount(client, {
+            booking_id, attendance_id, new_amount, reason,
+            actorUserId: req.user?.user_id || null, actorName,
+        });
+        await client.query('COMMIT');
+
+        if (result.changed) logCorrections(req, booking_id, [result]);
+        res.status(200).json({ status: 'success', data: result });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (error.statusCode) {
+            return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        }
+        console.error('Correct salary amount error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to correct the salary amount' });
+    } finally {
+        client.release();
+    }
+};
+
+/**
+ * @route   POST /api/bookings/:booking_id/corrections/bulk
+ * @desc    Restate a run of days at once — the case this feature exists for, where
+ *          the cron billed at the wrong rate for a week before anyone noticed.
+ *          Body: { target: 'INVOICE'|'SALARY'|'BOTH', from_date, to_date,
+ *                  invoice_amount?, salary_amount?, staff_profile_id?, reason }
+ *          Every day lands in ONE transaction: a booking is never left half
+ *          corrected. Days that aren't in a correctable state are reported back
+ *          as skipped rather than failing the batch.
+ * @access  Private (BOOKING_CORRECT_AMOUNT)
+ */
+exports.correctAmountsBulk = async (req, res) => {
+    const { booking_id } = req.params;
+    const { target, from_date, to_date, invoice_amount, salary_amount, staff_profile_id, reason } = req.body;
+
+    if (!['INVOICE', 'SALARY', 'BOTH'].includes(target)) {
+        return res.status(400).json({ status: 'error', message: "target must be 'INVOICE', 'SALARY' or 'BOTH'" });
+    }
+    if (!from_date || !to_date || from_date > to_date) {
+        return res.status(400).json({ status: 'error', message: 'from_date and to_date are required, and from_date must not be after to_date' });
+    }
+    if (!reason || !reason.trim()) {
+        return res.status(400).json({ status: 'error', message: 'A reason is required' });
+    }
+    const wantsInvoice = target === 'INVOICE' || target === 'BOTH';
+    const wantsSalary  = target === 'SALARY'  || target === 'BOTH';
+    if (wantsInvoice && (invoice_amount === undefined || invoice_amount === null || invoice_amount === '')) {
+        return res.status(400).json({ status: 'error', message: 'invoice_amount is required for this target' });
+    }
+    if (wantsSalary && (salary_amount === undefined || salary_amount === null || salary_amount === '')) {
+        return res.status(400).json({ status: 'error', message: 'salary_amount is required for this target' });
+    }
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+        const actorName = await getDeciderName(req.user?.user_id);
+        const applied = [];
+        const skipped = [];
+        const unchanged = [];
+
+        if (wantsInvoice) {
+            const daysRes = await client.query(
+                `SELECT service_date::text AS service_date, status
+                 FROM booking_daily_invoices
+                 WHERE booking_id = $1 AND service_date BETWEEN $2::date AND $3::date
+                   AND shift_slot_id IS NULL AND reschedule_id IS NULL
+                 ORDER BY service_date`,
+                [booking_id, from_date, to_date]
+            );
+            for (const day of daysRes.rows) {
+                if (day.status !== 'INVOICED') {
+                    skipped.push({ service_date: day.service_date, target_type: 'INVOICE', why: `status is ${day.status}` });
+                    continue;
+                }
+                const result = await correctInvoiceAmount(client, {
+                    booking_id, service_date: day.service_date, new_amount: invoice_amount,
+                    reason, actorUserId: req.user?.user_id || null, actorName,
+                });
+                (result.changed ? applied : unchanged).push(result);
+            }
+        }
+
+        if (wantsSalary) {
+            const rowsRes = await client.query(
+                `SELECT attendance_id, service_date::text AS service_date, salary_status
+                 FROM staff_daily_attendance
+                 WHERE booking_id = $1 AND service_date BETWEEN $2::date AND $3::date
+                   AND ($4::uuid IS NULL OR staff_profile_id = $4::uuid)
+                 ORDER BY service_date`,
+                [booking_id, from_date, to_date, staff_profile_id || null]
+            );
+            for (const row of rowsRes.rows) {
+                if (row.salary_status !== 'PAID') {
+                    skipped.push({ service_date: row.service_date, target_type: 'SALARY', why: `salary is ${row.salary_status}` });
+                    continue;
+                }
+                const result = await correctSalaryAmount(client, {
+                    booking_id, attendance_id: row.attendance_id, new_amount: salary_amount,
+                    reason, actorUserId: req.user?.user_id || null, actorName,
+                });
+                (result.changed ? applied : unchanged).push(result);
+            }
+        }
+
+        if (applied.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                status: 'error',
+                message: 'Nothing to correct in that range — the days are already at that amount, or none of them are in a decided state.',
+                data: { skipped, unchanged },
+            });
+        }
+
+        await client.query('COMMIT');
+        logCorrections(req, booking_id, applied);
+
+        res.status(200).json({
+            status: 'success',
+            data: {
+                applied, skipped, unchanged,
+                net_delta: applied.reduce((sum, a) => sum + a.delta, 0),
+            },
+        });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (error.statusCode) {
+            return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        }
+        console.error('Bulk correction error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to correct the selected days' });
+    } finally {
+        client.release();
+    }
+};
+
+/**
+ * @route   GET /api/bookings/:booking_id/corrections
+ * @desc    Every amount correction made against this booking, newest first.
+ * @access  Private (VIEW_BOOKINGS)
+ */
+exports.getBookingCorrections = async (req, res) => {
+    const { booking_id } = req.params;
+    try {
+        const rows = await getCorrectionsForBooking(db, booking_id);
+        res.status(200).json({ status: 'success', data: rows });
+    } catch (error) {
+        console.error('Get booking corrections error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to fetch corrections' });
     }
 };
 

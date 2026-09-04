@@ -1458,6 +1458,37 @@ class ApiClient {
     return this.request(`/bookings/${bookingId}/coverage-events`);
   }
 
+  // ── Amount corrections ────────────────────────────────────────────────────
+  // Restating a wrong figure on a day that stays paid/invoiced. Distinct from
+  // revokeDays, which cancels the day and hands the money back.
+
+  async getBookingCorrections(bookingId) {
+    return this.request(`/bookings/${bookingId}/corrections`);
+  }
+
+  async correctInvoiceAmount(bookingId, serviceDate, { new_amount, reason }) {
+    return this.request(`/bookings/${bookingId}/invoices/${serviceDate}/amount`, {
+      method: 'PATCH',
+      body: JSON.stringify({ new_amount, reason }),
+    });
+  }
+
+  async correctSalaryAmount(bookingId, attendanceId, { new_amount, reason }) {
+    return this.request(`/bookings/${bookingId}/attendance/${attendanceId}/amount`, {
+      method: 'PATCH',
+      body: JSON.stringify({ new_amount, reason }),
+    });
+  }
+
+  // target: 'INVOICE' | 'SALARY' | 'BOTH' — applies across a date range in one
+  // transaction, so a booking is never left half corrected.
+  async correctAmountsBulk(bookingId, payload) {
+    return this.request(`/bookings/${bookingId}/corrections/bulk`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   async swapBookingStaff(bookingId, swapData) {
     return this.request(`/bookings/${bookingId}/swap-staff`, {
       method: 'POST',

@@ -207,6 +207,14 @@ router.post('/attendance/:attendance_id/confirm-salary', protect, requirePermiss
 // Revoke a wrongly auto-paid/invoiced LIVE_IN day.
 router.post('/:booking_id/attendance/revoke', protect, requirePermission('ATTENDANCE_REVOKE'), dailyAttendanceController.revokeDays);
 
+// Correct the AMOUNT on a day that was already decided — distinct from revoking
+// it (the day stays paid/invoiced; only the difference moves). See
+// services/amountCorrections.js.
+router.get('/:booking_id/corrections', protect, requirePermission('VIEW_BOOKINGS'), dailyAttendanceController.getBookingCorrections);
+router.patch('/:booking_id/invoices/:service_date/amount', protect, requirePermission('BOOKING_CORRECT_AMOUNT'), dailyAttendanceController.correctInvoiceAmountForDay);
+router.patch('/:booking_id/attendance/:attendance_id/amount', protect, requirePermission('BOOKING_CORRECT_AMOUNT'), dailyAttendanceController.correctSalaryAmountForDay);
+router.post('/:booking_id/corrections/bulk', protect, requirePermission('BOOKING_CORRECT_AMOUNT'), dailyAttendanceController.correctAmountsBulk);
+
 // Day-draft staging (Draft -> Preview -> Confirm): everything entered in the Day
 // Detail modal is cached here until explicitly confirmed — see dailyDraftController.js.
 router.get('/:booking_id/day-drafts', protect, requirePermission('VIEW_BOOKINGS'), dailyDraftController.listDayDrafts);

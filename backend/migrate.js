@@ -3387,6 +3387,61 @@ async function runMigration() {
   await db.query(`ALTER TABLE staff_swaps ADD COLUMN IF NOT EXISTS handoff_type VARCHAR(10) NOT NULL DEFAULT 'IMMEDIATE'`);
 
   // =========================================================
+  // AMOUNT CORRECTIONS
+  // Restates the figure on a day that was already decided — a salary already
+  // PAID, or a client invoice already INVOICED — when the amount itself was
+  // wrong (e.g. the nightly cron billed at the wrong rate for a week).
+  //
+  // Deliberately NOT the same thing as revoking a day (dailyAttendanceController
+  // .revokeDays): a revoke says the day should never have been charged/paid at
+  // all, hands the money back under a settlement choice, and gives the client
+  // the day back. A correction says the day was right and only the number was
+  // wrong, so the day stays PAID/INVOICED and only the DIFFERENCE moves.
+  //
+  // Corrections post a delta rather than reversing and re-charging, because
+  // reverseServiceInvoice credits the full invoice back to the client's wallet
+  // regardless of how much was ever drawn from it, and its amount_paid
+  // decrement is overwritten by drawWalletForBooking's recompute — both of
+  // which would corrupt the numbers on a reverse-then-recharge cycle.
+  //
+  // A day may be corrected repeatedly; every pass appends a row here, so the
+  // reconciliation invariant is:
+  //   row.amount == original transaction + SUM(corrections.delta_amount)
+  // =========================================================
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS booking_amount_corrections (
+      correction_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      booking_id UUID NOT NULL REFERENCES bookings(booking_id) ON DELETE CASCADE,
+      target_type VARCHAR(10) NOT NULL CHECK (target_type IN ('SALARY', 'INVOICE')),
+      attendance_id UUID REFERENCES staff_daily_attendance(attendance_id),
+      daily_invoice_id UUID REFERENCES booking_daily_invoices(daily_invoice_id),
+      service_date DATE NOT NULL,
+      old_amount NUMERIC(12,2) NOT NULL,
+      new_amount NUMERIC(12,2) NOT NULL,
+      delta_amount NUMERIC(12,2) NOT NULL,
+      adjustment_transaction_id UUID REFERENCES transactions(transaction_id),
+      reason TEXT NOT NULL,
+      corrected_by UUID REFERENCES users(user_id),
+      corrected_by_name VARCHAR(255),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_booking_amount_corrections_booking_id
+    ON booking_amount_corrections(booking_id);
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_booking_amount_corrections_service_date
+    ON booking_amount_corrections(booking_id, service_date);
+  `);
+
+  // Cheap "this day was corrected" marker for the timeline/day modal, so the
+  // common render path doesn't have to join booking_amount_corrections.
+  await db.query(`ALTER TABLE booking_daily_invoices ADD COLUMN IF NOT EXISTS corrected_at TIMESTAMP WITH TIME ZONE`);
+  await db.query(`ALTER TABLE staff_daily_attendance ADD COLUMN IF NOT EXISTS corrected_at TIMESTAMP WITH TIME ZONE`);
+
+  // =========================================================
 
   await seedQuotePresetItems();
 
