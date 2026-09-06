@@ -307,7 +307,12 @@ const executeCompletion = async (client, params) => {
 };
 
 // ─── STAFF SWAP ────────────────────────────────────────────────────────────────
-// Executes a swap whose incoming assignment was pre-created with status 'SCHEDULED'.
+// Executes a swap whose incoming assignment was pre-created with status
+// 'SCHEDULED'. Mirrors the immediate branch of bookingController.swapStaff: the
+// outgoing staff's assignment is NEVER touched here — they stay ACTIVE and
+// concurrent with the incoming staff until someone explicitly closes them out
+// (bookingController.closeStaffAssignment). See that file's header comment for
+// the full rationale.
 
 const executeStaffSwap = async (client, payload) => {
     const {
@@ -316,39 +321,17 @@ const executeStaffSwap = async (client, payload) => {
         new_staff_id,
         new_assignment_id,
         swap_reason = null,
-        billing_gap = false,
         new_daily_rate,
         new_ot_rate,
         new_scheduled_end_time,
         effective_date,
         swapped_by = null,
-        old_staff_out_time = null,
         new_staff_in_time = null,
         actor = SYSTEM_ACTOR,
     } = payload;
 
     const effDateStr = toDateStr(effective_date);
 
-    // Close the outgoing assignment.
-    const closedRes = await client.query(
-        `UPDATE booking_staff_assignments
-         SET service_end_date = $1, status = 'COMPLETED'
-         WHERE booking_id = $2 AND status = 'ACTIVE' AND assignment_id <> $3
-         RETURNING assignment_id`,
-        [effDateStr, booking_id, new_assignment_id]
-    );
-    const oldAssignmentId = closedRes.rows[0]?.assignment_id || null;
-
-    // Out/in time capture — same effective date is both the old staff's last day
-    // and the new staff's first day for a scheduled swap (see swapStaff's
-    // scheduled branch, which inserts the new assignment at service_start_date =
-    // effective_date and this closes the old one at service_end_date = effective_date).
-    if (oldAssignmentId && old_staff_out_time) {
-        await applyPartialAttendanceTime(client, {
-            booking_id, assignment_id: oldAssignmentId,
-            service_date: effDateStr, out_time: old_staff_out_time,
-        });
-    }
     if (new_staff_in_time) {
         await applyPartialAttendanceTime(client, {
             booking_id, assignment_id: new_assignment_id,
@@ -365,13 +348,14 @@ const executeStaffSwap = async (client, payload) => {
     // Audit row.
     await client.query(
         `INSERT INTO staff_swaps
-            (booking_id, old_staff_id, new_staff_id, swap_reason, swapped_at, swapped_by, arrival_time, billing_gap)
-         VALUES ($1, $2, $3, $4, NOW(), $5, NULL, $6)`,
-        [booking_id, old_staff_id, new_staff_id, swap_reason, swapped_by, billing_gap]
+            (booking_id, old_staff_id, new_staff_id, swap_reason, swapped_at, swapped_by)
+         VALUES ($1, $2, $3, $4, NOW(), $5)`,
+        [booking_id, old_staff_id, new_staff_id, swap_reason, swapped_by]
     );
 
-    // Update the booking's pointer + optional overrides.
-    const fields = [`assigned_staff_id = $1`];
+    // Point the booking at the incoming staff, force manual invoicing (same
+    // one-way switch as the immediate path — see swapStaff's header), + overrides.
+    const fields = [`assigned_staff_id = $1`, `invoicing_mode = 'MANUAL'`];
     const values = [new_staff_id];
     let p = 2;
     if (new_daily_rate !== undefined && new_daily_rate !== null) { fields.push(`daily_rate = $${p}`); values.push(new_daily_rate); p++; }
@@ -380,10 +364,8 @@ const executeStaffSwap = async (client, payload) => {
     values.push(booking_id);
     await client.query(`UPDATE bookings SET ${fields.join(', ')} WHERE booking_id = $${p}`, values);
 
-    // Free old, occupy new.
-    if (old_staff_id) {
-        await client.query(`UPDATE staff_profiles SET current_status = 'AVAILABLE' WHERE staff_profile_id = $1`, [old_staff_id]);
-    }
+    // The outgoing staff is deliberately NOT freed — they remain actively on
+    // this booking until explicitly closed out.
     await client.query(`UPDATE staff_profiles SET current_status = 'ASSIGNED' WHERE staff_profile_id = $1`, [new_staff_id]);
 
     const notify = async () => {
@@ -395,7 +377,7 @@ const executeStaffSwap = async (client, payload) => {
                 actionType: 'STAFF_SWAPPED',
                 entityType: 'BOOKING',
                 entityId: String(booking_id),
-                details: { booking_id, old_staff_id, new_staff_id, swap_reason, billing_gap, scheduled: true },
+                details: { booking_id, old_staff_id, new_staff_id, swap_reason, scheduled: true, invoicing_mode: 'MANUAL' },
             });
 
             const ctx = await db.query(
@@ -422,10 +404,10 @@ const executeStaffSwap = async (client, payload) => {
             const swapDateStr = new Date(effective_date).toLocaleDateString('en-GB');
             const patient = c.patient_name || 'the patient';
             const tasks = [];
+            // The outgoing staff's assignment has NOT ended — only a heads-up.
             if (c.old_mobile && c.old_name) {
                 tasks.push(
-                    sendStaffAssignmentTerminated(c.old_mobile, c.old_name, patient, swapDateStr),
-                    sendSms(c.old_mobile, `VCare: Hi ${c.old_name}, your assignment for ${patient} has ended. End date: ${swapDateStr}. Thank you for your service.`)
+                    sendSms(c.old_mobile, `VCare: Hi ${c.old_name}, ${c.new_name} has been assigned to take over ${patient}'s care. Please log your out-time once your shift ends.`)
                 );
             }
             if (c.new_mobile && c.new_name) {
@@ -523,80 +505,6 @@ const executeAssignmentStart = async (client, payload) => {
     };
 
     return { result: { booking_id, assignment_id, status: 'ACTIVE' }, notify };
-};
-
-// ─── ASSIGNMENT END ────────────────────────────────────────────────────────────
-// Closes a single assignment on its own end date, without touching anyone else on
-// the booking. Used by an OVERLAP handoff, where the outgoing staff keeps working
-// after the incoming staff has already started: their assignment stays ACTIVE past
-// the swap and nothing else in the system closes an assignment when its
-// service_end_date passes.
-//
-// Post-billing (see cron/scheduledActions.js), matching TERMINATION/COMPLETION —
-// the effective date is the staff member's final served day, so they must still be
-// on duty while that night's attendance/invoice decisions are seeded.
-
-const executeAssignmentEnd = async (client, payload) => {
-    const {
-        booking_id,
-        assignment_id,
-        staff_profile_id,
-        effective_date,
-        staff_out_time = null,
-        actor = SYSTEM_ACTOR,
-    } = payload;
-
-    const upd = await client.query(
-        `UPDATE booking_staff_assignments
-         SET status = 'COMPLETED', service_end_date = COALESCE(service_end_date, $2::date)
-         WHERE assignment_id = $1 AND status = 'ACTIVE'
-         RETURNING assignment_id, service_end_date`,
-        [assignment_id, toDateStr(effective_date)]
-    );
-    if (upd.rows.length === 0) {
-        // Already closed by a termination/completion/another swap that landed first.
-        return { result: { booking_id, skipped: 'assignment no longer active' }, notify: null };
-    }
-
-    if (staff_out_time) {
-        await applyPartialAttendanceTime(client, {
-            booking_id, assignment_id,
-            service_date: toDateStr(upd.rows[0].service_end_date), out_time: staff_out_time,
-        });
-    }
-
-    // Only release the staff member if this was their last commitment — during an
-    // overlap they may already hold the next booking's assignment.
-    if (staff_profile_id) {
-        await client.query(
-            `UPDATE staff_profiles sp
-             SET current_status = 'AVAILABLE'
-             WHERE sp.staff_profile_id = $1
-               AND NOT EXISTS (
-                 SELECT 1 FROM booking_staff_assignments
-                 WHERE staff_profile_id = $1 AND status IN ('ACTIVE', 'SCHEDULED')
-               )`,
-            [staff_profile_id]
-        );
-    }
-
-    const notify = async () => {
-        try {
-            await logActivity({
-                actorUserId: actor.user_id,
-                actorName: actor.name,
-                actorRole: actor.role,
-                actionType: 'STAFF_ASSIGNMENT_ENDED',
-                entityType: 'BOOKING',
-                entityId: String(booking_id),
-                details: { booking_id, assignment_id, staff_profile_id, effective_date: toDateStr(effective_date), overlap_end: true },
-            });
-        } catch (e) {
-            console.error('[executeAssignmentEnd] notify error:', e.message);
-        }
-    };
-
-    return { result: { booking_id, assignment_id, status: 'COMPLETED' }, notify };
 };
 
 // ─── SHIFT REASSIGNMENT ────────────────────────────────────────────────────────
@@ -702,8 +610,6 @@ const dispatchScheduledAction = async (client, action, actor = SYSTEM_ACTOR) => 
             return executeStaffSwap(client, { booking_id: action.booking_id, effective_date: action.effective_date, ...payload });
         case 'ASSIGNMENT_START':
             return executeAssignmentStart(client, { booking_id: action.booking_id, ...payload });
-        case 'ASSIGNMENT_END':
-            return executeAssignmentEnd(client, { booking_id: action.booking_id, effective_date: action.effective_date, ...payload });
         case 'SHIFT_REASSIGNMENT':
             return executeShiftReassignment(client, { booking_id: action.booking_id, effective_date: action.effective_date, ...payload });
         case 'SHIFT_PATTERN_CHANGE': {
@@ -728,7 +634,6 @@ module.exports = {
     executeCompletion,
     executeStaffSwap,
     executeAssignmentStart,
-    executeAssignmentEnd,
     executeShiftReassignment,
     dispatchScheduledAction,
 };

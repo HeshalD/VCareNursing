@@ -9,7 +9,6 @@ const {
 } = require('../services/billingService');
 const { runPreBillingScheduledActions, runPostBillingScheduledActions } = require('./scheduledActions');
 const { drawWalletForBooking } = require('../services/walletService');
-const { getCoverageDaysForDate } = require('../services/coverageEvents');
 
 const getActiveBookingBalances = async (client) => {
   return client.query(
@@ -143,19 +142,25 @@ const startDailyInvoicing = () => {
 
       const activeAssignments = activeAssignmentsRes.rows;
 
-      // Which bookings are mid-handoff today — a gap (nobody on site) or an overlap
-      // (two staff on site). Read before the early return below, because a booking in
-      // a gap has NO active assignment by definition and still needs its invoice
-      // decision seeded for the admin.
-      const coverageToday = await getCoverageDaysForDate(client, today);
-      const isGapDay = (bookingId) => coverageToday.get(bookingId)?.gap === true;
-      const isOverlapDay = (bookingId) => coverageToday.get(bookingId)?.overlap === true;
-
-      if (activeAssignments.length === 0 && coverageToday.size === 0) {
+      if (activeAssignments.length === 0) {
         console.log('No active staff assignments to process today.');
         await client.query('COMMIT');
         return;
       }
+
+      // How many ACTIVE assignments a booking currently has. Normally 1 — but a
+      // staff swap (bookingController.swapStaff) opens the incoming staff's
+      // assignment ACTIVE and concurrent with the outgoing staff's, and never
+      // closes the outgoing one automatically (only an explicit out-time via
+      // closeStaffAssignment does that). So this booking may sit at 2 concurrent
+      // assignments indefinitely, for as long as it takes someone to log that
+      // out-time — there is no date range or cap to track, just "how many right
+      // now," recomputed fresh every night.
+      const activeAssignmentCountByBooking = new Map();
+      for (const a of activeAssignments) {
+        activeAssignmentCountByBooking.set(a.booking_id, (activeAssignmentCountByBooking.get(a.booking_id) || 0) + 1);
+      }
+      const isConcurrentBooking = (bookingId) => (activeAssignmentCountByBooking.get(bookingId) || 0) > 1;
 
       // Step 3 — Process staff earnings and client invoices
       // Only LIVE_IN bookings are auto-processed by the cron. A live-in nurse is
@@ -171,15 +176,13 @@ const startDailyInvoicing = () => {
       // the admin to log the actual in/out time and decide manually, exactly like
       // SHIFT_BASED/VISITING. Every day in between still auto-pays as before.
       //
-      // A staff handoff can produce two more days of the same kind (see
-      // services/coverageEvents.js), and they join the very same boundary-day sets:
-      //   - GAP:     nobody was on site. No salary is payable, and whether the client
-      //              is charged is the admin's call, so the invoice is seeded PENDING
-      //              at Rs.0 rather than auto-charged at the daily rate.
-      //   - OVERLAP: two staff were on site. Both assignments are ACTIVE, so without
-      //              this the cron would silently pay both a full day and invoice the
-      //              client once — instead neither is paid until the admin confirms
-      //              each, and the client invoice is left PENDING too.
+      // A booking currently carrying two concurrent assignments (mid-swap) joins
+      // the same exclusion: nobody is auto-paid on either side until the admin
+      // confirms each one, for as long as the overlap lasts. Client invoicing
+      // needs no separate check for this — swapStaff already forces
+      // invoicing_mode='MANUAL' the moment a swap creates the second assignment,
+      // and the existing invoicing_mode check below already routes every
+      // subsequent day through the same PENDING/decide flow.
       let staffEarningsCount = 0;
       let clientInvoiceCount = 0;
 
@@ -223,10 +226,10 @@ const startDailyInvoicing = () => {
 
         const isFirstDay = assignment.service_start_date === today;
         const isLastDay = bookingsEndingToday.has(assignment.booking_id);
-        const isOverlap = isOverlapDay(assignment.booking_id);
-        if (isFirstDay || isLastDay || isOverlap) {
-          const why = isFirstDay ? 'first' : isLastDay ? 'last' : 'overlap';
-          console.log(`⏭️  Staff Earnings: skipping auto-pay for ${assignment.staff_name} on ${today} (${why} day — needs manual in/out + pay decision)`);
+        const isConcurrent = isConcurrentBooking(assignment.booking_id);
+        if (isFirstDay || isLastDay || isConcurrent) {
+          const why = isFirstDay ? 'first' : isLastDay ? 'last' : 'mid-swap, two staff concurrently active';
+          console.log(`⏭️  Staff Earnings: skipping auto-pay for ${assignment.staff_name} on ${today} (${why} — needs manual in/out + pay decision)`);
           continue;
         }
 
@@ -281,9 +284,8 @@ const startDailyInvoicing = () => {
       // into manual invoicing via bookings.invoicing_mode = 'MANUAL'.
       for (const [bookingId, bookingData] of bookingMap.entries()) {
         if (bookingData.service_model !== 'LIVE_IN' || bookingData.invoicing_mode === 'MANUAL') continue;
-        if (bookingsStartingToday.has(bookingId) || bookingsEndingToday.has(bookingId) || isOverlapDay(bookingId)) {
-          const why = bookingsStartingToday.has(bookingId) ? 'first' : bookingsEndingToday.has(bookingId) ? 'last' : 'overlap';
-          console.log(`⏭️  Client Invoice: skipping auto-invoice for booking ${bookingId} on ${today} (${why} day — needs manual invoice decision)`);
+        if (bookingsStartingToday.has(bookingId) || bookingsEndingToday.has(bookingId)) {
+          console.log(`⏭️  Client Invoice: skipping auto-invoice for booking ${bookingId} on ${today} (${bookingsStartingToday.has(bookingId) ? 'first' : 'last'} day — needs manual invoice decision)`);
           continue;
         }
 
@@ -332,49 +334,25 @@ const startDailyInvoicing = () => {
       // which derives occurrences live from the shift pattern instead.
       let pendingSeededCount = 0;
 
-      // LIVE_IN MANUAL: one PENDING row per booking per day. LIVE_IN AUTO bookings also
-      // get one on their first/last day only (see bookingsStartingToday/bookingsEndingToday
-      // above). VISITING gets exactly one, on its visit date (see visitingBookingsDueToday).
-      //
-      // Iterates the BOOKINGS, not bookingMap: bookingMap is keyed off active staff
-      // assignments, and a booking in a coverage gap has none that day — driving the
-      // seed from it would skip exactly the days that most need an admin decision,
-      // leaving the gap silently uninvoiced and invisible in the queue.
-      for (const bookingRow of activeBookingsRes.rows) {
-        const bookingId = bookingRow.booking_id;
-        const bookingData = bookingMap.get(bookingId);
-        const serviceModel = bookingRow.service_model;
-        const gapDay = isGapDay(bookingId);
-        const overlapDay = isOverlapDay(bookingId);
-
+      // LIVE_IN MANUAL: one PENDING row per booking per day (this now includes every
+      // booking mid-swap, since swapStaff forces invoicing_mode='MANUAL' the moment
+      // it creates a second concurrent assignment — no separate check needed here).
+      // LIVE_IN AUTO bookings also get one on their first/last day only (see
+      // bookingsStartingToday/bookingsEndingToday above). VISITING gets exactly one,
+      // on its visit date (see visitingBookingsDueToday).
+      for (const [bookingId, bookingData] of bookingMap.entries()) {
         const isManualType =
-          (serviceModel === 'VISITING' && visitingBookingsDueToday.has(bookingId)) ||
-          (serviceModel === 'LIVE_IN' && bookingRow.invoicing_mode === 'MANUAL') ||
-          (serviceModel === 'LIVE_IN' && (bookingsStartingToday.has(bookingId) || bookingsEndingToday.has(bookingId))) ||
-          (serviceModel === 'LIVE_IN' && (gapDay || overlapDay));
+          (bookingData.service_model === 'VISITING' && visitingBookingsDueToday.has(bookingId)) ||
+          (bookingData.service_model === 'LIVE_IN' && bookingData.invoicing_mode === 'MANUAL') ||
+          (bookingData.service_model === 'LIVE_IN' && (bookingsStartingToday.has(bookingId) || bookingsEndingToday.has(bookingId)));
         if (!isManualType) continue;
-
-        // Suggested amount only — the admin can always type over it.
-        //   gap:     nobody served the day, so it starts at zero. Charging anyway has
-        //            to be a deliberate act, not the default.
-        //   overlap: total_daily_rate sums what the STAFF are paid, so with two of them
-        //            on site it would suggest billing the client double for a day they
-        //            received one day of care. The booking's own client rate is the
-        //            honest starting point; the admin can raise it if the second staff
-        //            member is genuinely billable.
-        const suggestedAmount = gapDay
-          ? 0
-          : overlapDay
-            ? bookingRow.daily_rate
-            : (bookingData?.total_daily_rate || bookingData?.daily_rate || bookingRow.daily_rate);
 
         try {
           await client.query(
-            `INSERT INTO booking_daily_invoices (booking_id, service_date, entry_mode, status, amount, notes)
-             VALUES ($1, $2, 'MANUAL', 'PENDING', $3, $4)
+            `INSERT INTO booking_daily_invoices (booking_id, service_date, entry_mode, status, amount)
+             VALUES ($1, $2, 'MANUAL', 'PENDING', $3)
              ON CONFLICT (booking_id, service_date) WHERE shift_slot_id IS NULL DO NOTHING`,
-            [bookingId, today, suggestedAmount,
-             gapDay ? 'No staff on duty — coverage gap' : overlapDay ? 'Two staff on duty — handoff overlap' : null]
+            [bookingId, today, bookingData.total_daily_rate || bookingData.daily_rate]
           );
           pendingSeededCount++;
         } catch (seedErr) {

@@ -1452,12 +1452,6 @@ class ApiClient {
     return this.request(`/bookings/${bookingId}/pauses`);
   }
 
-  // Gap/overlap ranges left behind by staff handoffs — days the nightly cron hands
-  // to the admin instead of auto-paying/auto-invoicing them.
-  async getBookingCoverageEvents(bookingId) {
-    return this.request(`/bookings/${bookingId}/coverage-events`);
-  }
-
   // ── Amount corrections ────────────────────────────────────────────────────
   // Restating a wrong figure on a day that stays paid/invoiced. Distinct from
   // revokeDays, which cancels the day and hands the money back.
@@ -1493,6 +1487,15 @@ class ApiClient {
     return this.request(`/bookings/${bookingId}/swap-staff`, {
       method: 'POST',
       body: JSON.stringify(swapData),
+    });
+  }
+
+  // Closes the outgoing side of a swap once they've actually left — the only
+  // thing that ever ends an assignment a swap left open. body: { out_time }
+  async closeStaffAssignment(bookingId, assignmentId, { out_time }) {
+    return this.request(`/bookings/${bookingId}/assignments/${assignmentId}/close-out`, {
+      method: 'PATCH',
+      body: JSON.stringify({ out_time }),
     });
   }
 

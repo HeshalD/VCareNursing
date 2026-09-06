@@ -26,13 +26,6 @@ const { computeRegFeeSplit, settleRegistrationFee } = require('../services/regis
 const { applyPartialAttendanceTime } = require('./dailyAttendanceController')._internal;
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const { maybeAutoCompleteVisitingBooking } = require('../services/visitingBookings');
-const {
-    deriveHandoff,
-    validateHandoff,
-    createCoverageEvent,
-    getCoverageEventsForBooking,
-    toDateStr: toCoverageDateStr,
-} = require('../services/coverageEvents');
 const { closeActivePatternForPause } = require('../services/shiftPatternService');
 const { drawWalletForBooking } = require('../services/walletService');
 
@@ -621,20 +614,6 @@ exports.getBookingPauses = async (req, res) => {
     } catch (error) {
         console.error('Get booking pauses error:', error);
         res.status(500).json({ status: 'error', message: 'Failed to fetch pause history' });
-    }
-};
-
-// GET /api/bookings/:booking_id/coverage-events
-// Open gap/overlap ranges produced by this booking's staff handoffs — drives the
-// care timeline's gap/overlap day cells and the day modal's decision banners.
-exports.getBookingCoverageEvents = async (req, res) => {
-    const { booking_id } = req.params;
-    try {
-        const rows = await getCoverageEventsForBooking(db, booking_id);
-        res.status(200).json({ status: 'success', data: rows });
-    } catch (error) {
-        console.error('Get booking coverage events error:', error);
-        res.status(500).json({ status: 'error', message: 'Failed to fetch coverage events' });
     }
 };
 
@@ -3743,29 +3722,46 @@ exports.resolveShiftBookingOverdue = async (req, res) => {
   }
 };
 
+// Swapping staff on a LIVE_IN booking never closes the outgoing staff's
+// assignment. Both are simply ACTIVE and concurrent from the swap date onward —
+// the booking naturally shows two staff on that day and every day after, until
+// someone explicitly logs the outgoing staff's out-time (see
+// closeStaffAssignment below), which is the only thing that ever closes it. If
+// that never happens, they stay on the booking indefinitely — that is the
+// intended behaviour, not a bug: the client wants this driven by what actually
+// happened (an out-time being logged), not by a date picked in advance.
+//
+// The mirror case — the incoming staff's in-time never gets logged — needs no
+// special handling here at all: the new assignment already exists from the
+// swap date, and any day nobody logs an in-time for it is just an ordinary
+// "mark absent" day through the existing attendance flow
+// (dailyAttendanceController.markAbsent). The booking keeps running; the day
+// they do show up and log an in-time, it's an ordinary worked day again.
+//
+// From the swap date onward, bookings.invoicing_mode is forced to MANUAL — this
+// is a one-way switch the admin has to consciously undo later (see
+// updateInvoicingMode) once the booking is back to a single clean staff member.
+// This is what "the admin has full control over the invoice/pay" actually means
+// in practice: it routes every subsequent day through the same PENDING/decide
+// flow that already exists for manually-invoiced LIVE_IN bookings, for as long
+// as it takes to resolve. Staff pay follows the same idea but needs no manual
+// flag — see cron/dailyInvoicing.js, which skips auto-pay for every assignment
+// on a booking whenever more than one is concurrently ACTIVE, and resumes on
+// its own the moment the booking is back down to one.
 exports.swapStaff = async (req, res) => {
     const { booking_id } = req.params;
     const {
         new_staff_id,
         swap_reason,
-        arrival_time,
         new_staff_start_date,
         // Optional overrides
         new_daily_rate,
         new_ot_rate,
         new_scheduled_end_time,
-        // Out/in time capture — old staff's last logged out_time, new staff's first
-        // logged in_time. Both optional; either can be entered for a swap that's
-        // happening now, scheduled ahead, or being backfilled for a past date.
-        old_staff_out_time,
+        // The incoming staff's first logged in_time, if already known. Optional —
+        // if omitted, their first day (and every day after, until logged) is just
+        // an ordinary un-logged LIVE_IN day, handled by the existing attendance UI.
         new_staff_in_time,
-        // Handoff shape (LIVE_IN only). Absent/'IMMEDIATE' keeps the original
-        // behaviour byte-for-byte: the old assignment ends on the swap date and the
-        // new one starts the next day. 'GAP'/'OVERLAP' instead take both boundary
-        // dates explicitly and record a booking_coverage_events row — see
-        // services/coverageEvents.js.
-        handoff_type,
-        old_staff_end_date
     } = req.body;
 
     if (!new_staff_id) {
@@ -3802,7 +3798,7 @@ exports.swapStaff = async (req, res) => {
         }
 
         const bookingRes = await client.query(
-            `SELECT b.*, 
+            `SELECT b.*,
                     sp.full_name as old_staff_name,
                     u.mobile_number as old_staff_mobile,
                     cp.full_name as client_name,
@@ -3876,59 +3872,18 @@ exports.swapStaff = async (req, res) => {
         const newStaff = newStaffRes.rows[0];
 
         // 2.5 If the incoming staff's start date is in the future, defer the swap:
-        //     reserve them now, keep the current nurse working/billed, and let the
-        //     cron flip the booking over on the effective date.
+        //     reserve them now, keep the current staff working/billed, and let the
+        //     cron flip the new assignment on on the effective date. The outgoing
+        //     staff's assignment is never touched by any of this — see the header.
         const businessDate = await getBusinessDate(client);
-        const requestedSwapDateStr = new_staff_start_date ? toDateStr(new_staff_start_date) : null;
-        const swapReferenceDateStr = requestedSwapDateStr || businessDate;
-
-        // A gap/overlap handoff takes BOTH boundary dates from the admin instead of
-        // deriving the incoming staff's start from the outgoing staff's end. The two
-        // boundaries then move independently: either can be today or in the future,
-        // so each is carried by its own scheduled action rather than by the single
-        // STAFF_SWAP action an immediate swap uses.
-        const isExplicitHandoff = handoff_type === 'GAP' || handoff_type === 'OVERLAP';
-        let handoff = { type: 'IMMEDIATE', start_date: null, end_date: null, days: 0 };
-
-        if (isExplicitHandoff) {
-            if (!old_staff_end_date || !new_staff_start_date) {
-                await client.query('ROLLBACK');
-                return res.status(400).json({
-                    status: 'error',
-                    message: "A gap or overlap handoff needs both the outgoing staff's last day and the incoming staff's start date."
-                });
-            }
-            if (!activeAssignment) {
-                await client.query('ROLLBACK');
-                return res.status(400).json({
-                    status: 'error',
-                    message: 'This booking has no active staff assignment to hand off from.'
-                });
-            }
-            handoff = validateHandoff(
-                handoff_type,
-                deriveHandoff(toCoverageDateStr(old_staff_end_date), toCoverageDateStr(new_staff_start_date)),
-                booking.service_model
-            );
-
-            // Two handoffs in flight at once would fight over the same assignments —
-            // whichever executed second would find the row it expected already closed.
-            for (const type of ['STAFF_SWAP', 'ASSIGNMENT_END', 'ASSIGNMENT_START']) {
-                if (await hasOpenAction(client, booking_id, type)) {
-                    await client.query('ROLLBACK');
-                    return res.status(400).json({
-                        status: 'error',
-                        message: 'A staff change is already scheduled for this booking. Cancel it before recording another.'
-                    });
-                }
-            }
-        }
+        const requestedSwapDateStr = new_staff_start_date ? toDateStr(new_staff_start_date) : businessDate;
 
         if (newStaff.current_status !== 'AVAILABLE') {
-            // current_status is a live snapshot that only flips back to AVAILABLE when the
-            // cron closes out an old assignment, so it lags a staff member whose other
-            // commitment(s) will have ended before this swap's effective date. Only block
-            // on a genuine date-overlapping assignment elsewhere.
+            // current_status is a live snapshot that only flips back to AVAILABLE when
+            // an assignment is explicitly closed out (or a termination/completion
+            // executes), so it lags a staff member whose other commitment(s) will have
+            // ended before this swap's effective date. Only block on a genuine
+            // date-overlapping assignment elsewhere.
             const conflictRes = await client.query(
                 `SELECT 1
                  FROM booking_staff_assignments bsa
@@ -3947,7 +3902,7 @@ exports.swapStaff = async (req, res) => {
                    AND (COALESCE(bsa.service_end_date, sa.effective_date) IS NULL
                         OR COALESCE(bsa.service_end_date, sa.effective_date) >= $3::date)
                  LIMIT 1`,
-                [new_staff_id, booking_id, swapReferenceDateStr]
+                [new_staff_id, booking_id, requestedSwapDateStr]
             );
             if (conflictRes.rows.length > 0) {
                 await client.query('ROLLBACK');
@@ -3958,7 +3913,7 @@ exports.swapStaff = async (req, res) => {
             }
         }
 
-        if (!isExplicitHandoff && requestedSwapDateStr && isFutureDate(requestedSwapDateStr, businessDate)) {
+        if (isFutureDate(requestedSwapDateStr, businessDate)) {
             const alreadyScheduled = await hasOpenAction(client, booking_id, 'STAFF_SWAP');
             if (alreadyScheduled) {
                 await client.query('ROLLBACK');
@@ -3991,12 +3946,10 @@ exports.swapStaff = async (req, res) => {
                     new_staff_id,
                     new_assignment_id: newAssignmentId,
                     swap_reason: swap_reason || null,
-                    billing_gap: false,
                     new_daily_rate: new_daily_rate ?? null,
                     new_ot_rate: new_ot_rate ?? null,
                     new_scheduled_end_time: new_scheduled_end_time ?? null,
                     swapped_by: req.user.user_id,
-                    old_staff_out_time: old_staff_out_time || null,
                     new_staff_in_time: new_staff_in_time || null,
                 },
                 reason: swap_reason || null,
@@ -4008,228 +3961,73 @@ exports.swapStaff = async (req, res) => {
             return res.status(200).json({
                 status: 'success',
                 scheduled: true,
-                message: `Staff swap to ${newStaff.full_name} scheduled for ${requestedSwapDateStr}. ${currentStaffName || 'Current staff'} continues until then.`,
+                message: `Staff swap to ${newStaff.full_name} scheduled for ${requestedSwapDateStr}. ${currentStaffName || 'Current staff'} stays on the booking — nothing closes their assignment until an out-time is logged for them.`,
                 data: { booking_id, new_staff_id, effective_date: requestedSwapDateStr }
             });
         }
 
-        // 3. Determine billing gap
-        // If arrival_time provided and it's within 4 hours of now — no billing gap
-        let billingGap = false;
-        if (arrival_time) {
-            const arrivalDate = new Date(arrival_time);
-            const now = new Date();
-            const diffHours = (arrivalDate - now) / (1000 * 60 * 60);
-            billingGap = diffHours > 4;
-        }
-
+        // 3. Log the swap. The outgoing staff's assignment is left exactly as it
+        // is — this is the whole point of the new model: no boundary date is
+        // picked up front, so there is nothing to compute or validate here.
         const oldStaffId = currentStaffId;
 
-        // 4. Log the swap
-        const swapRes = await client.query(
+        await client.query(
             `INSERT INTO staff_swaps
-                (booking_id, old_staff_id, new_staff_id, swap_reason, swapped_at, swapped_by, arrival_time, billing_gap, handoff_type)
-             VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7, $8)
-             RETURNING swap_id`,
-            [
-                booking_id,
-                oldStaffId,
-                new_staff_id,
-                swap_reason || null,
-                req.user.user_id,
-                arrival_time ? new Date(arrival_time) : null,
-                billingGap || handoff.type === 'GAP',
-                handoff.type
-            ]
+                (booking_id, old_staff_id, new_staff_id, swap_reason, swapped_at, swapped_by)
+             VALUES ($1, $2, $3, $4, NOW(), $5)`,
+            [booking_id, oldStaffId, new_staff_id, swap_reason || null, req.user.user_id]
         );
-        const swapId = swapRes.rows[0].swap_id;
 
-        // 5. Update booking_staff_assignments for the swap
-        //    IMMEDIATE — close the old assignment on the swap date, open the new one
-        //    the next day (both effective now; this is the original behaviour).
-        //    GAP/OVERLAP — both boundary dates come from the admin and each side is
-        //    applied now only if its date has arrived; a future boundary is deferred
-        //    to its own scheduled action instead (ASSIGNMENT_END / ASSIGNMENT_START),
-        //    since the two sides no longer share one effective date.
-        let oldEndDateStr;
-        let newStartDateStr;
-
-        if (isExplicitHandoff) {
-            oldEndDateStr = toCoverageDateStr(old_staff_end_date);
-            newStartDateStr = toCoverageDateStr(new_staff_start_date);
-        } else {
-            const swapDate = new_staff_start_date
-                ? new Date(new_staff_start_date)
-                : new Date();
-            swapDate.setHours(0, 0, 0, 0);
-
-            oldEndDateStr = swapDate.toISOString().split('T')[0];
-
-            const newStartDate = new Date(swapDate);
-            newStartDate.setDate(newStartDate.getDate() + 1);
-            newStartDateStr = newStartDate.toISOString().split('T')[0];
-        }
-
-        // Only a gap/overlap defers a boundary. An immediate swap always lands both
-        // sides now — its new assignment starts tomorrow by construction, and the
-        // original code opened that row ACTIVE straight away; treating tomorrow as
-        // "future" here would silently reroute every ordinary swap through
-        // ASSIGNMENT_START and stop pointing the booking at the incoming staff.
-        const oldEndIsFuture = isExplicitHandoff && isFutureDate(oldEndDateStr, businessDate);
-        const newStartIsFuture = isExplicitHandoff && isFutureDate(newStartDateStr, businessDate);
-
-        if (activeAssignment) {
-            // An overlap keeps the outgoing staff ACTIVE past the incoming staff's
-            // start — nothing else in the system closes an assignment when its
-            // service_end_date passes, so that close is scheduled explicitly.
-            await client.query(
-                `UPDATE booking_staff_assignments
-                 SET service_end_date = $1, status = $3
-                 WHERE assignment_id = $2`,
-                [oldEndDateStr, activeAssignment.assignment_id, oldEndIsFuture ? 'ACTIVE' : 'COMPLETED']
-            );
-
-            if (oldEndIsFuture) {
-                await enqueueScheduledAction(client, {
-                    booking_id,
-                    action_type: 'ASSIGNMENT_END',
-                    effective_date: oldEndDateStr,
-                    payload: {
-                        assignment_id: activeAssignment.assignment_id,
-                        staff_profile_id: oldStaffId,
-                        staff_out_time: old_staff_out_time || null,
-                        reason: swap_reason || null,
-                    },
-                    reason: swap_reason || null,
-                    created_by: req.user.user_id,
-                });
-            }
-        }
-
+        // 4. Open the new assignment ACTIVE and open-ended, starting today (or the
+        // requested date) — concurrent with the outgoing staff's still-open one.
         const newDailyRate = new_daily_rate ?? bookingDetail.daily_rate ?? bookingDetail.quote_daily_rate ?? 0;
         const newAssignmentRes = await client.query(
             `INSERT INTO booking_staff_assignments
                 (booking_id, staff_profile_id, assigned_on, assigned_by, daily_rate,
                  service_start_date, service_end_date, amount_allocated, status)
-             VALUES ($1, $2, NOW(), $3, $4, $5, NULL, NULL, $6)
+             VALUES ($1, $2, NOW(), $3, $4, $5, NULL, NULL, 'ACTIVE')
              RETURNING assignment_id`,
-            [booking_id, new_staff_id, req.user.user_id, newDailyRate, newStartDateStr,
-             newStartIsFuture ? 'SCHEDULED' : 'ACTIVE']
+            [booking_id, new_staff_id, req.user.user_id, newDailyRate, requestedSwapDateStr]
         );
         const newAssignmentId = newAssignmentRes.rows[0].assignment_id;
 
-        if (newStartIsFuture) {
-            // Reuses the same action the ordinary future-dated first assignment uses:
-            // it flips the row ACTIVE, applies the in-time, and points the booking at
-            // the incoming staff on the day they actually start.
-            await enqueueScheduledAction(client, {
-                booking_id,
-                action_type: 'ASSIGNMENT_START',
-                effective_date: newStartDateStr,
-                payload: {
-                    assignment_id: newAssignmentId,
-                    staff_profile_id: new_staff_id,
-                    ot_rate: new_ot_rate ?? null,
-                    staff_in_time: new_staff_in_time || null,
-                },
-                reason: swap_reason || null,
-                created_by: req.user.user_id,
-            });
-        }
-
-        // Out/in time capture: old staff's last logged day gets its out_time, the
-        // incoming staff's first day gets its in_time. Either/both optional.
-        // A boundary still in the future has its time carried in that side's
-        // scheduled-action payload instead and is applied when the action runs, so
-        // attendance is never written ahead of the day it belongs to.
-        if (activeAssignment && old_staff_out_time && !oldEndIsFuture) {
-            await applyPartialAttendanceTime(client, {
-                booking_id, assignment_id: activeAssignment.assignment_id,
-                service_date: oldEndDateStr, out_time: old_staff_out_time,
-            });
-        }
-        if (new_staff_in_time && !newStartIsFuture) {
+        if (new_staff_in_time) {
             await applyPartialAttendanceTime(client, {
                 booking_id, assignment_id: newAssignmentId,
-                service_date: newStartDateStr, in_time: new_staff_in_time,
+                service_date: requestedSwapDateStr, in_time: new_staff_in_time,
             });
         }
 
-        // 5.5 Record the gap/overlap range, if this handoff produced one. Nothing
-        //     here moves money — it marks which days the nightly cron must leave to
-        //     the admin instead of auto-paying/auto-invoicing them.
-        if (handoff.type !== 'IMMEDIATE') {
-            await createCoverageEvent(client, {
-                booking_id,
-                event_type: handoff.type,
-                start_date: handoff.start_date,
-                end_date: handoff.end_date,
-                old_staff_id: oldStaffId,
-                new_staff_id,
-                old_assignment_id: activeAssignment?.assignment_id || null,
-                new_assignment_id: newAssignmentId,
-                swap_id: swapId,
-                old_staff_out_time: old_staff_out_time || null,
-                new_staff_in_time: new_staff_in_time || null,
-                reason: swap_reason || null,
-                created_by: req.user.user_id,
-                created_by_name: await getActorName(req.user.user_id),
-            });
-        }
-
-        // 6. Build the booking update dynamically
-        // Only override fields the admin explicitly passed in.
-        // assigned_staff_id follows whoever is actually on duty: it only moves to the
-        // incoming staff once their assignment is live. While they are still
-        // SCHEDULED (a gap not yet closed, or an overlap starting later), the pointer
-        // stays on the outgoing staff and ASSIGNMENT_START moves it on the day.
-        let updateFields = [];
-        let updateValues = [];
-        let paramCount = 1;
-
-        if (!newStartIsFuture) {
-            updateFields.push(`assigned_staff_id = $${paramCount}`);
-            updateValues.push(new_staff_id);
-            paramCount++;
-        }
+        // 5. Point the booking at the incoming staff and force manual invoicing —
+        // see the function header for why this is a one-way switch here.
+        const updateFields = [`assigned_staff_id = $1`, `invoicing_mode = 'MANUAL'`];
+        const updateValues = [new_staff_id];
+        let paramCount = 2;
 
         if (new_daily_rate !== undefined) {
             updateFields.push(`daily_rate = $${paramCount}`);
             updateValues.push(new_daily_rate);
             paramCount++;
         }
-
         if (new_ot_rate !== undefined) {
             updateFields.push(`ot_rate = $${paramCount}`);
             updateValues.push(new_ot_rate);
             paramCount++;
         }
-
         if (new_scheduled_end_time !== undefined) {
             updateFields.push(`scheduled_end_time = $${paramCount}`);
             updateValues.push(new Date(new_scheduled_end_time));
             paramCount++;
         }
+        updateValues.push(booking_id);
+        await client.query(
+            `UPDATE bookings SET ${updateFields.join(', ')} WHERE booking_id = $${paramCount}`,
+            updateValues
+        );
 
-        if (updateFields.length > 0) {
-            updateValues.push(booking_id);
-            await client.query(
-                `UPDATE bookings SET ${updateFields.join(', ')} WHERE booking_id = $${paramCount}`,
-                updateValues
-            );
-        }
-
-        // 7. Free old staff member — but not while they are still on duty serving an
-        //    overlap; ASSIGNMENT_END releases them on their real last day.
-        if (!oldEndIsFuture) {
-            await client.query(
-                `UPDATE staff_profiles SET current_status = 'AVAILABLE' WHERE staff_profile_id = $1`,
-                [oldStaffId]
-            );
-        }
-
-        // 8. Lock new staff member (also reserves them for a start still to come, so
-        //    they can't be double-booked during a gap)
+        // The outgoing staff is deliberately NOT freed here — they are still
+        // actively on this booking until their out-time closes the assignment
+        // (see closeStaffAssignment below).
         await client.query(
             `UPDATE staff_profiles SET current_status = 'ASSIGNED' WHERE staff_profile_id = $1`,
             [new_staff_id]
@@ -4237,7 +4035,7 @@ exports.swapStaff = async (req, res) => {
 
         await client.query('COMMIT');
 
-        // 8. Activity log (non-fatal — must not roll back the committed swap)
+        // 6. Activity log (non-fatal — must not roll back the committed swap)
         try {
             const actorName = await getActorName(req.user.user_id);
             await logActivity({
@@ -4254,22 +4052,15 @@ exports.swapStaff = async (req, res) => {
                     new_staff_name: newStaff.full_name,
                     new_staff_id: new_staff_id,
                     swap_reason: swap_reason || null,
-                    billing_gap: billingGap,
-                    handoff_type: handoff.type,
-                    old_staff_end_date: oldEndDateStr,
-                    new_staff_start_date: newStartDateStr,
-                    ...(handoff.type !== 'IMMEDIATE' && {
-                        coverage_start_date: handoff.start_date,
-                        coverage_end_date: handoff.end_date,
-                        coverage_days: handoff.days,
-                    }),
+                    swap_date: requestedSwapDateStr,
+                    invoicing_mode: 'MANUAL',
                 }
             });
         } catch (logErr) {
             console.error('Activity log error (non-fatal):', logErr);
         }
 
-        // 9. Fire-and-forget notifications
+        // 7. Fire-and-forget notifications
         (async () => {
             try {
                 const swapDate = new Date().toLocaleDateString('en-GB');
@@ -4294,11 +4085,13 @@ exports.swapStaff = async (req, res) => {
                 const oldMobile = bookingDetail.old_staff_mobile;
                 const notifications = [];
 
+                // The outgoing staff's assignment has NOT ended — they're still on
+                // duty alongside the incoming staff — so this is a heads-up, not the
+                // "assignment ended" notice.
                 if (oldMobile && currentStaffName) {
                     notifications.push(
-                        sendStaffAssignmentTerminated(oldMobile, currentStaffName, patientName, swapDate),
                         sendSms(oldMobile,
-                            `VCare: Hi ${currentStaffName}, your assignment for ${patientName} has ended. End date: ${swapDate}. Thank you for your dedication and service.`
+                            `VCare: Hi ${currentStaffName}, ${newStaff.full_name} has been assigned to take over ${patientName}'s care. Please log your out-time once your shift ends.`
                         )
                     );
                 }
@@ -4327,29 +4120,15 @@ exports.swapStaff = async (req, res) => {
             }
         })();
 
-        const handoffNote = handoff.type === 'GAP'
-            ? `${handoff.days} day(s) with no cover (${handoff.start_date} to ${handoff.end_date}) — invoice those days from the care timeline.`
-            : handoff.type === 'OVERLAP'
-                ? `${handoff.days} day(s) with both staff on duty (${handoff.start_date} to ${handoff.end_date}) — confirm each staff member's pay from the care timeline.`
-                : null;
-
         res.status(200).json({
             status: 'success',
-            message: handoffNote
-                ? `Staff swap recorded. ${currentStaffName || 'Current staff'} → ${newStaff.full_name}. ${handoffNote}`
-                : `Staff swapped successfully. ${currentStaffName || 'Current staff'} replaced by ${newStaff.full_name}.`,
+            message: `Staff swap recorded. ${currentStaffName || 'Current staff'} stays on the booking until their out-time is logged; ${newStaff.full_name} is also now on duty. Invoicing for this booking is now manual until you switch it back.`,
             data: {
                 booking_id,
                 old_staff: currentStaffName,
                 new_staff: newStaff.full_name,
-                handoff_type: handoff.type,
-                old_staff_end_date: oldEndDateStr,
-                new_staff_start_date: newStartDateStr,
-                coverage_days: handoff.days,
-                billing_gap: billingGap,
-                billing_note: handoffNote || (billingGap
-                    ? 'Gap exceeds 4 hours — billing gap recorded. Manual review may be needed.'
-                    : 'Replacement within 4 hours — billing continues uninterrupted.')
+                swap_date: requestedSwapDateStr,
+                invoicing_mode: 'MANUAL',
             }
         });
 
@@ -4360,6 +4139,120 @@ exports.swapStaff = async (req, res) => {
         }
         console.error('swapStaff error:', error);
         res.status(500).json({ status: 'error', message: 'Failed to swap staff member' });
+    } finally {
+        client.release();
+    }
+};
+
+// PATCH /api/bookings/:booking_id/assignments/:assignment_id/close-out
+// body: { out_time }
+// Closes an open-ended assignment — the only thing that ever does. Used to end
+// the outgoing staff's side of a swap once they've actually left: sets
+// service_end_date/status, logs the out-time, and frees the staff member
+// (unless they hold another open assignment elsewhere). See swapStaff's header
+// for why an assignment is never closed automatically.
+exports.closeStaffAssignment = async (req, res) => {
+    const { booking_id, assignment_id } = req.params;
+    const { out_time } = req.body;
+
+    if (!out_time) {
+        return res.status(400).json({ status: 'error', message: 'out_time is required' });
+    }
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const assignmentRes = await client.query(
+            `SELECT assignment_id, staff_profile_id, status, service_end_date
+             FROM booking_staff_assignments
+             WHERE assignment_id = $1 AND booking_id = $2
+             FOR UPDATE`,
+            [assignment_id, booking_id]
+        );
+        if (assignmentRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Assignment not found for this booking' });
+        }
+        const assignment = assignmentRes.rows[0];
+
+        if (assignment.status !== 'ACTIVE' || assignment.service_end_date) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ status: 'error', message: 'This assignment is already closed' });
+        }
+
+        // This only ever closes the OUTGOING side of a swap — the booking must
+        // still have another ACTIVE assignment covering it afterward. Closing the
+        // sole remaining assignment would leave the booking ACTIVE with no staff
+        // at all and no way for the cron to notice, since every downstream check
+        // (invoicing, pending-invoice seeding) assumes an ACTIVE LIVE_IN booking
+        // always has at least one active assignment.
+        const otherActiveRes = await client.query(
+            `SELECT 1 FROM booking_staff_assignments
+             WHERE booking_id = $1 AND status = 'ACTIVE' AND assignment_id != $2
+             LIMIT 1`,
+            [booking_id, assignment_id]
+        );
+        if (otherActiveRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                status: 'error',
+                message: 'This is the only active staff member on this booking. Swap in a replacement before closing this assignment, or terminate/pause the booking instead.'
+            });
+        }
+
+        const closeDateStr = toDateStr(out_time);
+
+        await client.query(
+            `UPDATE booking_staff_assignments
+             SET service_end_date = $1, status = 'COMPLETED'
+             WHERE assignment_id = $2`,
+            [closeDateStr, assignment_id]
+        );
+
+        await applyPartialAttendanceTime(client, {
+            booking_id, assignment_id,
+            service_date: closeDateStr, out_time,
+        });
+
+        // Only release them if this was their last open commitment — they may
+        // already hold a different booking's assignment.
+        await client.query(
+            `UPDATE staff_profiles sp
+             SET current_status = 'AVAILABLE'
+             WHERE sp.staff_profile_id = $1
+               AND NOT EXISTS (
+                 SELECT 1 FROM booking_staff_assignments
+                 WHERE staff_profile_id = $1 AND status IN ('ACTIVE', 'SCHEDULED')
+               )`,
+            [assignment.staff_profile_id]
+        );
+
+        await client.query('COMMIT');
+
+        try {
+            const actorName = await getActorName(req.user.user_id);
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: extractActorRole(req.user.role),
+                actionType: 'STAFF_ASSIGNMENT_ENDED',
+                entityType: 'BOOKING',
+                entityId: booking_id,
+                details: { booking_id, assignment_id, staff_profile_id: assignment.staff_profile_id, out_time: closeDateStr },
+            });
+        } catch (logErr) {
+            console.error('Activity log error (non-fatal):', logErr);
+        }
+
+        res.status(200).json({ status: 'success', data: { booking_id, assignment_id, service_end_date: closeDateStr } });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (error.statusCode) {
+            return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        }
+        console.error('closeStaffAssignment error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to close the assignment' });
     } finally {
         client.release();
     }

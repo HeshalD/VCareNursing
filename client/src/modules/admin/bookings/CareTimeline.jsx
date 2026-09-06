@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Wallet, Receipt, X, UserCheck, CalendarX, CheckCircle2, LayoutGrid, AlertTriangle, Lock, Undo2, Check, Cross, UserX, Users } from 'lucide-react';
+import { Wallet, Receipt, X, UserCheck, CalendarX, CheckCircle2, LayoutGrid, AlertTriangle, Lock, Undo2, Check, Cross } from 'lucide-react';
 import DateInput from '../../../components/common/DateInput';
 
 const useIsMobile = (query = '(max-width: 639px)') => {
@@ -109,7 +109,6 @@ const CareTimeline = ({
   dailyInvoiceRecords = [],
   draftDates = new Set(), // Set<dateISO> — days with a cached-but-unconfirmed booking_day_drafts row
   reschedules = [],      // [{ reschedule_id, shift_slot_id, original_date, new_date, new_start_time, assignment_id, makeup_staff_name, shift_number, shift_label }]
-  coverageEvents = [],   // [{ event_type: 'GAP'|'OVERLAP', start_date, end_date, old_staff_name, new_staff_name }] — staff handoff days needing an admin decision
   manualSalaryDay = false,
   manualInvoiceDay = false,
   pauses = [],           // [{ paused_date, resume_date, resumed_date }] — booking_pauses rows, any order
@@ -531,24 +530,6 @@ const CareTimeline = ({
   const isDateHospitalized = (dateISO) =>
     hospitalizedRanges.some((r) => dateISO >= r.start && (r.end === null || dateISO <= r.end));
 
-  // Staff-handoff days: GAP (nobody on site) and OVERLAP (two staff on site). Both
-  // are days the nightly cron deliberately leaves for the admin to decide, so they
-  // are marked distinctly on the grid rather than reading as ordinary served days.
-  const coverageByDate = useMemo(() => {
-    const map = new Map();
-    coverageEvents.forEach((ev) => {
-      if (!ev?.start_date || !ev?.end_date) return;
-      const end = String(ev.end_date).slice(0, 10);
-      let cursor = String(ev.start_date).slice(0, 10);
-      // Bounded walk — a runaway range must never spin the render thread.
-      for (let guard = 0; cursor <= end && guard < 400; guard++) {
-        map.set(cursor, ev);
-        cursor = toLocalISO(shiftDays(new Date(`${cursor}T12:00:00`), 1));
-      }
-    });
-    return map;
-  }, [coverageEvents]);
-
   // Build a map of dateISO → event list from all event sources
   const eventsByDate = useMemo(() => {
     const map = new Map();
@@ -883,7 +864,6 @@ const CareTimeline = ({
           tipDate:   `${fmtFull(cellDate)} · Day ${dayNum}${isOverrun ? ' · overrun' : ''}`,
           dateISO, salaryMeta, invoiceMeta, cellEvents,
           isHospitalized: isDateHospitalized(dateISO),
-          coverage: coverageByDate.get(dateISO) || null,
         });
       }
     }
@@ -898,7 +878,7 @@ const CareTimeline = ({
       calRows: rows,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clampedMonthIdx, bookingMonths, start, displayDays, plannedDays, paidDays, servedDays, nurseColorMap, attendanceByDate, invoiceByDate, draftDates, manualSalaryDay, manualInvoiceDay, shiftSlots, eventsByDate, staffAssignments, reschedules, movedOrigins, assignmentByIdForReschedule, naturalEndDayNum, partialLastDay, pauseWindows, hospitalizedRanges, coverageByDate]);
+  }, [clampedMonthIdx, bookingMonths, start, displayDays, plannedDays, paidDays, servedDays, nurseColorMap, attendanceByDate, invoiceByDate, draftDates, manualSalaryDay, manualInvoiceDay, shiftSlots, eventsByDate, staffAssignments, reschedules, movedOrigins, assignmentByIdForReschedule, naturalEndDayNum, partialLastDay, pauseWindows, hospitalizedRanges]);
 
   const activeCell = useMemo(() => {
     if (hoveredDay == null) return null;
@@ -1173,7 +1153,12 @@ const CareTimeline = ({
               const primaryNurse = workingNurses[0] || null;
               const pill         = PILL[cell.status];
               const isClickable  = Boolean(onDayClick) && cell.delivered;
-              const multiShift   = isShiftBased && workingNurses.length > 1;
+              // Two-plus nurses on one day isn't SHIFT_BASED-only anymore: a LIVE_IN
+              // swap leaves both the outgoing and incoming staff concurrently active
+              // (see bookingController.swapStaff), so this day naturally carries two
+              // assignments and the existing multi-nurse band/border treatment already
+              // built for SHIFT_BASED applies here for free.
+              const multiStaff   = workingNurses.length > 1;
               // A day can be acted on once something on it is actually settled —
               // the same bar for both revoking it and correcting its amount.
               const hasSettledMoney = cell.delivered
@@ -1208,35 +1193,15 @@ const CareTimeline = ({
                 };
               } else {
                 borderStyle = {
-                  border: multiShift
+                  border: multiStaff
                     ? '1px solid #D1D5DB'
                     : `1px solid ${primaryNurse.color.border}`,
                 };
               }
 
-              // Handoff days override whatever the nurse-coverage math produced: a gap
-              // day has no staff at all (so it must not read as an ordinary served
-              // day), and an overlap day is flagged so two nurse dots don't look like
-              // a rendering accident.
-              const isGapCell = cell.coverage?.event_type === 'GAP';
-              const isOverlapCell = cell.coverage?.event_type === 'OVERLAP';
-              if (isGapCell) {
-                cellBg = 'repeating-linear-gradient(45deg, #FDECEA, #FDECEA 6px, #F9D9D4 6px, #F9D9D4 12px)';
-                borderStyle = { border: '1.5px dashed #E0705F' };
-              } else if (isOverlapCell) {
-                borderStyle = { border: '1.5px solid #E0A44A' };
-              }
-
-              const coverageTitle = isGapCell
-                ? `No cover — ${cell.coverage.old_staff_name || 'outgoing staff'} had left and ${cell.coverage.new_staff_name || 'incoming staff'} had not started. Invoice decision pending.`
-                : isOverlapCell
-                  ? `Both ${cell.coverage.old_staff_name || 'outgoing staff'} and ${cell.coverage.new_staff_name || 'incoming staff'} on duty. Pay for each is decided manually.`
-                  : undefined;
-
               return (
                 <div
                   key={cell.dayNum}
-                  title={coverageTitle}
                   className={`relative flex flex-col justify-between rounded-xl p-1.5 sm:p-2 select-none ${
                     selectMode ? (isRevokable ? 'cursor-pointer' : 'cursor-not-allowed') : ((isMobile || isClickable) ? 'cursor-pointer' : 'cursor-default')
                   }`}
@@ -1290,12 +1255,6 @@ const CareTimeline = ({
                       </span>
                     )}
                     <div className="flex items-center gap-0.5 flex-shrink-0 ml-auto">
-                      {isGapCell && (
-                        <UserX style={{ width: 9, height: 9, color: '#C2483C' }} strokeWidth={2.5} />
-                      )}
-                      {isOverlapCell && (
-                        <Users style={{ width: 9, height: 9, color: '#B57A22' }} strokeWidth={2.5} />
-                      )}
                       {cell.isHospitalized && (
                         <Cross style={{ width: 9, height: 9, color: '#C2483C' }} strokeWidth={2.5} />
                       )}
@@ -1410,22 +1369,6 @@ const CareTimeline = ({
                               )}
                             </div>
                           ))}
-                        </>
-                      )}
-
-                      {cell.coverage && (
-                        <>
-                          <div className="h-px my-2" style={{ background: 'rgba(255,255,255,.12)' }} />
-                          <div className="flex items-start gap-1.5">
-                            {cell.coverage.event_type === 'GAP'
-                              ? <UserX style={{ width: 10, height: 10, color: '#E0705F', flexShrink: 0, marginTop: 1 }} />
-                              : <Users style={{ width: 10, height: 10, color: '#E0A44A', flexShrink: 0, marginTop: 1 }} />}
-                            <span className="text-[10px] text-[#F2EFE8] leading-tight">
-                              {cell.coverage.event_type === 'GAP'
-                                ? `No cover — ${cell.coverage.old_staff_name || 'outgoing staff'} had left, ${cell.coverage.new_staff_name || 'incoming staff'} not yet started`
-                                : `Both ${cell.coverage.old_staff_name || 'outgoing staff'} and ${cell.coverage.new_staff_name || 'incoming staff'} on duty`}
-                            </span>
-                          </div>
                         </>
                       )}
 
@@ -1993,19 +1936,6 @@ const CareTimeline = ({
               </div>
             )}
 
-            {cell.coverage && (
-              <div
-                className="mt-2.5 rounded-lg px-2.5 py-2 text-xs leading-tight"
-                style={cell.coverage.event_type === 'GAP'
-                  ? { background: 'rgba(224,112,95,.12)', color: '#A6412F' }
-                  : { background: 'rgba(224,164,74,.14)', color: '#8A5C12' }}
-              >
-                {cell.coverage.event_type === 'GAP'
-                  ? `No cover — ${cell.coverage.old_staff_name || 'outgoing staff'} had left and ${cell.coverage.new_staff_name || 'incoming staff'} had not started.`
-                  : `Both ${cell.coverage.old_staff_name || 'outgoing staff'} and ${cell.coverage.new_staff_name || 'incoming staff'} on duty.`}
-              </div>
-            )}
-
             {cell.cellEvents.length > 0 && (
               <>
                 <div className="h-px my-3" style={{ background: '#EFEAE0' }} />
@@ -2111,22 +2041,6 @@ const CareTimeline = ({
             </div>
             <div className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">
               <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: '#8C8C8C', boxShadow: '0 0 0 1.5px #3F77B5' }} />Makeup
-            </div>
-          </>
-        )}
-        {coverageEvents.length > 0 && (
-          <>
-            <div className="w-px h-4 inline-block flex-shrink-0" style={{ background: '#E7E1D6' }} />
-            <div className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">
-              <span
-                className="w-3 h-3 rounded-sm inline-block"
-                style={{ background: 'repeating-linear-gradient(45deg, #FDECEA, #FDECEA 3px, #F9D9D4 3px, #F9D9D4 6px)', border: '1px dashed #E0705F' }}
-              />
-              No cover
-            </div>
-            <div className="flex items-center gap-1.5 text-sm text-[#4A463E] font-semibold">
-              <span className="w-3 h-3 rounded-sm inline-block" style={{ background: '#FFFFFF', border: '1.5px solid #E0A44A' }} />
-              Overlap
             </div>
           </>
         )}

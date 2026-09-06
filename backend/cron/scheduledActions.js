@@ -3,16 +3,16 @@
 // execute* functions). Invoked from dailyInvoicing.js at two points in the nightly run:
 //   - pre-billing: ASSIGNMENT_START / STAFF_SWAP, so today's payroll/invoicing reflects
 //     whichever staff member is on duty today.
-//   - post-billing: TERMINATION / COMPLETION / ASSIGNMENT_END, so the effective date
-//     is billed/paid as the final served day (consistent with the settlement math,
-//     which counts the end date as worked).
+//   - post-billing: TERMINATION / COMPLETION, so the effective date is billed/paid as
+//     the final served day (consistent with the settlement math, which counts the end
+//     date as worked).
 // One bad row must not poison the batch: each row gets its own SAVEPOINT, and a failure
 // is recorded on the row (status='FAILED') rather than rolling back the whole cron run.
 
 const { dispatchScheduledAction, SYSTEM_ACTOR } = require('../services/scheduledActions');
 
 const PRE_BILLING_TYPES = ['ASSIGNMENT_START', 'STAFF_SWAP', 'SHIFT_PATTERN_CHANGE', 'SHIFT_REASSIGNMENT'];
-const POST_BILLING_TYPES = ['TERMINATION', 'COMPLETION', 'ASSIGNMENT_END'];
+const POST_BILLING_TYPES = ['TERMINATION', 'COMPLETION'];
 
 const runDueActions = async (client, businessDate, actionTypes) => {
     const dueRes = await client.query(

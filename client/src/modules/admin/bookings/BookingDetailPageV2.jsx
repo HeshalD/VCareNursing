@@ -47,22 +47,6 @@ const addHoursToTime = (timeStr, hours) => {
   return `${String(Math.floor(totalMins / 60)).padStart(2, '0')}:${String(totalMins % 60).padStart(2, '0')}`;
 };
 const initials     = (name) => (name || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
-// Staff handoff shapes — mirrors services/coverageEvents.js. The server re-derives
-// this from the same two dates and rejects a mismatch, so this copy exists only to
-// tell the admin what the dates they picked actually mean before they submit.
-const MAX_GAP_DAYS = 3;
-const MAX_OVERLAP_DAYS = 7;
-const deriveHandoff = (oldEndISO, newStartISO) => {
-  if (!oldEndISO || !newStartISO) return { type: 'IMMEDIATE', days: 0, start: null, end: null };
-  const delta = Math.round((new Date(`${newStartISO}T12:00:00`) - new Date(`${oldEndISO}T12:00:00`)) / 86400000);
-  if (delta > 1) {
-    return { type: 'GAP', days: delta - 1, start: toDateInput(addDays(new Date(`${oldEndISO}T12:00:00`), 1)), end: toDateInput(addDays(new Date(`${newStartISO}T12:00:00`), -1)) };
-  }
-  if (delta <= 0) {
-    return { type: 'OVERLAP', days: Math.abs(delta) + 1, start: newStartISO, end: oldEndISO };
-  }
-  return { type: 'IMMEDIATE', days: 0, start: null, end: null };
-};
 // 'HH:MM' in + 'HH:MM' out -> hours worked, wrapping past midnight if out <= in (overnight shift).
 const computeWorkedHours = (inTime, outTime) => {
   if (!inTime || !outTime) return null;
@@ -420,13 +404,12 @@ const BookingDetailPageV2 = () => {
   const [swapModalDesignation, setSwapModalDesignation] = useState('');
   const [swapModalSlotId, setSwapModalSlotId]         = useState(null); // set => modal targets a shift slot, not the whole booking
   const [swapModalIsAssign, setSwapModalIsAssign]     = useState(false); // true => slot has no current staff (assign, not reassign)
-  const [swapModalOldOutTime, setSwapModalOldOutTime] = useState(''); // HH:mm — outgoing staff's out time on swapModalStartDate (optional)
+  // Out time on a SHIFT_BASED slot reassign only — a LIVE_IN whole-booking swap no
+  // longer takes the outgoing staff's out-time at swap time at all (their
+  // assignment stays open until it's explicitly closed later; see
+  // closeStaffAssignment / the "Log out & close" action in Allocation history).
+  const [swapModalOldOutTime, setSwapModalOldOutTime] = useState(''); // HH:mm
   const [swapModalNewInTime, setSwapModalNewInTime]   = useState(''); // HH:mm — incoming staff's in time on swapModalStartDate (optional)
-  // Handoff shape (LIVE_IN whole-booking swaps only). 'IMMEDIATE' keeps the original
-  // one-date behaviour; 'GAP'/'OVERLAP' reveal a second date so the outgoing staff's
-  // last day and the incoming staff's first day can be set independently.
-  const [swapModalHandoff, setSwapModalHandoff]       = useState('IMMEDIATE'); // 'IMMEDIATE' | 'GAP' | 'OVERLAP'
-  const [swapModalOldEndDate, setSwapModalOldEndDate] = useState(toDateInput(new Date()));
   // Sharing a candidate's profile with the client happens straight from the staff
   // picker — it's a "show the client who's available" step, independent of whether
   // this staff member ends up being the one assigned.
@@ -441,6 +424,16 @@ const BookingDetailPageV2 = () => {
   const [editTimesOut, setEditTimesOut]                = useState('');
   const [editTimesSubmitting, setEditTimesSubmitting] = useState(false);
   const [editTimesError, setEditTimesError]           = useState('');
+
+  // close-assignment modal — ends the outgoing side of a swap once they've
+  // actually left (see closeStaffAssignment on the backend). Distinct from Edit
+  // Times: this is the one action that sets service_end_date/status, not just an
+  // attendance record.
+  const [closeAssignmentRow, setCloseAssignmentRow]         = useState(null);
+  const [closeAssignmentDate, setCloseAssignmentDate]       = useState('');
+  const [closeAssignmentTime, setCloseAssignmentTime]       = useState('');
+  const [closeAssignmentBusy, setCloseAssignmentBusy]       = useState(false);
+  const [closeAssignmentError, setCloseAssignmentError]     = useState('');
 
   // reschedule modal — moves one shift occurrence to a different date, with an
   // optional staff change for the makeup occurrence
@@ -547,9 +540,6 @@ const BookingDetailPageV2 = () => {
   const [attendanceHistory, setAttendanceHistory]   = useState([]);
   const [dailyInvoiceRecords, setDailyInvoiceRecords] = useState([]);
   const [shiftReschedules, setShiftReschedules]     = useState([]);
-  // Gap/overlap ranges from staff handoffs — [{ event_type, start_date, end_date,
-  // old_staff_name, new_staff_name, ... }]. See services/coverageEvents.js.
-  const [coverageEvents, setCoverageEvents]         = useState([]);
   const [reschedulesBusy, setReschedulesBusy]       = useState('');
   const [reschedulesError, setReschedulesError]     = useState('');
   const [dayModal, setDayModal]                     = useState(null); // { dateISO, dayNum }
@@ -1146,20 +1136,18 @@ const BookingDetailPageV2 = () => {
       // Always fetched (not gated on isShiftBased) — bookingSummary may not have
       // resolved yet on the very first call, and this query is a cheap no-op
       // for non-shift bookings anyway (no shift_slot_id rows to match).
-      const [attRes, invRes, rescheduleRes, historyRes, draftsRes, coverageRes] = await Promise.all([
+      const [attRes, invRes, rescheduleRes, historyRes, draftsRes] = await Promise.all([
         apiClient.getBookingAttendance(bookingId),
         apiClient.getBookingDailyInvoices(bookingId),
         apiClient.getBookingShiftReschedules(bookingId),
         apiClient.getAttendanceHistory(bookingId),
         apiClient.getBookingDayDrafts(bookingId),
-        apiClient.getBookingCoverageEvents(bookingId),
       ]);
       setAttendanceRecords(Array.isArray(attRes?.data) ? attRes.data : []);
       setDailyInvoiceRecords(Array.isArray(invRes?.data) ? invRes.data : []);
       setShiftReschedules(Array.isArray(rescheduleRes?.data) ? rescheduleRes.data : []);
       setAttendanceHistory(Array.isArray(historyRes?.data) ? historyRes.data : []);
       setDraftDates(new Set((Array.isArray(draftsRes?.data) ? draftsRes.data : []).map(d => d.service_date)));
-      setCoverageEvents(Array.isArray(coverageRes?.data) ? coverageRes.data : []);
     } catch {
       // non-fatal — the timeline still renders without these
     }
@@ -1246,10 +1234,7 @@ const BookingDetailPageV2 = () => {
     });
     setAttendanceInputs(inputs);
     setInvoiceAmountInputsBySlot(invoiceInputs);
-    // A coverage-gap day had no staff on site, so it starts at Rs.0 — the admin can
-    // still type the daily rate in and invoice it, but charging must be the deliberate
-    // choice, not the default. Mirrors the PENDING row the cron seeds for the same day.
-    setInvoiceAmountInput(coverageForDate(dateISO)?.event_type === 'GAP' ? '0' : String(dailyRate || ''));
+    setInvoiceAmountInput(String(dailyRate || ''));
     setDayModalError('');
     setDayModalStep('edit');
     setEditingAttendanceIds(new Set());
@@ -1383,11 +1368,6 @@ const BookingDetailPageV2 = () => {
     );
     return { onlyStart: isFirstDay && !isLastDay, onlyEnd: isLastDay && !isFirstDay };
   };
-
-  // The open gap/overlap covering a date, if any. Ranges never overlap each other in
-  // practice (a booking can only be handed off one way at a time), so the first hit wins.
-  const coverageForDate = (dateISO) =>
-    coverageEvents.find(e => dateISO >= e.start_date && dateISO <= e.end_date) || null;
 
   // Validates the typed in/out time and caches it into the day's draft — does NOT
   // write staff_daily_attendance. Nothing is real until confirmDay().
@@ -1823,7 +1803,7 @@ const BookingDetailPageV2 = () => {
     finally { setPaymentSubmitting(false); }
   };
 
-  const closeSwapModal = () => { setShowSwapModal(false); setSwapModalStep(1); setSwapModalSearch(''); setSwapModalSelectedStaff(null); setSwapModalReason(''); setSwapModalError(''); setSwapModalPage(1); setSwapModalDesignation(''); setSwapModalStartDate(toDateInput(new Date())); setSwapModalSlotId(null); setSwapModalIsAssign(false); setSwapModalOldOutTime(''); setSwapModalNewInTime(''); setSwapModalHandoff('IMMEDIATE'); setSwapModalOldEndDate(toDateInput(new Date())); setProfileSendingId(null); setProfileSentIds([]); setProfileSendError(''); };
+  const closeSwapModal = () => { setShowSwapModal(false); setSwapModalStep(1); setSwapModalSearch(''); setSwapModalSelectedStaff(null); setSwapModalReason(''); setSwapModalError(''); setSwapModalPage(1); setSwapModalDesignation(''); setSwapModalStartDate(toDateInput(new Date())); setSwapModalSlotId(null); setSwapModalIsAssign(false); setSwapModalOldOutTime(''); setSwapModalNewInTime(''); setProfileSendingId(null); setProfileSentIds([]); setProfileSendError(''); };
   const selectSwapStaff = (s) => { setSwapModalSelectedStaff(s); setSwapModalStep(2); };
   // WhatsApp one candidate's profile to this booking's client, straight from the picker.
   // Deliberately independent of the swap itself: the admin can send several candidates
@@ -1845,40 +1825,13 @@ const BookingDetailPageV2 = () => {
   };
   const openSlotAssignModal = (slot) => { setSwapModalSlotId(slot.shift_slot_id); setSwapModalIsAssign(!slot.assignment); setShowSwapModal(true); };
 
-  // A gap/overlap handoff only exists for a LIVE_IN whole-booking swap. Shift-slot
-  // assigns/reassigns keep the original single-date flow (each slot is its own
-  // occurrence, so there is no continuous coverage to break or double up).
-  const handoffPickerEnabled = isLiveIn && !swapModalSlotId && !swapModalIsAssign;
-  const handoffMode = handoffPickerEnabled ? swapModalHandoff : 'IMMEDIATE';
-  const swapHandoffPreview = handoffMode === 'IMMEDIATE'
-    ? null
-    : deriveHandoff(swapModalOldEndDate, swapModalStartDate);
-  const swapHandoffError = (() => {
-    if (!swapHandoffPreview) return '';
-    const { type, days } = swapHandoffPreview;
-    if (handoffMode === 'GAP') {
-      if (type === 'OVERLAP') return "The incoming staff starts on or before the outgoing staff's last day — that's an overlap, not a gap.";
-      if (type === 'IMMEDIATE') return 'These dates are back-to-back, so there are no uncovered days. Use Immediate instead.';
-      if (days > MAX_GAP_DAYS) return `A gap can be at most ${MAX_GAP_DAYS} days. These dates leave ${days}.`;
-    }
-    if (handoffMode === 'OVERLAP') {
-      if (type === 'GAP') return "The incoming staff starts after the outgoing staff's last day — that's a gap, not an overlap.";
-      if (type === 'IMMEDIATE') return 'These dates are back-to-back, so nobody doubles up. Use Immediate instead.';
-      if (days > MAX_OVERLAP_DAYS) return `An overlap can be at most ${MAX_OVERLAP_DAYS} days. These dates give ${days}.`;
-    }
-    return '';
-  })();
-
   const confirmSwap = async () => {
     if (!swapModalSelectedStaff || (!swapModalSlotId && !swapModalReason.trim())) return;
     try {
       setSwapModalSubmitting(true); setSwapModalError('');
       apiClient.setToken(adminToken);
-      // Time-only inputs — combine with the date each one belongs to into a full
-      // timestamp. On an immediate handoff both sit on the single swap date; on a
-      // gap/overlap the out-time belongs to the outgoing staff's own last day.
-      const outTimeDate = handoffMode === 'IMMEDIATE' ? swapModalStartDate : swapModalOldEndDate;
-      const oldOutTime = swapModalOldOutTime ? `${outTimeDate}T${swapModalOldOutTime}` : null;
+      // Time-only inputs — combine with the staff start date above into a full timestamp.
+      const oldOutTime = swapModalOldOutTime ? `${swapModalStartDate}T${swapModalOldOutTime}` : null;
       const newInTime = swapModalNewInTime ? `${swapModalStartDate}T${swapModalNewInTime}` : null;
       let response;
       if (swapModalSlotId) {
@@ -1886,20 +1839,19 @@ const BookingDetailPageV2 = () => {
           ? await apiClient.assignStaffToShiftSlot(bookingId, swapModalSlotId, { staff_profile_id: swapModalSelectedStaff.staff_profile_id, service_start_date: swapModalStartDate, notes: swapModalReason.trim() || null, staff_in_time: newInTime })
           : await apiClient.reassignShiftSlotStaff(bookingId, swapModalSlotId, { new_staff_id: swapModalSelectedStaff.staff_profile_id, effective_date: swapModalStartDate, reason: swapModalReason.trim() || null, old_staff_out_time: oldOutTime, new_staff_in_time: newInTime });
       } else {
+        // Whole-booking LIVE_IN swap: the outgoing staff's assignment is left open —
+        // no out-time is captured here at all. See bookingController.swapStaff's
+        // header comment for why, and openCloseAssignment below for how it's closed
+        // later once they've actually left.
         response = await apiClient.swapBookingStaff(bookingId, {
           new_staff_id: swapModalSelectedStaff.staff_profile_id,
           swap_reason: swapModalReason.trim(),
           new_staff_start_date: swapModalStartDate,
-          old_staff_out_time: oldOutTime,
           new_staff_in_time: newInTime,
-          ...(handoffMode !== 'IMMEDIATE' && {
-            handoff_type: handoffMode,
-            old_staff_end_date: swapModalOldEndDate,
-          }),
         });
       }
       closeSwapModal(); await fetchDetail(); await fetchDailyRecords(); await fetchScheduledActions(); if (isShiftBased) await fetchShiftData();
-      if (response?.scheduled) {
+      if (response?.scheduled || response?.data?.invoicing_mode === 'MANUAL') {
         window.alert(response.message || 'Change scheduled for the future date.');
       }
     } catch (err) { setSwapModalError(err?.message || 'Failed to update staff assignment'); }
@@ -1938,6 +1890,31 @@ const BookingDetailPageV2 = () => {
       await fetchDailyRecords();
     } catch (err) { setEditTimesError(err?.message || 'Failed to save times'); }
     finally { setEditTimesSubmitting(false); }
+  };
+
+  // Closes an assignment a swap left open — the outgoing staff has actually left,
+  // so their out-time is logged and their row stops being "ongoing". Only ever
+  // offered while another assignment is also ongoing (see ongoingAssignmentCount
+  // below); closing the sole remaining one is rejected server-side too.
+  const openCloseAssignment = (row) => {
+    setCloseAssignmentRow(row);
+    setCloseAssignmentDate(toDateInput(new Date()));
+    setCloseAssignmentTime('');
+    setCloseAssignmentError('');
+  };
+  const closeCloseAssignment = () => { setCloseAssignmentRow(null); setCloseAssignmentDate(''); setCloseAssignmentTime(''); setCloseAssignmentError(''); };
+  const submitCloseAssignment = async () => {
+    if (!closeAssignmentRow || !closeAssignmentDate || !closeAssignmentTime) return;
+    try {
+      setCloseAssignmentBusy(true); setCloseAssignmentError('');
+      apiClient.setToken(adminToken);
+      await apiClient.closeStaffAssignment(bookingId, closeAssignmentRow.id, {
+        out_time: `${closeAssignmentDate}T${closeAssignmentTime}`,
+      });
+      closeCloseAssignment();
+      await fetchDetail(); await fetchDailyRecords();
+    } catch (err) { setCloseAssignmentError(err?.message || 'Failed to close this assignment'); }
+    finally { setCloseAssignmentBusy(false); }
   };
 
   // Inline rate editing — one editor shared across the Overview and Rates tab
@@ -2955,7 +2932,6 @@ const BookingDetailPageV2 = () => {
                     dailyInvoiceRecords={dailyInvoiceRecords}
                     draftDates={draftDates}
                     reschedules={shiftReschedules}
-                    coverageEvents={coverageEvents}
                     manualSalaryDay={manualSalaryDay}
                     manualInvoiceDay={manualInvoiceDay}
                     pauses={bookingPauses}
@@ -3415,7 +3391,14 @@ const BookingDetailPageV2 = () => {
               {/* Allocation history */}
               <Card>
                 <CardTitle>Allocation history</CardTitle>
-                {allocationHistoryWithTimeStatus.length === 0 ? <Empty icon={Users} text="No allocation history available." /> : (
+                {allocationHistoryWithTimeStatus.length === 0 ? <Empty icon={Users} text="No allocation history available." /> : (() => {
+                  // A swap leaves the outgoing staff's row "ongoing" (no end date)
+                  // alongside the incoming staff's — more than one ongoing row is
+                  // exactly that mid-swap state, and "Log out & close" only makes
+                  // sense while it's true (closing the sole remaining one is
+                  // rejected server-side too, but hiding it here avoids the error).
+                  const ongoingCount = allocationHistoryWithTimeStatus.filter(r => r.isOngoing && !r.shiftSlotId).length;
+                  return (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {allocationHistoryWithTimeStatus.map((row, i) => (
                       <div key={row.id || i} style={{ display: 'flex', alignItems: 'center', gap: 12, borderRadius: 12, padding: '12px 14px', background: row.color ? row.color.tint : '#FBF9F4', border: `1px solid ${row.needsTimeAction ? '#F4C77A' : (row.color ? row.color.border : '#EFEAE0')}`, borderLeft: `4px solid ${row.color ? row.color.solid : '#E7E1D6'}` }}>
@@ -3458,14 +3441,26 @@ const BookingDetailPageV2 = () => {
                             {row.dayCount !== null ? `${row.dayCount} day${row.dayCount !== 1 ? 's' : ''}` : row.isOngoing && row.dayStart && plannedDays ? `${plannedDays - row.dayStart + 1} planned` : '—'}
                           </div>
                           {row.amountAllocated > 0 && <div style={{ fontSize: 11, fontWeight: 600, color: '#5A554B', marginTop: 2 }}>{formatMoney(row.amountAllocated)}</div>}
-                          <button onClick={() => openEditTimes(row)} style={{ marginTop: 6, fontSize: 11, fontWeight: 600, color: row.needsTimeAction ? '#9A6A12' : '#8C5AA6', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-                            {row.needsTimeAction ? 'Enter times' : 'Edit times'}
-                          </button>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, marginTop: 6 }}>
+                            <button onClick={() => openEditTimes(row)} style={{ fontSize: 11, fontWeight: 600, color: row.needsTimeAction ? '#9A6A12' : '#8C5AA6', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                              {row.needsTimeAction ? 'Enter times' : 'Edit times'}
+                            </button>
+                            {row.isOngoing && !row.shiftSlotId && ongoingCount > 1 && (
+                              <button
+                                onClick={() => openCloseAssignment(row)}
+                                title="They've actually left — log their out-time and end this assignment"
+                                style={{ fontSize: 11, fontWeight: 600, color: '#B3261E', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                              >
+                                Log out &amp; close
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     ))}
                   </div>
-                )}
+                  );
+                })()}
               </Card>
 
               {/* Swap history */}
@@ -4670,39 +4665,6 @@ const BookingDetailPageV2 = () => {
                       referenceDate={swapModalStartDate}
                     />
                   </div>
-                  {handoffPickerEnabled && (
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Handoff type</label>
-                      <div className="grid grid-cols-3 gap-2">
-                        {[
-                          { key: 'IMMEDIATE', label: 'Immediate', hint: 'Back-to-back' },
-                          { key: 'GAP',       label: 'Gap',       hint: 'Nobody on site' },
-                          { key: 'OVERLAP',   label: 'Overlap',   hint: 'Both on site' },
-                        ].map(opt => (
-                          <button
-                            key={opt.key}
-                            type="button"
-                            onClick={() => setSwapModalHandoff(opt.key)}
-                            className={`rounded-xl border px-3 py-2 text-left transition ${swapModalHandoff === opt.key ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:bg-slate-50'}`}
-                          >
-                            <span className={`block text-sm font-semibold ${swapModalHandoff === opt.key ? 'text-blue-700' : 'text-slate-700'}`}>{opt.label}</span>
-                            <span className="block text-[11px] text-slate-500 mt-0.5">{opt.hint}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {handoffMode !== 'IMMEDIATE' && (
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Outgoing staff's last day <span className="text-rose-500">*</span></label>
-                      <DateInput value={swapModalOldEndDate} onChange={e => setSwapModalOldEndDate(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
-                      {swapModalOldEndDate > toDateInput(new Date()) && (
-                        <p className="text-xs text-amber-600 mt-1.5">
-                          {normCurrentStaff?.name || 'The outgoing staff member'} keeps working until then — their assignment closes automatically on that date.
-                        </p>
-                      )}
-                    </div>
-                  )}
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">{swapModalIsAssign ? 'Service start date' : 'New staff start date'} <span className="text-rose-500">*</span></label>
                     <DateInput value={swapModalStartDate} onChange={e => setSwapModalStartDate(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
@@ -4717,26 +4679,18 @@ const BookingDetailPageV2 = () => {
                       </p>
                     )}
                   </div>
-                  {/* What the two chosen dates actually mean, before anything is submitted. */}
-                  {swapHandoffPreview && !swapHandoffError && swapHandoffPreview.type === 'GAP' && (
-                    <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-xs text-rose-700">
-                      <span className="font-semibold">{swapHandoffPreview.days} day{swapHandoffPreview.days === 1 ? '' : 's'} with no cover</span>
-                      {' '}({formatDate(swapHandoffPreview.start)}{swapHandoffPreview.days > 1 ? ` – ${formatDate(swapHandoffPreview.end)}` : ''}).
-                      {' '}No staff salary is payable for those days. Whether the client is invoiced for them is decided per day from the care timeline — the suggested amount starts at Rs.0.
+                  {/* LIVE_IN whole-booking swap: both staff are active from the start date
+                      above until the outgoing staff's out-time is explicitly logged — no
+                      date is picked for that up front, it happens whenever it happens. */}
+                  {!swapModalIsAssign && !swapModalSlotId && (
+                    <div className="rounded-xl bg-blue-50 border border-blue-200 p-3 text-xs text-blue-800">
+                      {normCurrentStaff?.name || 'The current staff member'} and {swapModalSelectedStaff.full_name} will both show as on duty from {formatDate(swapModalStartDate)} onward.
+                      {' '}{normCurrentStaff?.name || 'They'} stay{normCurrentStaff?.name ? 's' : ''} on the booking until their out-time is logged from the Staff &amp; Swaps tab — there's no need to know that date now.
+                      {' '}Invoicing for this booking switches to manual from {formatDate(swapModalStartDate)} onward.
                     </div>
-                  )}
-                  {swapHandoffPreview && !swapHandoffError && swapHandoffPreview.type === 'OVERLAP' && (
-                    <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
-                      <span className="font-semibold">{swapHandoffPreview.days} day{swapHandoffPreview.days === 1 ? '' : 's'} with both staff on duty</span>
-                      {' '}({formatDate(swapHandoffPreview.start)}{swapHandoffPreview.days > 1 ? ` – ${formatDate(swapHandoffPreview.end)}` : ''}).
-                      {' '}Neither staff member is paid automatically for those days, and the client isn't auto-invoiced — both are confirmed per day from the care timeline.
-                    </div>
-                  )}
-                  {swapHandoffError && (
-                    <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-xs text-rose-700">{swapHandoffError}</div>
                   )}
                   <div className={`grid ${swapModalIsAssign ? 'grid-cols-1' : 'grid-cols-2'} gap-3`}>
-                    {!swapModalIsAssign && (
+                    {!swapModalIsAssign && swapModalSlotId && (
                       <div>
                         <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Old staff out time <span className="text-slate-400 normal-case font-normal">(optional)</span></label>
                         <TimeInput value={swapModalOldOutTime} onChange={e => setSwapModalOldOutTime(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
@@ -4747,11 +4701,7 @@ const BookingDetailPageV2 = () => {
                       <TimeInput value={swapModalNewInTime} onChange={e => setSwapModalNewInTime(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
                     </div>
                   </div>
-                  <p className="text-xs text-slate-400 -mt-2">
-                    {handoffMode === 'IMMEDIATE'
-                      ? `Times use the staff start date above (${formatDate(swapModalStartDate)}).`
-                      : `Out time is on ${formatDate(swapModalOldEndDate)} (outgoing staff's last day); in time is on ${formatDate(swapModalStartDate)}.`}
-                  </p>
+                  <p className="text-xs text-slate-400 -mt-2">Times use the staff start date above ({formatDate(swapModalStartDate)}).</p>
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">{swapModalIsAssign ? 'Notes (optional)' : 'Reason for swap'} {!swapModalIsAssign && <span className="text-rose-500">*</span>}</label>
                     <textarea rows={3} value={swapModalReason} onChange={e => setSwapModalReason(e.target.value)} placeholder="e.g. Staff requested leave, client preference…" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
@@ -4761,7 +4711,7 @@ const BookingDetailPageV2 = () => {
                 </div>
                 <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 shrink-0">
                   <button onClick={() => setSwapModalStep(1)} className="text-sm font-medium text-slate-600 hover:text-slate-900 transition">← Back</button>
-                  <button onClick={confirmSwap} disabled={swapModalSubmitting || (!swapModalIsAssign && !swapModalReason.trim()) || !swapModalStartDate || (handoffMode !== 'IMMEDIATE' && (!swapModalOldEndDate || !!swapHandoffError))} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
+                  <button onClick={confirmSwap} disabled={swapModalSubmitting || (!swapModalIsAssign && !swapModalReason.trim()) || !swapModalStartDate} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
                     {swapModalSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Repeat2 className="h-4 w-4" />}
                     {swapModalSubmitting ? 'Saving…' : swapModalIsAssign ? 'Confirm Assignment' : 'Confirm Swap'}
                   </button>
@@ -4811,6 +4761,49 @@ const BookingDetailPageV2 = () => {
               <button onClick={saveEditTimes} disabled={editTimesSubmitting || (!editTimesIn && !editTimesOut)} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
                 {editTimesSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 {editTimesSubmitting ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════
+          CLOSE ASSIGNMENT MODAL — ends the outgoing side of a swap once
+          they've actually left. The one action that sets service_end_date
+          on an assignment a swap deliberately left open.
+      ══════════════════════════════════════════════════════ */}
+      {closeAssignmentRow && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(20,17,12,.45)' }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Log out &amp; close assignment</h3>
+                <p className="text-xs text-slate-500 mt-0.5">{closeAssignmentRow.name}</p>
+              </div>
+              <button onClick={closeCloseAssignment} className="p-1.5 rounded-lg hover:bg-slate-100 transition"><XCircle className="h-5 w-5 text-slate-400" /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-xs text-slate-500">
+                {closeAssignmentRow.name} has been on this booking alongside another staff member since {formatDate(closeAssignmentRow.startDate)}.
+                Logging their out-time ends their assignment — they'll no longer show as on duty after this date.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Date</label>
+                  <DateInput value={closeAssignmentDate} onChange={e => setCloseAssignmentDate(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Out time</label>
+                  <TimeInput value={closeAssignmentTime} onChange={e => setCloseAssignmentTime(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                </div>
+              </div>
+              {closeAssignmentError && <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700">{closeAssignmentError}</div>}
+            </div>
+            <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-slate-200">
+              <button onClick={closeCloseAssignment} className="text-sm font-medium text-slate-600 hover:text-slate-900 transition px-3">Cancel</button>
+              <button onClick={submitCloseAssignment} disabled={closeAssignmentBusy || !closeAssignmentDate || !closeAssignmentTime} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-rose-700 hover:bg-rose-800 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
+                {closeAssignmentBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                {closeAssignmentBusy ? 'Closing…' : 'Close assignment'}
               </button>
             </div>
           </div>
@@ -5136,13 +5129,13 @@ const BookingDetailPageV2 = () => {
           dayModal.assignments.some(a => !a.shift_slot_id && toLocalDateStr(a.service_start_date) === dayModal.dateISO);
         const isLastDayInvoiceDecision = isLiveIn && invoicingMode !== 'MANUAL' &&
           dayModal.assignments.some(a => liveInBoundary(a, dayModal.dateISO).onlyEnd);
-        // Same idea for a handoff's gap/overlap days — the cron leaves those PENDING
-        // too (see services/coverageEvents.js), so an AUTO-invoicing LIVE_IN booking
-        // still needs the invoice decision surfaced here on exactly those days.
-        const dayCoverage = isLiveIn ? coverageForDate(dayModal.dateISO) : null;
-        const isGapDay = dayCoverage?.event_type === 'GAP';
-        const isOverlapDay = dayCoverage?.event_type === 'OVERLAP';
-        const showInvoiceSection = manualInvoiceDay || isFirstDayInvoiceDecision || isLastDayInvoiceDecision || !!dayCoverage;
+        // Mid-swap: the outgoing staff's assignment is left open by swapStaff, so on
+        // any day both are still concurrently active this is just >1 assignment
+        // covering the day — no separate lookup needed. swapStaff already forces
+        // invoicing_mode='MANUAL' the moment this happens, so manualInvoiceDay below
+        // already covers the invoice-decision side; this is only for the banner.
+        const isConcurrentDay = isLiveIn && dayModal.assignments.filter(a => !a.shift_slot_id).length > 1;
+        const showInvoiceSection = manualInvoiceDay || isFirstDayInvoiceDecision || isLastDayInvoiceDecision;
         const fmtTime = (ts) => ts ? new Date(ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : '—';
         const thCls = 'px-3 py-2 text-left text-[10.5px] font-semibold uppercase tracking-wider text-gray-400';
         const tdCls = 'px-3 py-3 text-sm text-gray-700 align-middle';
@@ -5270,20 +5263,13 @@ const BookingDetailPageV2 = () => {
                 );
               })() : (
               <>
-                {/* Mid-handoff day — explains why nobody (gap) or two people (overlap)
-                    show below, and what is still the admin's to decide. */}
-                {isGapDay && (
-                  <div className="mx-6 mt-4 rounded-lg border bg-rose-50 border-rose-200 px-4 py-2.5 text-xs text-rose-700">
-                    <span className="font-semibold">No staff on duty this day.</span>{' '}
-                    {dayCoverage.old_staff_name || 'The outgoing staff member'} finished on {formatDate(dayCoverage.start_date)} and{' '}
-                    {dayCoverage.new_staff_name || 'the incoming staff member'} had not started yet. No salary is payable — decide below whether the client is invoiced for the day.
-                  </div>
-                )}
-                {isOverlapDay && (
+                {/* Mid-swap day — two staff concurrently active, explains why two rows
+                    show below and that both need their own decision. */}
+                {isConcurrentDay && (
                   <div className="mx-6 mt-4 rounded-lg border bg-amber-50 border-amber-200 px-4 py-2.5 text-xs text-amber-800">
                     <span className="font-semibold">Two staff on duty this day.</span>{' '}
-                    {dayCoverage.old_staff_name || 'The outgoing staff member'} stayed on while {dayCoverage.new_staff_name || 'the incoming staff member'} started.
-                    Neither is paid automatically — confirm each one's attendance and pay separately below, then decide the client's invoice for the day.
+                    Neither is paid automatically while this booking has more than one active staff member — confirm each one's attendance and pay separately below.
+                    The outgoing staff member stays active until their out-time is logged from the Staff &amp; Swaps tab.
                   </div>
                 )}
 
@@ -5305,11 +5291,7 @@ const BookingDetailPageV2 = () => {
                   <div className="px-6 pt-5 pb-2">
                     <p className="text-[10.5px] font-semibold uppercase tracking-widest text-gray-400 mb-3">Staff Attendance</p>
                     {dayModal.assignments.length === 0 ? (
-                      <p className="text-sm text-gray-400 py-4 text-center">
-                        {isGapDay
-                          ? 'Nobody was on duty — there is no salary to calculate for this day.'
-                          : 'No staff assigned on this day.'}
-                      </p>
+                      <p className="text-sm text-gray-400 py-4 text-center">No staff assigned on this day.</p>
                     ) : (
                       <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
                         <table className="w-full text-sm border-collapse">

@@ -104,13 +104,6 @@ router.get(
 );
 
 router.get(
-    '/:booking_id/coverage-events',
-    protect,
-    requirePermission('VIEW_BOOKINGS'),
-    bookingController.getBookingCoverageEvents
-);
-
-router.get(
     '/:booking_id/invoice-progress',
     protect,
     requirePermission('VIEW_BOOKINGS'),
@@ -188,6 +181,9 @@ router.post('/:booking_id/resolve-overdue', protect, requirePermission('BOOKING_
 
 router.post('/:booking_id/swap-staff', protect, requirePermission('BOOKING_SWAP_STAFF'), bookingController.swapStaff);
 router.get('/:booking_id/swap-history', protect, requirePermission('VIEW_BOOKINGS'), bookingController.getSwapHistory);
+// Closes the outgoing side of a swap once they've actually left — the only thing
+// that ever ends an assignment left open by swapStaff. See its header comment.
+router.patch('/:booking_id/assignments/:assignment_id/close-out', protect, requirePermission('BOOKING_SWAP_STAFF'), bookingController.closeStaffAssignment);
 // Share a (replacement) staff member's profile with the booking's client on WhatsApp.
 router.post('/:booking_id/send-staff-profile', protect, requirePermission('BOOKING_SEND_STAFF_PROFILE'), bookingController.sendStaffProfileToClient);
 
