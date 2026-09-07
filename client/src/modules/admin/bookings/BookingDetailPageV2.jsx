@@ -1299,6 +1299,19 @@ const BookingDetailPageV2 = () => {
     setDraftSalaryDecisions({}); setDraftInvoiceDecisions({}); setDraftWaives({});
   };
 
+  // dayModal.assignments is a snapshot taken when the modal opened — if it's open
+  // while a concurrent-day close-out finishes (fetchDetail refreshes staffHistory),
+  // re-derive it so the closed assignment stops showing as ongoing without the
+  // admin having to close and reopen the day.
+  useEffect(() => {
+    if (!dayModal) return;
+    const fresh = getAssignmentsForDate(dayModal.dateISO);
+    const unchanged = fresh.length === dayModal.assignments.length &&
+      fresh.every((a, i) => a.assignment_id === dayModal.assignments[i].assignment_id && a.service_end_date === dayModal.assignments[i].service_end_date);
+    if (!unchanged) setDayModal((dm) => (dm ? { ...dm, assignments: fresh } : dm));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staffHistory]);
+
   // Persists the day's cached draft to the backend (booking_day_drafts) — pure cache
   // write, never touches staff_daily_attendance/booking_daily_invoices/wallets.
   // Accepts overrides for maps that just changed (state setters are async, so the
@@ -1896,9 +1909,9 @@ const BookingDetailPageV2 = () => {
   // so their out-time is logged and their row stops being "ongoing". Only ever
   // offered while another assignment is also ongoing (see ongoingAssignmentCount
   // below); closing the sole remaining one is rejected server-side too.
-  const openCloseAssignment = (row) => {
+  const openCloseAssignment = (row, presetDate) => {
     setCloseAssignmentRow(row);
-    setCloseAssignmentDate(toDateInput(new Date()));
+    setCloseAssignmentDate(presetDate || toDateInput(new Date()));
     setCloseAssignmentTime('');
     setCloseAssignmentError('');
   };
@@ -4773,7 +4786,10 @@ const BookingDetailPageV2 = () => {
           on an assignment a swap deliberately left open.
       ══════════════════════════════════════════════════════ */}
       {closeAssignmentRow && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(20,17,12,.45)' }}>
+        // z-[60] — this can now also be opened from a button inside the Day Detail
+        // Modal (z-50, rendered later in the DOM), same reasoning as the reschedule
+        // modal below.
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: 'rgba(20,17,12,.45)' }}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
               <div>
@@ -5135,6 +5151,12 @@ const BookingDetailPageV2 = () => {
         // invoicing_mode='MANUAL' the moment this happens, so manualInvoiceDay below
         // already covers the invoice-decision side; this is only for the banner.
         const isConcurrentDay = isLiveIn && dayModal.assignments.filter(a => !a.shift_slot_id).length > 1;
+        // Whichever of the concurrent assignments hasn't been closed yet — offered
+        // right here so the admin doesn't have to leave the timeline to log the
+        // outgoing staff's out-time (see openCloseAssignment / closeStaffAssignment).
+        const closableAssignments = isConcurrentDay
+          ? dayModal.assignments.filter(a => !a.shift_slot_id && !a.service_end_date)
+          : [];
         const showInvoiceSection = manualInvoiceDay || isFirstDayInvoiceDecision || isLastDayInvoiceDecision;
         const fmtTime = (ts) => ts ? new Date(ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : '—';
         const thCls = 'px-3 py-2 text-left text-[10.5px] font-semibold uppercase tracking-wider text-gray-400';
@@ -5269,7 +5291,24 @@ const BookingDetailPageV2 = () => {
                   <div className="mx-6 mt-4 rounded-lg border bg-amber-50 border-amber-200 px-4 py-2.5 text-xs text-amber-800">
                     <span className="font-semibold">Two staff on duty this day.</span>{' '}
                     Neither is paid automatically while this booking has more than one active staff member — confirm each one's attendance and pay separately below.
-                    The outgoing staff member stays active until their out-time is logged from the Staff &amp; Swaps tab.
+                    The outgoing staff member stays active until their out-time is logged.
+                    {closableAssignments.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {closableAssignments.map(a => (
+                          <button
+                            key={a.assignment_id}
+                            onClick={() => openCloseAssignment({
+                              id: a.assignment_id,
+                              name: a.full_name || a.staff_name || 'This staff member',
+                              startDate: a.service_start_date,
+                            }, dayModal.dateISO)}
+                            className="px-2.5 py-1 rounded-md bg-white border border-amber-300 text-amber-900 font-semibold hover:bg-amber-100 transition"
+                          >
+                            Log {a.full_name || a.staff_name || 'staff'}'s out-time &amp; close
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 

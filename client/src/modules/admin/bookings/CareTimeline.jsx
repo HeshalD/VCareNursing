@@ -669,9 +669,13 @@ const CareTimeline = ({
     dayDate.setHours(12, 0, 0, 0);
 
     if (!isShiftBased) {
-      // Single nurse: pick the most recently started assignment covering this day
-      let bestMatch = null;
-      let bestStart = null;
+      // LIVE_IN can have more than one assignment covering the same day — a swap
+      // leaves the outgoing staff's assignment open (no service_end_date) until
+      // their out-time is logged, so both they and the incoming staff are "in
+      // range" on the same day. Collect every match rather than picking one, so
+      // that mid-swap day genuinely shows both (VISITING's date-equality check
+      // still yields at most one, since it never has overlapping assignments).
+      const matches = [];
       for (const a of staffAssignments) {
         const aStart = new Date(a.service_start_date || a.startDate);
         aStart.setHours(0, 0, 0, 0);
@@ -685,21 +689,21 @@ const CareTimeline = ({
           ? toLocalISO(dayDate) === toLocalISO(aStart)
           : dayDate >= aStart && (!aEnd || dayDate <= aEnd);
         if (inRange) {
-          if (!bestStart || aStart > bestStart) {
-            bestStart = aStart;
-            const id = a.staff_profile_id || a.staffId || a.id;
-            bestMatch = {
-              name:        a.full_name || a.staff_name || a.name || 'Staff',
-              designation: a.designation || '',
-              color:       nurseColorMap.get(id) || NURSE_COLORS[0],
-              shiftLabel:  null,
-              shiftStartTime: null,
-              shiftNumber: 0,
-            };
-          }
+          const id = a.staff_profile_id || a.staffId || a.id;
+          matches.push({
+            name:        a.full_name || a.staff_name || a.name || 'Staff',
+            designation: a.designation || '',
+            color:       nurseColorMap.get(id) || NURSE_COLORS[0],
+            shiftLabel:  null,
+            shiftStartTime: null,
+            shiftNumber: 0,
+            assignmentId: a.assignment_id || a.id,
+            startSort:   aStart,
+          });
         }
       }
-      return bestMatch ? [bestMatch] : [];
+      matches.sort((a, b) => a.startSort - b.startSort);
+      return matches;
     }
 
     // SHIFT_BASED: collect all assignments active on this day, one per shift slot
