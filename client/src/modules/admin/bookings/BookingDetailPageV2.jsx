@@ -2375,7 +2375,11 @@ const BookingDetailPageV2 = () => {
   const isPaused          = bookingStatus === 'paused';
   const canPause          = !isTerminated && !isPaused && ['LIVE_IN', 'SHIFT_BASED'].includes(bookingSummary.service_model) && ['active', 'overdue'].includes(bookingStatus);
   const openPause         = bookingPauses.find(p => !p.resumed_at) || null;
-  const sm                = STATUS_META[bookingStatus] || STATUS_META.pending;
+  // OVERDUE bookings are still running — display as Active with a separate
+  // overdue-balance flag rather than a distinct lifecycle status.
+  const isOverdueBalance  = bookingStatus === 'overdue';
+  const sm                = STATUS_META[isOverdueBalance ? 'active' : bookingStatus] || STATUS_META.pending;
+  const statusLabel       = isOverdueBalance ? 'Active' : (bookingSummary.status || 'Unknown');
   const scheduledCompletion   = bookingScheduledActions.find(sa => sa.action_type === 'COMPLETION');
   const scheduledTermination  = bookingScheduledActions.find(sa => sa.action_type === 'TERMINATION');
   const scheduledFinalization = scheduledCompletion || scheduledTermination || null;
@@ -2610,8 +2614,13 @@ const BookingDetailPageV2 = () => {
                   </h1>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: sm.bg, color: sm.col, borderRadius: 999, padding: '4px 10px', fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap' }}>
                     <span style={{ width: 6, height: 6, borderRadius: '50%', background: sm.dot }} />
-                    {bookingSummary.status || 'Unknown'}
+                    {statusLabel}
                   </span>
+                  {isOverdueBalance && (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: '#fef2f2', color: '#991b1b', borderRadius: 999, padding: '4px 10px', fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                      Overdue balance
+                    </span>
+                  )}
                   {isVisiting && visitingStatus && visitingStatus !== VISITING_STATUS.COMPLETED && (() => {
                     const vm = VISITING_STATUS_META[visitingStatus];
                     return (
@@ -2970,7 +2979,7 @@ const BookingDetailPageV2 = () => {
                   <CardTitle>Booking details</CardTitle>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 15 }}>
                     <Field label="Booking code"  value={bookingSummary.booking_code  || '-'} mono />
-                    <Field label="Status"        value={bookingSummary.status        || '-'} />
+                    <Field label="Status"        value={statusLabel} />
                     <Field label="Service type"  value={bookingSummary.service_type  || '-'} />
                     <Field label="Service model" value={bookingSummary.service_model || '-'} />
                     <Field label="Start date"    value={formatDate(bookingSummary.start_date)} />
@@ -3906,7 +3915,7 @@ const BookingDetailPageV2 = () => {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
                     {[
                       { label: 'Booking code', value: bookingSummary.booking_code || '-', mono: true },
-                      { label: 'Status',       value: bookingSummary.status       || '-' },
+                      { label: 'Status',       value: statusLabel },
                       { label: 'Service',      value: bookingSummary.service_type || '-' },
                       { label: 'Start',        value: formatDate(bookingSummary.start_date) },
                       ...(isShiftBased ? [] : [{ label: 'Planned end', value: formatDate(bookingSummary.scheduled_end_time) }]),

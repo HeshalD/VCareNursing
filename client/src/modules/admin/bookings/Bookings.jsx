@@ -51,11 +51,22 @@ const formatTime = (t) => {
 };
 
 const StatusBadge = ({ status }) => {
-  const cfg = STATUS_CONFIG[status?.toUpperCase()] || { dot: 'bg-gray-400', label: status || 'Unknown' };
+  // OVERDUE bookings are still running — display them as Active with a
+  // separate "Overdue balance" flag rather than a distinct lifecycle status.
+  const isOverdueBalance = status?.toUpperCase() === 'OVERDUE';
+  const effectiveStatus = isOverdueBalance ? 'ACTIVE' : status?.toUpperCase();
+  const cfg = STATUS_CONFIG[effectiveStatus] || { dot: 'bg-gray-400', label: status || 'Unknown' };
   return (
-    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-700">
-      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
-      {cfg.label}
+    <span className="inline-flex items-center gap-1.5 flex-wrap">
+      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-700">
+        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
+        {cfg.label}
+      </span>
+      {isOverdueBalance && (
+        <span className="inline-flex items-center gap-1 rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 ring-1 ring-inset ring-red-200">
+          Overdue balance
+        </span>
+      )}
     </span>
   );
 };
@@ -181,6 +192,10 @@ const Bookings = () => {
 
       if (statusFilter === 'EXPIRING_SOON') {
         if (!b.is_expiring_soon) return false;
+      } else if (statusFilter === 'ACTIVE') {
+        // OVERDUE bookings are still active — just behind on payment — so they
+        // belong under the Active tab rather than being invisible outside "All".
+        if (!['ACTIVE', 'OVERDUE'].includes(b.status)) return false;
       } else if (statusFilter !== 'ALL') {
         if (b.status !== statusFilter) return false;
       }
@@ -198,9 +213,12 @@ const Bookings = () => {
   }, [bookings, bookingDetails, searchQuery, statusFilter, typeFilter, hospitalizedOnly]);
 
   const statusCounts = useMemo(() => {
-    const counts = { ALL: bookings.length, EXPIRING_SOON: 0, PENDING: 0 };
+    const counts = { ALL: bookings.length, EXPIRING_SOON: 0, PENDING: 0, ACTIVE: 0 };
     bookings.forEach((b) => {
       counts[b.status] = (counts[b.status] || 0) + 1;
+      // OVERDUE bookings count toward the Active tab too — see StatusBadge/filteredBookings.
+      // (counts[b.status] above already added ACTIVE-status bookings to counts.ACTIVE.)
+      if (b.status === 'OVERDUE') counts.ACTIVE++;
       if (b.is_expiring_soon) counts.EXPIRING_SOON++;
     });
     return counts;

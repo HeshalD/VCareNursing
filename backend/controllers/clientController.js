@@ -1194,8 +1194,10 @@ exports.getAdminClientBookingsPaginated = async (req, res) => {
         (b.status || '').toLowerCase().includes(search)
       );
     });
-    const active = all.filter((b) => b.status === 'ACTIVE');
-    const recent = all.filter((b) => b.status !== 'ACTIVE');
+    // OVERDUE bookings are still running — just behind on payment — so they
+    // belong in the Active bucket, not Recent.
+    const active = all.filter((b) => ['ACTIVE', 'OVERDUE'].includes(b.status));
+    const recent = all.filter((b) => !['ACTIVE', 'OVERDUE'].includes(b.status));
 
     const paginate = (arr, page) => {
       const total = arr.length;

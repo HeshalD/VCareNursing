@@ -607,7 +607,11 @@ const BookingDetailPage = () => {
 
   const bookingStatus       = (bookingSummary.status || '').toLowerCase();
   const isTerminatedBooking = bookingStatus === 'terminated';
-  const statusTone          = STATUS_STYLES[bookingStatus] || 'bg-slate-100 text-slate-700';
+  // OVERDUE bookings are still running — display as Active with a separate
+  // overdue-balance flag rather than a distinct lifecycle status.
+  const isOverdueBalance    = bookingStatus === 'overdue';
+  const statusTone          = STATUS_STYLES[isOverdueBalance ? 'active' : bookingStatus] || 'bg-slate-100 text-slate-700';
+  const statusLabel         = isOverdueBalance ? 'Active' : (bookingSummary.status || 'Unknown');
 
   const sectionTabs = [
     { id: 'payments',    label: 'Payments' },
@@ -725,8 +729,13 @@ const BookingDetailPage = () => {
             </h1>
             <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${statusTone}`}>
               <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60" />
-              {bookingSummary.status || 'Unknown'}
+              {statusLabel}
             </span>
+            {isOverdueBalance && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-3 py-1 text-xs font-bold text-red-700 ring-1 ring-inset ring-red-200">
+                Overdue balance
+              </span>
+            )}
           </div>
           <p className="text-sm text-[#6F6A60] flex flex-wrap items-center gap-1.5">
             {(() => {
@@ -1315,7 +1324,7 @@ const BookingDetailPage = () => {
                 <div className="flex flex-col gap-3">
                   {[
                     { label: 'Booking code', value: bookingSummary.booking_code || '-', mono: true },
-                    { label: 'Status',       value: bookingSummary.status       || '-' },
+                    { label: 'Status',       value: statusLabel },
                     { label: 'Service',      value: bookingSummary.service_type || '-' },
                     { label: 'Start',        value: formatDate(bookingSummary.start_date) },
                     { label: 'Planned end',  value: formatDate(bookingSummary.scheduled_end_time) },
@@ -1489,7 +1498,7 @@ const BookingDetailPage = () => {
                 <CardTitle>Booking details</CardTitle>
                 <div className="grid grid-cols-2 gap-4">
                   <DetailRow label="Booking code"   value={bookingSummary.booking_code || '-'} mono />
-                  <DetailRow label="Status"         value={bookingSummary.status || '-'} />
+                  <DetailRow label="Status"         value={statusLabel} />
                   <DetailRow label="Service type"   value={bookingSummary.service_type || '-'} />
                   <DetailRow label="Service model"  value={bookingSummary.service_model || '-'} />
                   <DetailRow label="Start date"     value={formatDate(bookingSummary.start_date)} />

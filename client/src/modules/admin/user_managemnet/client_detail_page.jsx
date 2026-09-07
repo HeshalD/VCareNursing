@@ -1330,7 +1330,7 @@ const ClientDetailPage = () => {
               summary={
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
                   <span className="font-semibold text-gray-900 text-sm">{booking.service_type || 'Booking'}</span>
-                  <StatusBadge status={booking.status} />
+                  <BookingStatusBadge status={booking.status} />
                   <span className="text-sm text-gray-500">{formatDate(booking.start_date)}</span>
                   <span className="text-sm text-gray-500">{booking.current_staff_name || 'No staff assigned'}</span>
                   <span className="font-semibold text-gray-700 text-sm">{formatMoney(booking.amount_quotated || booking.total_amount || 0)}</span>
@@ -4350,6 +4350,24 @@ const StatusBadge = ({ status }) => {
   return (
     <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-semibold ${cls}`}>
       {status}
+    </span>
+  );
+};
+
+// Booking-specific status badge: OVERDUE bookings are still running — just
+// behind on payment — so they're shown as Active with a separate overdue
+// flag rather than the generic red "OVERDUE" treatment StatusBadge gives
+// invoices/payments (where OVERDUE really is a bad terminal-ish state).
+const BookingStatusBadge = ({ status }) => {
+  const isOverdueBalance = (status || '').toUpperCase() === 'OVERDUE';
+  return (
+    <span className="inline-flex items-center gap-1.5 flex-wrap">
+      <StatusBadge status={isOverdueBalance ? 'ACTIVE' : status} />
+      {isOverdueBalance && (
+        <span className="inline-flex items-center rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-semibold text-red-700 ring-1 ring-inset ring-red-200">
+          Overdue balance
+        </span>
+      )}
     </span>
   );
 };

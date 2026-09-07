@@ -24,6 +24,10 @@ const getStatusBadge = (status) => {
   const map = {
     ACTIVE: { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Active' },
     active: { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Active' },
+    // OVERDUE bookings are still running — just behind on payment — so show
+    // them as Active plus a separate overdue-balance flag below.
+    OVERDUE: { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Active' },
+    overdue: { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Active' },
     PENDING_TERMINATION: { dot: 'bg-amber-400', text: 'text-amber-700', label: 'Pending Termination' },
     pending_termination: { dot: 'bg-amber-400', text: 'text-amber-700', label: 'Pending Termination' },
     TERMINATED: { dot: 'bg-red-400', text: 'text-red-700', label: 'Terminated' },
@@ -34,10 +38,18 @@ const getStatusBadge = (status) => {
     cancelled: { dot: 'bg-red-400', text: 'text-red-700', label: 'Cancelled' },
   };
   const c = map[status] || { dot: 'bg-slate-400', text: 'text-slate-600', label: status };
+  const isOverdueBalance = (status || '').toUpperCase() === 'OVERDUE';
   return (
-    <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${c.text}`}>
-      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${c.dot}`} />
-      {c.label}
+    <span className="inline-flex items-center gap-1.5 flex-wrap">
+      <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${c.text}`}>
+        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${c.dot}`} />
+        {c.label}
+      </span>
+      {isOverdueBalance && (
+        <span className="inline-flex items-center rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 ring-1 ring-inset ring-red-200">
+          Overdue balance
+        </span>
+      )}
     </span>
   );
 };
