@@ -37,6 +37,7 @@ import {
   PlusCircle,
   Save,
   Send,
+  ScrollText,
   Star,
   StickyNote,
   Trash2,
@@ -49,6 +50,8 @@ import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import StaffCareTimeline from './StaffCareTimeline';
 import StaffSwitcherSidebar from './StaffSwitcherSidebar';
+import { dotForAction, ROLE_DOT, fmt as fmtActivityDate, ACTION_TYPE_OPTIONS as ACTIVITY_ACTION_TYPES } from '../activity_log/activityLogConstants';
+import { Tag as ActivityTag, DetailsTable as ActivityDetailsTable } from '../activity_log/activityLogComponents';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const moneyFormatter = new Intl.NumberFormat('en-LK', {
@@ -611,6 +614,11 @@ const StaffDetailPageV2 = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [activeSection, setActiveSection] = useState('care-timeline');
+  const [activityLogs, setActivityLogs] = useState([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityPagination, setActivityPagination] = useState({ total: 0, page: 1, limit: 20 });
+  const [activityActionType, setActivityActionType] = useState('');
+  const [activityExpandedRow, setActivityExpandedRow] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [availabilityUpdating, setAvailabilityUpdating] = useState(false);
@@ -681,6 +689,7 @@ const StaffDetailPageV2 = () => {
     { id: 'bank-accounts',   label: 'Bank Accounts',   icon: Landmark },
     { id: 'documents',       label: 'Documents',       icon: FileText },
     { id: 'change-history',  label: 'Change History',  icon: ClipboardList },
+    { id: 'activities',      label: 'Activities',      icon: ScrollText },
   ]), []);
 
   const runAdminRequest = async (fn) => {
@@ -820,6 +829,32 @@ const StaffDetailPageV2 = () => {
   };
 
   useEffect(() => { loadPage(); }, [adminToken, staffProfileId]);
+
+  const fetchActivityLog = async (page = 1) => {
+    try {
+      setActivityLoading(true);
+      const params = { page, limit: activityPagination.limit };
+      if (activityActionType) params.action_type = activityActionType;
+      const res = await runAdminRequest(() => apiClient.getActivityLogByStaff(staffProfileId, params));
+      setActivityLogs(res.data || []);
+      setActivityPagination(res.pagination || { total: 0, page, limit: 20 });
+    } catch (err) {
+      console.error('Staff activity log fetch error:', err);
+    } finally {
+      setActivityLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!adminToken || !staffProfileId || activeSection !== 'activities') return;
+    fetchActivityLog(1);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminToken, staffProfileId, activeSection]);
+
+  useEffect(() => {
+    if (activeSection === 'activities') fetchActivityLog(1);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activityActionType]);
 
   const reloadStaffRecruiter = async () => {
     try {
@@ -2372,6 +2407,103 @@ const StaffDetailPageV2 = () => {
     );
   };
 
+  const renderActivities = () => {
+    const totalPages = Math.max(1, Math.ceil(activityPagination.total / activityPagination.limit));
+    return (
+      <div className="flex flex-col gap-4">
+        <Card>
+          <CardHead
+            title="Activity log"
+            sub="All actions logged for and by this staff member"
+            action={
+              <select
+                value={activityActionType}
+                onChange={(e) => setActivityActionType(e.target.value)}
+                className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-600 outline-none focus:border-blue-500"
+              >
+                <option value="">All Actions</option>
+                {ACTIVITY_ACTION_TYPES.map((a) => (
+                  <option key={a} value={a}>{a.replace(/_/g, ' ')}</option>
+                ))}
+              </select>
+            }
+          />
+          <CardBody>
+            {activityLoading ? (
+              <div className="flex items-center justify-center py-10">
+                <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+              </div>
+            ) : activityLogs.length === 0 ? (
+              <Empty title="No activity found" subtitle="No actions have been logged for this staff member yet." />
+            ) : (
+              <>
+                <div className="flex flex-col gap-3">
+                  {activityLogs.map((log) => {
+                    const isExpanded = activityExpandedRow === log.log_id;
+                    return (
+                      <div key={log.log_id} className="border border-slate-200 rounded-lg overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={() => log.details && setActivityExpandedRow(isExpanded ? null : log.log_id)}
+                          className="w-full flex items-center justify-between gap-3 px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors text-left"
+                        >
+                          <div className="flex items-center gap-2.5 flex-wrap">
+                            <span className="text-xs text-slate-400 whitespace-nowrap">{fmtActivityDate(log.created_at)}</span>
+                            <span className="text-xs font-bold text-slate-700">{log.actor_name}</span>
+                            <ActivityTag label={log.actor_role} dot={ROLE_DOT[log.actor_role]} />
+                            <ActivityTag label={log.action_type.replace(/_/g, ' ')} dot={dotForAction(log.action_type)} />
+                            {log.entity_type && (
+                              <span className="text-xs text-slate-400">{log.entity_type.replace(/_/g, ' ').toUpperCase()}</span>
+                            )}
+                          </div>
+                          {log.details && (
+                            <span className="text-slate-400 flex-shrink-0">
+                              {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                            </span>
+                          )}
+                        </button>
+                        {isExpanded && log.details && (
+                          <div className="border-t border-slate-100 p-4 bg-white">
+                            <ActivityDetailsTable details={log.details} />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-100">
+                  <p className="text-xs text-slate-400">
+                    Showing {activityLogs.length} of {activityPagination.total} entries
+                  </p>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => fetchActivityLog(activityPagination.page - 1)}
+                      disabled={activityPagination.page <= 1}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-500 hover:bg-slate-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="text-xs text-slate-500 px-2">Page {activityPagination.page} of {totalPages}</span>
+                    <button
+                      type="button"
+                      onClick={() => fetchActivityLog(activityPagination.page + 1)}
+                      disabled={activityPagination.page >= totalPages}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-500 hover:bg-slate-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </CardBody>
+        </Card>
+      </div>
+    );
+  };
+
   // ── bank modal ─────────────────────────────────────────────────────────────
   const renderBankModal = () => !bankModal.isOpen ? null : (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -2994,6 +3126,7 @@ const StaffDetailPageV2 = () => {
       {activeSection === 'bank-accounts'   && renderBankAccounts()}
       {activeSection === 'documents'       && renderDocuments()}
       {activeSection === 'change-history'  && renderChangeHistory()}
+      {activeSection === 'activities'      && renderActivities()}
 
       </div>
       </div>

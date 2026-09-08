@@ -692,6 +692,7 @@ const CareTimeline = ({
           const id = a.staff_profile_id || a.staffId || a.id;
           matches.push({
             name:        a.full_name || a.staff_name || a.name || 'Staff',
+            staffCode:   a.staff_code || null,
             designation: a.designation || '',
             color:       nurseColorMap.get(id) || NURSE_COLORS[0],
             shiftLabel:  null,
@@ -731,6 +732,7 @@ const CareTimeline = ({
         if (a.shift_slot_id && movedOrigins.has(`${a.shift_slot_id}__${dateISO}`)) {
           matches.push({
             name: a.full_name || a.staff_name || a.name || 'Staff',
+            staffCode: a.staff_code || null,
             designation: '', color: NURSE_COLORS[0], kind: 'MOVED',
             shiftLabel, shiftStartTime: null, shiftNumber: slot?.shift_number ?? 999,
           });
@@ -739,6 +741,7 @@ const CareTimeline = ({
 
         matches.push({
           name:           a.full_name || a.staff_name || a.name || 'Staff',
+          staffCode:      a.staff_code || null,
           designation:    a.designation || '',
           color:          nurseColorMap.get(id) || NURSE_COLORS[0],
           shiftLabel,
@@ -767,6 +770,7 @@ const CareTimeline = ({
       const id = makeupAssignment?.staff_profile_id || makeupAssignment?.staffId || makeupAssignment?.id;
       matches.push({
         name: r.makeup_staff_name || makeupAssignment?.full_name || makeupAssignment?.staff_name || 'Staff',
+        staffCode: makeupAssignment?.staff_code || null,
         designation: makeupAssignment?.designation || '',
         color: nurseColorMap.get(id) || NURSE_COLORS[0],
         shiftLabel: r.shift_label || (r.shift_number ? `Shift ${r.shift_number}` : 'Shift'),
@@ -908,6 +912,7 @@ const CareTimeline = ({
         const slot = shiftSlots.find((s) => s.shift_slot_id === a.shift_slot_id);
         return {
           name:       a.full_name || a.staff_name || a.name || 'Staff',
+          staffCode:  a.staff_code || null,
           color:      nurseColorMap.get(id) || NURSE_COLORS[0],
           shiftLabel: slot?.label || null,
         };
@@ -1357,6 +1362,9 @@ const CareTimeline = ({
                                   style={nurse.kind === 'MOVED' ? { background: 'transparent', border: '1px solid #B4AEA3' } : { background: nurse.color.solid }}
                                 />
                                 <span className="text-xs font-semibold text-[#F2EFE8] truncate">{nurse.name}</span>
+                                {nurse.staffCode && (
+                                  <span className="text-[10px] text-[#A8A299] flex-shrink-0">{nurse.staffCode}</span>
+                                )}
                                 {nurse.kind === 'MOVED' && (
                                   <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(180,174,163,.24)', color: '#CFC9BE' }}>Moved</span>
                                 )}
@@ -1922,6 +1930,9 @@ const CareTimeline = ({
                         style={nurse.kind === 'MOVED' ? { background: 'transparent', border: '1px solid #B4AEA3' } : { background: nurse.color.solid }}
                       />
                       <span className="text-sm font-semibold text-[#3A362F] truncate">{nurse.name}</span>
+                      {nurse.staffCode && (
+                        <span className="text-xs text-[#9A9488] flex-shrink-0">{nurse.staffCode}</span>
+                      )}
                       {nurse.kind === 'MOVED' && (
                         <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(180,174,163,.16)', color: '#8A8478' }}>Moved</span>
                       )}

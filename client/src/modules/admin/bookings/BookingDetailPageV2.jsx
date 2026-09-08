@@ -3,7 +3,7 @@ import {
   Activity, AlertTriangle, ArrowLeft, CalendarDays, CheckCircle, Download, DollarSign,
   LayoutGrid, Loader2, Menu, MessageCircle, Phone, RefreshCw, Repeat2, Search, SendHorizontal, ShieldCheck,
   Upload, User, UserPlus, Users, Wallet, X, XCircle, Briefcase, History, Pause, Play, Building2,
-  StickyNote, Plus, Trash2, Pencil, Check,
+  StickyNote, Plus, Trash2, Pencil, Check, ChevronDown, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
@@ -17,6 +17,8 @@ import DateInput, { todayISO } from '../../../components/common/DateInput';
 import TimeInput from '../../../components/common/TimeInput';
 import { computeVisitingStatus, VISITING_STATUS, VISITING_STATUS_META } from '../../../utils/visitingBookingStatus';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
+import { dotForAction, ROLE_DOT, fmt as fmtActivityDate, ACTION_TYPE_OPTIONS as ACTIVITY_ACTION_TYPES } from '../activity_log/activityLogConstants';
+import { Tag as ActivityTag, DetailsTable as ActivityDetailsTable } from '../activity_log/activityLogComponents';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -365,6 +367,13 @@ const BookingDetailPageV2 = () => {
 
   // nav
   const [activeSection, setActiveSection] = useState(searchParams.get('section') || 'care-timeline');
+
+  // activity log (scoped to this booking)
+  const [activityLogs, setActivityLogs] = useState([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityPagination, setActivityPagination] = useState({ total: 0, page: 1, limit: 20 });
+  const [activityActionType, setActivityActionType] = useState('');
+  const [activityExpandedRow, setActivityExpandedRow] = useState(null);
 
   // payment form
   const [paymentForm, setPaymentForm]         = useState(initialPaymentForm);
@@ -974,6 +983,33 @@ const BookingDetailPageV2 = () => {
     apiClient.setToken(adminToken);
     apiClient.getSalespersons().then(r => setSalespersonsList(r?.data || [])).catch(() => {});
   }, [adminToken, activeSection]);
+
+  const fetchActivityLog = async (page = 1) => {
+    try {
+      setActivityLoading(true);
+      const params = { page, limit: activityPagination.limit };
+      if (activityActionType) params.action_type = activityActionType;
+      const res = await apiClient.getActivityLogByBooking(bookingId, params);
+      setActivityLogs(res.data || []);
+      setActivityPagination(res.pagination || { total: 0, page, limit: 20 });
+    } catch (err) {
+      console.error('Booking activity log fetch error:', err);
+    } finally {
+      setActivityLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!adminToken || activeSection !== 'activities') return;
+    apiClient.setToken(adminToken);
+    fetchActivityLog(1);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminToken, activeSection]);
+
+  useEffect(() => {
+    if (activeSection === 'activities') fetchActivityLog(1);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activityActionType]);
   useEffect(() => {
     if (!statementClientId || !adminToken) return;
     let cancelled = false;
@@ -2397,6 +2433,7 @@ const BookingDetailPageV2 = () => {
     { id: 'client',      label: 'Client & Care',  icon: User },
     { id: 'settlement',  label: 'Settlement',     icon: CheckCircle },
     { id: 'termination', label: 'Termination',    icon: AlertTriangle },
+    { id: 'activities',  label: 'Activities',     icon: Activity },
   ];
 
   const heroName    = patientDetails.patient_name || clientDetails.client_name || 'Booking';
@@ -4178,6 +4215,96 @@ const BookingDetailPageV2 = () => {
             </Card>
           )}
 
+          {/* ══════════════════════════════════════════════════════
+              TAB: ACTIVITIES
+          ══════════════════════════════════════════════════════ */}
+          {activeSection === 'activities' && (
+            <Card>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ background: '#EAF3F1', borderRadius: '50%', padding: 8 }}><Activity style={{ width: 16, height: 16, color: '#137A6B' }} /></div>
+                  <h3 style={{ margin: 0, fontSize: 15.5, fontWeight: 700 }}>Activity log</h3>
+                </div>
+                <select
+                  value={activityActionType}
+                  onChange={(e) => setActivityActionType(e.target.value)}
+                  style={{ border: '1px solid #E2DCD0', borderRadius: 8, padding: '7px 10px', fontFamily: 'inherit', fontSize: 12.5, color: '#374151', outline: 'none', background: '#fff' }}
+                >
+                  <option value="">All Actions</option>
+                  {ACTIVITY_ACTION_TYPES.map((a) => (
+                    <option key={a} value={a}>{a.replace(/_/g, ' ')}</option>
+                  ))}
+                </select>
+              </div>
+
+              {activityLoading ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 0' }}>
+                  <Loader2 style={{ width: 20, height: 20, color: '#9ca3af' }} className="animate-spin" />
+                </div>
+              ) : activityLogs.length === 0 ? (
+                <Empty icon={Activity} text="No activity recorded for this booking." />
+              ) : (
+                <>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {activityLogs.map((log) => {
+                      const isExpanded = activityExpandedRow === log.log_id;
+                      return (
+                        <div key={log.log_id} style={{ background: '#FBF9F4', border: '1px solid #EFEAE0', borderRadius: 13, padding: '13px 16px', cursor: log.details ? 'pointer' : 'default' }} onClick={() => log.details && setActivityExpandedRow(isExpanded ? null : log.log_id)}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: 12.5, color: '#A39D91', whiteSpace: 'nowrap' }}>{fmtActivityDate(log.created_at)}</span>
+                              <span style={{ fontWeight: 700, fontSize: 13, color: '#2A2722' }}>{log.actor_name}</span>
+                              <ActivityTag label={log.actor_role} dot={ROLE_DOT[log.actor_role]} />
+                              <ActivityTag label={log.action_type.replace(/_/g, ' ')} dot={dotForAction(log.action_type)} />
+                              {log.entity_type && (
+                                <span style={{ fontSize: 11.5, color: '#A39D91' }}>{log.entity_type.replace(/_/g, ' ').toUpperCase()}</span>
+                              )}
+                            </div>
+                            {log.details && (
+                              <ChevronDown style={{ width: 14, height: 14, color: '#C4BFB5', transition: 'transform 0.15s', transform: isExpanded ? 'rotate(180deg)' : 'none' }} />
+                            )}
+                          </div>
+                          {isExpanded && log.details && (
+                            <div style={{ marginTop: 12 }}>
+                              <ActivityDetailsTable details={log.details} />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 16, paddingTop: 12, borderTop: '1px solid #EFEAE0' }}>
+                    <p style={{ margin: 0, fontSize: 11.5, color: '#A39D91' }}>
+                      Showing {activityLogs.length} of {activityPagination.total} entries
+                    </p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <button
+                        type="button"
+                        onClick={() => fetchActivityLog(activityPagination.page - 1)}
+                        disabled={activityPagination.page <= 1}
+                        style={{ border: '1px solid #E2DCD0', background: '#fff', borderRadius: 8, padding: '5px 7px', color: '#7A756A', cursor: activityPagination.page <= 1 ? 'not-allowed' : 'pointer', opacity: activityPagination.page <= 1 ? 0.4 : 1, display: 'flex' }}
+                      >
+                        <ChevronLeft style={{ width: 14, height: 14 }} />
+                      </button>
+                      <span style={{ fontSize: 11.5, color: '#7A756A', padding: '0 6px' }}>
+                        Page {activityPagination.page} of {Math.max(1, Math.ceil(activityPagination.total / activityPagination.limit))}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => fetchActivityLog(activityPagination.page + 1)}
+                        disabled={activityPagination.page >= Math.max(1, Math.ceil(activityPagination.total / activityPagination.limit))}
+                        style={{ border: '1px solid #E2DCD0', background: '#fff', borderRadius: 8, padding: '5px 7px', color: '#7A756A', cursor: activityPagination.page >= Math.max(1, Math.ceil(activityPagination.total / activityPagination.limit)) ? 'not-allowed' : 'pointer', opacity: activityPagination.page >= Math.max(1, Math.ceil(activityPagination.total / activityPagination.limit)) ? 0.4 : 1, display: 'flex' }}
+                      >
+                        <ChevronRight style={{ width: 14, height: 14 }} />
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </Card>
+          )}
+
         </div>
         </div>
       </div>
@@ -5417,6 +5544,7 @@ const BookingDetailPageV2 = () => {
                                   <tr key={a.assignment_id} style={rowBorder}>
                                     <td className={tdCls}>
                                       <span className="font-medium text-gray-900">{staffName}</span>
+                                      {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     {isFlatMarkDay ? (
@@ -5466,6 +5594,7 @@ const BookingDetailPageV2 = () => {
                                   <tr key={a.assignment_id} style={rowBorder}>
                                     <td className={tdCls}>
                                       <span className="font-medium text-gray-900">{staffName}</span>
+                                      {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     {assignedCell}
@@ -5491,6 +5620,7 @@ const BookingDetailPageV2 = () => {
                                   <tr key={a.assignment_id} style={{ ...rowBorder, background: '#fffaf0' }}>
                                     <td className={tdCls}>
                                       <span className="font-medium text-gray-900">{staffName}</span>
+                                      {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     {isFlatMarkDay ? null : assignedCell}
@@ -5523,6 +5653,7 @@ const BookingDetailPageV2 = () => {
                                   <tr key={a.assignment_id} style={{ ...rowBorder, background: '#fff7ed' }}>
                                     <td className={tdCls}>
                                       <span className="font-medium text-gray-900">{staffName}</span>
+                                      {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     {isFlatMarkDay ? null : assignedCell}
@@ -5553,6 +5684,7 @@ const BookingDetailPageV2 = () => {
                                   <tr key={a.assignment_id} style={rowBorder}>
                                     <td className={tdCls}>
                                       <span className="font-medium text-gray-900">{staffName}</span>
+                                      {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     <td className={tdCls} colSpan={5}>
@@ -5598,6 +5730,7 @@ const BookingDetailPageV2 = () => {
                                   <tr key={a.assignment_id} style={rowBorder}>
                                     <td className={tdCls}>
                                       <span className="font-medium text-gray-900">{staffName}</span>
+                                      {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     {assignedCell}
@@ -5647,6 +5780,7 @@ const BookingDetailPageV2 = () => {
                                   <tr key={a.assignment_id} style={{ ...rowBorder, background: '#fff7ed' }}>
                                     <td className={tdCls}>
                                       <span className="font-medium text-gray-900">{staffName}</span>
+                                      {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     {isFlatMarkDay ? null : assignedCell}
@@ -5677,6 +5811,7 @@ const BookingDetailPageV2 = () => {
                                   <tr key={a.assignment_id} style={{ ...rowBorder, background: '#fafafa' }}>
                                     <td className={tdCls}>
                                       <span className="font-medium text-gray-900">{staffName}</span>
+                                      {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     <td className={tdCls} colSpan={5}>
@@ -5699,6 +5834,7 @@ const BookingDetailPageV2 = () => {
                                 <tr key={a.assignment_id} style={{ ...rowBorder, background: '#fafafa' }}>
                                   <td className={tdCls}>
                                     <span className="font-medium text-gray-900">{staffName}</span>
+                                    {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
                                     {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                   </td>
                                   {assignedCell}

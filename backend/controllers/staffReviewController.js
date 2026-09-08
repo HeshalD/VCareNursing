@@ -93,6 +93,27 @@ exports.createReview = async (req, res) => {
     const newReview = result.rows[0];
     await updateStaffRating(staff_profile_id);
 
+    // Activity log (non-fatal)
+    try {
+      const clientNameResult = await db.pool.query('SELECT full_name FROM client_profiles WHERE client_profile_id = $1', [client_profile_id]);
+      await logActivity({
+        actorUserId: user_id,
+        actorName: clientNameResult.rows[0]?.full_name || 'Client',
+        actorRole: 'CLIENT',
+        actionType: 'REVIEW_SUBMITTED_BY_CLIENT',
+        entityType: 'STAFF_REVIEW',
+        entityId: String(newReview.review_id),
+        details: {
+          staff_profile_id,
+          client_profile_id,
+          booking_id: booking_id || null,
+          rating,
+        }
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (createReview):', logErr.message);
+    }
+
     res.status(201).json({ message: "Review created successfully", review: newReview });
 
   } catch (error) {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { XCircle, Loader2, Calendar, User, Clock, Search, RefreshCw, AlertTriangle, Plus, ChevronRight, Building2, Trash2, Lock } from 'lucide-react';
+import { XCircle, Loader2, Calendar, User, Clock, Search, RefreshCw, AlertTriangle, Plus, ChevronRight, Building2, Trash2, Lock, Mars, Venus } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
@@ -77,6 +77,37 @@ const TypeChip = ({ type }) => {
     <span className="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">
       {BOOKING_TYPE_LABEL[type] || type}
     </span>
+  );
+};
+
+const GenderIcon = ({ gender }) => {
+  const cfg = {
+    MALE:   { Icon: Mars,  className: 'text-blue-500' },
+    FEMALE: { Icon: Venus, className: 'text-pink-500' },
+  }[gender?.toUpperCase()];
+
+  if (!cfg) return null;
+
+  const { Icon, className } = cfg;
+  return <Icon className={`w-3 h-3 flex-shrink-0 ${className}`} aria-label={gender} title={gender} />;
+};
+
+const StaffList = ({ staff }) => {
+  if (!staff || staff.length === 0) {
+    return <span className="text-gray-400 text-xs">Unassigned</span>;
+  }
+  return (
+    <div className="space-y-1">
+      {staff.map((s) => (
+        <div key={s.staff_profile_id} className="flex items-center gap-1.5">
+          <GenderIcon gender={s.gender} />
+          <span className="text-slate-700">{s.full_name}</span>
+          {s.staff_code && (
+            <span className="font-mono text-[11px] text-slate-400">{s.staff_code}</span>
+          )}
+        </div>
+      ))}
+    </div>
   );
 };
 
@@ -208,7 +239,10 @@ const Bookings = () => {
       const bookingCode = (b.booking_code || String(b.booking_id)).toLowerCase();
       const clientName = (details?.client_name || b.client_name || `client ${b.client_id}`).toLowerCase();
       const patientName = (details?.patient_name || b.patient_name || `patient ${b.patient_id}`).toLowerCase();
-      return bookingCode.includes(q) || clientName.includes(q) || patientName.includes(q);
+      const staffMatch = (details?.current_staff || []).some((s) =>
+        (s.full_name || '').toLowerCase().includes(q) || (s.staff_code || '').toLowerCase().includes(q)
+      );
+      return bookingCode.includes(q) || clientName.includes(q) || patientName.includes(q) || staffMatch;
     });
   }, [bookings, bookingDetails, searchQuery, statusFilter, typeFilter, hospitalizedOnly]);
 
@@ -302,7 +336,7 @@ const Bookings = () => {
                 <input
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search by client, booking code…"
+                  placeholder="Search by client, booking code, employee code, staff name…"
                   className="pl-8 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none w-56"
                 />
               </div>
@@ -375,6 +409,7 @@ const Bookings = () => {
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Booking</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Client</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Care Profile</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Staff</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Type</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Start Date</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
@@ -434,6 +469,11 @@ const Bookings = () => {
                             {details?.patient_age && (
                               <p className="text-xs text-slate-400">Age {details.patient_age}</p>
                             )}
+                          </td>
+
+                          {/* Staff */}
+                          <td className="px-4 py-3">
+                            <StaffList staff={details?.current_staff} />
                           </td>
 
                           {/* Booking type */}
@@ -520,6 +560,11 @@ const Bookings = () => {
                             : '—'}
                         </span>
                       </div>
+                      {details?.current_staff?.length > 0 && (
+                        <div className="text-xs">
+                          <StaffList staff={details.current_staff} />
+                        </div>
+                      )}
                       {b.is_expiring_soon && (
                         <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-600">
                           <AlertTriangle className="w-3 h-3" />

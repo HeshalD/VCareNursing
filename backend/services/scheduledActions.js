@@ -37,12 +37,16 @@ const getBusinessDate = async (client = db) => {
 };
 
 // Normalise a Date | string to 'YYYY-MM-DD' (date-only, no timezone surprises).
+// Reads the date in the company timezone (Asia/Colombo), not UTC — a plain
+// toISOString().split('T')[0] rolls a timestamp like 00:42 Colombo back to the
+// previous day once converted to UTC, which is exactly the wrong direction to
+// be wrong for an end-of-service timestamp.
 const toDateStr = (value) => {
     if (!value) return null;
     if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
     const d = value instanceof Date ? value : new Date(value);
     if (isNaN(d.getTime())) return null;
-    return d.toISOString().split('T')[0];
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Colombo' }).format(d);
 };
 
 // 'YYYY-MM-DD' strings compare correctly lexicographically.

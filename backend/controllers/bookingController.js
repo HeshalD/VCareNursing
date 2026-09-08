@@ -217,7 +217,7 @@ const finalizeBookingState = async (req, res, nextStatus, actorLabel, includeTer
             `UPDATE booking_staff_assignments
              SET service_end_date = $1, status = 'COMPLETED'
              WHERE booking_id = $2 AND status IN ('ACTIVE', 'SCHEDULED')`,
-            [endTime.toISOString().split('T')[0], booking_id]
+            [toDateStr(endTime), booking_id]
         );
 
         // Cancel any pending future-assignment activation so the cron can't
@@ -1052,7 +1052,17 @@ exports.getByBookingID = async (req, res) => {
                    WHERE bsa.booking_id = b.booking_id
                      AND bsa.status IN ('ACTIVE', 'SCHEDULED')
                    ORDER BY bsa.service_start_date DESC
-                   LIMIT 1) as service_start_time
+                   LIMIT 1) as service_start_time,
+                (SELECT COALESCE(json_agg(json_build_object(
+                            'staff_profile_id', bsa.staff_profile_id,
+                            'staff_code', sp.staff_code,
+                            'full_name', sp.full_name,
+                            'gender', sp.gender
+                        ) ORDER BY sp.full_name), '[]')
+                   FROM booking_staff_assignments bsa
+                   JOIN staff_profiles sp ON bsa.staff_profile_id = sp.staff_profile_id
+                   WHERE bsa.booking_id = b.booking_id
+                     AND bsa.status = 'ACTIVE') as current_staff
             FROM bookings b
             LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
             LEFT JOIN users uc ON c.user_id = uc.user_id
@@ -2731,6 +2741,25 @@ exports.requestTermination = async (req, res) => {
             }
         })();
 
+        // Activity log (non-fatal)
+        try {
+            const clientNameResult = await db.query(
+                'SELECT full_name FROM client_profiles WHERE client_profile_id = $1',
+                [booking.client_id]
+            );
+            await logActivity({
+                actorUserId: req.user?.user_id,
+                actorName: clientNameResult.rows[0]?.full_name || 'Client',
+                actorRole: extractActorRole(req.user?.role) || 'CLIENT',
+                actionType: 'TERMINATION_REQUESTED',
+                entityType: 'BOOKING',
+                entityId: String(booking_id),
+                details: { termination_id: termRes.rows[0].termination_id, urgency, requested_end_date, reason: reason || null }
+            });
+        } catch (logErr) {
+            console.error('Activity log failed (requestTermination):', logErr.message);
+        }
+
         res.status(201).json({
             status: 'success',
             message: "Termination request submitted successfully. Our team will review and confirm shortly.",
@@ -3244,7 +3273,7 @@ exports.forceStopBooking = async (req, res) => {
             `UPDATE booking_staff_assignments
              SET service_end_date = $1, status = 'COMPLETED'
              WHERE booking_id = $2 AND status IN ('ACTIVE', 'SCHEDULED')`,
-            [officialEndDate.toISOString().split('T')[0], booking_id]
+            [toDateStr(officialEndDate), booking_id]
         );
 
         // Cancel any pending future-assignment activation so the cron can't

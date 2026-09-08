@@ -54,6 +54,8 @@ const NOTE_TYPE_META = {
 };
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { dotForAction, fmt as fmtActivityDate, ROLE_DOT as ROLE_DOT_MAP, ACTION_TYPE_OPTIONS as ACTIVITY_ACTION_TYPES } from '../activity_log/activityLogConstants';
+import { Tag as ActivityTag, DetailsTable as ActivityDetailsTable } from '../activity_log/activityLogComponents';
 import { RefundDepositModal, ForfeitDepositModal } from '../products/ProductsPage';
 import AdminDirectBookingDrawer from '../bookings/AdminDirectBookingDrawer';
 import RegFeeDrawer from './RegFeeDrawer';
@@ -195,6 +197,12 @@ const ClientDetailPage = () => {
   const [clientTransactions, setClientTransactions] = useState([]);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
   const [txPage, setTxPage] = useState(1);
+
+  const [activityLogs, setActivityLogs] = useState([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityPagination, setActivityPagination] = useState({ total: 0, page: 1, limit: 20 });
+  const [activityActionType, setActivityActionType] = useState('');
+  const [activityExpandedRow, setActivityExpandedRow] = useState(null);
 
   const [receipts, setReceipts] = useState([]);
   const [receiptsLoading, setReceiptsLoading] = useState(false);
@@ -724,13 +732,34 @@ const ClientDetailPage = () => {
     }
   };
 
+  const fetchActivityLog = async (page = 1) => {
+    try {
+      setActivityLoading(true);
+      const params = { page, limit: activityPagination.limit };
+      if (activityActionType) params.action_type = activityActionType;
+      const res = await apiClient.getActivityLogByClient(clientId, params);
+      setActivityLogs(res.data || []);
+      setActivityPagination(res.pagination || { total: 0, page, limit: 20 });
+    } catch (err) {
+      console.error('Client activity log fetch error:', err);
+    } finally {
+      setActivityLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (activeSection === 'bookings') fetchBookingsPag();
     if (activeSection === 'invoices') { fetchClientInvoices(); fetchRegFeeInvoices(); fetchProductInvoices(); fetchCombinedInvoices(); fetchOverdueInvoices(); }
     if (activeSection === 'products') { fetchProductInvoices(); fetchRentedItems(); fetchDeposits(); }
     if (activeSection === 'quotes') { fetchQuoteLineItems(); fetchProductQuotes(); }
+    if (activeSection === 'activities') fetchActivityLog(1);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSection]);
+
+  useEffect(() => {
+    if (activeSection === 'activities') fetchActivityLog(1);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activityActionType]);
 
   useEffect(() => {
     if (!actionsOpen) return;
@@ -1193,6 +1222,7 @@ const ClientDetailPage = () => {
     { id: 'notes',     label: 'Notes',          icon: StickyNote },
     { id: 'statement', label: 'Statement',      icon: ReceiptText },
     { id: 'overdue',   label: 'Overdue',        icon: ShieldAlert },
+    { id: 'activities', label: 'Activities',    icon: Activity },
   ];
 
   const overdueAmount = Number(overdueSummary.total_overdue_amount || 0);
@@ -3034,6 +3064,117 @@ const ClientDetailPage = () => {
             <StatCard icon={Activity}     label="Overdue Count"         value={overdueSummary.overdue_payments_count || 0}      tone="slate" />
           </div>
         );
+
+      case 'activities': {
+        const activityTotalPages = Math.max(1, Math.ceil(activityPagination.total / activityPagination.limit));
+        return (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="w-64">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Action Type</label>
+                <select
+                  value={activityActionType}
+                  onChange={(e) => setActivityActionType(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white text-gray-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-colors"
+                >
+                  <option value="">All Actions</option>
+                  {ACTIVITY_ACTION_TYPES.map((a) => (
+                    <option key={a} value={a}>{a.replace(/_/g, ' ')}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+              {activityLoading ? (
+                <div className="flex items-center justify-center h-40">
+                  <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+                </div>
+              ) : activityLogs.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-40 gap-2">
+                  <Activity className="w-8 h-8 text-gray-200" />
+                  <p className="text-sm text-gray-400">No activity found for this client</p>
+                </div>
+              ) : (
+                <>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-200 bg-gray-50">
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Timestamp</th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Actor</th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Role</th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Action</th>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Entity</th>
+                          <th className="px-4 py-3" />
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {activityLogs.map((log) => {
+                          const isExpanded = activityExpandedRow === log.log_id;
+                          return (
+                            <React.Fragment key={log.log_id}>
+                              <tr
+                                className="hover:bg-gray-50 cursor-pointer transition-colors"
+                                onClick={() => setActivityExpandedRow(isExpanded ? null : log.log_id)}
+                              >
+                                <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtActivityDate(log.created_at)}</td>
+                                <td className="px-4 py-3 font-semibold text-gray-900">{log.actor_name}</td>
+                                <td className="px-4 py-3 whitespace-nowrap"><ActivityTag label={log.actor_role} dot={ROLE_DOT_MAP[log.actor_role]} /></td>
+                                <td className="px-4 py-3 whitespace-nowrap"><ActivityTag label={log.action_type.replace(/_/g, ' ')} dot={dotForAction(log.action_type)} /></td>
+                                <td className="px-4 py-3 text-gray-500">
+                                  {log.entity_type ? log.entity_type.replace(/_/g, ' ').toUpperCase() : '—'}
+                                </td>
+                                <td className="px-4 py-3 text-right">
+                                  {log.details && (
+                                    <ChevronDown className={`w-4 h-4 text-gray-300 ml-auto transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                                  )}
+                                </td>
+                              </tr>
+                              {isExpanded && log.details && (
+                                <tr className="bg-gray-50">
+                                  <td colSpan={6} className="px-4 py-3">
+                                    <ActivityDetailsTable details={log.details} />
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="border-t border-gray-100 px-4 py-2.5 flex items-center justify-between">
+                    <p className="text-xs text-gray-400">
+                      Showing {activityLogs.length} of {activityPagination.total} entries
+                    </p>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => fetchActivityLog(activityPagination.page - 1)}
+                        disabled={activityPagination.page <= 1}
+                        className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-gray-500 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <ArrowLeft className="w-3.5 h-3.5" />
+                      </button>
+                      <span className="text-xs text-gray-500 px-2">Page {activityPagination.page} of {activityTotalPages}</span>
+                      <button
+                        type="button"
+                        onClick={() => fetchActivityLog(activityPagination.page + 1)}
+                        disabled={activityPagination.page >= activityTotalPages}
+                        className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-gray-500 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      }
 
       case 'overview':
       default:

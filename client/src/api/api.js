@@ -2878,6 +2878,24 @@ class ApiClient {
     return this.request(endpoint);
   }
 
+  async getActivityLogByClient(clientId, params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const endpoint = query ? `/activity-log/client/${clientId}?${query}` : `/activity-log/client/${clientId}`;
+    return this.request(endpoint);
+  }
+
+  async getActivityLogByBooking(bookingId, params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const endpoint = query ? `/activity-log/booking/${bookingId}?${query}` : `/activity-log/booking/${bookingId}`;
+    return this.request(endpoint);
+  }
+
+  async getActivityLogByStaff(staffProfileId, params = {}) {
+    const query = new URLSearchParams(params).toString();
+    const endpoint = query ? `/activity-log/staff/${staffProfileId}?${query}` : `/activity-log/staff/${staffProfileId}`;
+    return this.request(endpoint);
+  }
+
   // Transactions endpoints
   async getAllTransactions(params = {}) {
     const query = new URLSearchParams(params).toString();

@@ -650,7 +650,7 @@ exports.updateServiceRequest = async (req, res) => {
                 service_type || null,
                 service_model || null,
                 location_address !== undefined ? location_address : old.location_address,
-                start_date !== undefined ? start_date : old.start_date,
+                start_date !== undefined ? (start_date || null) : old.start_date,
                 remarks !== undefined ? remarks : old.remarks,
                 preferred_gender || null,
                 status || null,
