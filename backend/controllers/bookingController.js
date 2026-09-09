@@ -1232,6 +1232,8 @@ exports.getAdminBookingDetail = async (req, res) => {
                     ss.swap_reason,
                     ss.arrival_time,
                     ss.billing_gap,
+                    ss.old_staff_id,
+                    ss.new_staff_id,
                     old_sp.full_name as old_staff_name,
                     new_sp.full_name as new_staff_name,
                     u.mobile_number as swapped_by_mobile

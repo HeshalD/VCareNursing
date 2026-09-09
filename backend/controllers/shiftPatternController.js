@@ -164,7 +164,7 @@ exports.getShiftSlots = async (req, res) => {
             ? await db.query(
                 `SELECT DISTINCT ON (bsa.shift_slot_id)
                         bsa.shift_slot_id, bsa.assignment_id, bsa.staff_profile_id, bsa.daily_rate,
-                        bsa.service_start_date, bsa.status, sp.full_name AS staff_name
+                        bsa.service_start_date, bsa.status, sp.full_name AS staff_name, sp.staff_code
                  FROM booking_staff_assignments bsa
                  JOIN staff_profiles sp ON bsa.staff_profile_id = sp.staff_profile_id
                  WHERE bsa.shift_slot_id = ANY($1::uuid[]) AND bsa.status IN ('ACTIVE', 'SCHEDULED')

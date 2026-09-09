@@ -179,7 +179,6 @@ const BookingStaffAssignmentPage = () => {
       setAssignment((cur) => ({
         ...cur,
         service_start_date: cur.service_start_date || formatDateForDisplay(response.data?.booking?.start_date) || '',
-        daily_rate:         cur.daily_rate          || response.data?.booking?.quote_daily_rate || '',
         is_hospitalized:    response.data?.booking?.is_hospitalized || false,
         hospital_name:      response.data?.booking?.hospital_name || '',
       }));
@@ -304,6 +303,7 @@ const BookingStaffAssignmentPage = () => {
     if (!assignment.staff_profile_id) { setError('Select a staff member'); return; }
     const isoStartDate = formatDateForBackend(assignment.service_start_date);
     if (!isoStartDate) { setError('Enter a valid Service Start Date as DD/MM/YYYY'); return; }
+    if (!assignment.daily_rate) { setError('Daily Rate (Staff) is required'); return; }
     try {
       setSubmitting(true); setError(''); setSuccess('');
       await apiClient.assignStaffToBooking(bookingId, {

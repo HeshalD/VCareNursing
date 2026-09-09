@@ -146,6 +146,27 @@ const listToText = (value) => {
   const cleaned = arr.map(v => String(v).trim()).filter(Boolean);
   return cleaned.length ? cleaned.join(', ') : null;
 };
+// Wraps a staff name/code so it opens that staff member's profile in a new tab —
+// used everywhere this page displays a staff member. Renders plain text when no id
+// is available (e.g. an already-departed staff record with no profile to link to).
+const StaffLink = ({ id, children, className, style, title }) => {
+  if (!id) return <>{children}</>;
+  return (
+    <a
+      href={`/admin/staff/${id}/detail`}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      className={className}
+      style={{ color: 'inherit', textDecoration: 'none', cursor: 'pointer', ...style }}
+      onMouseEnter={(e) => { e.currentTarget.style.textDecoration = 'underline'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none'; }}
+      title={title || 'View staff profile'}
+    >
+      {children}
+    </a>
+  );
+};
 // Every profile field we hold on a staff member, laid out for the swap/assign picker so
 // the admin can judge a candidate without opening their profile in another tab.
 const StaffProfileDetails = ({ staff }) => {
@@ -616,9 +637,9 @@ const BookingDetailPageV2 = () => {
   const activeAssignments = staffHistory.filter(r => (r.status || '').toLowerCase() === 'active');
 
   const normCurrentStaff = currentStaff?.staff_name || currentStaff?.full_name || currentStaff?.name
-    ? { name: currentStaff.staff_name || currentStaff.full_name || currentStaff.name || '-', id: currentStaff.staff_code || currentStaff.staff_profile_id || '-', mobile: currentStaff.staff_mobile || currentStaff.mobile || '-', email: currentStaff.staff_email || currentStaff.email || '-', designation: currentStaff.designation || currentStaff.staff_designation || '-' }
+    ? { name: currentStaff.staff_name || currentStaff.full_name || currentStaff.name || '-', id: currentStaff.staff_code || currentStaff.staff_profile_id || '-', profileId: currentStaff.staff_profile_id || null, mobile: currentStaff.staff_mobile || currentStaff.mobile || '-', email: currentStaff.staff_email || currentStaff.email || '-', designation: currentStaff.designation || currentStaff.staff_designation || '-' }
     : activeStaffRow
-      ? { name: activeStaffRow.full_name || activeStaffRow.staff_name || '-', id: activeStaffRow.staff_code || activeStaffRow.staff_profile_id || '-', mobile: activeStaffRow.staff_mobile || activeStaffRow.mobile || '-', email: activeStaffRow.staff_email || activeStaffRow.email || '-', designation: activeStaffRow.designation || '-' }
+      ? { name: activeStaffRow.full_name || activeStaffRow.staff_name || '-', id: activeStaffRow.staff_code || activeStaffRow.staff_profile_id || '-', profileId: activeStaffRow.staff_profile_id || null, mobile: activeStaffRow.staff_mobile || activeStaffRow.mobile || '-', email: activeStaffRow.staff_email || activeStaffRow.email || '-', designation: activeStaffRow.designation || '-' }
       : null;
 
   const normPayments = paymentHistory.map(p => ({
@@ -637,7 +658,7 @@ const BookingDetailPageV2 = () => {
 
   const normStaffHistory = staffHistory.map(r => ({
     id: r.assignment_id || r.id, name: r.full_name || r.staff_name || '-',
-    staffId: r.staff_code || r.staff_profile_id || '-', colorKey: r.staff_profile_id || r.id,
+    staffId: r.staff_code || r.staff_profile_id || '-', profileId: r.staff_profile_id || null, colorKey: r.staff_profile_id || r.id,
     designation: r.designation || '-', currentStatus: r.current_status || r.status || '-',
     startDate: r.service_start_date || r.assigned_at || r.created_at,
     endDate: r.service_end_date || r.ended_at || r.end_date,
@@ -647,7 +668,9 @@ const BookingDetailPageV2 = () => {
 
   const normSwapHistory = swapHistory.map(s => ({
     id: s.swap_id || s.id, oldStaffName: s.old_staff_name || s.from_staff_name || '-',
-    newStaffName: s.new_staff_name || s.to_staff_name || '-', swappedAt: s.swapped_at || s.created_at,
+    oldStaffId: s.old_staff_id || null,
+    newStaffName: s.new_staff_name || s.to_staff_name || '-', newStaffId: s.new_staff_id || null,
+    swappedAt: s.swapped_at || s.created_at,
     reason: s.swap_reason || s.reason || null, billingGap: Boolean(s.billing_gap),
     swappedByMobile: s.swapped_by_mobile || null,
   }));
@@ -900,8 +923,13 @@ const BookingDetailPageV2 = () => {
     const flagged = [];
     bySlot.forEach(rows => {
       rows.forEach((row, i) => {
-        const startISO = row.startDate ? row.startDate.slice(0, 10) : null;
-        const endISO = row.effectiveEnd ? row.effectiveEnd.slice(0, 10) : null;
+        // service_start_date/service_end_date come back as raw DATE values (not cast
+        // to text server-side), so a plain UTC slice can land a day off from the real
+        // calendar date once serialized — toLocalDateStr re-derives it from local
+        // components the same way liveInBoundary does, keeping this in step with the
+        // dates Care Timeline actually writes attendance under.
+        const startISO = row.startDate ? toLocalDateStr(row.startDate) : null;
+        const endISO = row.effectiveEnd ? toLocalDateStr(row.effectiveEnd) : null;
         const inRecord = startISO ? attendanceRecords.find(a => a.assignment_id === row.id && a.service_date?.slice(0, 10) === startISO) : null;
         const outRecord = endISO ? attendanceRecords.find(a => a.assignment_id === row.id && a.service_date?.slice(0, 10) === endISO) : null;
         const missingInTime = i > 0 && !inRecord?.in_time;
@@ -959,7 +987,12 @@ const BookingDetailPageV2 = () => {
     // ASSIGNED, but both are still valid swap/assign candidates as long as they have
     // no genuine date-overlapping commitment — the backend (swapStaff/assignStaffToSlot)
     // already re-checks that at write time, so the picker just needs to list everyone.
-    apiClient.getAllStaff({ limit: 1000, page: 1 }).then(r => setAvailableStaff(r?.data || [])).catch(() => {});
+    // A flat limit here silently truncated the swap/assign picker once staff
+    // headcount passed it, so fetch the real total first and request exactly that many.
+    apiClient.getAllStaff({ limit: 1, page: 1 })
+      .then(r => apiClient.getAllStaff({ limit: Math.max(r?.pagination?.total_count || 0, 1), page: 1 }))
+      .then(r => setAvailableStaff(r?.data || []))
+      .catch(() => {});
   }, [adminToken]);
 
   // Batched schedule lookup for the staff-picker UIs below (swap modal + shift
@@ -1255,7 +1288,14 @@ const BookingDetailPageV2 = () => {
       // start time (VISITING/LIVE_IN) so the admin isn't typing times from scratch —
       // still a plain editable input, so they can correct it if actual times differed.
       let in_time = '', out_time = '', autoFilled = false;
-      if (a.shift_start_time) {
+      // A real attendance row can already exist here without ever going through this
+      // form — e.g. closeStaffAssignment ("Log out & close assignment") writes one
+      // directly. Prefer its actual times over the schedule-based guess below.
+      const existingRecord = attendanceRecords.find(r => r.assignment_id === a.assignment_id && r.service_date?.slice(0, 10) === dateISO);
+      if (existingRecord) {
+        in_time = existingRecord.in_time ? new Date(existingRecord.in_time).toTimeString().slice(0, 5) : '';
+        out_time = existingRecord.out_time ? new Date(existingRecord.out_time).toTimeString().slice(0, 5) : '';
+      } else if (a.shift_start_time) {
         in_time = a.shift_start_time.slice(0, 5);
         if (a.shift_duration_hours) out_time = addHoursToTime(in_time, parseFloat(a.shift_duration_hours));
         autoFilled = true;
@@ -1912,8 +1952,8 @@ const BookingDetailPageV2 = () => {
   // already-recorded rows (past, current or scheduled) so a bulk-migrated or
   // never-logged assignment can be filled in after the fact.
   const openEditTimes = (row) => {
-    const startISO = row.startDate ? row.startDate.slice(0, 10) : null;
-    const endISO = row.effectiveEnd ? row.effectiveEnd.slice(0, 10) : null;
+    const startISO = row.startDate ? toLocalDateStr(row.startDate) : null;
+    const endISO = row.effectiveEnd ? toLocalDateStr(row.effectiveEnd) : null;
     const inRecord = startISO ? attendanceRecords.find(a => a.assignment_id === row.id && a.service_date?.slice(0, 10) === startISO) : null;
     const outRecord = endISO ? attendanceRecords.find(a => a.assignment_id === row.id && a.service_date?.slice(0, 10) === endISO) : null;
     setEditTimesRow(row);
@@ -1927,8 +1967,8 @@ const BookingDetailPageV2 = () => {
     try {
       setEditTimesSubmitting(true); setEditTimesError('');
       apiClient.setToken(adminToken);
-      const startISO = editTimesRow.startDate ? editTimesRow.startDate.slice(0, 10) : null;
-      const endISO = editTimesRow.effectiveEnd ? editTimesRow.effectiveEnd.slice(0, 10) : null;
+      const startISO = editTimesRow.startDate ? toLocalDateStr(editTimesRow.startDate) : null;
+      const endISO = editTimesRow.effectiveEnd ? toLocalDateStr(editTimesRow.effectiveEnd) : null;
       if (editTimesIn && startISO) {
         await apiClient.setAttendanceTime(bookingId, { assignment_id: editTimesRow.id, service_date: startISO, in_time: `${startISO}T${editTimesIn}`, shift_slot_id: editTimesRow.shiftSlotId || undefined });
       }
@@ -1954,6 +1994,9 @@ const BookingDetailPageV2 = () => {
   const closeCloseAssignment = () => { setCloseAssignmentRow(null); setCloseAssignmentDate(''); setCloseAssignmentTime(''); setCloseAssignmentError(''); };
   const submitCloseAssignment = async () => {
     if (!closeAssignmentRow || !closeAssignmentDate || !closeAssignmentTime) return;
+    const closedAssignmentId = closeAssignmentRow.id;
+    const closedDate = closeAssignmentDate;
+    const closedTime = closeAssignmentTime;
     try {
       setCloseAssignmentBusy(true); setCloseAssignmentError('');
       apiClient.setToken(adminToken);
@@ -1961,6 +2004,15 @@ const BookingDetailPageV2 = () => {
         out_time: `${closeAssignmentDate}T${closeAssignmentTime}`,
       });
       closeCloseAssignment();
+      // The Day Detail modal's attendance row for this assignment was seeded blank
+      // when it opened (openDayModal only knows about a real record if one already
+      // existed then) — feed it the time just entered here directly, rather than
+      // waiting on fetchDetail/fetchDailyRecords to round-trip through state that
+      // row doesn't re-derive from once it's been set.
+      setAttendanceInputs((p) => ({
+        ...p,
+        [closedAssignmentId]: { date: closedDate, in_time: '', out_time: closedTime, autoFilled: false },
+      }));
       await fetchDetail(); await fetchDailyRecords();
     } catch (err) { setCloseAssignmentError(err?.message || 'Failed to close this assignment'); }
     finally { setCloseAssignmentBusy(false); }
@@ -2427,6 +2479,7 @@ const BookingDetailPageV2 = () => {
     { id: 'overview',    label: 'Overview',      icon: LayoutGrid },
     { id: 'payments',    label: 'Payments',       icon: DollarSign },
     { id: 'staff',       label: 'Staff & Swaps',  icon: Users },
+    { id: 'allocation-history', label: 'Allocation History', icon: History },
     { id: 'rates',       label: 'Rates',          icon: Wallet },
     ...(isShiftBased ? [{ id: 'reschedules', label: 'Reschedules', icon: Repeat2 }] : []),
     { id: 'salesperson', label: 'Salesperson',    icon: Briefcase },
@@ -3067,12 +3120,14 @@ const BookingDetailPageV2 = () => {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 13, marginBottom: 16 }}>
                         <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#3F77B5', flexShrink: 0 }} />
                         <div>
-                          <div style={{ fontSize: 15, fontWeight: 700, color: '#2A2722' }}>{normCurrentStaff.name}</div>
+                          <div style={{ fontSize: 15, fontWeight: 700, color: '#2A2722' }}>
+                            <StaffLink id={normCurrentStaff.profileId}>{normCurrentStaff.name}</StaffLink>
+                          </div>
                           <div style={{ fontSize: 12.5, color: '#6F6A60', marginTop: 2 }}>{normCurrentStaff.designation}</div>
                         </div>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 13 }}>
-                        <Field label="Staff ID"   value={normCurrentStaff.id}     mono />
+                        <Field label="Staff ID"   value={<StaffLink id={normCurrentStaff.profileId}>{normCurrentStaff.id}</StaffLink>}     mono />
                         <Field label="Phone"       value={formatMobileNumber(normCurrentStaff.mobile)} />
                         <Field label="Email"       value={normCurrentStaff.email}  />
                         {activeStaffRow && (
@@ -3372,7 +3427,13 @@ const BookingDetailPageV2 = () => {
                               <div style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>{slot.label || `Shift ${slot.shift_number}`} <span style={{ fontWeight: 500, color: '#A39D91' }}>· {(slot.start_time || '').slice(0, 5)} ({slot.duration_hours}h)</span></div>
                               {slot.assignment ? (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 3, flexWrap: 'wrap' }}>
-                                  <div style={{ fontSize: 12.5, color: '#6F6A60' }}>{slot.assignment.staff_name} · {formatMoney(slot.assignment.daily_rate)}/shift</div>
+                                  <div style={{ fontSize: 12.5, color: '#6F6A60' }}>
+                                    <StaffLink id={slot.assignment.staff_profile_id}>
+                                      {slot.assignment.staff_name}
+                                      {slot.assignment.staff_code && <span style={{ marginLeft: 5, fontSize: 11, color: '#A39D91', fontFamily: "'JetBrains Mono',monospace" }}>{slot.assignment.staff_code}</span>}
+                                    </StaffLink>
+                                    {' '}· {formatMoney(slot.assignment.daily_rate)}/shift
+                                  </div>
                                   {slot.assignment.status === 'SCHEDULED' && (
                                     <Pill tone="amber">Starts {formatDate(slot.assignment.service_start_date)}</Pill>
                                   )}
@@ -3410,12 +3471,15 @@ const BookingDetailPageV2 = () => {
                           {initials(normCurrentStaff.name)}
                         </div>
                         <div>
-                          <div style={{ fontSize: 15, fontWeight: 700, color: '#2A2722' }}>{normCurrentStaff.name}</div>
+                          <div style={{ fontSize: 15, fontWeight: 700, color: '#2A2722', display: 'flex', alignItems: 'center', gap: 7 }}>
+                            <StaffLink id={normCurrentStaff.profileId}>{normCurrentStaff.name}</StaffLink>
+                            <StaffLink id={normCurrentStaff.profileId}><span style={{ fontSize: 11, fontWeight: 600, color: '#A39D91', fontFamily: "'JetBrains Mono',monospace" }}>{normCurrentStaff.id}</span></StaffLink>
+                          </div>
                           <div style={{ fontSize: 12.5, color: '#6F6A60', marginTop: 2 }}>{normCurrentStaff.designation}</div>
                         </div>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 13 }}>
-                        <Field label="Staff ID"   value={normCurrentStaff.id}     mono />
+                        <Field label="Staff ID"   value={<StaffLink id={normCurrentStaff.profileId}>{normCurrentStaff.id}</StaffLink>}     mono />
                         <Field label="Phone"       value={formatMobileNumber(normCurrentStaff.mobile)} />
                         <Field label="Email"       value={normCurrentStaff.email}  />
                         {activeStaffRow && (
@@ -3447,107 +3511,157 @@ const BookingDetailPageV2 = () => {
                 </Card>
               )}
 
-              {/* Allocation history */}
-              <Card>
-                <CardTitle>Allocation history</CardTitle>
-                {allocationHistoryWithTimeStatus.length === 0 ? <Empty icon={Users} text="No allocation history available." /> : (() => {
-                  // A swap leaves the outgoing staff's row "ongoing" (no end date)
-                  // alongside the incoming staff's — more than one ongoing row is
-                  // exactly that mid-swap state, and "Log out & close" only makes
-                  // sense while it's true (closing the sole remaining one is
-                  // rejected server-side too, but hiding it here avoids the error).
-                  const ongoingCount = allocationHistoryWithTimeStatus.filter(r => r.isOngoing && !r.shiftSlotId).length;
-                  return (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {allocationHistoryWithTimeStatus.map((row, i) => (
-                      <div key={row.id || i} style={{ display: 'flex', alignItems: 'center', gap: 12, borderRadius: 12, padding: '12px 14px', background: row.color ? row.color.tint : '#FBF9F4', border: `1px solid ${row.needsTimeAction ? '#F4C77A' : (row.color ? row.color.border : '#EFEAE0')}`, borderLeft: `4px solid ${row.color ? row.color.solid : '#E7E1D6'}` }}>
-                        <div style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 800, background: row.color ? row.color.solid : '#D5CFC4' }}>
-                          {initials(row.name)}
-                        </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>{row.name}</span>
-                            {row.designation !== '-' && <span style={{ fontSize: 12, color: '#A39D91' }}>{row.designation}</span>}
-                            {row.isOngoing && <span style={{ fontSize: 10, fontWeight: 700, background: '#E3F1E8', color: '#2F7A53', border: '1px solid #DCEEDD', borderRadius: 999, padding: '2px 7px' }}>Active</span>}
-                            {row.needsTimeAction && (
-                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 700, background: '#FCEFD4', color: '#9A6A12', border: '1px solid #F4C77A', borderRadius: 999, padding: '2px 7px' }}>
-                                <AlertTriangle style={{ width: 10, height: 10 }} /> Action needed
-                              </span>
-                            )}
-                          </div>
-                          <div style={{ fontSize: 12, color: '#6F6A60', marginTop: 3 }}>
-                            {formatDate(row.startDate)} <span style={{ color: '#C4BFB5', margin: '0 4px' }}>→</span>
-                            {row.effectiveEnd ? formatDate(row.effectiveEnd) : <span style={{ color: '#2F8A5B', fontWeight: 600 }}>Ongoing</span>}
-                          </div>
-                          {(row.inRecord?.in_time || row.outRecord?.out_time) && (
-                            <div style={{ fontSize: 11, color: '#8B857A', marginTop: 2 }}>
-                              {row.inRecord?.in_time && <>In {formatDT(row.inRecord.in_time)}</>}
-                              {row.inRecord?.in_time && row.outRecord?.out_time && <span style={{ margin: '0 5px' }}>·</span>}
-                              {row.outRecord?.out_time && <>Out {formatDT(row.outRecord.out_time)}</>}
-                            </div>
-                          )}
-                          {row.needsTimeAction && (
-                            <div style={{ fontSize: 11, color: '#9A6A12', marginTop: 2 }}>
-                              Missing {[row.missingInTime && 'in time', row.missingOutTime && 'out time'].filter(Boolean).join(' & ')} for this swap
-                            </div>
-                          )}
-                        </div>
-                        <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                          <div style={{ fontSize: 12, fontWeight: 700, padding: '4px 10px', borderRadius: 8, background: row.color ? row.color.solid : '#E7E1D6', color: row.color ? '#fff' : '#5A554B', marginBottom: 4 }}>
-                            Day {row.dayStart ?? '?'} {row.isOngoing ? '→ ongoing' : `→ Day ${row.dayEnd ?? '?'}`}
-                          </div>
-                          <div style={{ fontSize: 11, color: '#A39D91' }}>
-                            {row.dayCount !== null ? `${row.dayCount} day${row.dayCount !== 1 ? 's' : ''}` : row.isOngoing && row.dayStart && plannedDays ? `${plannedDays - row.dayStart + 1} planned` : '—'}
-                          </div>
-                          {row.amountAllocated > 0 && <div style={{ fontSize: 11, fontWeight: 600, color: '#5A554B', marginTop: 2 }}>{formatMoney(row.amountAllocated)}</div>}
-                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, marginTop: 6 }}>
-                            <button onClick={() => openEditTimes(row)} style={{ fontSize: 11, fontWeight: 600, color: row.needsTimeAction ? '#9A6A12' : '#8C5AA6', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-                              {row.needsTimeAction ? 'Enter times' : 'Edit times'}
-                            </button>
-                            {row.isOngoing && !row.shiftSlotId && ongoingCount > 1 && (
-                              <button
-                                onClick={() => openCloseAssignment(row)}
-                                title="They've actually left — log their out-time and end this assignment"
-                                style={{ fontSize: 11, fontWeight: 600, color: '#B3261E', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-                              >
-                                Log out &amp; close
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  );
-                })()}
-              </Card>
-
-              {/* Swap history */}
-              <Card>
-                <CardTitle>Swap history</CardTitle>
-                <p style={{ fontSize: 11.5, color: '#A39D91', marginTop: -8, marginBottom: 12 }}>Out/in times for a swap live on its two rows in Allocation history above — use "Edit times" there to add or correct them.</p>
-                {normSwapHistory.length === 0 ? <Empty icon={Repeat2} text="No swap history for this booking." /> : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
-                    {normSwapHistory.map((swap, i) => (
-                      <div key={swap.id || i} style={{ background: '#FBF9F4', border: '1px solid #EFEAE0', borderRadius: 12, padding: '14px 16px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>{swap.oldStaffName}</span>
-                            <span style={{ color: '#B6AFA2', fontSize: 16 }}>→</span>
-                            <span style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>{swap.newStaffName}</span>
-                          </div>
-                          <Pill tone={swap.billingGap ? 'amber' : 'violet'}>{swap.billingGap ? 'Billing gap' : 'Recorded'}</Pill>
-                        </div>
-                        <div style={{ fontSize: 12, color: '#A39D91', marginBottom: 5 }}>{formatDT(swap.swappedAt)}</div>
-                        <div style={{ fontSize: 13, color: '#5A554B' }}>{swap.reason || 'No reason provided.'}</div>
-                        {swap.swappedByMobile && <div style={{ fontSize: 12, color: '#A39D91', marginTop: 5 }}>Swapped by {formatMobileNumber(swap.swappedByMobile)}</div>}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </Card>
+              {/* Full per-assignment in/out times and swap history now live on
+                  their own tab — a table reads better for that much detail than
+                  another card stack here. */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: '#8C5AA6', background: '#F2EAF5', border: '1px solid #DCC8E3', borderRadius: 10, padding: '10px 14px' }}>
+                <History style={{ width: 14, height: 14, flexShrink: 0 }} />
+                Every staff period's in/out times and the full swap log are on the <b>Allocation History</b> tab.
+                {rowsNeedingSwapTime.length > 0 && <> {rowsNeedingSwapTime.length} need attention there.</>}
+              </div>
             </div>
           )}
+
+          {/* ══════════════════════════════════════════════════════
+              TAB: ALLOCATION HISTORY — every staff period on this booking (who,
+              when, in/out times, amount) plus the swap log that created them,
+              as tables rather than the card stacks used elsewhere on this page —
+              there's enough columns of detail here that a table reads faster.
+          ══════════════════════════════════════════════════════ */}
+          {activeSection === 'allocation-history' && (() => {
+            const thCls = { padding: '8px 10px', textAlign: 'left', fontSize: 10.5, fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase', color: '#9ca3af' };
+            const tdCls = { padding: '10px', fontSize: 12.5, color: '#374151', verticalAlign: 'top' };
+            const ongoingCount = allocationHistoryWithTimeStatus.filter(r => r.isOngoing && !r.shiftSlotId).length;
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <Card>
+                  <CardTitle>Allocation history</CardTitle>
+                  {allocationHistoryWithTimeStatus.length === 0 ? <Empty icon={Users} text="No allocation history available." /> : (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                            <th style={thCls}>Staff</th>
+                            <th style={thCls}>Period</th>
+                            <th style={thCls}>In time</th>
+                            <th style={thCls}>Out time</th>
+                            <th style={thCls}>Duration</th>
+                            <th style={thCls}>Amount</th>
+                            <th style={thCls}>Status</th>
+                            <th style={thCls}>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {allocationHistoryWithTimeStatus.map((row, i) => (
+                            <tr key={row.id || i} style={{ borderTop: i > 0 ? '1px solid #f3f4f6' : 'none', background: row.needsTimeAction ? '#FFFBEB' : undefined }}>
+                              <td style={tdCls}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                  <span style={{ width: 8, height: 8, borderRadius: 999, flexShrink: 0, background: row.color ? row.color.solid : '#D5CFC4' }} />
+                                  <div>
+                                    <div style={{ fontWeight: 700, color: '#111827' }}><StaffLink id={row.profileId}>{row.name}</StaffLink></div>
+                                    {row.designation !== '-' && <div style={{ fontSize: 11, color: '#9ca3af' }}>{row.designation}</div>}
+                                  </div>
+                                </div>
+                              </td>
+                              <td style={tdCls}>
+                                <div style={{ fontWeight: 600, color: '#111827' }}>Day {row.dayStart ?? '?'} {row.isOngoing ? '→ ongoing' : `→ Day ${row.dayEnd ?? '?'}`}</div>
+                                <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
+                                  {formatDate(row.startDate)} → {row.effectiveEnd ? formatDate(row.effectiveEnd) : 'Ongoing'}
+                                </div>
+                              </td>
+                              <td style={tdCls}>
+                                {row.inRecord?.in_time
+                                  ? formatDT(row.inRecord.in_time)
+                                  : row.missingInTime
+                                    ? <span style={{ color: '#B45309', fontWeight: 600 }}>Missing</span>
+                                    : <span style={{ color: '#9ca3af' }}>—</span>}
+                              </td>
+                              <td style={tdCls}>
+                                {row.outRecord?.out_time
+                                  ? formatDT(row.outRecord.out_time)
+                                  : row.missingOutTime
+                                    ? <span style={{ color: '#B45309', fontWeight: 600 }}>Missing</span>
+                                    : <span style={{ color: '#9ca3af' }}>{row.isOngoing ? 'Ongoing' : '—'}</span>}
+                              </td>
+                              <td style={tdCls}>
+                                {row.dayCount !== null
+                                  ? `${row.dayCount} day${row.dayCount !== 1 ? 's' : ''}`
+                                  : row.isOngoing && row.dayStart && plannedDays
+                                    ? `${plannedDays - row.dayStart + 1} planned`
+                                    : '—'}
+                              </td>
+                              <td style={tdCls}>{row.amountAllocated > 0 ? formatMoney(row.amountAllocated) : <span style={{ color: '#9ca3af' }}>—</span>}</td>
+                              <td style={tdCls}>
+                                {row.isOngoing && (
+                                  <span style={{ display: 'inline-block', fontSize: 10, fontWeight: 700, background: '#E3F1E8', color: '#2F7A53', border: '1px solid #DCEEDD', borderRadius: 999, padding: '2px 7px', marginBottom: row.needsTimeAction ? 4 : 0 }}>Active</span>
+                                )}
+                                {row.needsTimeAction && (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10.5, color: '#9A6A12' }}>
+                                    <AlertTriangle style={{ width: 10, height: 10, flexShrink: 0 }} />
+                                    {[row.missingInTime && 'in', row.missingOutTime && 'out'].filter(Boolean).join(' & ')} time missing
+                                  </div>
+                                )}
+                                {!row.isOngoing && !row.needsTimeAction && <span style={{ color: '#9ca3af' }}>—</span>}
+                              </td>
+                              <td style={tdCls}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+                                  <button onClick={() => openEditTimes(row)} style={{ fontSize: 11, fontWeight: 600, color: row.needsTimeAction ? '#9A6A12' : '#8C5AA6', background: 'none', border: 'none', cursor: 'pointer', padding: 0, whiteSpace: 'nowrap' }}>
+                                    {row.needsTimeAction ? 'Enter times' : 'Edit times'}
+                                  </button>
+                                  {row.isOngoing && !row.shiftSlotId && ongoingCount > 1 && (
+                                    <button
+                                      onClick={() => openCloseAssignment(row)}
+                                      title="They've actually left — log their out-time and end this assignment"
+                                      style={{ fontSize: 11, fontWeight: 600, color: '#B3261E', background: 'none', border: 'none', cursor: 'pointer', padding: 0, whiteSpace: 'nowrap' }}
+                                    >
+                                      Log out &amp; close
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </Card>
+
+                <Card>
+                  <CardTitle>Swap history</CardTitle>
+                  <p style={{ fontSize: 11.5, color: '#A39D91', marginTop: -8, marginBottom: 12 }}>Out/in times for a swap live on its two rows in Allocation history above — use "Edit times" there to add or correct them.</p>
+                  {normSwapHistory.length === 0 ? <Empty icon={Repeat2} text="No swap history for this booking." /> : (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                            <th style={thCls}>Date</th>
+                            <th style={thCls}>Outgoing</th>
+                            <th style={thCls}>Incoming</th>
+                            <th style={thCls}>Reason</th>
+                            <th style={thCls}>Swapped by</th>
+                            <th style={thCls}>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {normSwapHistory.map((swap, i) => (
+                            <tr key={swap.id || i} style={{ borderTop: i > 0 ? '1px solid #f3f4f6' : 'none' }}>
+                              <td style={{ ...tdCls, whiteSpace: 'nowrap', color: '#6b7280' }}>{formatDT(swap.swappedAt)}</td>
+                              <td style={tdCls}><StaffLink id={swap.oldStaffId}><span style={{ fontWeight: 600, color: '#111827' }}>{swap.oldStaffName}</span></StaffLink></td>
+                              <td style={tdCls}><StaffLink id={swap.newStaffId}><span style={{ fontWeight: 600, color: '#111827' }}>{swap.newStaffName}</span></StaffLink></td>
+                              <td style={tdCls}>{swap.reason || <span style={{ color: '#9ca3af' }}>No reason provided</span>}</td>
+                              <td style={tdCls}>{swap.swappedByMobile ? formatMobileNumber(swap.swappedByMobile) : <span style={{ color: '#9ca3af' }}>—</span>}</td>
+                              <td style={tdCls}><Pill tone={swap.billingGap ? 'amber' : 'violet'}>{swap.billingGap ? 'Billing gap' : 'Recorded'}</Pill></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </Card>
+              </div>
+            );
+          })()}
 
           {/* ══════════════════════════════════════════════════════
               TAB: RATES — client billing rate(s) vs staff pay rate(s), set at
@@ -3595,9 +3709,11 @@ const BookingDetailPageV2 = () => {
                     {activeAssignments.map((a) => (
                       <div key={a.assignment_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, border: '1px solid #EFEAE0', borderRadius: 12, padding: '12px 14px', background: '#FBF9F4' }}>
                         <div>
-                          <div style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>{a.full_name || a.staff_name || '-'}</div>
-                          {(a.shift_label || a.shift_number) && <div style={{ fontSize: 12, color: '#A39D91', marginTop: 2 }}>{a.shift_label || `Shift ${a.shift_number}`}</div>}
-                          {a.staff_code && <div style={{ fontSize: 11, color: '#C4BFB5', marginTop: 2, fontFamily: "'JetBrains Mono',monospace" }}>{a.staff_code}</div>}
+                          <StaffLink id={a.staff_profile_id}>
+                            <div style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>{a.full_name || a.staff_name || '-'}</div>
+                            {(a.shift_label || a.shift_number) && <div style={{ fontSize: 12, color: '#A39D91', marginTop: 2 }}>{a.shift_label || `Shift ${a.shift_number}`}</div>}
+                            {a.staff_code && <div style={{ fontSize: 11, color: '#C4BFB5', marginTop: 2, fontFamily: "'JetBrains Mono',monospace" }}>{a.staff_code}</div>}
+                          </StaffLink>
                         </div>
                         <EditableRate
                           rateKey={`staff_${a.assignment_id}`} label={null} value={a.daily_rate}
@@ -4722,8 +4838,10 @@ const BookingDetailPageV2 = () => {
                               </div>
                               <div className="min-w-0">
                                 <p className="text-sm font-semibold text-slate-900 truncate">
-                                  {s.full_name}
-                                  {s.staff_code && <span className="ml-2 text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{s.staff_code}</span>}
+                                  <StaffLink id={s.staff_profile_id}>
+                                    {s.full_name}
+                                    {s.staff_code && <span className="ml-2 text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{s.staff_code}</span>}
+                                  </StaffLink>
                                 </p>
                                 {(s.designation || s.gender) && <p className="text-xs text-slate-500">{s.designation}{s.designation && s.gender ? ' · ' : ''}{s.gender ? (s.gender === 'MALE' ? 'Male' : s.gender === 'FEMALE' ? 'Female' : s.gender) : ''}</p>}
                                 {s.mobile_number && <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5"><Phone className="w-3 h-3" /> {formatMobileNumber(s.mobile_number)}</p>}
@@ -4788,7 +4906,11 @@ const BookingDetailPageV2 = () => {
                         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-center">
                           <p className="text-xs text-slate-500 mb-2 font-medium uppercase tracking-wide">Current</p>
                           <div className="w-12 h-12 rounded-full bg-rose-100 flex items-center justify-center mx-auto mb-2"><User className="w-6 h-6 text-rose-400" /></div>
-                          <p className="text-sm font-semibold text-slate-900 truncate">{swapModalSlotId ? (shiftSlots.find(s => s.shift_slot_id === swapModalSlotId)?.assignment?.staff_name || '-') : (normCurrentStaff?.name || '-')}</p>
+                          <p className="text-sm font-semibold text-slate-900 truncate">
+                            <StaffLink id={swapModalSlotId ? shiftSlots.find(s => s.shift_slot_id === swapModalSlotId)?.assignment?.staff_profile_id : normCurrentStaff?.profileId}>
+                              {swapModalSlotId ? (shiftSlots.find(s => s.shift_slot_id === swapModalSlotId)?.assignment?.staff_name || '-') : (normCurrentStaff?.name || '-')}
+                            </StaffLink>
+                          </p>
                         </div>
                         <div className="flex items-center justify-center"><Repeat2 className="w-7 h-7 text-slate-300" /></div>
                       </>
@@ -4798,7 +4920,7 @@ const BookingDetailPageV2 = () => {
                       <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-2 overflow-hidden">
                         {swapModalSelectedStaff.profile_picture_url ? <img src={swapModalSelectedStaff.profile_picture_url} alt={swapModalSelectedStaff.full_name} className="w-12 h-12 object-cover" /> : <User className="w-6 h-6 text-emerald-600" />}
                       </div>
-                      <p className="text-sm font-semibold text-slate-900 truncate">{swapModalSelectedStaff.full_name}</p>
+                      <p className="text-sm font-semibold text-slate-900 truncate"><StaffLink id={swapModalSelectedStaff.staff_profile_id}>{swapModalSelectedStaff.full_name}</StaffLink></p>
                       {swapModalSelectedStaff.mobile_number && <p className="text-xs text-slate-500 mt-0.5">{formatMobileNumber(swapModalSelectedStaff.mobile_number)}</p>}
                     </div>
                   </div>
@@ -4883,7 +5005,7 @@ const BookingDetailPageV2 = () => {
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
               <div>
                 <h3 className="text-base font-bold text-slate-900">Edit times</h3>
-                <p className="text-xs text-slate-500 mt-0.5">{editTimesRow.name}</p>
+                <p className="text-xs text-slate-500 mt-0.5"><StaffLink id={editTimesRow.profileId}>{editTimesRow.name}</StaffLink></p>
               </div>
               <button onClick={closeEditTimes} className="p-1.5 rounded-lg hover:bg-slate-100 transition"><XCircle className="h-5 w-5 text-slate-400" /></button>
             </div>
@@ -4930,7 +5052,7 @@ const BookingDetailPageV2 = () => {
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
               <div>
                 <h3 className="text-base font-bold text-slate-900">Log out &amp; close assignment</h3>
-                <p className="text-xs text-slate-500 mt-0.5">{closeAssignmentRow.name}</p>
+                <p className="text-xs text-slate-500 mt-0.5"><StaffLink id={closeAssignmentRow.profileId}>{closeAssignmentRow.name}</StaffLink></p>
               </div>
               <button onClick={closeCloseAssignment} className="p-1.5 rounded-lg hover:bg-slate-100 transition"><XCircle className="h-5 w-5 text-slate-400" /></button>
             </div>
@@ -5054,7 +5176,7 @@ const BookingDetailPageV2 = () => {
                       ) : selectedStaff ? (
                         <div className="flex items-center justify-between gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
                           <div className="min-w-0">
-                            <p className="text-sm font-semibold text-slate-900 truncate">{selectedStaff.full_name}</p>
+                            <p className="text-sm font-semibold text-slate-900 truncate"><StaffLink id={selectedStaff.staff_profile_id}>{selectedStaff.full_name}</StaffLink></p>
                             <p className="text-xs text-slate-500">
                               {selectedStaff.designation}
                               {onBookingStaffIds.has(selectedStaff.staff_profile_id) && <span className={selectedStaff.designation ? 'ml-1.5 font-medium text-emerald-600' : 'font-medium text-emerald-600'}>{selectedStaff.designation ? '· ' : ''}Already on this booking</span>}
@@ -5287,12 +5409,6 @@ const BookingDetailPageV2 = () => {
         // invoicing_mode='MANUAL' the moment this happens, so manualInvoiceDay below
         // already covers the invoice-decision side; this is only for the banner.
         const isConcurrentDay = isLiveIn && dayModal.assignments.filter(a => !a.shift_slot_id).length > 1;
-        // Whichever of the concurrent assignments hasn't been closed yet — offered
-        // right here so the admin doesn't have to leave the timeline to log the
-        // outgoing staff's out-time (see openCloseAssignment / closeStaffAssignment).
-        const closableAssignments = isConcurrentDay
-          ? dayModal.assignments.filter(a => !a.shift_slot_id && !a.service_end_date)
-          : [];
         const showInvoiceSection = manualInvoiceDay || isFirstDayInvoiceDecision || isLastDayInvoiceDecision;
         const fmtTime = (ts) => ts ? new Date(ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : '—';
         const thCls = 'px-3 py-2 text-left text-[10.5px] font-semibold uppercase tracking-wider text-gray-400';
@@ -5331,12 +5447,13 @@ const BookingDetailPageV2 = () => {
                 // summary of what Confirm Day is about to apply.
                 const staffPreviewRows = dayModal.assignments.map(a => {
                   const staffName = a.full_name || a.staff_name || 'Staff';
-                  if (draftWaives[a.shift_slot_id]) return { assignmentId: a.assignment_id, staffName, kind: 'WAIVED' };
-                  if (draftAbsent[a.assignment_id]) return { assignmentId: a.assignment_id, staffName, kind: 'ABSENT' };
+                  const staffProfileId = a.staff_profile_id;
+                  if (draftWaives[a.shift_slot_id]) return { assignmentId: a.assignment_id, staffName, staffProfileId, kind: 'WAIVED' };
+                  if (draftAbsent[a.assignment_id]) return { assignmentId: a.assignment_id, staffName, staffProfileId, kind: 'ABSENT' };
                   const saved = draftTimeSaved[a.assignment_id];
                   if (saved) {
                     const decision = draftSalaryDecisions[a.assignment_id];
-                    return { assignmentId: a.assignment_id, staffName, kind: 'TIME', saved, decision };
+                    return { assignmentId: a.assignment_id, staffName, staffProfileId, kind: 'TIME', saved, decision };
                   }
                   return null;
                 }).filter(Boolean);
@@ -5366,7 +5483,7 @@ const BookingDetailPageV2 = () => {
                             <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
                               {staffPreviewRows.map((r, idx) => (
                                 <div key={r.assignmentId} className="flex items-center justify-between px-4 py-2.5 text-sm" style={idx > 0 ? { borderTop: '1px solid #f3f4f6' } : {}}>
-                                  <span className="font-medium text-gray-900">{r.staffName}</span>
+                                  <StaffLink id={r.staffProfileId}><span className="font-medium text-gray-900">{r.staffName}</span></StaffLink>
                                   {r.kind === 'WAIVED' && <span className="text-xs text-amber-700">Waived — no pay</span>}
                                   {r.kind === 'ABSENT' && <span className="text-xs text-red-700">Absent — no pay</span>}
                                   {r.kind === 'TIME' && (
@@ -5426,25 +5543,7 @@ const BookingDetailPageV2 = () => {
                 {isConcurrentDay && (
                   <div className="mx-6 mt-4 rounded-lg border bg-amber-50 border-amber-200 px-4 py-2.5 text-xs text-amber-800">
                     <span className="font-semibold">Two staff on duty this day.</span>{' '}
-                    Neither is paid automatically while this booking has more than one active staff member — confirm each one's attendance and pay separately below.
-                    The outgoing staff member stays active until their out-time is logged.
-                    {closableAssignments.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {closableAssignments.map(a => (
-                          <button
-                            key={a.assignment_id}
-                            onClick={() => openCloseAssignment({
-                              id: a.assignment_id,
-                              name: a.full_name || a.staff_name || 'This staff member',
-                              startDate: a.service_start_date,
-                            }, dayModal.dateISO)}
-                            className="px-2.5 py-1 rounded-md bg-white border border-amber-300 text-amber-900 font-semibold hover:bg-amber-100 transition"
-                          >
-                            Log {a.full_name || a.staff_name || 'staff'}'s out-time &amp; close
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                    Neither is paid automatically while this booking has more than one active staff member — log each one's attendance below: the incoming staff member logs in and the outgoing one logs out to close their assignment.
                   </div>
                 )}
 
@@ -5486,7 +5585,17 @@ const BookingDetailPageV2 = () => {
                               const record = dateRecords.find(r => r.assignment_id === a.assignment_id);
                               const staffName = a.full_name || a.staff_name || 'Staff';
                               const shiftLabel = a.shift_label || (a.shift_number ? `Shift ${a.shift_number}` : null);
-                              const inputs = attendanceInputs[a.assignment_id] || { date: dayModal.dateISO, in_time: '', out_time: '' };
+                              // A time can already be on record here without going through this
+                              // form's own draft cache — e.g. closeStaffAssignment (Log out & close)
+                              // writes a real PENDING attendance row directly. Fall back to it so
+                              // that time shows up pre-filled instead of the field looking empty.
+                              const toLocalHM = (ts) => ts ? new Date(ts).toTimeString().slice(0, 5) : '';
+                              const inputs = attendanceInputs[a.assignment_id] || (record ? {
+                                date: record.service_date?.slice(0, 10) || dayModal.dateISO,
+                                in_time: toLocalHM(record.in_time),
+                                out_time: toLocalHM(record.out_time),
+                                autoFilled: false,
+                              } : { date: dayModal.dateISO, in_time: '', out_time: '' });
                               const rowBorder = idx > 0 ? { borderTop: '1px solid #f3f4f6' } : {};
                               const isEditing = editingAttendanceIds.has(a.assignment_id);
                               const draftSaved = draftTimeSaved[a.assignment_id];
@@ -5498,7 +5607,12 @@ const BookingDetailPageV2 = () => {
                               // gets the flat present/absent/exception mark — boundary days (and every
                               // SHIFT_BASED/VISITING day) still need a real in/out time.
                               const { onlyStart: liveInOnlyStart, onlyEnd: liveInOnlyEnd } = liveInBoundary(a, dayModal.dateISO);
-                              const isFlatMarkDay = isLiveIn && !a.shift_slot_id && !liveInOnlyStart && !liveInOnlyEnd;
+                              // The outgoing half of a still-open swap — started before today, no
+                              // end date yet, and this is the OTHER concurrent assignment (not the
+                              // one whose service_start_date is today). Gets its own row below
+                              // instead of falling into either the flat mark or the normal timed flow.
+                              const isSwapOutgoingOpen = isConcurrentDay && isLiveIn && !a.shift_slot_id && !a.service_end_date && !liveInOnlyStart;
+                              const isFlatMarkDay = isLiveIn && !a.shift_slot_id && !liveInOnlyStart && !liveInOnlyEnd && !isSwapOutgoingOpen;
 
                               // Assigned reference — shift start/duration for SHIFT_BASED, else the
                               // assignment's own service_start_time/assigned_hours (VISITING/LIVE_IN).
@@ -5543,8 +5657,10 @@ const BookingDetailPageV2 = () => {
                                 return (
                                   <tr key={a.assignment_id} style={rowBorder}>
                                     <td className={tdCls}>
-                                      <span className="font-medium text-gray-900">{staffName}</span>
-                                      {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                      <StaffLink id={a.staff_profile_id}>
+                                        <span className="font-medium text-gray-900">{staffName}</span>
+                                        {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                      </StaffLink>
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     {isFlatMarkDay ? (
@@ -5593,8 +5709,10 @@ const BookingDetailPageV2 = () => {
                                 return (
                                   <tr key={a.assignment_id} style={rowBorder}>
                                     <td className={tdCls}>
-                                      <span className="font-medium text-gray-900">{staffName}</span>
-                                      {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                      <StaffLink id={a.staff_profile_id}>
+                                        <span className="font-medium text-gray-900">{staffName}</span>
+                                        {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                      </StaffLink>
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     {assignedCell}
@@ -5619,8 +5737,10 @@ const BookingDetailPageV2 = () => {
                                 return (
                                   <tr key={a.assignment_id} style={{ ...rowBorder, background: '#fffaf0' }}>
                                     <td className={tdCls}>
-                                      <span className="font-medium text-gray-900">{staffName}</span>
-                                      {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                      <StaffLink id={a.staff_profile_id}>
+                                        <span className="font-medium text-gray-900">{staffName}</span>
+                                        {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                      </StaffLink>
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     {isFlatMarkDay ? null : assignedCell}
@@ -5652,8 +5772,10 @@ const BookingDetailPageV2 = () => {
                                 return (
                                   <tr key={a.assignment_id} style={{ ...rowBorder, background: '#fff7ed' }}>
                                     <td className={tdCls}>
-                                      <span className="font-medium text-gray-900">{staffName}</span>
-                                      {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                      <StaffLink id={a.staff_profile_id}>
+                                        <span className="font-medium text-gray-900">{staffName}</span>
+                                        {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                      </StaffLink>
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     {isFlatMarkDay ? null : assignedCell}
@@ -5683,8 +5805,10 @@ const BookingDetailPageV2 = () => {
                                 return (
                                   <tr key={a.assignment_id} style={rowBorder}>
                                     <td className={tdCls}>
-                                      <span className="font-medium text-gray-900">{staffName}</span>
-                                      {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                      <StaffLink id={a.staff_profile_id}>
+                                        <span className="font-medium text-gray-900">{staffName}</span>
+                                        {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                      </StaffLink>
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     <td className={tdCls} colSpan={5}>
@@ -5729,8 +5853,10 @@ const BookingDetailPageV2 = () => {
                                 return (
                                   <tr key={a.assignment_id} style={rowBorder}>
                                     <td className={tdCls}>
-                                      <span className="font-medium text-gray-900">{staffName}</span>
-                                      {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                      <StaffLink id={a.staff_profile_id}>
+                                        <span className="font-medium text-gray-900">{staffName}</span>
+                                        {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                      </StaffLink>
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     {assignedCell}
@@ -5779,8 +5905,10 @@ const BookingDetailPageV2 = () => {
                                 return (
                                   <tr key={a.assignment_id} style={{ ...rowBorder, background: '#fff7ed' }}>
                                     <td className={tdCls}>
-                                      <span className="font-medium text-gray-900">{staffName}</span>
-                                      {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                      <StaffLink id={a.staff_profile_id}>
+                                        <span className="font-medium text-gray-900">{staffName}</span>
+                                        {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                      </StaffLink>
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     {isFlatMarkDay ? null : assignedCell}
@@ -5803,6 +5931,42 @@ const BookingDetailPageV2 = () => {
                                 );
                               }
 
+                              // SWAP — OUTGOING, STILL OPEN: this assignment started before today
+                              // and has no end date yet (swapStaff leaves it open — see
+                              // closeStaffAssignment). Mirrors the incoming assignment's "Log in &
+                              // start assignment" row below: instead of a normal in/out entry, the
+                              // one thing this row can do is log the out-time and end the assignment
+                              // — inline here instead of a separate banner/modal the admin has to go
+                              // hunting for.
+                              if (isSwapOutgoingOpen) {
+                                return (
+                                  <tr key={a.assignment_id} style={{ ...rowBorder, background: '#fff1f0' }}>
+                                    <td className={tdCls}>
+                                      <StaffLink id={a.staff_profile_id}>
+                                        <span className="font-medium text-gray-900">{staffName}</span>
+                                        {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                      </StaffLink>
+                                    </td>
+                                    {assignedCell}
+                                    <td className={tdCls} colSpan={4}>
+                                      <span className="text-xs text-gray-500">Still on this booking alongside the incoming staff — log their out-time to end this assignment.</span>
+                                    </td>
+                                    <td className={tdCls}>
+                                      <button
+                                        onClick={() => openCloseAssignment({
+                                          id: a.assignment_id,
+                                          name: staffName,
+                                          startDate: a.service_start_date,
+                                        }, inputs.date || dayModal.dateISO)}
+                                        className="px-3 py-1 text-[11px] font-semibold text-white bg-rose-700 hover:bg-rose-800 rounded transition"
+                                      >
+                                        Log out &amp; close assignment
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              }
+
                               // Non-boundary LIVE_IN day — a flat present/absent/exception mark, no
                               // in/out time. Boundary days (and every SHIFT_BASED/VISITING day) keep
                               // the timed flow below since partial-day billing depends on the hour.
@@ -5810,8 +5974,10 @@ const BookingDetailPageV2 = () => {
                                 return (
                                   <tr key={a.assignment_id} style={{ ...rowBorder, background: '#fafafa' }}>
                                     <td className={tdCls}>
-                                      <span className="font-medium text-gray-900">{staffName}</span>
-                                      {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                      <StaffLink id={a.staff_profile_id}>
+                                        <span className="font-medium text-gray-900">{staffName}</span>
+                                        {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                      </StaffLink>
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     <td className={tdCls} colSpan={5}>
@@ -5833,8 +5999,10 @@ const BookingDetailPageV2 = () => {
                               return (
                                 <tr key={a.assignment_id} style={{ ...rowBorder, background: '#fafafa' }}>
                                   <td className={tdCls}>
-                                    <span className="font-medium text-gray-900">{staffName}</span>
-                                    {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                    <StaffLink id={a.staff_profile_id}>
+                                      <span className="font-medium text-gray-900">{staffName}</span>
+                                      {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                    </StaffLink>
                                     {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                   </td>
                                   {assignedCell}
@@ -5864,7 +6032,9 @@ const BookingDetailPageV2 = () => {
                                   <td className={tdCls}><HoursBadge served={onlyStart ? null : livePreviewHours} assigned={assignedHours} /></td>
                                   <td className={tdCls}>
                                     <div className="flex items-center gap-1.5 flex-wrap">
-                                      <button onClick={() => saveAttendanceTimes(a)} className="px-3 py-1 text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded transition">Save</button>
+                                      <button onClick={() => saveAttendanceTimes(a)} title={onlyStart && isConcurrentDay ? "Logs their in-time — they're already active on this booking, this just records when they actually arrived" : undefined} className="px-3 py-1 text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded transition">
+                                        {onlyStart && isConcurrentDay ? 'Log in & start assignment' : 'Save'}
+                                      </button>
                                       {isEditing ? (
                                         <button onClick={() => cancelEditAttendance(a.assignment_id)} className="px-3 py-1 text-[11px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded transition">Cancel</button>
                                       ) : (
