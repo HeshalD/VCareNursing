@@ -296,7 +296,8 @@ exports.confirmDayDraft = async (req, res) => {
 
             const { invoice, finalAmount } = await applyInvoiceDecision(client, {
                 booking_id, service_date, approve: entry.approve, amount: entry.amount,
-                shift_slot_id: entry.shift_slot_id || null, reschedule_id: entry.reschedule_id || null,
+                shift_slot_id: entry.shift_slot_id || null, assignment_id: entry.assignment_id || null,
+                reschedule_id: entry.reschedule_id || null,
                 deciderUserId, deciderName: actorName
             });
             invoiceResults.push(invoice);
@@ -305,7 +306,7 @@ exports.confirmDayDraft = async (req, res) => {
                 actionType: entry.approve
                     ? (isShift ? 'SHIFT_INVOICE_CONFIRMED' : 'DAILY_INVOICE_CONFIRMED')
                     : (isShift ? 'SHIFT_INVOICE_SKIPPED' : 'DAILY_INVOICE_SKIPPED'),
-                details: { service_date, amount: finalAmount, shift_slot_id: entry.shift_slot_id || null }
+                details: { service_date, amount: finalAmount, shift_slot_id: entry.shift_slot_id || null, assignment_id: entry.assignment_id || null }
             });
         }
 

@@ -122,13 +122,14 @@ const correctInvoiceAmount = async (client, {
   if (bookingRes.rows.length === 0) throw badRequest('Booking not found', 404);
   const booking = bookingRes.rows[0];
 
-  // Only the standing (non shift-slot, non-reschedule) row for the day. Shift and
-  // makeup occurrences carry their own rows and are corrected by their own ids;
-  // a booking-wide date lookup must not silently pick one of them.
+  // Only the standing (non shift-slot, non-assignment, non-reschedule) row for the
+  // day. Shift/makeup occurrences and per-assignment invoices (a mid-swap day split
+  // between staff members — see applyInvoiceDecision) carry their own rows; a plain
+  // booking-wide date lookup must not silently pick one of several matches.
   const invoiceRes = await client.query(
     `SELECT * FROM booking_daily_invoices
      WHERE booking_id = $1 AND service_date = $2::date
-       AND shift_slot_id IS NULL AND reschedule_id IS NULL
+       AND shift_slot_id IS NULL AND assignment_id IS NULL AND reschedule_id IS NULL
      FOR UPDATE`,
     [booking_id, service_date]
   );

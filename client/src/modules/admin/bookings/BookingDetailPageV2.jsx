@@ -464,6 +464,18 @@ const BookingDetailPageV2 = () => {
   const [closeAssignmentTime, setCloseAssignmentTime]       = useState('');
   const [closeAssignmentBusy, setCloseAssignmentBusy]       = useState(false);
   const [closeAssignmentError, setCloseAssignmentError]     = useState('');
+  // 'time' collects the out-time, 'pay' decides the first/last day. Nothing commits
+  // until 'pay' is submitted — closing and settling go in one transaction so an
+  // assignment can't end up closed with its ends half-decided.
+  const [closeAssignmentStep, setCloseAssignmentStep]       = useState('time');
+  // 'close' ends the assignment and settles it; 'settle' is for one a scheduled
+  // termination/completion already ended overnight, so only the pay is outstanding.
+  const [closeAssignmentMode, setCloseAssignmentMode]       = useState('close');
+  // dateISO -> { approve, amount } and dateISO -> 'HH:MM' for backfilling a first
+  // day whose in-time was never logged.
+  const [closePayDecisions, setClosePayDecisions]           = useState({});
+  const [closeInTimeOverrides, setCloseInTimeOverrides]     = useState({});
+  const [settleAfterEnding, setSettleAfterEnding]           = useState(false);
 
   // reschedule modal — moves one shift occurrence to a different date, with an
   // optional staff change for the makeup occurrence
@@ -578,6 +590,7 @@ const BookingDetailPageV2 = () => {
   const [editingAttendanceIds, setEditingAttendanceIds] = useState(() => new Set()); // assignment_ids re-opened for correction after saving, pre-salary-decision
   const [invoiceAmountInput, setInvoiceAmountInput]  = useState('');
   const [invoiceAmountInputsBySlot, setInvoiceAmountInputsBySlot] = useState({}); // shift_slot_id -> amount string
+  const [invoiceAmountInputsByAssignment, setInvoiceAmountInputsByAssignment] = useState({}); // assignment_id -> amount string, for splitting a mid-swap LIVE_IN day's client invoice per staff member
   const [salaryAmountInputs, setSalaryAmountInputs] = useState({}); // assignment_id -> amount string
 
   // Correcting a wrong figure on a day that has ALREADY been decided. Deliberately
@@ -934,15 +947,34 @@ const BookingDetailPageV2 = () => {
         const outRecord = endISO ? attendanceRecords.find(a => a.assignment_id === row.id && a.service_date?.slice(0, 10) === endISO) : null;
         const missingInTime = i > 0 && !inRecord?.in_time;
         const missingOutTime = i < rows.length - 1 && !!row.effectiveEnd && !outRecord?.out_time;
-        flagged.push({ ...row, inRecord, outRecord, missingInTime, missingOutTime, needsTimeAction: missingInTime || missingOutTime });
+        // An ended LIVE_IN assignment whose first or last day is still PENDING —
+        // the cron deliberately never auto-pays those, and a scheduled termination
+        // or completion runs overnight with nobody there to decide them, so they
+        // wait here until an admin settles them. Same-day assignments have one
+        // boundary, not two.
+        const boundaryRows = startISO === endISO ? [inRecord] : [inRecord, outRecord];
+        const needsPaySettlement = Boolean(
+          isLiveIn && row.effectiveEnd && !row.shiftSlotId &&
+          boundaryRows.some(r => !r || r.salary_status === 'PENDING')
+        );
+        flagged.push({
+          ...row, inRecord, outRecord, missingInTime, missingOutTime,
+          needsTimeAction: missingInTime || missingOutTime,
+          needsPaySettlement,
+        });
       });
     });
     flagged.sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
     return flagged;
-  }, [sortedAllocationHistory, attendanceRecords]);
+  }, [sortedAllocationHistory, attendanceRecords, isLiveIn]);
 
   const rowsNeedingSwapTime = useMemo(
     () => allocationHistoryWithTimeStatus.filter(r => r.needsTimeAction),
+    [allocationHistoryWithTimeStatus]
+  );
+
+  const rowsNeedingPaySettlement = useMemo(
+    () => allocationHistoryWithTimeStatus.filter(r => r.needsPaySettlement),
     [allocationHistoryWithTimeStatus]
   );
 
@@ -1431,7 +1463,7 @@ const BookingDetailPageV2 = () => {
     });
 
     const invoices = Object.values(invoiceDecisions).map(dec => ({
-      shift_slot_id: dec.shift_slot_id || null, reschedule_id: dec.reschedule_id || null,
+      shift_slot_id: dec.shift_slot_id || null, assignment_id: dec.assignment_id || null, reschedule_id: dec.reschedule_id || null,
       action: 'DECIDE', approve: dec.approve, amount: dec.approve ? dec.amount : undefined,
     }));
 
@@ -1445,7 +1477,7 @@ const BookingDetailPageV2 = () => {
   // swapped) — so only the booking's first day needs a start time and only its last day
   // needs an end time. Middle days (and non-boundary edits) still need both.
   const liveInBoundary = (assignment, dateISO) => {
-    if (!isLiveIn || assignment.shift_slot_id) return { onlyStart: false, onlyEnd: false };
+    if (!isLiveIn || assignment.shift_slot_id) return { onlyStart: false, onlyEnd: false, sameDay: false, isBoundary: false };
     const isFirstDay = toLocalDateStr(assignment.service_start_date) === dateISO;
     // The assignment only gets service_end_date once the termination/completion actually
     // executes (immediately for a same-day end, or overnight via the cron for a scheduled
@@ -1455,7 +1487,17 @@ const BookingDetailPageV2 = () => {
       (assignment.service_end_date && toLocalDateStr(assignment.service_end_date) === dateISO) ||
       (!assignment.service_end_date && scheduledFinalization?.effective_date === dateISO)
     );
-    return { onlyStart: isFirstDay && !isLastDay, onlyEnd: isLastDay && !isFirstDay };
+    // Arrived and left on the same day — a client can reject a staff member on
+    // arrival and have them swapped out hours later. Neither half of the usual
+    // midnight-bounded pair applies: there's one real in→out span, so this day
+    // needs BOTH times, like any ordinary non-LIVE_IN day.
+    const sameDay = isFirstDay && isLastDay;
+    return {
+      onlyStart: isFirstDay && !isLastDay,
+      onlyEnd: isLastDay && !isFirstDay,
+      sameDay,
+      isBoundary: isFirstDay || isLastDay,
+    };
   };
 
   // Validates the typed in/out time and caches it into the day's draft — does NOT
@@ -1611,18 +1653,22 @@ const BookingDetailPageV2 = () => {
   };
 
   // Caches the client-invoice approve/skip + amount decision — no invoice
-  // transaction is created until Confirm Day.
-  const decideInvoice = (approve, shiftSlotId) => {
-    const key = shiftSlotId || 'day';
+  // transaction is created until Confirm Day. Pass assignmentId instead of
+  // shiftSlotId to invoice one staff member's share of a mid-swap LIVE_IN day
+  // separately (see isConcurrentDay) rather than one lump amount for the whole day.
+  const decideInvoice = (approve, shiftSlotId, assignmentId) => {
+    const key = assignmentId || shiftSlotId || 'day';
     // A shift covered same-day by a different staff member (via the reschedule
     // mechanism, new_date === original_date) has its own reschedule-scoped invoice
     // row — must be targeted explicitly or this would collide with the slot's
     // standing (now-unused) invoice row for the same date.
     const slotAssignment = shiftSlotId ? dayModal.assignments.find(a => a.shift_slot_id === shiftSlotId) : null;
-    const amount = approve ? parseFloat(shiftSlotId ? invoiceAmountInputsBySlot[shiftSlotId] : invoiceAmountInput) : null;
+    const amount = approve
+      ? parseFloat(assignmentId ? invoiceAmountInputsByAssignment[assignmentId] : shiftSlotId ? invoiceAmountInputsBySlot[shiftSlotId] : invoiceAmountInput)
+      : null;
     const nextInvoiceDecisions = {
       ...draftInvoiceDecisions,
-      [key]: { approve, amount, shift_slot_id: shiftSlotId || null, reschedule_id: slotAssignment?.reschedule_id || null },
+      [key]: { approve, amount, shift_slot_id: shiftSlotId || null, assignment_id: assignmentId || null, reschedule_id: slotAssignment?.reschedule_id || null },
     };
     setDraftInvoiceDecisions(nextInvoiceDecisions);
     persistDraftWith({ invoiceDecisions: nextInvoiceDecisions });
@@ -1981,28 +2027,130 @@ const BookingDetailPageV2 = () => {
     finally { setEditTimesSubmitting(false); }
   };
 
-  // Closes an assignment a swap left open — the outgoing staff has actually left,
-  // so their out-time is logged and their row stops being "ongoing". Only ever
-  // offered while another assignment is also ongoing (see ongoingAssignmentCount
-  // below); closing the sole remaining one is rejected server-side too.
-  const openCloseAssignment = (row, presetDate) => {
+  // The attendance row already on file for one assignment on one date, if any.
+  const attendanceFor = (assignmentId, dateISO) => attendanceRecords.find(
+    r => r.assignment_id === assignmentId && r.service_date?.slice(0, 10) === dateISO
+  ) || null;
+  const timeOfDay = (ts) => (ts ? new Date(ts).toTimeString().slice(0, 5) : '');
+
+  // The day(s) an assignment's pay is settled for: the one it started on and the
+  // one it ended on. A LIVE_IN staff member is on duty continuously, so those two
+  // are the only partial days — everything between is a full day the cron already
+  // paid. They're decided together at the end because only then are both real
+  // spans known (see settleBoundaryPay).
+  //
+  // An assignment that started and ended on the SAME day collapses to a single
+  // entry: a client who rejects a carer on arrival leaves one real in→out span of
+  // a few hours, not two midnight-bounded halves.
+  const buildSettlementDays = (row, outDateISO, outTimeHM) => {
+    const startISO = toLocalDateStr(row.startDate);
+    const endISO = outDateISO || toLocalDateStr(row.effectiveEnd);
+    if (!startISO || !endISO) return [];
+
+    const describe = (dateISO, kind) => {
+      const record = attendanceFor(row.id, dateISO);
+      const isOnlyDay = kind === 'ONLY';
+      // Midnight bounds the open end of a partial day: a first day runs from arrival
+      // to midnight, a last day from midnight to departure. A single-day assignment
+      // has neither — both ends are real.
+      const inTime = (isOnlyDay || kind === 'FIRST')
+        ? (closeInTimeOverrides[dateISO] ?? timeOfDay(record?.in_time))
+        : '00:00';
+      const outTime = (isOnlyDay || kind === 'LAST')
+        ? (outTimeHM || timeOfDay(record?.out_time))
+        : '23:59';
+      const hours = computeWorkedHours(inTime, outTime);
+      return {
+        dateISO, kind, record, inTime, outTime, hours,
+        needsInTime: (isOnlyDay || kind === 'FIRST') && !inTime,
+        alreadyDecided: Boolean(record && record.salary_status !== 'PENDING'),
+        // Pro-rated against a 24h LIVE_IN day, which is what the daily rate buys.
+        suggested: hours !== null && row.dailyRate ? Math.round((Number(row.dailyRate) * hours) / 24) : null,
+      };
+    };
+
+    return startISO === endISO
+      ? [describe(startISO, 'ONLY')]
+      : [describe(startISO, 'FIRST'), describe(endISO, 'LAST')];
+  };
+
+  // Ends an assignment a swap left open — the outgoing staff has actually left —
+  // and settles their first/last day in the same commit. `mode: 'settle'` skips the
+  // closing half for an assignment a scheduled termination/completion already ended
+  // overnight, leaving only the pay outstanding.
+  const openCloseAssignment = (row, presetDate, mode = 'close') => {
+    const alreadyEnded = mode === 'settle';
+    const endISO = alreadyEnded ? toLocalDateStr(row.effectiveEnd) : null;
+    const existingOut = alreadyEnded ? timeOfDay(attendanceFor(row.id, endISO)?.out_time) : '';
     setCloseAssignmentRow(row);
-    setCloseAssignmentDate(presetDate || toDateInput(new Date()));
-    setCloseAssignmentTime('');
+    setCloseAssignmentMode(mode);
+    setCloseAssignmentDate(endISO || presetDate || toDateInput(new Date()));
+    setCloseAssignmentTime(existingOut);
+    setCloseAssignmentStep('time');
+    setClosePayDecisions({});
+    setCloseInTimeOverrides({});
     setCloseAssignmentError('');
   };
-  const closeCloseAssignment = () => { setCloseAssignmentRow(null); setCloseAssignmentDate(''); setCloseAssignmentTime(''); setCloseAssignmentError(''); };
+  const closeCloseAssignment = () => {
+    setCloseAssignmentRow(null); setCloseAssignmentDate(''); setCloseAssignmentTime('');
+    setCloseAssignmentError(''); setCloseAssignmentStep('time'); setCloseAssignmentMode('close');
+    setClosePayDecisions({}); setCloseInTimeOverrides({});
+  };
+
+  // Step one only moves to the pay decision — nothing is written yet.
+  const reviewCloseAssignmentPay = () => {
+    if (!closeAssignmentDate || !closeAssignmentTime) { setCloseAssignmentError('Enter the date and time they left'); return; }
+    if (toLocalDateStr(closeAssignmentRow.startDate) > closeAssignmentDate) {
+      setCloseAssignmentError(`They started on ${formatDate(closeAssignmentRow.startDate)} — the out-time can't be before that.`);
+      return;
+    }
+    const days = buildSettlementDays(closeAssignmentRow, closeAssignmentDate, closeAssignmentTime);
+    // Left blank on purpose: an empty amount falls through to that day's pro-rated
+    // suggestion at render and on submit, so a suggestion that moves (because the
+    // admin fills in a missing arrival time here) stays live instead of going stale.
+    setClosePayDecisions(Object.fromEntries(
+      days.filter(d => !d.alreadyDecided).map(d => [d.dateISO, { approve: true, amount: '' }])
+    ));
+    setCloseAssignmentError('');
+    setCloseAssignmentStep('pay');
+  };
+
   const submitCloseAssignment = async () => {
-    if (!closeAssignmentRow || !closeAssignmentDate || !closeAssignmentTime) return;
-    const closedAssignmentId = closeAssignmentRow.id;
-    const closedDate = closeAssignmentDate;
-    const closedTime = closeAssignmentTime;
+    if (!closeAssignmentRow) return;
+    const row = closeAssignmentRow;
+    const days = buildSettlementDays(row, closeAssignmentDate, closeAssignmentTime);
+
+    const missing = days.find(d => !d.alreadyDecided && d.needsInTime);
+    if (missing) { setCloseAssignmentError(`Enter when they arrived on ${formatDate(missing.dateISO)} before deciding that day's pay.`); return; }
+
+    const settlement_days = days.filter(d => !d.alreadyDecided).map(d => {
+      const decision = closePayDecisions[d.dateISO] || { approve: true, amount: '' };
+      const amount = decision.amount === '' || decision.amount === null || decision.amount === undefined
+        ? d.suggested
+        : Number(decision.amount);
+      return {
+        service_date: d.dateISO,
+        in_time: `${d.dateISO}T${d.inTime}`,
+        out_time: `${d.dateISO}T${d.outTime}`,
+        approve: Boolean(decision.approve),
+        amount: decision.approve ? amount : undefined,
+      };
+    });
+
+    const unpriced = settlement_days.find(d => d.approve && (!d.amount || d.amount <= 0));
+    if (unpriced) { setCloseAssignmentError(`Enter an amount for ${formatDate(unpriced.service_date)}, or mark it as not paid.`); return; }
+
     try {
       setCloseAssignmentBusy(true); setCloseAssignmentError('');
       apiClient.setToken(adminToken);
-      await apiClient.closeStaffAssignment(bookingId, closeAssignmentRow.id, {
-        out_time: `${closeAssignmentDate}T${closeAssignmentTime}`,
-      });
+      if (closeAssignmentMode === 'settle') {
+        await apiClient.settleAssignmentBoundaryPay(bookingId, row.id, { settlement_days });
+      } else {
+        await apiClient.closeStaffAssignment(bookingId, row.id, {
+          out_time: `${closeAssignmentDate}T${closeAssignmentTime}`,
+          settlement_days,
+        });
+      }
       closeCloseAssignment();
       // The Day Detail modal's attendance row for this assignment was seeded blank
       // when it opened (openDayModal only knows about a real record if one already
@@ -2011,12 +2159,26 @@ const BookingDetailPageV2 = () => {
       // row doesn't re-derive from once it's been set.
       setAttendanceInputs((p) => ({
         ...p,
-        [closedAssignmentId]: { date: closedDate, in_time: '', out_time: closedTime, autoFilled: false },
+        [row.id]: { date: closeAssignmentDate, in_time: '', out_time: closeAssignmentTime, autoFilled: false },
       }));
       await fetchDetail(); await fetchDailyRecords();
     } catch (err) { setCloseAssignmentError(err?.message || 'Failed to close this assignment'); }
     finally { setCloseAssignmentBusy(false); }
   };
+
+  // Hands the admin the pay decision straight after they end a booking themselves.
+  // Runs once the post-termination refetches have landed (see handleActionsSubmit),
+  // so the assignment it picks already carries its end date. Whichever ended last is
+  // the one they just closed; any others keep their flag in Allocation History.
+  useEffect(() => {
+    if (!settleAfterEnding) return;
+    setSettleAfterEnding(false);
+    if (closeAssignmentRow) return;
+    const justEnded = [...rowsNeedingPaySettlement]
+      .sort((a, b) => new Date(b.effectiveEnd) - new Date(a.effectiveEnd))[0];
+    if (justEnded) openCloseAssignment(justEnded, null, 'settle');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settleAfterEnding]);
 
   // Inline rate editing — one editor shared across the Overview and Rates tab
   // fields (see EditableRate above). `staff_${assignment_id}` keys route to the
@@ -2177,9 +2339,15 @@ const BookingDetailPageV2 = () => {
       const response = actionsModalMode === 'complete'
         ? await apiClient.completeBooking(bookingId, payload)
         : await apiClient.adminTerminateBooking(bookingId, payload);
-      closeActionsModal(); await fetchDetail(); await fetchScheduledActions();
+      closeActionsModal(); await fetchDetail(); await fetchDailyRecords(); await fetchScheduledActions();
       if (response?.scheduled) {
         window.alert(response.message || 'This has been scheduled for the future date. The booking stays active and billed until then.');
+      } else {
+        // Ending it right now closed the assignment there and then, and the admin is
+        // standing here — so hand them the first/last day pay decision immediately
+        // rather than leaving it flagged. Set only after the refetches so the effect
+        // below reads assignments that already carry their end date.
+        setSettleAfterEnding(true);
       }
     } catch (err) { setActionsModalError(err?.message || `Failed to ${actionsModalMode} booking`); }
     finally { setActionsModalLoading(false); }
@@ -3517,7 +3685,8 @@ const BookingDetailPageV2 = () => {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: '#8C5AA6', background: '#F2EAF5', border: '1px solid #DCC8E3', borderRadius: 10, padding: '10px 14px' }}>
                 <History style={{ width: 14, height: 14, flexShrink: 0 }} />
                 Every staff period's in/out times and the full swap log are on the <b>Allocation History</b> tab.
-                {rowsNeedingSwapTime.length > 0 && <> {rowsNeedingSwapTime.length} need attention there.</>}
+                {rowsNeedingSwapTime.length > 0 && <> {rowsNeedingSwapTime.length} need a time entered there.</>}
+                {rowsNeedingPaySettlement.length > 0 && <> {rowsNeedingPaySettlement.length} {rowsNeedingPaySettlement.length === 1 ? 'has' : 'have'} first/last day pay still to settle.</>}
               </div>
             </div>
           )}
@@ -3601,7 +3770,13 @@ const BookingDetailPageV2 = () => {
                                     {[row.missingInTime && 'in', row.missingOutTime && 'out'].filter(Boolean).join(' & ')} time missing
                                   </div>
                                 )}
-                                {!row.isOngoing && !row.needsTimeAction && <span style={{ color: '#9ca3af' }}>—</span>}
+                                {row.needsPaySettlement && (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10.5, color: '#B45309', marginTop: 4 }}>
+                                    <AlertTriangle style={{ width: 10, height: 10, flexShrink: 0 }} />
+                                    First/last day pay not settled
+                                  </div>
+                                )}
+                                {!row.isOngoing && !row.needsTimeAction && !row.needsPaySettlement && <span style={{ color: '#9ca3af' }}>—</span>}
                               </td>
                               <td style={tdCls}>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
@@ -3615,6 +3790,15 @@ const BookingDetailPageV2 = () => {
                                       style={{ fontSize: 11, fontWeight: 600, color: '#B3261E', background: 'none', border: 'none', cursor: 'pointer', padding: 0, whiteSpace: 'nowrap' }}
                                     >
                                       Log out &amp; close
+                                    </button>
+                                  )}
+                                  {row.needsPaySettlement && (
+                                    <button
+                                      onClick={() => openCloseAssignment(row, null, 'settle')}
+                                      title="Decide what they're owed for their first and last day"
+                                      style={{ fontSize: 11, fontWeight: 600, color: '#B45309', background: 'none', border: 'none', cursor: 'pointer', padding: 0, whiteSpace: 'nowrap' }}
+                                    >
+                                      Settle pay
                                     </button>
                                   )}
                                 </div>
@@ -5043,46 +5227,153 @@ const BookingDetailPageV2 = () => {
           they've actually left. The one action that sets service_end_date
           on an assignment a swap deliberately left open.
       ══════════════════════════════════════════════════════ */}
-      {closeAssignmentRow && (
-        // z-[60] — this can now also be opened from a button inside the Day Detail
+      {closeAssignmentRow && (() => {
+        const isSettleOnly = closeAssignmentMode === 'settle';
+        const onPayStep = closeAssignmentStep === 'pay';
+        const days = onPayStep ? buildSettlementDays(closeAssignmentRow, closeAssignmentDate, closeAssignmentTime) : [];
+        const DAY_LABEL = { FIRST: 'First day', LAST: 'Last day', ONLY: 'Their only day' };
+        const outstanding = days.filter(d => !d.alreadyDecided);
+        return (
+        // z-[60] — this can also be opened from a button inside the Day Detail
         // Modal (z-50, rendered later in the DOM), same reasoning as the reschedule
         // modal below.
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: 'rgba(20,17,12,.45)' }}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div className={`bg-white rounded-2xl shadow-2xl w-full ${onPayStep ? 'max-w-lg' : 'max-w-sm'} max-h-[92vh] flex flex-col`}>
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
               <div>
-                <h3 className="text-base font-bold text-slate-900">Log out &amp; close assignment</h3>
+                <h3 className="text-base font-bold text-slate-900">
+                  {onPayStep ? 'Decide their pay' : isSettleOnly ? 'Settle first & last day pay' : 'Log out & close assignment'}
+                </h3>
                 <p className="text-xs text-slate-500 mt-0.5"><StaffLink id={closeAssignmentRow.profileId}>{closeAssignmentRow.name}</StaffLink></p>
               </div>
               <button onClick={closeCloseAssignment} className="p-1.5 rounded-lg hover:bg-slate-100 transition"><XCircle className="h-5 w-5 text-slate-400" /></button>
             </div>
-            <div className="p-6 space-y-4">
-              <p className="text-xs text-slate-500">
-                {closeAssignmentRow.name} has been on this booking alongside another staff member since {formatDate(closeAssignmentRow.startDate)}.
-                Logging their out-time ends their assignment — they'll no longer show as on duty after this date.
-              </p>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Date</label>
-                  <DateInput value={closeAssignmentDate} onChange={e => setCloseAssignmentDate(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Out time</label>
-                  <TimeInput value={closeAssignmentTime} onChange={e => setCloseAssignmentTime(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
-                </div>
-              </div>
+
+            <div className="p-6 space-y-4 overflow-y-auto">
+              {!onPayStep ? (
+                <>
+                  <p className="text-xs text-slate-500">
+                    {isSettleOnly
+                      ? `${closeAssignmentRow.name}'s assignment ended on ${formatDate(closeAssignmentRow.effectiveEnd)}. Confirm when they actually left, then decide what they're owed for their first and last day.`
+                      : `${closeAssignmentRow.name} has been on this booking alongside another staff member since ${formatDate(closeAssignmentRow.startDate)}. Logging their out-time ends their assignment — they'll no longer show as on duty after this date.`}
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Date</label>
+                      <DateInput value={closeAssignmentDate} disabled={isSettleOnly} onChange={e => setCloseAssignmentDate(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50 disabled:text-slate-500" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Out time</label>
+                      <TimeInput value={closeAssignmentTime} onChange={e => setCloseAssignmentTime(e.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-slate-500">
+                    Their middle days were paid at the full daily rate as they went. These are the partial days at each
+                    end — decide what each one is worth.
+                  </p>
+                  {days.map(d => {
+                    const decision = closePayDecisions[d.dateISO] || { approve: true, amount: '' };
+                    const amountValue = decision.amount === '' || decision.amount === null || decision.amount === undefined
+                      ? (d.suggested ?? '')
+                      : decision.amount;
+                    const setDecision = (patch) => setClosePayDecisions(p => ({ ...p, [d.dateISO]: { ...decision, ...patch } }));
+                    return (
+                      <div key={d.dateISO} className={`rounded-xl border p-3.5 ${d.alreadyDecided ? 'border-slate-200 bg-slate-50' : 'border-slate-200'}`}>
+                        <div className="flex items-start justify-between gap-3 flex-wrap">
+                          <div>
+                            <div className="text-xs font-bold text-slate-900">{DAY_LABEL[d.kind]}</div>
+                            <div className="text-xs text-slate-500 mt-0.5">{formatDate(d.dateISO)}</div>
+                          </div>
+                          {d.alreadyDecided ? (
+                            <span className="text-xs font-semibold text-slate-500">
+                              {d.record.salary_status === 'PAID'
+                                ? `Already paid · ${formatMoney(d.record.salary_amount)}`
+                                : `Already settled · ${d.record.salary_status.toLowerCase()}`}
+                            </span>
+                          ) : (
+                            <div className="text-xs text-slate-600 tabular-nums text-right">
+                              <div>{d.inTime || '—'} → {d.outTime}</div>
+                              <div className="font-semibold text-slate-900">{formatHoursMins(d.hours) || 'hours unknown'}</div>
+                            </div>
+                          )}
+                        </div>
+
+                        {!d.alreadyDecided && (
+                          <>
+                            {d.needsInTime && (
+                              <div className="mt-3">
+                                <label className="block text-[11px] font-semibold uppercase tracking-wide text-amber-700 mb-1.5">
+                                  Arrival time was never logged — enter it
+                                </label>
+                                <TimeInput
+                                  value={closeInTimeOverrides[d.dateISO] || ''}
+                                  onChange={e => setCloseInTimeOverrides(p => ({ ...p, [d.dateISO]: e.target.value }))}
+                                  className="w-full rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm outline-none focus:border-amber-500"
+                                />
+                              </div>
+                            )}
+                            <div className="mt-3 flex items-center gap-2 flex-wrap">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs text-slate-500">Rs.</span>
+                                <input
+                                  type="number" min="0" step="0.01" value={decision.approve ? amountValue : ''}
+                                  disabled={!decision.approve}
+                                  onChange={e => setDecision({ amount: e.target.value })}
+                                  onWheel={e => e.currentTarget.blur()}
+                                  className="w-32 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 disabled:bg-slate-100"
+                                  placeholder="0.00"
+                                />
+                              </div>
+                              <button
+                                onClick={() => setDecision({ approve: !decision.approve })}
+                                className={`px-2.5 py-1.5 text-[11px] font-semibold rounded-lg transition ${decision.approve ? 'text-rose-700 bg-rose-50 hover:bg-rose-100' : 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100'}`}
+                              >
+                                {decision.approve ? "Don't pay this day" : 'Pay this day'}
+                              </button>
+                            </div>
+                            {decision.approve && d.suggested !== null && (
+                              <p className="text-[11px] text-slate-400 mt-1.5">
+                                Suggested {formatMoney(d.suggested)} — {formatHoursMins(d.hours)} of a 24h day at {formatMoney(closeAssignmentRow.dailyRate)}
+                              </p>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {outstanding.length === 0 && (
+                    <p className="text-xs text-slate-400">Both ends of this assignment have already been settled — there's nothing left to decide.</p>
+                  )}
+                </>
+              )}
               {closeAssignmentError && <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700">{closeAssignmentError}</div>}
             </div>
-            <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-slate-200">
-              <button onClick={closeCloseAssignment} className="text-sm font-medium text-slate-600 hover:text-slate-900 transition px-3">Cancel</button>
-              <button onClick={submitCloseAssignment} disabled={closeAssignmentBusy || !closeAssignmentDate || !closeAssignmentTime} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-rose-700 hover:bg-rose-800 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
-                {closeAssignmentBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                {closeAssignmentBusy ? 'Closing…' : 'Close assignment'}
+
+            <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-slate-200 shrink-0">
+              <button
+                onClick={() => (onPayStep ? setCloseAssignmentStep('time') : closeCloseAssignment())}
+                className="text-sm font-medium text-slate-600 hover:text-slate-900 transition px-3"
+              >
+                {onPayStep ? 'Back' : 'Cancel'}
               </button>
+              {onPayStep ? (
+                <button onClick={submitCloseAssignment} disabled={closeAssignmentBusy} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-rose-700 hover:bg-rose-800 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
+                  {closeAssignmentBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {closeAssignmentBusy ? 'Saving…' : isSettleOnly ? 'Confirm pay' : 'Close assignment & pay'}
+                </button>
+              ) : (
+                <button onClick={reviewCloseAssignmentPay} disabled={!closeAssignmentDate || !closeAssignmentTime} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
+                  Next: decide pay
+                </button>
+              )}
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ══════════════════════════════════════════════════════
           RESCHEDULE MODAL — move one shift occurrence to a different date,
@@ -5372,7 +5663,11 @@ const BookingDetailPageV2 = () => {
       {dayModal && (() => {
         const dateRecords = attendanceRecords.filter(r => r.service_date?.slice(0, 10) === dayModal.dateISO);
         const dateInvoiceRecords = dailyInvoiceRecords.filter(r => r.service_date?.slice(0, 10) === dayModal.dateISO);
-        const invoiceRecord = dateInvoiceRecords.find(r => !r.shift_slot_id) || dateInvoiceRecords[0];
+        // The plain, whole-day record — excludes both shift-slot rows (SHIFT_BASED)
+        // and per-assignment rows (a mid-swap LIVE_IN day invoiced separately per
+        // staff member, see isConcurrentDay below), which now can also carry
+        // shift_slot_id IS NULL and would otherwise be picked up here by mistake.
+        const invoiceRecord = dateInvoiceRecords.find(r => !r.shift_slot_id && !r.assignment_id);
         // Audit trail for this specific day — DAY_REVOKED logs a service_dates array
         // (can cover several days at once), every other attendance/salary action logs
         // a single service_date, so both shapes need checking.
@@ -5460,9 +5755,12 @@ const BookingDetailPageV2 = () => {
 
                 const invoicePreviewRows = Object.entries(draftInvoiceDecisions).map(([key, dec]) => {
                   const slotAssignment = dec.shift_slot_id ? dayModal.assignments.find(a => a.shift_slot_id === dec.shift_slot_id) : null;
+                  const billedAssignment = dec.assignment_id ? dayModal.assignments.find(a => a.assignment_id === dec.assignment_id) : null;
                   const label = dec.shift_slot_id
                     ? (slotAssignment?.shift_label || (slotAssignment?.shift_number ? `Shift ${slotAssignment.shift_number}` : 'Shift'))
-                    : `Day ${dayModal.dayNum}`;
+                    : dec.assignment_id
+                      ? (billedAssignment?.full_name || billedAssignment?.staff_name || 'Staff')
+                      : `Day ${dayModal.dayNum}`;
                   return { key, label, dec };
                 });
                 const waivedSlotIds = Object.keys(draftWaives);
@@ -5606,13 +5904,16 @@ const BookingDetailPageV2 = () => {
                               // Only a LIVE_IN assignment with no fixed start/end boundary on this day
                               // gets the flat present/absent/exception mark — boundary days (and every
                               // SHIFT_BASED/VISITING day) still need a real in/out time.
-                              const { onlyStart: liveInOnlyStart, onlyEnd: liveInOnlyEnd } = liveInBoundary(a, dayModal.dateISO);
+                              const { onlyStart: liveInOnlyStart, onlyEnd: liveInOnlyEnd, sameDay: liveInSameDay, isBoundary: liveInIsBoundary } = liveInBoundary(a, dayModal.dateISO);
                               // The outgoing half of a still-open swap — started before today, no
                               // end date yet, and this is the OTHER concurrent assignment (not the
                               // one whose service_start_date is today). Gets its own row below
                               // instead of falling into either the flat mark or the normal timed flow.
                               const isSwapOutgoingOpen = isConcurrentDay && isLiveIn && !a.shift_slot_id && !a.service_end_date && !liveInOnlyStart;
-                              const isFlatMarkDay = isLiveIn && !a.shift_slot_id && !liveInOnlyStart && !liveInOnlyEnd && !isSwapOutgoingOpen;
+                              // liveInSameDay is excluded too: starting AND ending today leaves
+                              // both onlyStart/onlyEnd false, which would otherwise fall through
+                              // to the flat mark and leave nowhere to enter either time.
+                              const isFlatMarkDay = isLiveIn && !a.shift_slot_id && !liveInOnlyStart && !liveInOnlyEnd && !liveInSameDay && !isSwapOutgoingOpen;
 
                               // Assigned reference — shift start/duration for SHIFT_BASED, else the
                               // assignment's own service_start_time/assigned_hours (VISITING/LIVE_IN).
@@ -5865,7 +6166,15 @@ const BookingDetailPageV2 = () => {
                                     <td className={tdCls + ' tabular-nums'}>{fmtTime(draftSaved.out_time)}</td>
                                     <td className={tdCls}><HoursBadge served={Number(draftSaved.hours_served)} assigned={assignedHours} /></td>
                                     <td className={tdCls}>
-                                      {salaryDecision ? (
+                                      {/* A LIVE_IN assignment's first and last day are paid for at
+                                          the end, together, once both partial days' real hours are
+                                          known — see settleBoundaryPay. Only the time is logged here. */}
+                                      {liveInIsBoundary ? (
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <span className="text-[11px] text-gray-500">Pay decided when this assignment ends</span>
+                                          <button onClick={() => editAttendanceTimes(a)} title="Correct the logged in/out time" className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition">Edit Time</button>
+                                        </div>
+                                      ) : salaryDecision ? (
                                         <div className="flex items-center gap-1.5 flex-wrap">
                                           <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${salaryDecision.approve ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
                                             <span className={`w-1.5 h-1.5 rounded-full ${salaryDecision.approve ? 'bg-blue-400' : 'bg-gray-400'}`} />
@@ -5957,6 +6266,8 @@ const BookingDetailPageV2 = () => {
                                           id: a.assignment_id,
                                           name: staffName,
                                           startDate: a.service_start_date,
+                                          profileId: a.staff_profile_id,
+                                          dailyRate: a.daily_rate,
                                         }, inputs.date || dayModal.dateISO)}
                                         className="px-3 py-1 text-[11px] font-semibold text-white bg-rose-700 hover:bg-rose-800 rounded transition"
                                       >
@@ -6067,18 +6378,86 @@ const BookingDetailPageV2 = () => {
                       {!manualInvoiceDay && isLastDayInvoiceDecision && (
                         <p className="text-xs text-gray-400 mt-1">Last day — this booking normally bills automatically, but decide whether to charge the client for today since the staff member's service ends today.</p>
                       )}
+                      {isConcurrentDay && (
+                        <p className="text-xs text-gray-400 mt-1">Two staff on duty today — invoice the client for each one's share separately, instead of one lump amount for the day.</p>
+                      )}
                     </div>
                     <div style={{ border: '1px solid #e5e7eb', borderRadius: 8, overflow: 'hidden' }}>
                       <table className="w-full text-sm border-collapse">
                         <thead style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
                           <tr>
-                            <th className={thCls}>{isShiftBased ? 'Shift' : 'Day'}</th>
+                            <th className={thCls}>{isShiftBased ? 'Shift' : isConcurrentDay ? 'Staff' : 'Day'}</th>
                             <th className={thCls}>Amount (Rs.)</th>
                             <th className={thCls}>Action</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {isShiftBased && slotIds.length > 0 ? slotIds.map((slotId, idx) => {
+                          {isConcurrentDay ? dayModal.assignments.filter(a => !a.shift_slot_id).map((a, idx) => {
+                            const staffLabel = a.full_name || a.staff_name || 'Staff';
+                            const rowBorder = idx > 0 ? { borderTop: '1px solid #f3f4f6' } : {};
+                            const assignmentInvoiceRecord = dateInvoiceRecords.find(r => r.assignment_id === a.assignment_id);
+                            const draftDecision = draftInvoiceDecisions[a.assignment_id];
+                            if (assignmentInvoiceRecord && assignmentInvoiceRecord.status !== 'PENDING') {
+                              const invoiced = assignmentInvoiceRecord.status === 'INVOICED';
+                              return (
+                                <tr key={a.assignment_id} style={rowBorder}>
+                                  <td className={tdCls + ' font-medium text-gray-900'}>{staffLabel}</td>
+                                  <td className={tdCls + ' tabular-nums'}>{invoiced ? `Rs.${Number(assignmentInvoiceRecord.amount).toLocaleString()}` : '—'}</td>
+                                  <td className={tdCls}>
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${invoiced ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                                        <span className={`w-1.5 h-1.5 rounded-full ${invoiced ? 'bg-green-500' : 'bg-gray-400'}`} />
+                                        {invoiced ? 'Invoiced' : 'Skipped'}
+                                      </span>
+                                      {invoiced && (
+                                        <button
+                                          onClick={() => openCorrection({
+                                            kind: 'INVOICE', id: assignmentInvoiceRecord.daily_invoice_id, dateISO: dayModal.dateISO,
+                                            currentAmount: Number(assignmentInvoiceRecord.amount), who: clientDetails.client_name || 'the client',
+                                          })}
+                                          title="Correctly billed, but this amount is wrong — restate it"
+                                          className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition"
+                                        >
+                                          Correct
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            }
+                            if (draftDecision) {
+                              return (
+                                <tr key={a.assignment_id} style={rowBorder}>
+                                  <td className={tdCls + ' font-medium text-gray-900'}>{staffLabel}</td>
+                                  <td className={tdCls + ' tabular-nums'}>{draftDecision.approve ? `Rs.${Number(draftDecision.amount).toLocaleString()}` : '—'}</td>
+                                  <td className={tdCls}>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded ${draftDecision.approve ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+                                        <span className={`w-1.5 h-1.5 rounded-full ${draftDecision.approve ? 'bg-blue-400' : 'bg-gray-400'}`} />
+                                        {draftDecision.approve ? 'Invoiced (draft)' : 'Skipped (draft)'}
+                                      </span>
+                                      <button onClick={() => undoInvoiceDecision(a.assignment_id)} className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition">Undo</button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            }
+                            return (
+                              <tr key={a.assignment_id} style={{ ...rowBorder, background: '#fafafa' }}>
+                                <td className={tdCls + ' font-medium text-gray-900'}>{staffLabel}</td>
+                                <td className={tdCls}>
+                                  <input type="number" min="0" step="0.01" value={invoiceAmountInputsByAssignment[a.assignment_id] || ''} onChange={e => setInvoiceAmountInputsByAssignment(p => ({ ...p, [a.assignment_id]: e.target.value }))} onWheel={e => e.currentTarget.blur()} className="rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-blue-500 w-32" placeholder="0.00" />
+                                </td>
+                                <td className={tdCls}>
+                                  <div className="flex gap-1.5">
+                                    <button onClick={() => decideInvoice(true, null, a.assignment_id)} disabled={!invoiceAmountInputsByAssignment[a.assignment_id]} className="px-2.5 py-1 text-[11px] font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded transition disabled:opacity-50">Confirm</button>
+                                    <button onClick={() => decideInvoice(false, null, a.assignment_id)} className="px-2.5 py-1 text-[11px] font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded transition">Skip</button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          }) : isShiftBased && slotIds.length > 0 ? slotIds.map((slotId, idx) => {
                             const slotAssignment = dayModal.assignments.find(a => a.shift_slot_id === slotId);
                             const shiftLabel = slotAssignment?.shift_label || (slotAssignment?.shift_number ? `Shift ${slotAssignment.shift_number}` : 'Shift');
                             const slotInvoiceRecord = dateInvoiceRecords.find(r => r.shift_slot_id === slotId);

@@ -1951,6 +1951,182 @@ exports.sendRegFeeInvoice = async (req, res) => {
   }
 };
 
+// Admin: correct the amount of a registration fee, either while it's still an
+// unpaid sent invoice (INVOICED) or after it's already been paid (PAID).
+// Always updates client_profiles.reg_fee_amount, the source-of-truth read by
+// every other reg-fee code path (payment confirmation, dashboard totals,
+// salesperson crediting).
+//
+// INVOICED: the invoice hasn't been paid yet, so this simply restates the
+// figure — updates the sent invoice row + regenerates its PDF, and updates
+// the still-open overdue_invoices row.
+//
+// PAID: real cash was already recorded against the old figure, so instead of
+// silently rewriting history this corrects the one-off REGISTRATION_FEE
+// CREDIT transaction that was created when the fee was confirmed paid (see
+// updateRegFeeStatus / verifyRegFeePayment / backdateRegFeePayment — each
+// creates exactly one such row per payment, unlike a booking's day-by-day
+// ledger, so there is nothing to net against and no wallet/earmark to
+// disturb). If an invoice row also exists (status PAID) it's kept in sync too
+// and its PDF regenerated; backdated payments that were never invoiced simply
+// have no invoice row to touch. Salesperson commission already credited off
+// the old amount is intentionally left untouched — that's a separate,
+// permanent credit, not part of correcting the fee record itself.
+// WAIVED is not supported: no money moved and no invoice exists to correct.
+exports.updateRegFeeAmount = async (req, res) => {
+  const { client_id } = req.params;
+  const { amount, reason } = req.body;
+
+  const newAmount = parseFloat(amount);
+  if (!amount || isNaN(newAmount) || newAmount <= 0) {
+    return res.status(400).json({ message: 'A valid fee amount is required.' });
+  }
+  if (!reason || !reason.trim()) {
+    return res.status(400).json({ message: 'A reason for the amount change is required.' });
+  }
+  const feeAmount = newAmount.toFixed(2);
+
+  const dbClient = await db.pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+
+    const clientResult = await dbClient.query(
+      `SELECT cp.client_profile_id, cp.full_name, cp.company_name, cp.display_name_source,
+              cp.reg_fee_status, cp.reg_fee_amount, cp.reg_fee_receipt_token
+       FROM client_profiles cp
+       WHERE cp.client_profile_id = $1
+       FOR UPDATE`,
+      [client_id]
+    );
+    if (clientResult.rows.length === 0) {
+      await dbClient.query('ROLLBACK');
+      return res.status(404).json({ message: 'Client not found.' });
+    }
+    const client = clientResult.rows[0];
+    client.display_name = (client.display_name_source === 'COMPANY_NAME' && client.company_name) || client.full_name;
+
+    if (!['INVOICED', 'PAID'].includes(client.reg_fee_status)) {
+      await dbClient.query('ROLLBACK');
+      return res.status(409).json({ message: 'The registration fee amount can only be edited while an invoice is sent and unpaid, or after it has been paid.' });
+    }
+    const isPaid = client.reg_fee_status === 'PAID';
+
+    const invoiceResult = await dbClient.query(
+      `SELECT ri.invoice_id, ri.invoice_code, ri.amount, ri.bank_account_id, ri.created_at,
+              ba.bank_name, ba.account_holder_name, ba.account_number, ba.branch_name
+       FROM client_reg_fee_invoices ri
+       JOIN bank_accounts ba ON ba.account_id = ri.bank_account_id
+       WHERE ri.client_id = $1 AND ri.status = $2
+       ORDER BY ri.created_at DESC
+       LIMIT 1
+       FOR UPDATE OF ri`,
+      [client_id, isPaid ? 'PAID' : 'SENT']
+    );
+    const invoice = invoiceResult.rows[0] || null;
+
+    let paymentTx = null;
+    if (isPaid) {
+      const txResult = await dbClient.query(
+        `SELECT transaction_id, amount, notes FROM transactions
+         WHERE client_id = $1 AND category = 'REGISTRATION_FEE' AND transaction_type = 'CREDIT'
+         ORDER BY created_at DESC
+         LIMIT 1
+         FOR UPDATE`,
+        [client_id]
+      );
+      if (txResult.rows.length === 0) {
+        await dbClient.query('ROLLBACK');
+        return res.status(404).json({ message: 'No registration fee payment record was found for this client.' });
+      }
+      paymentTx = txResult.rows[0];
+    } else if (!invoice) {
+      await dbClient.query('ROLLBACK');
+      return res.status(404).json({ message: 'No pending registration fee invoice was found for this client.' });
+    }
+
+    const oldAmount = isPaid ? paymentTx.amount : invoice.amount;
+
+    let invoicePdfUrl = null;
+    if (invoice) {
+      const invoiceDate = new Date(invoice.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+      const uploadUrl = `https://vcarenursing.com/client/pay-receipt/${client.reg_fee_receipt_token}`;
+
+      invoicePdfUrl = await generateAndUploadRegFeeInvoice({
+        invoice_code: invoice.invoice_code,
+        invoice_date: invoiceDate,
+        client_name: client.display_name,
+        amount: feeAmount,
+        bank_name: invoice.bank_name,
+        account_holder_name: invoice.account_holder_name,
+        account_number: invoice.account_number,
+        branch_name: invoice.branch_name || '—',
+        upload_url: uploadUrl,
+      });
+
+      await dbClient.query(
+        `UPDATE client_reg_fee_invoices SET amount = $1, pdf_url = $2 WHERE invoice_id = $3`,
+        [feeAmount, invoicePdfUrl, invoice.invoice_id]
+      );
+
+      // Regardless of OVERDUE (still unpaid) or RESOLVED (already paid), this row's
+      // amount feeds combinedTotalInvoiced in getAdminClientDetail (all_time_invoiced
+      // sums every status) — the "Total Invoiced" stat card would stay stale otherwise.
+      await dbClient.query(
+        `UPDATE overdue_invoices SET amount = $1
+         WHERE source_type = 'REGISTRATION_FEE' AND source_id = $2`,
+        [feeAmount, invoice.invoice_id]
+      );
+    }
+
+    await dbClient.query(
+      `UPDATE client_profiles SET reg_fee_amount = $1 WHERE client_profile_id = $2`,
+      [feeAmount, client_id]
+    );
+
+    if (isPaid) {
+      await dbClient.query(
+        `UPDATE transactions
+         SET amount = $1,
+             notes = CONCAT_WS(' | ', NULLIF(notes, ''), $2::text)
+         WHERE transaction_id = $3`,
+        [feeAmount, `Corrected Rs.${oldAmount} -> Rs.${feeAmount}: ${reason.trim()}`, paymentTx.transaction_id]
+      );
+    }
+
+    await dbClient.query('COMMIT');
+
+    try {
+      const actorName = await getActorName(req.user.user_id);
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName,
+        actorRole: extractActorRole(req.user.role),
+        actionType: 'REG_FEE_INVOICE_AMOUNT_EDITED',
+        entityType: 'CLIENT',
+        entityId: String(client_id),
+        details: {
+          old_amount: oldAmount, new_amount: feeAmount, reason: reason.trim(),
+          was_paid: isPaid, invoice_code: invoice?.invoice_code || null, pdf_url: invoicePdfUrl,
+        },
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (reg fee amount edit):', logErr.message);
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Registration fee amount updated.',
+      data: { reg_fee_amount: feeAmount, invoice_id: invoice?.invoice_id || null, invoice_pdf_url: invoicePdfUrl },
+    });
+  } catch (error) {
+    await dbClient.query('ROLLBACK');
+    console.error('Update Reg Fee Amount Error:', error.message);
+    res.status(500).json({ message: 'Failed to update registration fee amount.', error: error.message });
+  } finally {
+    dbClient.release();
+  }
+};
+
 // Admin: manually update reg_fee_status to PAID or WAIVED.
 exports.updateRegFeeStatus = async (req, res) => {
   const { client_id } = req.params;
@@ -2760,6 +2936,87 @@ exports.getAllRegFeeInvoices = async (req, res) => {
   } catch (err) {
     console.error('Get all reg fee invoices error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to fetch registration fee invoices.' });
+  }
+};
+
+// One row per client (not per invoice) for the admin "Registration Fees"
+// overview tab — everything an admin needs to review/correct a client's
+// registration fee without opening their detail page: identity, the current
+// fee figure, membership countdown, who's credited for it, and a link to the
+// invoice PDF on file. total_paid mirrors client_detail_page's "Payments Made
+// By Client" stat (all-time CREDIT transactions), distinct from reg_fee_amount
+// which is specifically the registration fee figure (see updateRegFeeAmount).
+exports.getRegistrationFeesOverview = async (req, res) => {
+  const { status, search, page = 1, limit = 50 } = req.query;
+  const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
+
+  const conditions = [];
+  const params = [];
+  let idx = 1;
+
+  if (status) { conditions.push(`cp.reg_fee_status = $${idx++}`); params.push(status); }
+  if (search) {
+    conditions.push(`(cp.full_name ILIKE $${idx} OR cp.company_name ILIKE $${idx} OR cp.client_code ILIKE $${idx} OR u.mobile_number ILIKE $${idx})`);
+    params.push(`%${search}%`);
+    idx++;
+  }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  try {
+    const [rows, countResult, statusCounts] = await Promise.all([
+      db.query(
+        `SELECT cp.client_profile_id, cp.client_code, cp.honorific, cp.full_name, cp.company_name,
+                cp.display_name_source, u.mobile_number,
+                cp.reg_fee_status, cp.reg_fee_amount, cp.reg_fee_expires_at, cp.reg_fee_invoiced_at,
+                inv.invoice_id, inv.invoice_code, inv.pdf_url AS invoice_pdf_url,
+                sp.salesperson_id, sp.salesperson_name,
+                COALESCE(paid.total_paid, 0) AS total_paid
+         FROM client_profiles cp
+         JOIN users u ON cp.user_id = u.user_id
+         LEFT JOIN LATERAL (
+           SELECT invoice_id, invoice_code, pdf_url
+           FROM client_reg_fee_invoices
+           WHERE client_id = cp.client_profile_id
+           ORDER BY created_at DESC
+           LIMIT 1
+         ) inv ON true
+         LEFT JOIN LATERAL (
+           SELECT csa.salesperson_id, ist.full_name AS salesperson_name
+           FROM client_salesperson_assignments csa
+           JOIN internal_staff ist ON ist.id = csa.salesperson_id
+           WHERE csa.client_id = cp.client_profile_id AND csa.is_current = true
+           LIMIT 1
+         ) sp ON true
+         LEFT JOIN LATERAL (
+           SELECT SUM(amount) AS total_paid
+           FROM transactions
+           WHERE client_id = cp.client_profile_id AND transaction_type = 'CREDIT'
+         ) paid ON true
+         ${where}
+         ORDER BY cp.reg_fee_invoiced_at DESC NULLS LAST, cp.created_at DESC
+         LIMIT $${idx} OFFSET $${idx + 1}`,
+        [...params, parseInt(limit, 10), offset]
+      ),
+      db.query(`SELECT COUNT(*) FROM client_profiles cp JOIN users u ON cp.user_id = u.user_id ${where}`, params),
+      db.query(`SELECT reg_fee_status, COUNT(*)::int AS count FROM client_profiles GROUP BY reg_fee_status`),
+    ]);
+
+    const total = parseInt(countResult.rows[0].count, 10);
+    const counts = { All: 0 };
+    statusCounts.rows.forEach((r) => {
+      counts[r.reg_fee_status || 'PENDING'] = r.count;
+      counts.All += r.count;
+    });
+
+    res.status(200).json({
+      status: 'success',
+      data: rows.rows,
+      pagination: { total, page: parseInt(page, 10), limit: parseInt(limit, 10), total_pages: Math.ceil(total / parseInt(limit, 10)) },
+      counts,
+    });
+  } catch (err) {
+    console.error('Get registration fees overview error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to fetch registration fees overview.' });
   }
 };
 

@@ -31,12 +31,14 @@ router.patch('/:client_id/billing', protect, requirePermission('CLIENT_EDIT'), c
 router.patch('/:client_id/profile', protect, requirePermission('CLIENT_EDIT'), clientController.updateClientProfile);
 router.post('/:client_id/send-reg-fee-invoice', protect, requirePermission('CLIENT_SEND_REG_FEE_INVOICE'), clientController.sendRegFeeInvoice);
 router.patch('/:client_id/reg-fee-status', protect, requirePermission('CLIENT_EDIT'), clientController.updateRegFeeStatus);
+router.patch('/:client_id/reg-fee-amount', protect, requirePermission('CLIENT_EDIT'), clientController.updateRegFeeAmount);
 router.post('/:client_id/verify-reg-fee-payment', protect, requirePermission('CLIENT_RECORD_PAYMENT'), clientController.verifyRegFeePayment);
 router.post('/:client_id/backdate-reg-fee-payment', protect, requirePermission('CLIENT_RECORD_PAYMENT'), clientController.backdateRegFeePayment);
 router.post('/:client_id/admin-upload-reg-fee-receipt', protect, requirePermission('CLIENT_RECORD_PAYMENT'), uploadPaymentReceipt, clientController.adminUploadRegFeeReceipt);
 router.get('/:client_id/invoices', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getClientInvoices);
 // Registration fee invoices — must stay above the generic '/:client_id' catch-all route below.
 router.get('/all-reg-fee-invoices', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getAllRegFeeInvoices);
+router.get('/registration-fees-overview', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getRegistrationFeesOverview);
 router.get('/:client_id/reg-fee-invoices', protect, requirePermission('VIEW_USER_MANAGEMENT'), clientController.getClientRegFeeInvoices);
 router.post('/reg-fee-invoices/:invoice_id/resend', protect, requirePermission('INVOICE_RESEND'), clientController.resendRegFeeInvoice);
 // Overdue invoices ledger — must stay above the generic '/:client_id' catch-all route below.

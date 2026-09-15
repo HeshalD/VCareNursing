@@ -345,6 +345,13 @@ class ApiClient {
       body: JSON.stringify({ status, salesperson_id: salespersonId }),
     });
   }
+  async updateRegFeeAmount(clientId, { amount, reason }) {
+    return this.request(`/client/${clientId}/reg-fee-amount`, {
+      method: 'PATCH',
+      body: JSON.stringify({ amount, reason }),
+    });
+  }
+
   async verifyRegFeePayment(clientId, salespersonId = null) {
     return this.request(`/client/${clientId}/verify-reg-fee-payment`, {
       method: 'POST',
@@ -1491,11 +1498,22 @@ class ApiClient {
   }
 
   // Closes the outgoing side of a swap once they've actually left — the only
-  // thing that ever ends an assignment a swap left open. body: { out_time }
-  async closeStaffAssignment(bookingId, assignmentId, { out_time }) {
+  // thing that ever ends an assignment a swap left open. settlement_days carries
+  // the pay decision for the assignment's first/last day, which commit in the
+  // same transaction as the close.
+  async closeStaffAssignment(bookingId, assignmentId, { out_time, settlement_days }) {
     return this.request(`/bookings/${bookingId}/assignments/${assignmentId}/close-out`, {
       method: 'PATCH',
-      body: JSON.stringify({ out_time }),
+      body: JSON.stringify({ out_time, settlement_days }),
+    });
+  }
+
+  // Decides the first/last-day pay of an assignment that already ended — a
+  // scheduled termination/completion runs overnight and leaves those days pending.
+  async settleAssignmentBoundaryPay(bookingId, assignmentId, { settlement_days }) {
+    return this.request(`/bookings/${bookingId}/assignments/${assignmentId}/settle-boundary-pay`, {
+      method: 'POST',
+      body: JSON.stringify({ settlement_days }),
     });
   }
 
@@ -1687,6 +1705,11 @@ class ApiClient {
   async getAllRegFeeInvoices(filters = {}) {
     const qs = new URLSearchParams(filters).toString();
     return this.request(qs ? `/client/all-reg-fee-invoices?${qs}` : '/client/all-reg-fee-invoices');
+  }
+
+  async getRegistrationFeesOverview(filters = {}) {
+    const qs = new URLSearchParams(filters).toString();
+    return this.request(qs ? `/client/registration-fees-overview?${qs}` : '/client/registration-fees-overview');
   }
 
   async getClientOverdueInvoices(clientId) {

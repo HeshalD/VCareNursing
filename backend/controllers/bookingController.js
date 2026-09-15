@@ -23,7 +23,12 @@ const {
     executeCompletion,
 } = require('../services/scheduledActions');
 const { computeRegFeeSplit, settleRegistrationFee } = require('../services/registrationFeeSplit');
-const { applyPartialAttendanceTime } = require('./dailyAttendanceController')._internal;
+const {
+    applyPartialAttendanceTime,
+    settleBoundaryPay,
+    boundaryDatesFor,
+    getDeciderName: getAttendanceDeciderName,
+} = require('./dailyAttendanceController')._internal;
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const { maybeAutoCompleteVisitingBooking } = require('../services/visitingBookings');
 const { closeActivePatternForPause } = require('../services/shiftPatternService');
@@ -1657,12 +1662,15 @@ exports.getBookingDailyInvoices = async (req, res) => {
             `SELECT
                 bdi.daily_invoice_id, bdi.booking_id, bdi.service_date::text as service_date, bdi.entry_mode,
                 bdi.status, bdi.amount, bdi.transaction_id, bdi.decided_by_user_id, bdi.decided_by_name, bdi.decided_at,
-                bdi.notes, bdi.created_at, bdi.updated_at, bdi.shift_slot_id,
+                bdi.notes, bdi.created_at, bdi.updated_at, bdi.shift_slot_id, bdi.assignment_id,
                 bdi.revoke_reason, bdi.revoked_by_name, bdi.revoked_at, bdi.settlement_action,
                 bdi.corrected_at,
-                ss.shift_number, ss.label as shift_label
+                ss.shift_number, ss.label as shift_label,
+                sp.full_name as assignment_staff_name
              FROM booking_daily_invoices bdi
              LEFT JOIN booking_shift_slots ss ON bdi.shift_slot_id = ss.shift_slot_id
+             LEFT JOIN booking_staff_assignments bsa ON bdi.assignment_id = bsa.assignment_id
+             LEFT JOIN staff_profiles sp ON bsa.staff_profile_id = sp.staff_profile_id
              WHERE bdi.booking_id = $1
              ORDER BY bdi.service_date DESC`,
             [booking_id]
@@ -1690,9 +1698,14 @@ exports.getBookingDailyInvoices = async (req, res) => {
  * single-shot `confirmDailyInvoice` endpoint and the day-draft confirm flow.
  * Throws an Error with `.statusCode` set on validation failure/conflict.
  */
-async function applyInvoiceDecision(client, { booking_id, service_date, approve, amount, shift_slot_id, reschedule_id, deciderUserId, deciderName }) {
+async function applyInvoiceDecision(client, { booking_id, service_date, approve, amount, shift_slot_id, assignment_id, reschedule_id, deciderUserId, deciderName }) {
     if (!service_date || typeof approve !== 'boolean') {
         const err = new Error('service_date and approve (boolean) are required');
+        err.statusCode = 400;
+        throw err;
+    }
+    if (shift_slot_id && assignment_id) {
+        const err = new Error('shift_slot_id and assignment_id cannot both be set — a day is split by shift or by staff member, not both');
         err.statusCode = 400;
         throw err;
     }
@@ -1719,6 +1732,23 @@ async function applyInvoiceDecision(client, { booking_id, service_date, approve,
         const err = new Error('shift_slot_id must not be provided for this booking type');
         err.statusCode = 400;
         throw err;
+    }
+    if (assignment_id && booking.service_model === 'SHIFT_BASED') {
+        const err = new Error('Invoicing an individual staff member\'s portion of the day does not apply to SHIFT_BASED bookings — use shift_slot_id instead');
+        err.statusCode = 400;
+        throw err;
+    }
+
+    if (assignment_id) {
+        const assignmentCheck = await client.query(
+            `SELECT 1 FROM booking_staff_assignments WHERE assignment_id = $1 AND booking_id = $2`,
+            [assignment_id, booking_id]
+        );
+        if (assignmentCheck.rows.length === 0) {
+            const err = new Error('Assignment not found for this booking');
+            err.statusCode = 404;
+            throw err;
+        }
     }
 
     if (shift_slot_id) {
@@ -1757,10 +1787,15 @@ async function applyInvoiceDecision(client, { booking_id, service_date, approve,
                 `SELECT * FROM booking_daily_invoices WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id = $3 AND reschedule_id IS NULL FOR UPDATE`,
                 [booking_id, service_date, shift_slot_id]
             )
-            : await client.query(
-                `SELECT * FROM booking_daily_invoices WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id IS NULL AND reschedule_id IS NULL FOR UPDATE`,
-                [booking_id, service_date]
-            );
+            : assignment_id
+                ? await client.query(
+                    `SELECT * FROM booking_daily_invoices WHERE booking_id = $1 AND service_date = $2 AND assignment_id = $3 FOR UPDATE`,
+                    [booking_id, service_date, assignment_id]
+                )
+                : await client.query(
+                    `SELECT * FROM booking_daily_invoices WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id IS NULL AND assignment_id IS NULL AND reschedule_id IS NULL FOR UPDATE`,
+                    [booking_id, service_date]
+                );
 
     if (existing.rows.length > 0 && existing.rows[0].status !== 'PENDING') {
         const err = new Error('This day has already been decided');
@@ -1776,6 +1811,12 @@ async function applyInvoiceDecision(client, { booking_id, service_date, approve,
             finalAmount = parseFloat(amount);
         } else if (shift_slot_id) {
             finalAmount = calculateShiftSlotCharge(booking).amount;
+        } else if (assignment_id) {
+            // No sensible default exists for one staff member's share of the day —
+            // the whole point of splitting it is that the admin decides the split.
+            const err = new Error('amount is required when invoicing an individual staff member\'s portion of the day');
+            err.statusCode = 400;
+            throw err;
         } else {
             finalAmount = parseFloat(booking.daily_rate);
         }
@@ -1790,7 +1831,7 @@ async function applyInvoiceDecision(client, { booking_id, service_date, approve,
             booking_id,
             client_id: booking.client_id,
             amount: finalAmount,
-            notes: `Manually confirmed ${shift_slot_id ? 'shift' : 'daily'} charge for ${service_date}`
+            notes: `Manually confirmed ${shift_slot_id ? 'shift' : assignment_id ? "staff member's" : 'daily'} charge for ${service_date}`
         });
 
         // Draw as much of this charge as the client's wallet currently holds —
@@ -1840,29 +1881,46 @@ async function applyInvoiceDecision(client, { booking_id, service_date, approve,
                 RETURNING *`,
                 [booking_id, service_date, approve ? 'INVOICED' : 'SKIPPED', finalAmount, transactionId, deciderUserId || null, deciderName, shift_slot_id]
             )
-            : await client.query(
-                `INSERT INTO booking_daily_invoices (
-                    booking_id, service_date, entry_mode, status, amount, transaction_id,
-                    decided_by_user_id, decided_by_name, decided_at
-                ) VALUES ($1, $2, 'MANUAL', $3, $4, $5, $6, $7, NOW())
-                ON CONFLICT (booking_id, service_date) WHERE shift_slot_id IS NULL
-                DO UPDATE SET status = EXCLUDED.status,
-                              amount = EXCLUDED.amount,
-                              transaction_id = EXCLUDED.transaction_id,
-                              decided_by_user_id = EXCLUDED.decided_by_user_id,
-                              decided_by_name = EXCLUDED.decided_by_name,
-                              decided_at = NOW(),
-                              updated_at = NOW()
-                RETURNING *`,
-                [booking_id, service_date, approve ? 'INVOICED' : 'SKIPPED', finalAmount, transactionId, deciderUserId || null, deciderName]
-            );
+            : assignment_id
+                ? await client.query(
+                    `INSERT INTO booking_daily_invoices (
+                        booking_id, service_date, entry_mode, status, amount, transaction_id,
+                        decided_by_user_id, decided_by_name, decided_at, assignment_id
+                    ) VALUES ($1, $2, 'MANUAL', $3, $4, $5, $6, $7, NOW(), $8)
+                    ON CONFLICT (booking_id, service_date, assignment_id) WHERE assignment_id IS NOT NULL
+                    DO UPDATE SET status = EXCLUDED.status,
+                                  amount = EXCLUDED.amount,
+                                  transaction_id = EXCLUDED.transaction_id,
+                                  decided_by_user_id = EXCLUDED.decided_by_user_id,
+                                  decided_by_name = EXCLUDED.decided_by_name,
+                                  decided_at = NOW(),
+                                  updated_at = NOW()
+                    RETURNING *`,
+                    [booking_id, service_date, approve ? 'INVOICED' : 'SKIPPED', finalAmount, transactionId, deciderUserId || null, deciderName, assignment_id]
+                )
+                : await client.query(
+                    `INSERT INTO booking_daily_invoices (
+                        booking_id, service_date, entry_mode, status, amount, transaction_id,
+                        decided_by_user_id, decided_by_name, decided_at
+                    ) VALUES ($1, $2, 'MANUAL', $3, $4, $5, $6, $7, NOW())
+                    ON CONFLICT (booking_id, service_date) WHERE shift_slot_id IS NULL AND assignment_id IS NULL
+                    DO UPDATE SET status = EXCLUDED.status,
+                                  amount = EXCLUDED.amount,
+                                  transaction_id = EXCLUDED.transaction_id,
+                                  decided_by_user_id = EXCLUDED.decided_by_user_id,
+                                  decided_by_name = EXCLUDED.decided_by_name,
+                                  decided_at = NOW(),
+                                  updated_at = NOW()
+                    RETURNING *`,
+                    [booking_id, service_date, approve ? 'INVOICED' : 'SKIPPED', finalAmount, transactionId, deciderUserId || null, deciderName]
+                );
 
     return { invoice: result.rows[0], finalAmount };
 }
 
 exports.confirmDailyInvoice = async (req, res) => {
     const { booking_id } = req.params;
-    const { service_date, approve, amount, shift_slot_id, reschedule_id } = req.body;
+    const { service_date, approve, amount, shift_slot_id, assignment_id, reschedule_id } = req.body;
 
     const client = await db.pool.connect();
 
@@ -1871,7 +1929,7 @@ exports.confirmDailyInvoice = async (req, res) => {
 
         const decidedByName = await getActorName(req.user?.user_id);
         const { invoice, finalAmount } = await applyInvoiceDecision(client, {
-            booking_id, service_date, approve, amount, shift_slot_id, reschedule_id,
+            booking_id, service_date, approve, amount, shift_slot_id, assignment_id, reschedule_id,
             deciderUserId: req.user?.user_id, deciderName: decidedByName
         });
 
@@ -4175,16 +4233,47 @@ exports.swapStaff = async (req, res) => {
     }
 };
 
+// Decides the pay for an assignment's boundary days, having first checked that the
+// days asked for really are its first/last day. Shared by the close-out path (which
+// closes and settles in one commit) and the settle-only path used for assignments a
+// scheduled termination or completion already ended overnight.
+const settleAssignmentDays = async (client, { booking_id, assignment, settlement_days, user }) => {
+    const allowed = boundaryDatesFor(assignment);
+    const days = settlement_days.map(d => ({ ...d, service_date: toDateStr(d.service_date) }));
+
+    const stray = days.find(d => !allowed.includes(d.service_date));
+    if (stray) {
+        const err = new Error(`${stray.service_date} is not this assignment's first or last day, so its pay can't be settled here.`);
+        err.statusCode = 400;
+        throw err;
+    }
+
+    return settleBoundaryPay(client, {
+        booking_id,
+        assignment_id: assignment.assignment_id,
+        days,
+        deciderUserId: user?.user_id,
+        deciderName: await getAttendanceDeciderName(user?.user_id),
+    });
+};
+
 // PATCH /api/bookings/:booking_id/assignments/:assignment_id/close-out
-// body: { out_time }
+// body: { out_time, settlement_days? }
 // Closes an open-ended assignment — the only thing that ever does. Used to end
 // the outgoing staff's side of a swap once they've actually left: sets
 // service_end_date/status, logs the out-time, and frees the staff member
 // (unless they hold another open assignment elsewhere). See swapStaff's header
 // for why an assignment is never closed automatically.
+//
+// settlement_days carries the pay decision for this assignment's first and last
+// day, which were deliberately left PENDING for its whole run (see
+// settleBoundaryPay). Closing and settling commit together so the admin can't end
+// up with a closed assignment whose ends are half-decided. It stays optional: an
+// assignment closed without it shows up as unsettled and can be settled later
+// through settleAssignmentBoundaryPay.
 exports.closeStaffAssignment = async (req, res) => {
     const { booking_id, assignment_id } = req.params;
-    const { out_time } = req.body;
+    const { out_time, settlement_days } = req.body;
 
     if (!out_time) {
         return res.status(400).json({ status: 'error', message: 'out_time is required' });
@@ -4195,7 +4284,7 @@ exports.closeStaffAssignment = async (req, res) => {
         await client.query('BEGIN');
 
         const assignmentRes = await client.query(
-            `SELECT assignment_id, staff_profile_id, status, service_end_date
+            `SELECT assignment_id, staff_profile_id, status, service_start_date, service_end_date
              FROM booking_staff_assignments
              WHERE assignment_id = $1 AND booking_id = $2
              FOR UPDATE`,
@@ -4233,6 +4322,17 @@ exports.closeStaffAssignment = async (req, res) => {
         }
 
         const closeDateStr = toDateStr(out_time);
+        const startDateStr = toDateStr(assignment.service_start_date);
+
+        // Same day is legitimate — a client can reject a staff member on arrival, so
+        // they start and leave within hours. Earlier than the start never is.
+        if (closeDateStr < startDateStr) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                status: 'error',
+                message: `The out-time can't be before this staff member started (${startDateStr}).`
+            });
+        }
 
         await client.query(
             `UPDATE booking_staff_assignments
@@ -4245,6 +4345,17 @@ exports.closeStaffAssignment = async (req, res) => {
             booking_id, assignment_id,
             service_date: closeDateStr, out_time,
         });
+
+        // Same transaction as the close itself — see the header.
+        let settled = [];
+        if (settlement_days) {
+            settled = await settleAssignmentDays(client, {
+                booking_id,
+                assignment: { ...assignment, service_end_date: closeDateStr },
+                settlement_days,
+                user: req.user,
+            });
+        }
 
         // Only release them if this was their last open commitment — they may
         // already hold a different booking's assignment.
@@ -4270,13 +4381,19 @@ exports.closeStaffAssignment = async (req, res) => {
                 actionType: 'STAFF_ASSIGNMENT_ENDED',
                 entityType: 'BOOKING',
                 entityId: booking_id,
-                details: { booking_id, assignment_id, staff_profile_id: assignment.staff_profile_id, out_time: closeDateStr },
+                details: {
+                    booking_id, assignment_id, staff_profile_id: assignment.staff_profile_id,
+                    out_time: closeDateStr, settled_days: settled,
+                },
             });
         } catch (logErr) {
             console.error('Activity log error (non-fatal):', logErr);
         }
 
-        res.status(200).json({ status: 'success', data: { booking_id, assignment_id, service_end_date: closeDateStr } });
+        res.status(200).json({
+            status: 'success',
+            data: { booking_id, assignment_id, service_end_date: closeDateStr, settled },
+        });
     } catch (error) {
         await client.query('ROLLBACK');
         if (error.statusCode) {
@@ -4284,6 +4401,82 @@ exports.closeStaffAssignment = async (req, res) => {
         }
         console.error('closeStaffAssignment error:', error);
         res.status(500).json({ status: 'error', message: 'Failed to close the assignment' });
+    } finally {
+        client.release();
+    }
+};
+
+// POST /api/bookings/:booking_id/assignments/:assignment_id/settle-boundary-pay
+// body: { settlement_days: [{ service_date, in_time?, out_time?, approve, amount? }] }
+// Settles the first/last-day pay of an assignment that has ALREADY ended — a
+// scheduled termination or completion runs overnight with nobody there to make the
+// call, so those days stay PENDING and the assignment shows as unsettled in
+// Allocation History until an admin decides them here. The close-out route above
+// covers the case where the admin is present and ends the assignment themselves.
+exports.settleAssignmentBoundaryPay = async (req, res) => {
+    const { booking_id, assignment_id } = req.params;
+    const { settlement_days } = req.body;
+
+    if (!Array.isArray(settlement_days) || settlement_days.length === 0) {
+        return res.status(400).json({ status: 'error', message: 'settlement_days is required' });
+    }
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const assignmentRes = await client.query(
+            `SELECT assignment_id, staff_profile_id, service_start_date, service_end_date
+             FROM booking_staff_assignments
+             WHERE assignment_id = $1 AND booking_id = $2
+             FOR UPDATE`,
+            [assignment_id, booking_id]
+        );
+        if (assignmentRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Assignment not found for this booking' });
+        }
+        const assignment = assignmentRes.rows[0];
+
+        // While an assignment is still running its last day isn't known, so there is
+        // no second boundary to decide — that's the whole reason this is deferred.
+        if (!assignment.service_end_date) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                status: 'error',
+                message: 'This assignment is still running. Its first and last day are settled together once it ends.'
+            });
+        }
+
+        const settled = await settleAssignmentDays(client, {
+            booking_id, assignment, settlement_days, user: req.user,
+        });
+
+        await client.query('COMMIT');
+
+        try {
+            const actorName = await getActorName(req.user.user_id);
+            await logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: extractActorRole(req.user.role),
+                actionType: 'STAFF_BOUNDARY_PAY_SETTLED',
+                entityType: 'BOOKING',
+                entityId: booking_id,
+                details: { booking_id, assignment_id, staff_profile_id: assignment.staff_profile_id, settled_days: settled },
+            });
+        } catch (logErr) {
+            console.error('Activity log error (non-fatal):', logErr);
+        }
+
+        res.status(200).json({ status: 'success', data: { booking_id, assignment_id, settled } });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (error.statusCode) {
+            return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        }
+        console.error('settleAssignmentBoundaryPay error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to settle this assignment\'s pay' });
     } finally {
         client.release();
     }

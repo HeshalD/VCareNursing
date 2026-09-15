@@ -303,6 +303,13 @@ const ClientDetailPage = () => {
   const [uploadingRegFeeReceipt, setUploadingRegFeeReceipt] = useState(false);
   const regFeeReceiptInputRef = useRef(null);
 
+  // Editing the amount of an already-sent (but unpaid) registration fee invoice.
+  const [editingRegFeeAmount, setEditingRegFeeAmount] = useState(false);
+  const [regFeeAmountEdit, setRegFeeAmountEdit] = useState('');
+  const [regFeeAmountEditReason, setRegFeeAmountEditReason] = useState('');
+  const [regFeeAmountEditLoading, setRegFeeAmountEditLoading] = useState(false);
+  const [regFeeAmountEditError, setRegFeeAmountEditError] = useState('');
+
   // Backdated (historical) registration fee payment entry — for clients who paid
   // before this was tracked in-system, or before this feature existed.
   const [showBackdateRegFeeForm, setShowBackdateRegFeeForm] = useState(false);
@@ -905,6 +912,41 @@ const ClientDetailPage = () => {
       setRegFeeError(err.message || 'Failed to send registration fee invoice.');
     } finally {
       setRegFeeLoading(false);
+    }
+  };
+
+  const handleSaveRegFeeAmountEdit = async () => {
+    const parsed = parseFloat(regFeeAmountEdit);
+    if (!regFeeAmountEdit || isNaN(parsed) || parsed <= 0) {
+      setRegFeeAmountEditError('Enter a valid amount.');
+      return;
+    }
+    if (!regFeeAmountEditReason.trim()) {
+      setRegFeeAmountEditError('A reason for the change is required.');
+      return;
+    }
+    setRegFeeAmountEditLoading(true);
+    setRegFeeAmountEditError('');
+    try {
+      const res = await apiClient.updateRegFeeAmount(clientId, {
+        amount: regFeeAmountEdit,
+        reason: regFeeAmountEditReason.trim(),
+      });
+      if (res.data?.invoice_pdf_url) setLastInvoicePdfUrl(res.data.invoice_pdf_url);
+      const [refreshed, txRefreshed] = await Promise.all([
+        apiClient.getAdminClientDetail(clientId),
+        apiClient.getClientTransactions(clientId),
+      ]);
+      setDetail(refreshed.data || null);
+      setClientTransactions(txRefreshed.data || []);
+      fetchRegFeeInvoices();
+      fetchOverdueInvoices();
+      setEditingRegFeeAmount(false);
+      setRegFeeAmountEditReason('');
+    } catch (err) {
+      setRegFeeAmountEditError(err.message || 'Failed to update registration fee amount.');
+    } finally {
+      setRegFeeAmountEditLoading(false);
     }
   };
 
@@ -3281,6 +3323,21 @@ const ClientDetailPage = () => {
                       }`}>
                         {formatMoney(clientProfile.reg_fee_amount || 10000)}
                       </span>
+                      {['INVOICED', 'PAID'].includes(feeStatus) && !editingRegFeeAmount && (
+                        <button
+                          type="button"
+                          title={feeStatus === 'PAID' ? 'Correct paid amount' : 'Edit invoiced amount'}
+                          onClick={() => {
+                            setRegFeeAmountEdit(String(clientProfile.reg_fee_amount || ''));
+                            setRegFeeAmountEditReason('');
+                            setRegFeeAmountEditError('');
+                            setEditingRegFeeAmount(true);
+                          }}
+                          className="inline-flex items-center justify-center rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                      )}
                     </div>
                   }
                 >
@@ -3352,6 +3409,58 @@ const ClientDetailPage = () => {
                   <p className="mt-1 text-xs text-gray-400">
                     Managed by {clientSalesperson?.current?.salesperson_name || 'no one yet'}
                   </p>
+
+                  {editingRegFeeAmount && (
+                    <div className="mt-3 space-y-2 rounded-md border border-blue-100 bg-blue-50/50 p-3">
+                      <div>
+                        <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 block mb-1">New Fee Amount (LKR)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={regFeeAmountEdit}
+                          onChange={(e) => setRegFeeAmountEdit(e.target.value)}
+                          onWheel={(e) => e.target.blur()}
+                          className="w-full @md:w-64 px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-medium uppercase tracking-wider text-gray-400 block mb-1">Reason for Change</label>
+                        <input
+                          type="text"
+                          value={regFeeAmountEditReason}
+                          onChange={(e) => setRegFeeAmountEditReason(e.target.value)}
+                          placeholder="e.g. Applied a discount, corrected a typo"
+                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
+                        />
+                      </div>
+                      {regFeeAmountEditError && <p className="text-xs text-red-600">{regFeeAmountEditError}</p>}
+                      <p className="text-[11px] text-gray-400">
+                        {feeStatus === 'PAID'
+                          ? "This client's fee is already marked paid — saving corrects the recorded payment amount and the invoice/PDF on file. It does not trigger a refund or additional collection; handle any money owed back or still due separately."
+                          : 'This updates the invoice already sent to the client and regenerates its PDF with the new amount.'}
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={handleSaveRegFeeAmountEdit}
+                          disabled={regFeeAmountEditLoading}
+                          className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                        >
+                          {regFeeAmountEditLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingRegFeeAmount(false)}
+                          disabled={regFeeAmountEditLoading}
+                          className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+                        >
+                          <X className="h-3 w-3" /> Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {regFeeError && <p className="mt-3 text-xs text-red-600">{regFeeError}</p>}
                   {salespersonError && <p className="mt-3 text-xs text-red-600">{salespersonError}</p>}

@@ -3383,6 +3383,34 @@ async function runMigration() {
   await db.query(`ALTER TABLE booking_daily_invoices ADD COLUMN IF NOT EXISTS corrected_at TIMESTAMP WITH TIME ZONE`);
   await db.query(`ALTER TABLE staff_daily_attendance ADD COLUMN IF NOT EXISTS corrected_at TIMESTAMP WITH TIME ZONE`);
 
+  // ── Per-staff client invoicing on a LIVE_IN mid-swap day ────────────────────
+  // A day with 2+ concurrently active assignments (outgoing staff not yet closed
+  // out) has always billed the client as one lump amount for the whole day. This
+  // lets the admin split that into one invoice line per assignment instead —
+  // mirrors shift_slot_id's existing "one row per unit of the day" pattern above,
+  // just keyed by assignment instead of by shift.
+  await db.query(`ALTER TABLE booking_daily_invoices ADD COLUMN IF NOT EXISTS assignment_id UUID REFERENCES booking_staff_assignments(assignment_id)`);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_booking_daily_invoices_assignment_id
+    ON booking_daily_invoices(assignment_id);
+  `);
+
+  // uniq_daily_invoice_no_slot (the ordinary one-row-per-day case) must now also
+  // exclude assignment-scoped rows, or the first per-assignment insert on a day
+  // would collide with it (assignment_id didn't exist when that index was defined,
+  // so every existing row already satisfies "assignment_id IS NULL" here for free).
+  await db.query(`DROP INDEX IF EXISTS uniq_daily_invoice_no_slot`);
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_daily_invoice_no_slot
+      ON booking_daily_invoices (booking_id, service_date)
+      WHERE shift_slot_id IS NULL AND assignment_id IS NULL
+  `);
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_daily_invoice_with_assignment
+      ON booking_daily_invoices (booking_id, service_date, assignment_id)
+      WHERE assignment_id IS NOT NULL
+  `);
+
   // =========================================================
 
   await seedQuotePresetItems();

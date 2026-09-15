@@ -883,6 +883,110 @@ async function applySalaryDecision(client, { attendance_id, approve, amount, dec
 }
 
 /**
+ * Settles the pay for one assignment's boundary day(s) — the day the staff member
+ * arrived and the day they left — as a single act at the end of the assignment.
+ *
+ * Those days are deliberately left PENDING for the whole run of the assignment:
+ * the cron skips auto-pay on both (see cron/dailyInvoicing.js), because a partial
+ * first day and a partial last day are worth whatever the admin judges them to be
+ * once the real hours on each end are known. Both ends are only known when the
+ * staff member actually leaves, so both are decided here, together.
+ *
+ * `days` is [{ service_date, in_time?, out_time?, approve, amount? }]. An
+ * assignment that started and ended on the same day — the client sent the staff
+ * member home on arrival — has ONE entry, not two: there is a single real in→out
+ * span, not two midnight-bounded halves.
+ *
+ * A day that was already decided (under the older on-the-day flow, or by a repeat
+ * submission) is left exactly as it stands rather than treated as an error, so a
+ * half-migrated assignment can still be settled for whichever end is outstanding.
+ */
+async function settleBoundaryPay(client, { booking_id, assignment_id, days, deciderUserId, deciderName }) {
+    if (!Array.isArray(days) || days.length === 0) {
+        const err = new Error('At least one day is required to settle');
+        err.statusCode = 400;
+        throw err;
+    }
+
+    const settled = [];
+
+    for (const day of days) {
+        const { service_date, in_time, out_time, approve, amount } = day;
+
+        if (!service_date) {
+            const err = new Error('service_date is required for each day being settled');
+            err.statusCode = 400;
+            throw err;
+        }
+
+        // Checked before writing times: applyPartialAttendanceTime refuses to edit
+        // an already-decided day, so a retry would fail here rather than no-op.
+        const existingRes = await client.query(
+            `SELECT attendance_id, salary_status FROM staff_daily_attendance
+             WHERE assignment_id = $1 AND service_date = $2 AND reschedule_id IS NULL`,
+            [assignment_id, service_date]
+        );
+        const existing = existingRes.rows[0] || null;
+
+        if (existing && existing.salary_status !== 'PENDING') {
+            settled.push({ service_date, attendance_id: existing.attendance_id, already_decided: true });
+            continue;
+        }
+
+        if (in_time || out_time) {
+            await applyPartialAttendanceTime(client, {
+                booking_id, assignment_id, service_date, in_time, out_time,
+            });
+        }
+
+        const rowRes = await client.query(
+            `SELECT attendance_id FROM staff_daily_attendance
+             WHERE assignment_id = $1 AND service_date = $2 AND reschedule_id IS NULL`,
+            [assignment_id, service_date]
+        );
+        if (rowRes.rows.length === 0) {
+            const err = new Error(`No attendance is logged for ${service_date} — record the in/out time before settling pay for it`);
+            err.statusCode = 400;
+            throw err;
+        }
+
+        const { attendance, salaryAmount } = await applySalaryDecision(client, {
+            attendance_id: rowRes.rows[0].attendance_id,
+            approve, amount, deciderUserId, deciderName,
+        });
+
+        settled.push({
+            service_date,
+            attendance_id: attendance.attendance_id,
+            approve,
+            salary_amount: salaryAmount,
+        });
+    }
+
+    return settled;
+}
+
+// A DATE column read back through pg arrives as a Date pinned to local midnight,
+// so an ISO slice would report the previous day east of UTC — read the calendar
+// parts off it instead.
+const toDateOnly = (value) => (value instanceof Date
+    ? `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
+    : String(value).slice(0, 10));
+
+/**
+ * The boundary days of an assignment — the day it started and the day it ended —
+ * which are the only days settleBoundaryPay is allowed to touch. Collapses to a
+ * single date when an assignment began and ended on the same day. Empty for an
+ * assignment that hasn't ended yet, since its last day isn't known.
+ */
+function boundaryDatesFor({ service_start_date, service_end_date }) {
+    if (!service_start_date || !service_end_date) return [];
+    const start = toDateOnly(service_start_date);
+    const end = toDateOnly(service_end_date);
+    return start === end ? [start] : [start, end];
+}
+
+/**
  * @route   POST /api/attendance/:attendance_id/confirm-salary
  * @desc    Admin decision on whether to pay a staff member's salary for a logged day.
  *          The 12h-served threshold is informational only — the decision is always
@@ -1375,6 +1479,8 @@ exports._internal = {
     applyAttendanceException,
     applyAttendancePresentFlat,
     applySalaryDecision,
+    settleBoundaryPay,
+    boundaryDatesFor,
     getDeciderName,
     EXCEPTION_ACTION_TYPES,
 };

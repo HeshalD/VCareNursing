@@ -376,38 +376,9 @@ exports.assignStaffToBooking = async (req, res) => {
 
     const staff = staffResult.rows[0];
 
-    if (staff.current_status !== 'AVAILABLE') {
-      // current_status is a live snapshot that only flips back to AVAILABLE when the cron
-      // closes out an old assignment, so it lags a staff member whose other commitment(s)
-      // will have ended before this booking's start date. Only block on a genuine
-      // date-overlapping assignment elsewhere.
-      const conflictRes = await db.query(
-        `SELECT 1
-         FROM booking_staff_assignments bsa
-         LEFT JOIN LATERAL (
-             SELECT effective_date FROM scheduled_actions
-             WHERE booking_id = bsa.booking_id
-               AND action_type IN ('TERMINATION', 'COMPLETION')
-               AND status = 'SCHEDULED'
-             ORDER BY effective_date ASC
-             LIMIT 1
-         ) sa ON bsa.service_end_date IS NULL
-         WHERE bsa.staff_profile_id = $1
-           AND bsa.booking_id != $2
-           AND bsa.status IN ('ACTIVE', 'SCHEDULED')
-           AND bsa.service_start_date <= $3::date
-           AND (COALESCE(bsa.service_end_date, sa.effective_date) IS NULL
-                OR COALESCE(bsa.service_end_date, sa.effective_date) >= $3::date)
-         LIMIT 1`,
-        [staff_profile_id, booking_id, toDateStr(service_start_date)]
-      );
-      if (conflictRes.rows.length > 0) {
-        return res.status(400).json({
-          status: 'error',
-          message: `${staff.full_name} is not available (status: ${staff.current_status})`
-        });
-      }
-    }
+    // The authoritative availability check (current_status re-read under a lock,
+    // with the same lagging-status leniency this used to apply here unlocked) now
+    // happens right before the insert, below — see the comment there for why.
 
     const staffDailyRate = daily_rate || parseFloat(booking.quote_daily_rate);
 
@@ -500,16 +471,96 @@ exports.assignStaffToBooking = async (req, res) => {
       notes || null
     ];
 
-    const insertResult = await db.query(insertQuery, values);
-    const assignment = insertResult.rows[0];
+    // The AVAILABLE check above ran on an unlocked read — two requests arriving
+    // close together (a double-click, a retried request) can both pass it before
+    // either's UPDATE below commits, and both then insert a duplicate assignment
+    // for the same staff member on the same booking. Everything from here to the
+    // status flip runs on one connection, inside one transaction, with the staff
+    // row locked for the duration — a second concurrent request blocks on the lock
+    // and re-checks against what the first one just committed, instead of racing it.
+    const assignClient = await db.pool.connect();
+    let assignment;
+    try {
+      await assignClient.query('BEGIN');
 
-    // Reserve the staff member either way so they aren't double-booked.
-    await db.query(
-      `UPDATE staff_profiles
-       SET current_status = 'ASSIGNED'
-       WHERE staff_profile_id = $1`,
-      [staff_profile_id]
-    );
+      const lockedStaffRes = await assignClient.query(
+        `SELECT current_status FROM staff_profiles WHERE staff_profile_id = $1 FOR UPDATE`,
+        [staff_profile_id]
+      );
+      if (lockedStaffRes.rows.length === 0) {
+        await assignClient.query('ROLLBACK');
+        return res.status(404).json({ status: 'error', message: 'Staff member not found' });
+      }
+      const lockedStatus = lockedStaffRes.rows[0].current_status;
+      if (lockedStatus !== 'AVAILABLE') {
+        // current_status is a live snapshot that only flips back to AVAILABLE when the
+        // cron closes out an old assignment, so it lags a staff member whose other
+        // commitment(s) will have ended before this booking's start date (or one who
+        // was marked UNAVAILABLE for an unrelated reason and never had a conflicting
+        // assignment at all). Only block on a genuine date-overlapping assignment
+        // elsewhere — same rule this used to apply unlocked before the insert; now
+        // re-verified under the lock so a concurrent request can't slip through it.
+        const conflictRes = await assignClient.query(
+          `SELECT 1
+           FROM booking_staff_assignments bsa
+           LEFT JOIN LATERAL (
+               SELECT effective_date FROM scheduled_actions
+               WHERE booking_id = bsa.booking_id
+                 AND action_type IN ('TERMINATION', 'COMPLETION')
+                 AND status = 'SCHEDULED'
+               ORDER BY effective_date ASC
+               LIMIT 1
+           ) sa ON bsa.service_end_date IS NULL
+           WHERE bsa.staff_profile_id = $1
+             AND bsa.booking_id != $2
+             AND bsa.status IN ('ACTIVE', 'SCHEDULED')
+             AND bsa.service_start_date <= $3::date
+             AND (COALESCE(bsa.service_end_date, sa.effective_date) IS NULL
+                  OR COALESCE(bsa.service_end_date, sa.effective_date) >= $3::date)
+           LIMIT 1`,
+          [staff_profile_id, booking_id, toDateStr(service_start_date)]
+        );
+        if (conflictRes.rows.length > 0) {
+          await assignClient.query('ROLLBACK');
+          return res.status(400).json({
+            status: 'error',
+            message: `${staff.full_name} is not available (status: ${lockedStatus})`
+          });
+        }
+      }
+
+      // Belt-and-braces alongside the lock above: catches a duplicate even if
+      // current_status ever drifts out of sync with the assignment rows themselves.
+      const dupRes = await assignClient.query(
+        `SELECT 1 FROM booking_staff_assignments
+         WHERE booking_id = $1 AND staff_profile_id = $2 AND status IN ('ACTIVE', 'SCHEDULED')
+         LIMIT 1`,
+        [booking_id, staff_profile_id]
+      );
+      if (dupRes.rows.length > 0) {
+        await assignClient.query('ROLLBACK');
+        return res.status(400).json({
+          status: 'error',
+          message: `${staff.full_name} already has an active or scheduled assignment on this booking.`
+        });
+      }
+
+      const insertResult = await assignClient.query(insertQuery, values);
+      assignment = insertResult.rows[0];
+
+      // Reserve the staff member either way so they aren't double-booked.
+      await assignClient.query(
+        `UPDATE staff_profiles SET current_status = 'ASSIGNED' WHERE staff_profile_id = $1`,
+        [staff_profile_id]
+      );
+
+      await assignClient.query('COMMIT');
+    } catch (e) {
+      await assignClient.query('ROLLBACK');
+      throw e;
+    } finally {
+      assignClient.release();
+    }
 
     if (isFuture) {
       // Keep the booking's start_date in sync with the assignment, but only on a

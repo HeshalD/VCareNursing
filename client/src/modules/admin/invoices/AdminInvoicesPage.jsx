@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Loader2, X, Receipt, Check, AlertCircle, Download, Send,
+  Loader2, X, Receipt, Check, AlertCircle, Download, Send, Search, Pencil,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import DateInput from '../../../components/common/DateInput';
+import useDebouncedValue from '../../../hooks/useDebouncedValue';
 
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
 const formatMoney = (v) => money.format(Number(v || 0));
@@ -22,9 +23,18 @@ const STATUS_CONFIG = {
   PENDING:  { dot: 'bg-amber-400',   text: 'text-amber-700',   label: 'Pending' },
 };
 
-const REG_FEE_STATUS_CONFIG = {
-  SENT: { dot: 'bg-blue-400',    text: 'text-blue-700',    label: 'Sent' },
-  PAID: { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Paid' },
+// Registration fee row helpers — honorifics/company display name mirrors
+// client_managemnet.jsx and client_detail_page.jsx's display_name logic;
+// days-remaining mirrors client_detail_page.jsx's expiry countdown (only
+// meaningful once PAID/WAIVED — see backend/cron/regFeeExpiry.js).
+const regFeeDisplayName = (row) => {
+  if (row.display_name_source === 'COMPANY_NAME' && row.company_name) return row.company_name;
+  return `${row.honorific ? `${row.honorific} ` : ''}${row.full_name || '—'}`;
+};
+
+const regFeeDaysRemaining = (row) => {
+  if (!['PAID', 'WAIVED'].includes(row.reg_fee_status) || !row.reg_fee_expires_at) return null;
+  return Math.ceil((new Date(row.reg_fee_expires_at) - Date.now()) / (1000 * 60 * 60 * 24));
 };
 
 // Client's *current* membership state (client_profiles.reg_fee_status) — distinct
@@ -58,6 +68,19 @@ const OVERDUE_INVOICE_STATUS_CONFIG = {
 };
 const OVERDUE_SOURCE_LABELS = { REGISTRATION_FEE: 'Registration Fee' };
 
+// Sub-filter within the Registration Fees tab — mirrors client_managemnet.jsx's
+// REG_TABS so admins filtering by membership state see the same vocabulary
+// whether they're on the client list or this cross-client overview.
+const REG_FEE_TABS = ['All', 'Pending', 'Invoiced', 'Receipt Submitted', 'Paid', 'Waived', 'Expired'];
+const REG_FEE_TAB_TO_STATUS = {
+  Pending: 'PENDING',
+  Invoiced: 'INVOICED',
+  'Receipt Submitted': 'RECEIPT_UPLOADED',
+  Paid: 'PAID',
+  Waived: 'WAIVED',
+  Expired: 'EXPIRED',
+};
+
 const StatusDot = ({ status, config }) => {
   const cfg = config[status] || { dot: 'bg-slate-400', text: 'text-slate-600', label: status || '—' };
   return (
@@ -85,7 +108,7 @@ const TAB_GROUPS = [
   {
     label: 'Other Invoices',
     tabs: [
-      { id: 'reg-fee', label: 'Registration Fee' },
+      { id: 'reg-fee', label: 'Registration Fees' },
       { id: 'products', label: 'Product & Rental' },
       { id: 'combined', label: 'Combined' },
       { id: 'overdue', label: 'Overdue' },
@@ -103,8 +126,8 @@ const TAB_META = {
     subtitle: 'Every daily attendance charge, invoiced or skipped.',
   },
   'reg-fee': {
-    title: 'Registration Fee Invoices',
-    subtitle: 'One-time client registration/membership fee invoices.',
+    title: 'Registration Fees',
+    subtitle: 'One row per client — current fee, renewal countdown, salesperson credit, and invoice on file.',
   },
   products: {
     title: 'Product & Rental Invoices',
@@ -139,9 +162,26 @@ export default function AdminInvoicesPage() {
   const [sendingInvoiceId, setSendingInvoiceId] = useState('');
   const [sentInvoiceId, setSentInvoiceId] = useState('');
 
-  // ── Registration fee invoices state ────────────────────────────────────────
-  const [regFeeInvoices, setRegFeeInvoices] = useState([]);
+  // ── Registration fees overview state (one row per client) ─────────────────
+  const [regFeeRows, setRegFeeRows] = useState([]);
   const [regFeeLoading, setRegFeeLoading] = useState(false);
+  const [regFeeStatusTab, setRegFeeStatusTab] = useState('All');
+  const [regFeeSearch, setRegFeeSearch] = useState('');
+  const debouncedRegFeeSearch = useDebouncedValue(regFeeSearch, 400);
+  const [regFeePage, setRegFeePage] = useState(1);
+  const [regFeePagination, setRegFeePagination] = useState(null);
+  const [regFeeCounts, setRegFeeCounts] = useState({ All: 0 });
+
+  // Amount-correction modal — same operation as client_detail_page's inline
+  // editor, surfaced here so an admin doesn't have to open each client just
+  // to fix a typo'd fee. Only enabled for INVOICED/PAID rows (see backend
+  // updateRegFeeAmount — PENDING/EXPIRED have no invoice, WAIVED has no money
+  // or invoice to correct).
+  const [editingRegFeeRow, setEditingRegFeeRow] = useState(null);
+  const [regFeeEditAmount, setRegFeeEditAmount] = useState('');
+  const [regFeeEditReason, setRegFeeEditReason] = useState('');
+  const [regFeeEditLoading, setRegFeeEditLoading] = useState(false);
+  const [regFeeEditError, setRegFeeEditError] = useState('');
 
   // ── Product/rental invoices state ──────────────────────────────────────────
   const [productInvoices, setProductInvoices] = useState([]);
@@ -224,18 +264,61 @@ export default function AdminInvoicesPage() {
     }
   }, [page, statusFilter, dateFrom, dateTo, bookingIdFilter]);
 
-  // ── Registration fee invoices fetch ────────────────────────────────────────
-  const fetchRegFeeInvoices = useCallback(async () => {
+  // ── Registration fees overview fetch (one row per client) ──────────────────
+  const fetchRegFeeRows = useCallback(async () => {
     setRegFeeLoading(true);
     try {
-      const res = await apiClient.getAllRegFeeInvoices({ limit: 200 });
-      setRegFeeInvoices(Array.isArray(res?.data) ? res.data : []);
+      const filters = { page: regFeePage, limit: PAGE_SIZE };
+      if (regFeeStatusTab !== 'All') filters.status = REG_FEE_TAB_TO_STATUS[regFeeStatusTab];
+      if (debouncedRegFeeSearch) filters.search = debouncedRegFeeSearch;
+      const res = await apiClient.getRegistrationFeesOverview(filters);
+      setRegFeeRows(Array.isArray(res?.data) ? res.data : []);
+      setRegFeePagination(res?.pagination || null);
+      if (res?.counts) setRegFeeCounts(res.counts);
     } catch {
-      setRegFeeInvoices([]);
+      setRegFeeRows([]);
     } finally {
       setRegFeeLoading(false);
     }
-  }, []);
+  }, [regFeePage, regFeeStatusTab, debouncedRegFeeSearch]);
+
+  const openRegFeeEdit = (row) => {
+    setEditingRegFeeRow(row);
+    setRegFeeEditAmount(String(row.reg_fee_amount || ''));
+    setRegFeeEditReason('');
+    setRegFeeEditError('');
+  };
+
+  const closeRegFeeEdit = () => {
+    if (regFeeEditLoading) return;
+    setEditingRegFeeRow(null);
+  };
+
+  const handleSaveRegFeeEdit = async () => {
+    const parsed = parseFloat(regFeeEditAmount);
+    if (!regFeeEditAmount || isNaN(parsed) || parsed <= 0) {
+      setRegFeeEditError('Enter a valid amount.');
+      return;
+    }
+    if (!regFeeEditReason.trim()) {
+      setRegFeeEditError('A reason for the change is required.');
+      return;
+    }
+    setRegFeeEditLoading(true);
+    setRegFeeEditError('');
+    try {
+      await apiClient.updateRegFeeAmount(editingRegFeeRow.client_profile_id, {
+        amount: regFeeEditAmount,
+        reason: regFeeEditReason.trim(),
+      });
+      setEditingRegFeeRow(null);
+      fetchRegFeeRows();
+    } catch (err) {
+      setRegFeeEditError(err.message || 'Failed to update registration fee amount.');
+    } finally {
+      setRegFeeEditLoading(false);
+    }
+  };
 
   // ── Product/rental invoices fetch ──────────────────────────────────────────
   const fetchProductInvoices = useCallback(async (overrides = {}) => {
@@ -313,7 +396,8 @@ export default function AdminInvoicesPage() {
   useEffect(() => { fetchPending(); }, [fetchPending]);
   useEffect(() => { if (tab === 'all') fetchInvoices(); }, [tab]); // eslint-disable-line
   useEffect(() => { if (tab === 'all') fetchInvoices(); }, [page]); // eslint-disable-line
-  useEffect(() => { if (tab === 'reg-fee') fetchRegFeeInvoices(); }, [tab]); // eslint-disable-line
+  useEffect(() => { setRegFeePage(1); }, [regFeeStatusTab, debouncedRegFeeSearch]);
+  useEffect(() => { if (tab === 'reg-fee') fetchRegFeeRows(); }, [tab, regFeePage, regFeeStatusTab, debouncedRegFeeSearch]); // eslint-disable-line
   useEffect(() => { if (tab === 'products') fetchProductInvoices(); }, [tab]); // eslint-disable-line
   useEffect(() => { if (tab === 'combined') fetchCombinedInvoices(); }, [tab]); // eslint-disable-line
   useEffect(() => { if (tab === 'overdue') fetchOverdueInvoices(); }, [tab]); // eslint-disable-line
@@ -705,69 +789,237 @@ export default function AdminInvoicesPage() {
 
         {/* ── REGISTRATION FEES TAB ─────────────────────────────────────────── */}
         {tab === 'reg-fee' && (
-          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-            {regFeeLoading ? (
-              <div className="flex items-center justify-center h-64">
-                <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+          <>
+            {/* Sub-filter: membership state, mirrors client_managemnet.jsx's tabs */}
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+              <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-1 w-fit flex-wrap">
+                {REG_FEE_TABS.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setRegFeeStatusTab(t)}
+                    className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                      regFeeStatusTab === t
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    {t}
+                    <span className="ml-1.5 tabular-nums text-slate-400">{regFeeCounts[t] ?? 0}</span>
+                  </button>
+                ))}
               </div>
-            ) : regFeeInvoices.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-400">
-                <Receipt className="h-8 w-8" />
-                <p className="text-sm font-medium">No registration fee invoices sent yet</p>
+              <div className="relative sm:ml-auto">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  value={regFeeSearch}
+                  onChange={(e) => setRegFeeSearch(e.target.value)}
+                  placeholder="Search by name, code, mobile…"
+                  className="pl-8 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none w-64"
+                />
               </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-200 bg-slate-50">
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Date Sent</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Client</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Invoice Code</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Invoice Status</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Membership</th>
-                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Amount</th>
-                      <th className="px-4 py-3" />
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {regFeeInvoices.map((inv) => (
-                      <tr key={inv.invoice_id} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{formatDate(inv.created_at)}</td>
-                        <td className="px-4 py-3">
-                          {inv.client_name ? (
-                            <button
-                              type="button"
-                              onClick={() => navigate(`/admin/users/${inv.client_profile_id}/detail`)}
-                              className={linkCls}
-                            >
-                              {inv.client_name}
-                            </button>
-                          ) : '—'}
-                        </td>
-                        <td className="px-4 py-3 font-mono text-xs text-slate-500">{inv.invoice_code}</td>
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          <StatusDot status={inv.status} config={REG_FEE_STATUS_CONFIG} />
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          <StatusDot status={inv.membership_status} config={MEMBERSHIP_STATUS_CONFIG} />
-                          {inv.membership_status === 'PAID' && inv.membership_expires_at && (
-                            <span className="block text-xs text-slate-400 mt-0.5">
-                              Expires {formatDate(inv.membership_expires_at)}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right font-medium text-slate-800 whitespace-nowrap">{formatMoney(inv.amount)}</td>
-                        <td className="px-4 py-3 text-right">
-                          <a href={inv.pdf_url} target="_blank" rel="noreferrer" title="Download invoice PDF" className={iconBtnCls}>
-                            <Download className="h-3.5 w-3.5" />
-                          </a>
-                        </td>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              {regFeeLoading ? (
+                <div className="flex items-center justify-center h-64">
+                  <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+                </div>
+              ) : regFeeRows.length === 0 ? (
+                <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-400">
+                  <Receipt className="h-8 w-8" />
+                  <p className="text-sm font-medium">No clients match the current filters</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50">
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Client</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Mobile</th>
+                        <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Amount Paid</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Renewal</th>
+                        <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Reg. Fee</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Salesperson</th>
+                        <th className="px-4 py-3" />
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {regFeeRows.map((row) => {
+                        const daysLeft = regFeeDaysRemaining(row);
+                        const renewalTone = daysLeft === null ? 'text-slate-400'
+                          : daysLeft <= 7 ? 'text-rose-600'
+                          : daysLeft <= 30 ? 'text-amber-600'
+                          : 'text-emerald-600';
+                        const canEdit = ['INVOICED', 'PAID'].includes(row.reg_fee_status);
+                        return (
+                          <tr key={row.client_profile_id} className="hover:bg-slate-50 transition-colors">
+                            <td className="px-4 py-3">
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/admin/users/${row.client_profile_id}/detail`)}
+                                className={`${linkCls} text-left`}
+                              >
+                                <span className="block font-medium">{regFeeDisplayName(row)}</span>
+                                {row.client_code && <span className="block text-xs text-slate-400 font-mono">{row.client_code}</span>}
+                              </button>
+                              <div className="mt-0.5">
+                                <StatusDot status={row.reg_fee_status} config={MEMBERSHIP_STATUS_CONFIG} />
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              {row.mobile_number ? (
+                                <button
+                                  type="button"
+                                  onClick={() => navigate(`/admin/users/${row.client_profile_id}/detail`)}
+                                  className={linkCls}
+                                >
+                                  {formatMobileNumber(row.mobile_number)}
+                                </button>
+                              ) : '—'}
+                            </td>
+                            <td className="px-4 py-3 text-right font-medium text-slate-800 whitespace-nowrap">{formatMoney(row.total_paid)}</td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              {daysLeft === null ? (
+                                <span className="text-slate-400">—</span>
+                              ) : (
+                                <span className={`font-semibold ${renewalTone}`}>
+                                  {daysLeft > 0 ? `${daysLeft}d left` : daysLeft === 0 ? 'Today' : 'Overdue'}
+                                </span>
+                              )}
+                              {row.reg_fee_expires_at && (
+                                <span className="block text-xs text-slate-400 mt-0.5">{formatDate(row.reg_fee_expires_at)}</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-right font-medium text-slate-800 whitespace-nowrap">{formatMoney(row.reg_fee_amount)}</td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              {row.salesperson_id ? (
+                                <button
+                                  type="button"
+                                  onClick={() => navigate(`/admin/salespersons/${row.salesperson_id}`)}
+                                  className={linkCls}
+                                >
+                                  {row.salesperson_name}
+                                </button>
+                              ) : <span className="text-slate-400">—</span>}
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center justify-end gap-1">
+                                <a
+                                  href={row.invoice_pdf_url || undefined}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title={row.invoice_pdf_url ? 'Download invoice PDF' : 'No invoice sent yet'}
+                                  className={`${iconBtnCls} ${!row.invoice_pdf_url ? 'pointer-events-none opacity-40' : ''}`}
+                                  aria-disabled={!row.invoice_pdf_url}
+                                >
+                                  <Download className="h-3.5 w-3.5" />
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={() => canEdit && openRegFeeEdit(row)}
+                                  disabled={!canEdit}
+                                  title={canEdit ? 'Edit registration fee amount' : 'Only invoiced or paid fees can be edited'}
+                                  className={iconBtnCls}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Pagination */}
+              {regFeePagination && regFeePagination.total_pages > 1 && (
+                <div className="flex items-center justify-between border-t border-slate-100 px-4 py-2.5">
+                  <p className="text-xs text-slate-400">
+                    Page {regFeePagination.page} of {regFeePagination.total_pages} &middot; {regFeePagination.total} total
+                  </p>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      disabled={regFeePage === 1}
+                      onClick={() => setRegFeePage((p) => p - 1)}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Prev
+                    </button>
+                    <button
+                      type="button"
+                      disabled={regFeePage === regFeePagination.total_pages}
+                      onClick={() => setRegFeePage((p) => p + 1)}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* Edit Registration Fee Amount modal */}
+        {editingRegFeeRow && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/30" onClick={closeRegFeeEdit} />
+            <div className="relative w-full max-w-sm bg-white rounded-xl shadow-2xl p-5">
+              <h2 className="text-sm font-semibold text-slate-900 mb-1">Edit Registration Fee</h2>
+              <p className="text-xs text-slate-500 mb-4">{regFeeDisplayName(editingRegFeeRow)}</p>
+
+              <label className="block text-xs font-medium text-slate-600 mb-1">New Fee Amount (LKR)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={regFeeEditAmount}
+                onChange={(e) => setRegFeeEditAmount(e.target.value)}
+                onWheel={(e) => e.target.blur()}
+                className={`${inputCls} w-full mb-3`}
+              />
+
+              <label className="block text-xs font-medium text-slate-600 mb-1">Reason for Change</label>
+              <input
+                type="text"
+                value={regFeeEditReason}
+                onChange={(e) => setRegFeeEditReason(e.target.value)}
+                placeholder="e.g. Applied a discount, corrected a typo"
+                className={`${inputCls} w-full`}
+              />
+
+              {editingRegFeeRow.reg_fee_status === 'PAID' && (
+                <p className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  This fee is already marked paid — saving corrects the recorded payment and invoice on file. It does not trigger a refund or additional collection.
+                </p>
+              )}
+
+              {regFeeEditError && <p className="mt-3 text-xs text-red-600">{regFeeEditError}</p>}
+
+              <div className="flex items-center gap-2 mt-4">
+                <button
+                  type="button"
+                  onClick={closeRegFeeEdit}
+                  disabled={regFeeEditLoading}
+                  className="flex-1 px-4 py-2 border border-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-100 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveRegFeeEdit}
+                  disabled={regFeeEditLoading}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500 transition-colors disabled:opacity-50"
+                >
+                  {regFeeEditLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                  Save
+                </button>
               </div>
-            )}
+            </div>
           </div>
         )}
 
