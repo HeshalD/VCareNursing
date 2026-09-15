@@ -805,7 +805,7 @@ export default function AdminInvoicesPage() {
                     }`}
                   >
                     {t}
-                    <span className="ml-1.5 tabular-nums text-slate-400">{regFeeCounts[t] ?? 0}</span>
+                    <span className="ml-1.5 tabular-nums text-slate-400">{regFeeCounts[t === 'All' ? 'All' : REG_FEE_TAB_TO_STATUS[t]] ?? 0}</span>
                   </button>
                 ))}
               </div>
