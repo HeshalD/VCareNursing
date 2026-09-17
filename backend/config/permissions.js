@@ -242,6 +242,8 @@ const PERMISSIONS = {
   // ── Staff Leaves ──────────────────────────────────────────────────────────
   STAFF_LEAVE_APPROVE:         { label: 'Approve Staff Leave',              module: 'Staff Leaves', entity: 'Staff Leave', verb: 'Approve', category: 'action' },
   STAFF_LEAVE_REJECT:          { label: 'Reject Staff Leave',               module: 'Staff Leaves', entity: 'Staff Leave', verb: 'Reject',  category: 'action' },
+  STAFF_LEAVE_CREATE:          { label: 'Log Staff Leave (Admin)',          module: 'Staff Leaves', entity: 'Staff Leave', verb: 'Create',  category: 'action' },
+  STAFF_LEAVE_REPORT_BACK:     { label: 'Report Staff Back From Leave',     module: 'Staff Leaves', entity: 'Staff Leave', verb: 'Report Back', category: 'action' },
 
   // ── Bookings — day-to-day operations (SHIFT_BASED/VISITING service delivery) ─
   BOOKING_CONFIRM_DAILY_INVOICE: { label: 'Confirm/Skip Daily or Shift Invoice', module: 'Bookings', entity: 'Shift Occurrence & Invoicing', verb: 'Confirm/Skip Invoice',    category: 'action' },
@@ -309,7 +311,7 @@ const ROLE_TEMPLATES = {
     'RENTAL_UNIT_CREATE', 'RENTAL_UNIT_EDIT', 'RENTAL_AGREEMENT_CREATE', 'RENTAL_UNIT_RETURN',
     'RENTAL_DEPOSIT_REFUND', 'RENTAL_DEPOSIT_FORFEIT',
     'RECRUITER_CREDIT', 'SALESPERSON_CREDIT',
-    'STAFF_LEAVE_APPROVE', 'STAFF_LEAVE_REJECT',
+    'STAFF_LEAVE_APPROVE', 'STAFF_LEAVE_REJECT', 'STAFF_LEAVE_CREATE', 'STAFF_LEAVE_REPORT_BACK',
   ],
   ACCOUNTS: [
     'VIEW_DASHBOARD', 'VIEW_BOOKINGS', 'VIEW_USER_MANAGEMENT', 'VIEW_QUOTATIONS',

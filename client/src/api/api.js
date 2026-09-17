@@ -2081,6 +2081,28 @@ class ApiClient {
     return this.request(`/staff-leave/summary/${staffProfileId}`);
   }
 
+  async getLeaveStaffOptions() {
+    return this.request('/staff-leave/staff-options');
+  }
+
+  async adminCreateLeave(leaveData) {
+    return this.request('/staff-leave/admin-create', {
+      method: 'POST',
+      body: JSON.stringify(leaveData),
+    });
+  }
+
+  async getOnLeaveStaff() {
+    return this.request('/staff-leave/on-leave');
+  }
+
+  async reportLeaveBack(leaveId, returnDate) {
+    return this.request(`/staff-leave/${leaveId}/report-back`, {
+      method: 'POST',
+      body: JSON.stringify({ return_date: returnDate || null }),
+    });
+  }
+
   // Staff Review endpoints
   async createStaffReview(reviewData) {
     return this.request('/staff-reviews', {

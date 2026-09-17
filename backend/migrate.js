@@ -3412,6 +3412,22 @@ async function runMigration() {
   `);
 
   // =========================================================
+  // ADMIN-INITIATED STAFF LEAVE + EARLY RETURN ("report back")
+  // source distinguishes a leave the staff member requested themselves from
+  // one an admin logged directly on their behalf (admin-logged leaves are
+  // auto-approved — there's no one else to approve them). actual_return_date
+  // is set when an admin reports the staff member back before the originally
+  // approved end_date; NULL means the leave is expected to run its full course.
+  // =========================================================
+  await db.query(`ALTER TABLE staff_leave_requests ADD COLUMN IF NOT EXISTS source VARCHAR(20) NOT NULL DEFAULT 'STAFF'`);
+  await db.query(`ALTER TABLE staff_leave_requests ADD COLUMN IF NOT EXISTS created_by_user_id UUID REFERENCES users(user_id)`);
+  await db.query(`ALTER TABLE staff_leave_requests ADD COLUMN IF NOT EXISTS created_by_name TEXT`);
+  await db.query(`ALTER TABLE staff_leave_requests ADD COLUMN IF NOT EXISTS actual_return_date DATE`);
+  await db.query(`ALTER TABLE staff_leave_requests ADD COLUMN IF NOT EXISTS returned_by_user_id UUID REFERENCES users(user_id)`);
+  await db.query(`ALTER TABLE staff_leave_requests ADD COLUMN IF NOT EXISTS returned_by_name TEXT`);
+  await db.query(`ALTER TABLE staff_leave_requests ADD COLUMN IF NOT EXISTS returned_at TIMESTAMP WITH TIME ZONE`);
+
+  // =========================================================
 
   await seedQuotePresetItems();
 

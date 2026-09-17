@@ -43,6 +43,7 @@ const rentalRoutes = require('./routes/rentalRoutes');
 const startDailyInvoicing = require('./cron/dailyInvoicing');
 const startRentalInvoicing = require('./cron/rentalInvoicing');
 const startRegFeeExpiry = require('./cron/regFeeExpiry');
+const startStaffLeaveStatus = require('./cron/staffLeaveStatus');
 
 const VERIFY_TOKEN = "nursing_verify_token";
 
@@ -72,6 +73,10 @@ startRentalInvoicing();
 
 // Start the registration-fee (membership) 365-day expiry cron job
 startRegFeeExpiry();
+
+// Start the staff leave status cron job (flips current_status ON_LEAVE/AVAILABLE
+// as leaves start/expire on their own, without needing an admin action that day)
+startStaffLeaveStatus();
 
 // Middleware
 // CORS setup – only permit origins configured via env or development host.

@@ -18,13 +18,14 @@ const ROLE_LABELS = {
   COUNSELLOR: 'Counsellor',
 };
 
-const STATUS_TABS = ['All', 'available', 'unavailable', 'assigned'];
+const STATUS_TABS = ['All', 'available', 'unavailable', 'assigned', 'on_leave'];
 
 const TAB_LABELS = {
   All: 'All',
   available: 'Available',
   unavailable: 'Unavailable',
   assigned: 'On Assignment',
+  on_leave: 'On Leave',
 };
 
 function parseRoles(raw) {
@@ -42,6 +43,7 @@ const StatusDot = ({ status }) => {
     available:   { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Available' },
     unavailable: { dot: 'bg-slate-400',   text: 'text-slate-500',   label: 'Unavailable' },
     assigned:    { dot: 'bg-blue-500',    text: 'text-blue-700',    label: 'On Assignment' },
+    on_leave:    { dot: 'bg-amber-400',   text: 'text-amber-700',   label: 'On Leave' },
   }[status?.toLowerCase()] ?? { dot: 'bg-slate-300', text: 'text-slate-500', label: status ?? '—' };
 
   return (

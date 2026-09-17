@@ -1473,6 +1473,7 @@ exports.getAllStaff = async (req, res) => {
               COUNT(*) FILTER (WHERE LOWER(sp.current_status) = 'available') AS available_count,
               COUNT(*) FILTER (WHERE LOWER(sp.current_status) = 'unavailable') AS unavailable_count,
               COUNT(*) FILTER (WHERE LOWER(sp.current_status) = 'assigned') AS assigned_count,
+              COUNT(*) FILTER (WHERE LOWER(sp.current_status) = 'on_leave') AS on_leave_count,
               COUNT(*) FILTER (WHERE sp.onboarding_status = 'PENDING_MIGRATION') AS pending_migration_count
             FROM staff_profiles sp
             JOIN users u ON sp.user_id = u.user_id
@@ -1576,6 +1577,7 @@ exports.getAllStaff = async (req, res) => {
                 available: parseInt(c.available_count, 10),
                 unavailable: parseInt(c.unavailable_count, 10),
                 assigned: parseInt(c.assigned_count, 10),
+                on_leave: parseInt(c.on_leave_count, 10),
                 pending_migration: parseInt(c.pending_migration_count, 10),
             }
         });

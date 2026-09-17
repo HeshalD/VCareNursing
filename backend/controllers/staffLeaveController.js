@@ -27,6 +27,50 @@ function dayCount(start, end) {
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
 
+// Flips current_status to ON_LEAVE the moment an approved leave already covers today
+// (a future-dated leave is caught later by the daily cron, once its start_date arrives).
+// Only moves AVAILABLE -> ON_LEAVE — never overwrites ASSIGNED/UNAVAILABLE, which belong
+// to other flows.
+async function markOnLeaveIfActiveToday(staffProfileId, startDate, endDate) {
+  try {
+    await pool.query(
+      `UPDATE staff_profiles
+       SET current_status = 'ON_LEAVE'
+       WHERE staff_profile_id = $1
+         AND current_status = 'AVAILABLE'
+         AND $2::date <= CURRENT_DATE AND $3::date >= CURRENT_DATE`,
+      [staffProfileId, startDate, endDate]
+    );
+  } catch (err) {
+    console.error('markOnLeaveIfActiveToday error:', err.message);
+  }
+}
+
+// Flips current_status back to AVAILABLE on a report-back. Only moves ON_LEAVE ->
+// AVAILABLE — if the staff member somehow isn't ON_LEAVE (e.g. cron already reset a
+// long-overdue leave), there's nothing to undo.
+async function markAvailableAfterLeave(staffProfileId) {
+  try {
+    await pool.query(
+      `UPDATE staff_profiles SET current_status = 'AVAILABLE'
+       WHERE staff_profile_id = $1 AND current_status = 'ON_LEAVE'`,
+      [staffProfileId]
+    );
+  } catch (err) {
+    console.error('markAvailableAfterLeave error:', err.message);
+  }
+}
+
+// Blocks overlapping PENDING/APPROVED leaves for the same staff member — a leave the
+// staff already reported back from early (actual_return_date set) no longer occupies
+// its original end_date, so it's excluded past that return date.
+const OVERLAP_CHECK_SQL = `
+  SELECT leave_id FROM staff_leave_requests
+  WHERE staff_profile_id = $1
+    AND status IN ('PENDING', 'APPROVED')
+    AND start_date <= $3
+    AND COALESCE(actual_return_date - 1, end_date) >= $2`;
+
 // GET /api/staff-leave/my-leaves — staff views their own leave history
 const getMyLeaves = async (req, res) => {
   try {
@@ -41,7 +85,8 @@ const getMyLeaves = async (req, res) => {
 
     const result = await pool.query(
       `SELECT leave_id, staff_profile_id, start_date::text AS start_date, end_date::text AS end_date,
-              reason, status, requested_at, reviewed_at, reviewed_by_name, rejected_reason
+              reason, status, requested_at, reviewed_at, reviewed_by_name, rejected_reason,
+              source, actual_return_date::text AS actual_return_date, returned_by_name, returned_at
        FROM staff_leave_requests
        WHERE staff_profile_id = $1
        ORDER BY requested_at DESC`,
@@ -79,14 +124,7 @@ const requestLeave = async (req, res) => {
     }
     const { staff_profile_id } = result.rows[0];
 
-    // Block overlapping PENDING/APPROVED leaves
-    const overlap = await pool.query(
-      `SELECT leave_id FROM staff_leave_requests
-       WHERE staff_profile_id = $1
-         AND status IN ('PENDING', 'APPROVED')
-         AND start_date <= $3 AND end_date >= $2`,
-      [staff_profile_id, start_date, end_date]
-    );
+    const overlap = await pool.query(OVERLAP_CHECK_SQL, [staff_profile_id, start_date, end_date]);
     if (overlap.rows.length) {
       return res.status(400).json({
         status: 'error',
@@ -95,8 +133,8 @@ const requestLeave = async (req, res) => {
     }
 
     const inserted = await pool.query(
-      `INSERT INTO staff_leave_requests (staff_profile_id, start_date, end_date, reason, status, requested_at)
-       VALUES ($1, $2, $3, $4, 'PENDING', NOW())
+      `INSERT INTO staff_leave_requests (staff_profile_id, start_date, end_date, reason, status, requested_at, source)
+       VALUES ($1, $2, $3, $4, 'PENDING', NOW(), 'STAFF')
        RETURNING leave_id, start_date::text AS start_date, end_date::text AS end_date, reason, status, requested_at`,
       [staff_profile_id, start_date, end_date, reason || null]
     );
@@ -104,6 +142,102 @@ const requestLeave = async (req, res) => {
     return res.status(201).json({ status: 'success', data: inserted.rows[0] });
   } catch (err) {
     console.error('requestLeave error:', err);
+    return res.status(500).json({ status: 'error', message: 'Server error' });
+  }
+};
+
+// GET /api/staff-leave/staff-options — active staff list for the admin "log leave" picker
+const getStaffOptions = async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT sp.staff_profile_id, sp.full_name, sp.designation, sp.staff_code, sp.gender
+       FROM staff_profiles sp
+       WHERE sp.is_active = true
+       ORDER BY sp.full_name ASC`
+    );
+    return res.json({ status: 'success', data: result.rows });
+  } catch (err) {
+    console.error('getStaffOptions error:', err);
+    return res.status(500).json({ status: 'error', message: 'Server error' });
+  }
+};
+
+// POST /api/staff-leave/admin-create — admin logs leave directly for any staff member.
+// Auto-approved: there's no separate approver for a leave the admin is themselves recording.
+const adminCreateLeave = async (req, res) => {
+  const { staff_profile_id, start_date, end_date, reason } = req.body;
+
+  if (!staff_profile_id || !start_date || !end_date) {
+    return res.status(400).json({ status: 'error', message: 'Staff member and start/end dates are required' });
+  }
+  if (new Date(end_date) < new Date(start_date)) {
+    return res.status(400).json({ status: 'error', message: 'End date cannot be before start date' });
+  }
+
+  try {
+    const staffRes = await pool.query(
+      `SELECT sp.staff_profile_id, sp.full_name, u.mobile_number
+       FROM staff_profiles sp
+       JOIN users u ON u.user_id = sp.user_id
+       WHERE sp.staff_profile_id = $1`,
+      [staff_profile_id]
+    );
+    if (!staffRes.rows.length) {
+      return res.status(404).json({ status: 'error', message: 'Staff member not found' });
+    }
+    const { full_name, mobile_number } = staffRes.rows[0];
+
+    const overlap = await pool.query(OVERLAP_CHECK_SQL, [staff_profile_id, start_date, end_date]);
+    if (overlap.rows.length) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'This staff member already has a pending or approved leave overlapping these dates.'
+      });
+    }
+
+    const adminName = await getReviewerName(req.user.user_id);
+    const inserted = await pool.query(
+      `INSERT INTO staff_leave_requests
+         (staff_profile_id, start_date, end_date, reason, status, requested_at,
+          source, created_by_user_id, created_by_name,
+          reviewed_at, reviewed_by_user_id, reviewed_by_name)
+       VALUES ($1, $2, $3, $4, 'APPROVED', NOW(),
+               'ADMIN', $5, $6,
+               NOW(), $5, $6)
+       RETURNING leave_id, staff_profile_id, start_date::text AS start_date, end_date::text AS end_date, reason, status, requested_at`,
+      [staff_profile_id, start_date, end_date, reason || null, req.user.user_id, adminName]
+    );
+    const leave = inserted.rows[0];
+    const days = dayCount(leave.start_date, leave.end_date);
+
+    await markOnLeaveIfActiveToday(staff_profile_id, leave.start_date, leave.end_date);
+
+    try {
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName: adminName,
+        actorRole: extractActorRole(req.user.role),
+        actionType: 'LEAVE_LOGGED_BY_ADMIN',
+        entityType: 'STAFF_LEAVE',
+        entityId: String(leave.leave_id),
+        details: { staff_profile_id, start_date: leave.start_date, end_date: leave.end_date, days, reason: leave.reason || null }
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (adminCreateLeave):', logErr.message);
+    }
+
+    if (mobile_number) {
+      const startTxt = fmtDate(leave.start_date);
+      const endTxt = fmtDate(leave.end_date);
+      sendStaffLeaveApproved(mobile_number, full_name, startTxt, endTxt, String(days))
+        .catch((err) => console.error('[WA] sendStaffLeaveApproved failed:', err.message));
+      sendStaffLeaveApprovedSms(mobile_number, full_name, startTxt, endTxt, days)
+        .catch((err) => console.error('[SMS] sendStaffLeaveApprovedSms failed:', err.message));
+    }
+
+    return res.status(201).json({ status: 'success', data: leave });
+  } catch (err) {
+    console.error('adminCreateLeave error:', err);
     return res.status(500).json({ status: 'error', message: 'Server error' });
   }
 };
@@ -121,6 +255,7 @@ const getAllLeaves = async (req, res) => {
     const result = await pool.query(
       `SELECT lr.leave_id, lr.staff_profile_id, lr.start_date::text AS start_date, lr.end_date::text AS end_date,
               lr.reason, lr.status, lr.requested_at, lr.reviewed_at, lr.reviewed_by_name, lr.rejected_reason,
+              lr.source, lr.actual_return_date::text AS actual_return_date, lr.returned_by_name, lr.returned_at,
               sp.full_name, sp.staff_code, sp.designation, sp.gender
        FROM staff_leave_requests lr
        JOIN staff_profiles sp ON sp.staff_profile_id = lr.staff_profile_id
@@ -227,7 +362,8 @@ const getReplacementCandidates = async (req, res) => {
                   SELECT 1 FROM staff_leave_requests lr2
                   WHERE lr2.staff_profile_id = sp.staff_profile_id
                     AND lr2.status = 'APPROVED'
-                    AND lr2.start_date <= $3 AND lr2.end_date >= $2
+                    AND lr2.start_date <= $3
+                    AND COALESCE(lr2.actual_return_date - 1, lr2.end_date) >= $2
                 ) THEN 'On approved leave in this date range'
                 ELSE NULL
               END AS unavailable_reason
@@ -270,6 +406,8 @@ const approveLeave = async (req, res) => {
     }
     const leave = result.rows[0];
     const days = dayCount(leave.start_date, leave.end_date);
+
+    await markOnLeaveIfActiveToday(leave.staff_profile_id, leave.start_date, leave.end_date);
 
     // Activity log (non-fatal)
     try {
@@ -380,6 +518,80 @@ const rejectLeave = async (req, res) => {
   }
 };
 
+// GET /api/staff-leave/on-leave — admin lists staff currently on leave (today falls
+// within an APPROVED leave that hasn't been reported back from early)
+const getOnLeaveStaff = async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT lr.leave_id, lr.staff_profile_id, lr.start_date::text AS start_date, lr.end_date::text AS end_date,
+              lr.reason, lr.source, lr.requested_at,
+              sp.full_name, sp.staff_code, sp.designation, sp.gender, sp.profile_picture_url,
+              (lr.end_date - CURRENT_DATE) AS days_remaining
+       FROM staff_leave_requests lr
+       JOIN staff_profiles sp ON sp.staff_profile_id = lr.staff_profile_id
+       WHERE lr.status = 'APPROVED'
+         AND lr.actual_return_date IS NULL
+         AND lr.start_date <= CURRENT_DATE
+         AND lr.end_date >= CURRENT_DATE
+       ORDER BY lr.end_date ASC`
+    );
+    return res.json({ status: 'success', data: result.rows });
+  } catch (err) {
+    console.error('getOnLeaveStaff error:', err);
+    return res.status(500).json({ status: 'error', message: 'Server error' });
+  }
+};
+
+// POST /api/staff-leave/:leaveId/report-back — admin reports a staff member back from
+// leave, either on schedule or early. Does not delete/alter the original start/end_date
+// (kept for the record); actual_return_date is what everything else checks against.
+const reportBack = async (req, res) => {
+  const { leaveId } = req.params;
+  const { return_date } = req.body;
+  try {
+    const adminName = await getReviewerName(req.user.user_id);
+    const returnDate = return_date || new Date().toISOString().slice(0, 10);
+
+    const result = await pool.query(
+      `UPDATE staff_leave_requests
+       SET actual_return_date = $1, returned_by_user_id = $2, returned_by_name = $3, returned_at = NOW()
+       WHERE leave_id = $4 AND status = 'APPROVED' AND actual_return_date IS NULL
+       RETURNING leave_id, staff_profile_id, start_date::text AS start_date, end_date::text AS end_date,
+                 actual_return_date::text AS actual_return_date`,
+      [returnDate, req.user.user_id, adminName, leaveId]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ status: 'error', message: 'Active approved leave not found' });
+    }
+    const leave = result.rows[0];
+
+    await markAvailableAfterLeave(leave.staff_profile_id);
+
+    try {
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName: adminName,
+        actorRole: extractActorRole(req.user.role),
+        actionType: 'LEAVE_STAFF_REPORTED_BACK',
+        entityType: 'STAFF_LEAVE',
+        entityId: String(leave.leave_id),
+        details: {
+          staff_profile_id: leave.staff_profile_id,
+          scheduled_end_date: leave.end_date,
+          actual_return_date: leave.actual_return_date,
+        }
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (reportBack):', logErr.message);
+    }
+
+    return res.json({ status: 'success', data: leave });
+  } catch (err) {
+    console.error('reportBack error:', err);
+    return res.status(500).json({ status: 'error', message: 'Server error' });
+  }
+};
+
 // GET /api/staff-leave/summary/:staffProfileId — total + monthly approved leave days,
 // plus approved leave ranges (for calendar marking)
 const getStaffLeaveSummary = async (req, res) => {
@@ -447,4 +659,8 @@ module.exports = {
   approveLeave,
   rejectLeave,
   getStaffLeaveSummary,
+  getStaffOptions,
+  adminCreateLeave,
+  getOnLeaveStaff,
+  reportBack,
 };

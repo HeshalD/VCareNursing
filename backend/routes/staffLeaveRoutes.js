@@ -11,6 +11,10 @@ const {
   approveLeave,
   rejectLeave,
   getStaffLeaveSummary,
+  getStaffOptions,
+  adminCreateLeave,
+  getOnLeaveStaff,
+  reportBack,
 } = require('../controllers/staffLeaveController');
 
 // Staff routes
@@ -20,6 +24,10 @@ router.post('/request', protect, restrictTo('STAFF', 'NURSE', 'CARETAKER', 'NANN
 // Admin routes
 router.get('/all', protect, requirePermission('VIEW_STAFF_LEAVES'), getAllLeaves);
 router.get('/pending', protect, requirePermission('VIEW_STAFF_LEAVES'), getPendingLeaves);
+router.get('/on-leave', protect, requirePermission('VIEW_STAFF_LEAVES'), getOnLeaveStaff);
+router.get('/staff-options', protect, requirePermission('STAFF_LEAVE_CREATE'), getStaffOptions);
+router.post('/admin-create', protect, requirePermission('STAFF_LEAVE_CREATE'), adminCreateLeave);
+router.post('/:leaveId/report-back', protect, requirePermission('STAFF_LEAVE_REPORT_BACK'), reportBack);
 // Admins can view any staff member's leave summary; staff can only view their own (enforced in controller).
 // NOTE: shared with staff self-service — deliberately NOT gated by requirePermission,
 // since those roles have no staff_permissions row.

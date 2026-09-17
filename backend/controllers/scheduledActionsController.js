@@ -39,7 +39,7 @@ exports.getUpcomingEvents = async (req, res) => {
         const todayRes = await db.query(`SELECT (DATE(NOW() AT TIME ZONE 'Asia/Colombo'))::text AS d`);
         const today = todayRes.rows[0].d;
 
-        const [scheduledRes, pendingRes, predictionRes, attendanceRes, leaveRes] = await Promise.all([
+        const [scheduledRes, pendingRes, predictionRes, attendanceRes, leaveRes, expiringLeaveRes] = await Promise.all([
             db.query(`
                 SELECT
                     sa.action_id, sa.action_type, sa.effective_date::text AS effective_date,
@@ -135,6 +135,20 @@ exports.getUpcomingEvents = async (req, res) => {
                 WHERE lr.status = 'PENDING'
                 ORDER BY lr.start_date ASC
             `),
+            // 6. EXPIRING_LEAVE — approved leaves ending within the next 3 days (or already
+            //    past their end date) whose staff member hasn't been reported back yet.
+            db.query(`
+                SELECT
+                    lr.leave_id, lr.start_date::text AS start_date, lr.end_date::text AS end_date,
+                    lr.reason,
+                    sp.full_name AS current_staff_name, sp.staff_code
+                FROM staff_leave_requests lr
+                JOIN staff_profiles sp ON sp.staff_profile_id = lr.staff_profile_id
+                WHERE lr.status = 'APPROVED'
+                  AND lr.actual_return_date IS NULL
+                  AND lr.end_date <= ($1::date + INTERVAL '3 days')
+                ORDER BY lr.end_date ASC
+            `, [today]),
         ]);
 
         const events = [];
@@ -229,6 +243,25 @@ exports.getUpcomingEvents = async (req, res) => {
                 reason: row.reason,
                 created_at: row.requested_at,
                 due_bucket: 'NEEDS_ACTION',
+            });
+        }
+
+        for (const row of expiringLeaveRes.rows) {
+            events.push({
+                id: row.leave_id,
+                source: 'EXPIRING_LEAVE',
+                action_type: 'EXPIRING_LEAVE',
+                booking_id: null,
+                booking_code: null,
+                client_name: null,
+                patient_name: null,
+                current_staff_name: row.current_staff_name,
+                staff_code: row.staff_code,
+                start_date: row.start_date,
+                end_date: row.end_date,
+                effective_date: row.end_date,
+                reason: row.reason,
+                due_bucket: bucketForDate(row.end_date, today),
             });
         }
 

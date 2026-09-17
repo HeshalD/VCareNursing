@@ -44,6 +44,7 @@ const ACTION_TYPE_CONFIG = {
   EXPIRING_SOON: { label: 'Balance Expiring Soon', Icon: Wallet, color: 'text-amber-600 bg-amber-50' },
   ATTENDANCE_NEEDED: { label: 'Attendance Not Logged', Icon: ClipboardList, color: 'text-amber-600 bg-amber-50' },
   PENDING_LEAVE: { label: 'Leave Request', Icon: CalendarOff, color: 'text-amber-600 bg-amber-50' },
+  EXPIRING_LEAVE: { label: 'Leave Ending', Icon: CalendarOff, color: 'text-blue-600 bg-blue-50' },
 };
 
 const URGENCY_CONFIG = {
@@ -56,6 +57,11 @@ const URGENCY_CONFIG = {
 // resolve themselves. Everything else (self-executing scheduled actions,
 // balance forecasts) is informational.
 const NEEDS_ACTION_SOURCES = ['PENDING_APPROVAL', 'ATTENDANCE', 'PENDING_LEAVE'];
+
+// EXPIRING_LEAVE is informational while the leave is still running — it only
+// becomes something to act on once the staff member is overdue to report back.
+const isNeedsAction = (e) =>
+  NEEDS_ACTION_SOURCES.includes(e.source) || (e.source === 'EXPIRING_LEAVE' && e.due_bucket === 'OVERDUE');
 
 const BucketBadge = ({ bucket }) => {
   const cfg = BUCKET_CONFIG[bucket] || BUCKET_CONFIG.LATER;
@@ -152,8 +158,8 @@ const UpcomingEvents = () => {
   };
 
   const filtered = events.filter(matchesSearch);
-  const needsAction = filtered.filter((e) => NEEDS_ACTION_SOURCES.includes(e.source));
-  const informational = filtered.filter((e) => !NEEDS_ACTION_SOURCES.includes(e.source));
+  const needsAction = filtered.filter(isNeedsAction);
+  const informational = filtered.filter((e) => !isNeedsAction(e));
 
   const handleCancel = async (event) => {
     try {
@@ -164,6 +170,19 @@ const UpcomingEvents = () => {
     } catch (err) {
       console.error('Cancel scheduled action error:', err);
       alert(err.message || 'Failed to cancel scheduled action.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleReportBack = async (event) => {
+    try {
+      setBusyId(event.id);
+      await apiClient.reportLeaveBack(event.id);
+      await fetchEvents();
+    } catch (err) {
+      console.error('reportLeaveBack error:', err);
+      alert(err.message || 'Failed to report staff back.');
     } finally {
       setBusyId(null);
     }
@@ -251,6 +270,15 @@ const UpcomingEvents = () => {
                       </>
                     )}
 
+                    {event.source === 'EXPIRING_LEAVE' && (
+                      <>
+                        <Detail label="Staff" value={`${event.current_staff_name || '—'}${event.staff_code ? ` (${event.staff_code})` : ''}`} />
+                        <Detail label="Leave Period" value={`${fmt(event.start_date)} → ${fmt(event.end_date)}`} />
+                        <Detail label="Was Due Back" value={fmt(event.end_date)} tone="text-red-600 font-medium" />
+                        <Detail label="Reason" value={event.reason} />
+                      </>
+                    )}
+
                     {event.source === 'ATTENDANCE' && (
                       <>
                         <Detail label="Booking" value={<BookingLink event={event} navigate={navigate} />} />
@@ -286,6 +314,16 @@ const UpcomingEvents = () => {
                       >
                         <CalendarOff className="w-3.5 h-3.5" />
                         Review Request
+                      </button>
+                    )}
+                    {event.source === 'EXPIRING_LEAVE' && (
+                      <button
+                        disabled={busyId === event.id}
+                        onClick={() => handleReportBack(event)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 border border-slate-200 rounded-lg hover:bg-emerald-50 hover:border-emerald-200 transition-colors disabled:opacity-50"
+                      >
+                        {busyId === event.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
+                        Report Back
                       </button>
                     )}
                   </div>
@@ -365,6 +403,16 @@ const UpcomingEvents = () => {
                           >
                             <Ban className="w-3.5 h-3.5" />
                             Cancel
+                          </button>
+                        )}
+                        {event.source === 'EXPIRING_LEAVE' && (
+                          <button
+                            disabled={busyId === event.id}
+                            onClick={() => handleReportBack(event)}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 border border-slate-200 rounded-lg hover:bg-emerald-50 hover:border-emerald-200 transition-colors disabled:opacity-50"
+                          >
+                            {busyId === event.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
+                            Report Back
                           </button>
                         )}
                       </td>

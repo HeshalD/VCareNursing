@@ -50,6 +50,7 @@ const StatusDot = ({ status }) => {
     AVAILABLE:   { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Available' },
     UNAVAILABLE: { dot: 'bg-slate-400',   text: 'text-slate-500',   label: 'Unavailable' },
     ASSIGNED:    { dot: 'bg-blue-500',    text: 'text-blue-700',    label: 'On Assignment' },
+    ON_LEAVE:    { dot: 'bg-amber-400',   text: 'text-amber-700',   label: 'On Leave' },
   }[status?.toUpperCase()] ?? { dot: 'bg-slate-300', text: 'text-slate-500', label: status ?? '—' };
 
   return (

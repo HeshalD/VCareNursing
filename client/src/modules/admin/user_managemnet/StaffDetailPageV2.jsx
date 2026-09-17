@@ -129,6 +129,7 @@ const STATUS_META = {
   verified:            { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500' },
   completed:           { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500' },
   assigned:            { bg: 'bg-blue-50',    text: 'text-blue-700',    dot: 'bg-blue-500'    },
+  on_leave:            { bg: 'bg-amber-50',   text: 'text-amber-700',   dot: 'bg-amber-400'   },
   pending:             { bg: 'bg-amber-50',   text: 'text-amber-700',   dot: 'bg-amber-400'   },
   pending_termination: { bg: 'bg-amber-50',   text: 'text-amber-700',   dot: 'bg-amber-400'   },
   under_review:        { bg: 'bg-amber-50',   text: 'text-amber-700',   dot: 'bg-amber-400'   },
@@ -139,6 +140,7 @@ const STATUS_META = {
   suspended:           { bg: 'bg-red-50',     text: 'text-red-600',     dot: 'bg-red-500'     },
 };
 const getSM = (v) => STATUS_META[String(v || '').toLowerCase()] || { bg: 'bg-slate-100', text: 'text-slate-500', dot: 'bg-slate-400' };
+const formatStatusLabel = (v) => (v ? String(v).replace(/_/g, ' ') : 'Unknown');
 
 const inputCls = 'w-full px-3 py-2 text-sm border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white transition-colors';
 
@@ -1417,7 +1419,7 @@ const StaffDetailPageV2 = () => {
             <div className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border mt-3 ${activeStatus === 'unavailable' ? 'bg-slate-50 border-slate-200' : 'bg-emerald-50 border-emerald-100'}`}>
               <span className={`w-2 h-2 rounded-full flex-shrink-0 ${getSM(profile.current_status).dot}`} />
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-semibold text-slate-900">Availability: {profile.current_status || 'Unknown'}</div>
+                <div className="text-sm font-semibold text-slate-900">Availability: {formatStatusLabel(profile.current_status)}</div>
                 <div className="text-xs text-slate-500 mt-0.5">
                   {activeStatus === 'unavailable'
                     ? "Won't be offered new bookings until marked available."
@@ -3053,7 +3055,7 @@ const StaffDetailPageV2 = () => {
               <h1 className="text-[17px] font-semibold text-slate-900">{profile.full_name || 'Staff profile'}</h1>
               <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${heroStatus.bg} ${heroStatus.text}`}>
                 <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${heroStatus.dot}`} />
-                {profile.current_status || 'Unknown'}
+                {formatStatusLabel(profile.current_status)}
               </span>
               <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${isActive ? 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200' : 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200'}`}>
                 {isActive ? 'Active' : 'Inactive'}
