@@ -3428,6 +3428,143 @@ async function runMigration() {
   await db.query(`ALTER TABLE staff_leave_requests ADD COLUMN IF NOT EXISTS returned_at TIMESTAMP WITH TIME ZONE`);
 
   // =========================================================
+  // INTERNAL STAFF GOALS, PERFORMANCE TIERS & ADVANCES
+  // Extends the internal staff salary system (see "INTERNAL STAFF SALARY"
+  // above) with a performance-allowance engine and a direct advance-payout
+  // mechanism for office staff (separate from staff_advances, which is the
+  // field-staff/caregiver wallet advance workflow).
+  //
+  // internal_staff_goals: an admin-set monthly target for a staff member.
+  // Only REGISTRATION_COUNT exists today; goal_type is kept free-text so a
+  // second metric can be added later without a migration.
+  //
+  // internal_staff_performance_tiers: the admin-editable range/reward table
+  // used when no goal is active (or the "per-tier" mode is chosen) — e.g.
+  // 0-5 registrations = no bonus, 6-10 = Rs.5000, etc. max_count NULL means
+  // "and above" (the open-ended top tier).
+  //
+  // internal_staff_advances: admin hands out an advance directly (no
+  // request/approve cycle, unlike staff_advances) against a specific salary
+  // month. settled_sheet_id is stamped once a salary sheet has pulled it in
+  // as a deduction, so it is never deducted twice.
+  // =========================================================
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS internal_staff_goals (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      staff_id UUID NOT NULL REFERENCES internal_staff(id) ON DELETE CASCADE,
+      month VARCHAR(7),
+      goal_type VARCHAR(20) NOT NULL DEFAULT 'REGISTRATION_COUNT',
+      target_count INTEGER NOT NULL,
+      reward_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      status VARCHAR(12) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'ACHIEVED', 'CLOSED')),
+      created_by UUID REFERENCES users(user_id),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_internal_staff_goals_staff
+    ON internal_staff_goals(staff_id, month);
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS internal_staff_performance_tiers (
+      id SERIAL PRIMARY KEY,
+      min_count INTEGER NOT NULL,
+      max_count INTEGER,
+      reward_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS internal_staff_advances (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      staff_id UUID NOT NULL REFERENCES internal_staff(id) ON DELETE CASCADE,
+      amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+      reason TEXT,
+      month VARCHAR(7) NOT NULL,
+      status VARCHAR(12) NOT NULL DEFAULT 'GIVEN' CHECK (status IN ('GIVEN', 'SETTLED')),
+      transaction_id UUID REFERENCES transactions(transaction_id),
+      given_by UUID REFERENCES users(user_id),
+      given_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      settled_sheet_id UUID REFERENCES internal_staff_salary_sheets(id)
+    );
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_internal_staff_advances_staff_month
+    ON internal_staff_advances(staff_id, month);
+  `);
+
+  await db.query(`
+    ALTER TABLE internal_staff_salary_sheets
+    ADD COLUMN IF NOT EXISTS performance_allowance_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS performance_allowance_mode VARCHAR(16) NOT NULL DEFAULT 'NONE'
+      CHECK (performance_allowance_mode IN ('NONE', 'GOAL', 'TIER', 'PER_REGISTRATION', 'BOTH')),
+    ADD COLUMN IF NOT EXISTS advances_deducted NUMERIC(12,2) NOT NULL DEFAULT 0
+  `);
+
+  // ADD COLUMN IF NOT EXISTS above is a no-op on databases that already have the
+  // column, so widen the mode CHECK explicitly (idempotent) to allow the newer
+  // PER_REGISTRATION / BOTH values.
+  await db.query(`
+    ALTER TABLE internal_staff_salary_sheets
+    DROP CONSTRAINT IF EXISTS internal_staff_salary_sheets_performance_allowance_mode_check
+  `);
+  await db.query(`
+    ALTER TABLE internal_staff_salary_sheets
+    ADD CONSTRAINT internal_staff_salary_sheets_performance_allowance_mode_check
+    CHECK (performance_allowance_mode IN ('NONE', 'GOAL', 'TIER', 'PER_REGISTRATION', 'BOTH'))
+  `);
+  await db.query(`
+    ALTER TABLE internal_staff_salary_sheets
+    ALTER COLUMN performance_allowance_mode TYPE VARCHAR(16)
+  `);
+
+  // Per-registration commission: the admin can set how much the internal
+  // staff member personally earns for having brought in this specific
+  // registration — separate from credited_amount (the client's registration
+  // fee, used for company-side sales reporting). Summed across a staff
+  // member's registrations for a given month, this is the "PER_REGISTRATION"
+  // performance allowance mode's source amount (see internalStaffSalaryController.
+  // resolvePerformanceAllowance).
+  await db.query(`
+    ALTER TABLE client_salesperson_assignments
+    ADD COLUMN IF NOT EXISTS commission_amount NUMERIC(12,2) NOT NULL DEFAULT 0
+  `);
+
+  await db.query(`
+    DO $$ BEGIN
+      ALTER TYPE transaction_category ADD VALUE IF NOT EXISTS 'INTERNAL_STAFF_ADVANCE';
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+  `);
+
+  // =========================================================
+  // COORDINATOR LOCKING (proxy-created records)
+  // A proxy-mode-created service request / booking / client / care profile is
+  // "owned" by exactly one internal staff member (the coordinator) — enforced
+  // in authMiddleware.requireOwnCoordinatorRecord. coordinator_staff_id on
+  // client_profiles / bookings is a denormalized "current owner" pointer kept
+  // in sync with client_salesperson_assignments / booking_salesperson_
+  // assignments (the existing, history-tracked sales-crediting tables);
+  // service_requests / patient_profiles have no such history table, so they
+  // just carry the column directly.
+  // =========================================================
+
+  await db.query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS coordinator_staff_id UUID REFERENCES internal_staff(id)`);
+  await db.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS coordinator_staff_id UUID REFERENCES internal_staff(id)`);
+  await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS coordinator_staff_id UUID REFERENCES internal_staff(id)`);
+  await db.query(`ALTER TABLE patient_profiles ADD COLUMN IF NOT EXISTS coordinator_staff_id UUID REFERENCES internal_staff(id)`);
+
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_service_requests_coordinator ON service_requests(coordinator_staff_id)`);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_bookings_coordinator ON bookings(coordinator_staff_id)`);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_client_profiles_coordinator ON client_profiles(coordinator_staff_id)`);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_patient_profiles_coordinator ON patient_profiles(coordinator_staff_id)`);
+
+  // =========================================================
+
+  await seedPerformanceTiers();
 
   await seedQuotePresetItems();
 
@@ -3496,6 +3633,34 @@ async function seedDefaultAdminUser() {
   } catch (error) {
     console.error('Error seeding default admin user:', error.message);
     // Don't fail migration if seeding fails
+  }
+}
+
+async function seedPerformanceTiers() {
+  try {
+    const existing = await db.query('SELECT COUNT(*) FROM internal_staff_performance_tiers');
+    if (parseInt(existing.rows[0].count) > 0) {
+      console.log('Internal staff performance tiers already seeded. Skipping...');
+      return;
+    }
+
+    const tiers = [
+      { min_count: 0, max_count: 5, reward_amount: 0 },
+      { min_count: 6, max_count: 10, reward_amount: 5000 },
+      { min_count: 11, max_count: 15, reward_amount: 10000 },
+      { min_count: 16, max_count: null, reward_amount: 15000 },
+    ];
+
+    for (const tier of tiers) {
+      await db.query(
+        `INSERT INTO internal_staff_performance_tiers (min_count, max_count, reward_amount) VALUES ($1, $2, $3)`,
+        [tier.min_count, tier.max_count, tier.reward_amount]
+      );
+    }
+
+    console.log(`Seeded ${tiers.length} default internal staff performance tiers`);
+  } catch (error) {
+    console.error('Error seeding internal staff performance tiers:', error.message);
   }
 }
 

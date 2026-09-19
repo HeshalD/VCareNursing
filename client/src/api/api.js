@@ -3109,6 +3109,21 @@ class ApiClient {
     return this.request(`/internal-staff-salary/staff/${staffId}/sales-attribution?month=${month}`);
   }
 
+  async updateRegistrationCommission(assignmentId, amount) {
+    return this.request(`/internal-staff-salary/registrations/${assignmentId}/commission`, {
+      method: 'PUT',
+      body: JSON.stringify({ amount }),
+    });
+  }
+
+  async getCoordinatorWork(staffId) {
+    return this.request(`/internal-staff-salary/staff/${staffId}/coordinator-work`);
+  }
+
+  async getMyInternalStaffId() {
+    return this.request('/internal-staff-salary/my-staff-id');
+  }
+
   async createSalarySheet(staffId, month) {
     return this.request(`/internal-staff-salary/staff/${staffId}/sheets`, {
       method: 'POST',
@@ -3134,6 +3149,57 @@ class ApiClient {
   async finalizeSalarySheet(sheetId) {
     return this.request(`/internal-staff-salary/sheets/${sheetId}/finalize`, {
       method: 'POST',
+    });
+  }
+
+  // Goals
+  async listStaffGoals(staffId) {
+    return this.request(`/internal-staff-salary/staff/${staffId}/goals`);
+  }
+
+  async createStaffGoal(staffId, data) {
+    return this.request(`/internal-staff-salary/staff/${staffId}/goals`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateStaffGoal(goalId, data) {
+    return this.request(`/internal-staff-salary/goals/${goalId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Performance tiers, summary & history
+  async listPerformanceTiers() {
+    return this.request('/internal-staff-salary/performance-tiers');
+  }
+
+  async upsertPerformanceTiers(tiers) {
+    return this.request('/internal-staff-salary/performance-tiers', {
+      method: 'PUT',
+      body: JSON.stringify({ tiers }),
+    });
+  }
+
+  async getPerformanceSummary(staffId, month) {
+    return this.request(`/internal-staff-salary/staff/${staffId}/performance-summary?month=${month}`);
+  }
+
+  async getStaffPerformanceHistory(staffId) {
+    return this.request(`/internal-staff-salary/staff/${staffId}/performance-history`);
+  }
+
+  // Advances
+  async listStaffAdvances(staffId) {
+    return this.request(`/internal-staff-salary/staff/${staffId}/advances`);
+  }
+
+  async giveStaffAdvance(staffId, data) {
+    return this.request(`/internal-staff-salary/staff/${staffId}/advances`, {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
   }
 

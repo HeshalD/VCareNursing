@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X, Loader2, ChevronDown } from 'lucide-react';
+import { X, Loader2, ChevronDown, AlertCircle } from 'lucide-react';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import DateInput from '../../../components/common/DateInput';
@@ -204,6 +204,20 @@ const AdminDirectBookingDrawer = ({
   const [sameAsClientAddress, setSameAsClientAddress] = useState(false);
   const [clientAddressLoading, setClientAddressLoading] = useState(false);
 
+  // Coordinator lock — same pattern as the proxy service request drawer.
+  const [myStaffId, setMyStaffId] = useState(null);
+  const [coordinatorAction, setCoordinatorAction] = useState(null); // 'REASSIGN' | 'KEEP' | null
+  useEffect(() => {
+    apiClient.getMyInternalStaffId().then((res) => setMyStaffId(res.staff_id)).catch(() => {});
+  }, []);
+  const selectedClient = clients.find((c) => c.client_profile_id === selectedClientId);
+  const coordinatorMismatch = !!(
+    selectedClient?.coordinator_staff_id &&
+    myStaffId &&
+    selectedClient.coordinator_staff_id !== myStaffId
+  );
+  useEffect(() => { setCoordinatorAction(null); }, [selectedClientId]);
+
   // ── Sync preselectedClientId when prop changes ───────────────────────────
   useEffect(() => {
     setSelectedClientId(preselectedClientId || '');
@@ -316,6 +330,7 @@ const AdminDirectBookingDrawer = ({
       errs.dailyRate = 'Enter a valid daily rate.';
     if (serviceModel === 'SHIFT_BASED' && (!shiftRate || isNaN(parseFloat(shiftRate)) || parseFloat(shiftRate) < 0))
       errs.shiftRate = 'Enter a valid per-shift rate.';
+    if (coordinatorMismatch && !coordinatorAction) errs.client = 'This client already has a coordinator — choose how to proceed.';
     return errs;
   };
 
@@ -337,6 +352,7 @@ const AdminDirectBookingDrawer = ({
       // SHIFT_BASED bookings have no booking end date — billing is purely shift-count-derived.
       ...(serviceModel !== 'SHIFT_BASED' && scheduledEndDate ? { scheduled_end_date: scheduledEndDate } : {}),
       ...(adminNotes ? { admin_notes: adminNotes } : {}),
+      ...(coordinatorAction ? { coordinator_action: coordinatorAction } : {}),
     };
 
     if (patientMode === 'existing') {
@@ -426,6 +442,37 @@ const AdminDirectBookingDrawer = ({
                         />
                       )}
                     </Field>
+                  )}
+
+                  {coordinatorMismatch && (
+                    <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3">
+                      <div className="flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                        <p className="text-sm text-amber-800">
+                          This client is already coordinated by <span className="font-semibold">{selectedClient?.coordinator_name || 'another staff member'}</span>. Choose how to proceed:
+                        </p>
+                      </div>
+                      <div className="flex gap-2 mt-3">
+                        <button
+                          type="button"
+                          onClick={() => setCoordinatorAction('REASSIGN')}
+                          className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold border transition-colors ${
+                            coordinatorAction === 'REASSIGN' ? 'border-blue-500 bg-blue-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          Reassign coordinator to me
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCoordinatorAction('KEEP')}
+                          className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold border transition-colors ${
+                            coordinatorAction === 'KEEP' ? 'border-blue-500 bg-blue-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          Keep existing coordinator
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </div>
               </>

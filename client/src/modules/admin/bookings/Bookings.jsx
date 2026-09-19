@@ -410,6 +410,7 @@ const Bookings = () => {
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Client</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Care Profile</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Staff</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Coordinator</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Type</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Start Date</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
@@ -474,6 +475,15 @@ const Bookings = () => {
                           {/* Staff */}
                           <td className="px-4 py-3">
                             <StaffList staff={details?.current_staff} />
+                          </td>
+
+                          {/* Coordinator */}
+                          <td className="px-4 py-3">
+                            {b.coordinator_name ? (
+                              <span className="text-slate-700">{b.coordinator_name}</span>
+                            ) : (
+                              <span className="text-xs text-slate-400">Unassigned</span>
+                            )}
                           </td>
 
                           {/* Booking type */}
@@ -564,6 +574,9 @@ const Bookings = () => {
                         <div className="text-xs">
                           <StaffList staff={details.current_staff} />
                         </div>
+                      )}
+                      {b.coordinator_name && (
+                        <p className="text-xs text-slate-500">Coordinator: <span className="text-slate-700">{b.coordinator_name}</span></p>
                       )}
                       {b.is_expiring_soon && (
                         <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-600">

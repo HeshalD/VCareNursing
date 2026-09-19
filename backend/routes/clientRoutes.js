@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const clientController = require('../controllers/clientController');
 const bookingNotesController = require('../controllers/bookingNotesController');
-const { protect, restrictTo, requirePermission, requireOwnSalesRecord } = require('../middleware/authMiddleware');
+const { protect, restrictTo, requirePermission, requireOwnSalesRecord, requireOwnCoordinatorRecord } = require('../middleware/authMiddleware');
 const { uploadPaymentReceipt } = require('../middleware/uploadMiddleware');
 
 // All routes below require login
@@ -27,8 +27,8 @@ router.get('/:client_id/detail', protect, requirePermission('VIEW_USER_MANAGEMEN
 router.patch('/:client_id/deactivate', protect, requirePermission('CLIENT_DEACTIVATE'), clientController.deactivateClientProfile);
 router.patch('/:client_id/reactivate', protect, requirePermission('CLIENT_DEACTIVATE'), clientController.reactivateClientProfile);
 router.delete('/:client_id', protect, requirePermission('CLIENT_DELETE'), clientController.deleteClientProfile);
-router.patch('/:client_id/billing', protect, requirePermission('CLIENT_EDIT'), clientController.updateClientCompanyName);
-router.patch('/:client_id/profile', protect, requirePermission('CLIENT_EDIT'), clientController.updateClientProfile);
+router.patch('/:client_id/billing', protect, requirePermission('CLIENT_EDIT'), requireOwnCoordinatorRecord('client_id', 'client_profiles', { idColumn: 'client_profile_id' }), clientController.updateClientCompanyName);
+router.patch('/:client_id/profile', protect, requirePermission('CLIENT_EDIT'), requireOwnCoordinatorRecord('client_id', 'client_profiles', { idColumn: 'client_profile_id' }), clientController.updateClientProfile);
 router.post('/:client_id/send-reg-fee-invoice', protect, requirePermission('CLIENT_SEND_REG_FEE_INVOICE'), clientController.sendRegFeeInvoice);
 router.patch('/:client_id/reg-fee-status', protect, requirePermission('CLIENT_EDIT'), clientController.updateRegFeeStatus);
 router.patch('/:client_id/reg-fee-amount', protect, requirePermission('CLIENT_EDIT'), clientController.updateRegFeeAmount);

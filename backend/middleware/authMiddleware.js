@@ -125,6 +125,36 @@ exports.requireOwnSalesRecord = (paramName, table) => async (req, res, next) => 
   }
 };
 
+// Generalized version of requireOwnSalesRecord for the proxy-mode "coordinator
+// lock" feature: restricts a :paramName-keyed route to the internal-staff
+// caller stamped as the ownerColumn (default coordinator_staff_id) on `table`.
+// Unlike requireOwnSalesRecord this is NOT limited to the SALES role — it
+// applies to any internal-staff account — and is bypassed by
+// COORDINATOR_VIEW_ALL_RECORDS or SUPER_ADMIN (via _userHasPermission).
+// A caller with no internal_staff row (e.g. a client-side account) or a
+// record with no coordinator set at all is left alone (next()) — the lock
+// only kicks in once a coordinator has actually been assigned.
+// idColumn lets the route's :paramName differ from the table's actual PK
+// column name (e.g. route param `:id` but the table's PK is `request_id`).
+exports.requireOwnCoordinatorRecord = (paramName, table, { idColumn = paramName, ownerColumn = 'coordinator_staff_id' } = {}) => async (req, res, next) => {
+  try {
+    if (await _userHasPermission(req.user, 'COORDINATOR_VIEW_ALL_RECORDS')) return next();
+
+    const staffRes = await db.query('SELECT id FROM internal_staff WHERE user_id = $1', [req.user.user_id]);
+    const staffId = staffRes.rows[0]?.id;
+    if (!staffId) return next(); // not an internal-staff account — not subject to this lock
+
+    const recordRes = await db.query(`SELECT ${ownerColumn} AS coordinator_id FROM ${table} WHERE ${idColumn} = $1`, [req.params[paramName]]);
+    const coordinatorId = recordRes.rows[0]?.coordinator_id;
+    if (!coordinatorId || coordinatorId === staffId) return next();
+
+    return res.status(403).json({ message: 'Permission Denied: this record is locked to its assigned coordinator.' });
+  } catch (err) {
+    console.error('requireOwnCoordinatorRecord error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
 // Sessions for device-bound logins are checked on every request so a revoked
 // device or a force-logout takes effect immediately, not just at next login.
 const LAST_SEEN_THROTTLE_MS = 60 * 1000;

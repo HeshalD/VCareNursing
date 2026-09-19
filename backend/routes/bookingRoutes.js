@@ -6,7 +6,8 @@ const bookingNotesController = require('../controllers/bookingNotesController');
 const dailyAttendanceController = require('../controllers/dailyAttendanceController');
 const dailyDraftController = require('../controllers/dailyDraftController');
 const shiftPatternController = require('../controllers/shiftPatternController');
-const { protect, restrictTo, attachSalesScope, requireOwnSalesRecord, requirePermission } = require('../middleware/authMiddleware');
+const { protect, restrictTo, attachSalesScope, requireOwnSalesRecord, requireOwnCoordinatorRecord, requirePermission } = require('../middleware/authMiddleware');
+const coordinatorLock = requireOwnCoordinatorRecord('booking_id', 'bookings');
 const { upload } = require('../config/cloudinaryConfig');
 
 router.post(
@@ -148,8 +149,9 @@ router.get(
 router.get('/staff/:staff_id', protect, bookingController.getStaffBookings);
 
 router.post(
-    '/terminate/:booking_id', 
+    '/terminate/:booking_id',
     protect,
+    coordinatorLock,
     bookingController.requestTermination
 );
 
@@ -173,13 +175,13 @@ router.post(
     bookingController.forceStopBooking
 );
 
-router.patch('/:booking_id/extend', protect, requirePermission('BOOKING_EXTEND'), bookingController.extendBooking);
+router.patch('/:booking_id/extend', protect, requirePermission('BOOKING_EXTEND'), coordinatorLock, bookingController.extendBooking);
 
 // Manual overdue flag/clear for SHIFT_BASED bookings (no automatic cron detection for this model)
 router.post('/:booking_id/mark-overdue', protect, requirePermission('BOOKING_MARK_OVERDUE'), bookingController.markShiftBookingOverdue);
 router.post('/:booking_id/resolve-overdue', protect, requirePermission('BOOKING_RESOLVE_OVERDUE'), bookingController.resolveShiftBookingOverdue);
 
-router.post('/:booking_id/swap-staff', protect, requirePermission('BOOKING_SWAP_STAFF'), bookingController.swapStaff);
+router.post('/:booking_id/swap-staff', protect, requirePermission('BOOKING_SWAP_STAFF'), coordinatorLock, bookingController.swapStaff);
 router.get('/:booking_id/swap-history', protect, requirePermission('VIEW_BOOKINGS'), bookingController.getSwapHistory);
 // Closes the outgoing side of a swap once they've actually left — the only thing
 // that ever ends an assignment left open by swapStaff. See its header comment.
@@ -189,7 +191,7 @@ router.patch('/:booking_id/assignments/:assignment_id/close-out', protect, requi
 // scheduled termination/completion runs overnight and leaves those days pending.
 router.post('/:booking_id/assignments/:assignment_id/settle-boundary-pay', protect, requirePermission('ATTENDANCE_CONFIRM_SALARY'), bookingController.settleAssignmentBoundaryPay);
 // Share a (replacement) staff member's profile with the booking's client on WhatsApp.
-router.post('/:booking_id/send-staff-profile', protect, requirePermission('BOOKING_SEND_STAFF_PROFILE'), bookingController.sendStaffProfileToClient);
+router.post('/:booking_id/send-staff-profile', protect, requirePermission('BOOKING_SEND_STAFF_PROFILE'), coordinatorLock, bookingController.sendStaffProfileToClient);
 
 // Daily attendance (staff in/out time + manual salary confirmation)
 router.get('/:booking_id/attendance', protect, requirePermission('VIEW_BOOKINGS'), dailyAttendanceController.getBookingAttendance);
@@ -235,7 +237,7 @@ router.post('/:booking_id/shift-slots/:shift_slot_id/reassign-staff', protect, r
 router.get('/:booking_id/daily-invoices', protect, requirePermission('VIEW_BOOKINGS'), bookingController.getBookingDailyInvoices);
 router.post('/:booking_id/daily-invoices', protect, requirePermission('BOOKING_CONFIRM_DAILY_INVOICE'), bookingController.confirmDailyInvoice);
 router.patch('/:booking_id/invoicing-mode', protect, requirePermission('BOOKING_UPDATE_INVOICING_MODE'), bookingController.updateInvoicingMode);
-router.patch('/:booking_id/rates', protect, requirePermission('BOOKING_UPDATE_RATE'), bookingController.updateBookingRates);
+router.patch('/:booking_id/rates', protect, requirePermission('BOOKING_UPDATE_RATE'), coordinatorLock, bookingController.updateBookingRates);
 
 // Hospitalization status (any service model — patient may be admitted mid-booking)
 router.patch('/:booking_id/hospitalization', protect, requirePermission('BOOKING_UPDATE_HOSPITALIZATION'), bookingController.updateHospitalizationStatus);
@@ -248,10 +250,10 @@ router.post('/:booking_id/shift-occurrences/reschedule', protect, requirePermiss
 router.post('/:booking_id/shift-occurrences/:reschedule_id/cancel', protect, requirePermission('BOOKING_CANCEL_RESCHEDULE'), bookingController.cancelShiftReschedule);
 
 // Notes CRUD
-router.post('/:booking_id/notes', protect, requirePermission('BOOKING_ADD_NOTE'), bookingNotesController.addNote);
+router.post('/:booking_id/notes', protect, requirePermission('BOOKING_ADD_NOTE'), coordinatorLock, bookingNotesController.addNote);
 router.get('/:booking_id/notes', protect, requirePermission('VIEW_BOOKINGS'), bookingNotesController.getBookingNotes);
-router.patch('/:booking_id/notes/:note_id', protect, requirePermission('BOOKING_EDIT_NOTE'), bookingNotesController.updateNote);
-router.delete('/:booking_id/notes/:note_id', protect, requirePermission('BOOKING_DELETE_NOTE'), bookingNotesController.deleteNote);
+router.patch('/:booking_id/notes/:note_id', protect, requirePermission('BOOKING_EDIT_NOTE'), coordinatorLock, bookingNotesController.updateNote);
+router.delete('/:booking_id/notes/:note_id', protect, requirePermission('BOOKING_DELETE_NOTE'), coordinatorLock, bookingNotesController.deleteNote);
 
 // Permanently deletes the booking and every related record. Not a delegable
 // permission — SUPER_ADMIN only, on purpose, so it can never be granted via

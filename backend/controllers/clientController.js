@@ -1547,9 +1547,11 @@ exports.getAllClients = async (req, res) => {
 
     const dataParams = [...params, perPage, offset];
     const dataRes = await db.query(
-      `SELECT cp.*, u.email, u.mobile_number, u.created_at as user_created_at
+      `SELECT cp.*, u.email, u.mobile_number, u.created_at as user_created_at,
+              coord.full_name AS coordinator_name
        FROM client_profiles cp
        JOIN users u ON cp.user_id = u.user_id
+       LEFT JOIN internal_staff coord ON coord.id = cp.coordinator_staff_id
        ${whereSQL}
        ORDER BY cp.created_at DESC
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,

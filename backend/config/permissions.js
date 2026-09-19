@@ -207,6 +207,13 @@ const PERMISSIONS = {
   INTERNAL_STAFF_SALARY_BUILD:         { label: 'Build Internal Staff Salary Sheet',    module: 'Internal Staff Salary', entity: 'Salary Sheet',  verb: 'Build',    category: 'action' },
   INTERNAL_STAFF_SALARY_FINALIZE:      { label: 'Finalize Internal Staff Salary Sheet', module: 'Internal Staff Salary', entity: 'Salary Sheet',  verb: 'Finalize', category: 'action' },
   INTERNAL_STAFF_SALARY_PRESET_MANAGE: { label: 'Manage Salary Presets',                module: 'Internal Staff Salary', entity: 'Salary Preset', verb: 'Manage',   category: 'action' },
+  INTERNAL_STAFF_GOAL_MANAGE:          { label: 'Manage Internal Staff Goals',          module: 'Internal Staff Salary', entity: 'Goal',          verb: 'Manage',   category: 'action' },
+  INTERNAL_STAFF_ADVANCE_GIVE:         { label: 'Give Internal Staff Advance',          module: 'Internal Staff Salary', entity: 'Advance',       verb: 'Give',     category: 'action' },
+  // Bypasses the proxy-mode coordinator lock (see requireOwnCoordinatorRecord in
+  // middleware/authMiddleware.js) — mirrors SALES_VIEW_ALL_RECORDS above, but for
+  // the general "coordinator" ownership on service requests/bookings/clients/care
+  // profiles created via proxy mode, not just the sales-crediting scope.
+  COORDINATOR_VIEW_ALL_RECORDS:        { label: 'View All Coordinator-Locked Records',  module: 'Internal Staff Salary', entity: 'Coordinator Scope', verb: 'View All', category: 'action' },
 
   // ── Bulk Import ───────────────────────────────────────────────────────────
   BULK_IMPORT_COMMIT:          { label: 'Commit Bulk Import',               module: 'Bulk Import', entity: 'Bulk Import', verb: 'Commit', category: 'action' },

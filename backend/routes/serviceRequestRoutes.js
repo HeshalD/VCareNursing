@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const serviceRequestController = require('../controllers/serviceRequestController');
-const { protect, restrictTo, requirePermission } = require('../middleware/authMiddleware'); // Adjust path as needed
+const { protect, restrictTo, requirePermission, requireOwnCoordinatorRecord } = require('../middleware/authMiddleware'); // Adjust path as needed
 
 // Public route for Phase 1
 router.post('/submit-request', serviceRequestController.submitServiceRequest);
@@ -17,14 +17,14 @@ router.get('/pending_leads', protect, requirePermission('VIEW_SERVICE_REQUESTS')
 router.get('/:id', protect, requirePermission('VIEW_SERVICE_REQUESTS'), serviceRequestController.getServiceRequestById);
 
 // Protected admin route to update service request status
-router.put('/:id/status', protect, requirePermission('SERVICE_REQUEST_EDIT'), serviceRequestController.updateServiceRequestStatus);
+router.put('/:id/status', protect, requirePermission('SERVICE_REQUEST_EDIT'), requireOwnCoordinatorRecord('id', 'service_requests', { idColumn: 'request_id' }), serviceRequestController.updateServiceRequestStatus);
 
 // Protected admin route to update full service request details
-router.put('/:id', protect, requirePermission('SERVICE_REQUEST_EDIT'), serviceRequestController.updateServiceRequest);
+router.put('/:id', protect, requirePermission('SERVICE_REQUEST_EDIT'), requireOwnCoordinatorRecord('id', 'service_requests', { idColumn: 'request_id' }), serviceRequestController.updateServiceRequest);
 
 // Candidate profiles sent to the client for a service request (one-time per staff)
 router.get('/:id/sent-candidates', protect, requirePermission('VIEW_SERVICE_REQUESTS'), serviceRequestController.getSentCandidates);
-router.post('/:id/send-candidate', protect, requirePermission('SERVICE_REQUEST_SEND_CANDIDATE'), serviceRequestController.sendCandidateProfile);
+router.post('/:id/send-candidate', protect, requirePermission('SERVICE_REQUEST_SEND_CANDIDATE'), requireOwnCoordinatorRecord('id', 'service_requests', { idColumn: 'request_id' }), serviceRequestController.sendCandidateProfile);
 
 // Admin route to create service request manually
 router.post('/proxy-service-request', protect, requirePermission('SERVICE_REQUEST_CREATE'), serviceRequestController.createServiceRequest);

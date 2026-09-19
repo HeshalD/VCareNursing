@@ -322,32 +322,29 @@ router.patch(
 
 // Staff bank accounts management (list/create/update/delete).
 // NOTE: shared with staff self-service (managing their own payout bank account) —
-// deliberately NOT gated by requirePermission, since those roles have no staff_permissions row.
+// deliberately NOT gated by restrictTo/requirePermission: access is enforced in the controller
+// (_canAccessStaffRecord) — own record, or the STAFF_*_BANK_ACCOUNT permission (direct or via custom role).
 router.get(
   '/:staff_profile_id/bank-accounts',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'NANNY', 'NURSE', 'CARETAKER', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'),
   staffController.getStaffBankAccounts
 );
 
 router.post(
   '/:staff_profile_id/bank-accounts',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'NANNY', 'NURSE', 'CARETAKER', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'),
   staffController.createStaffBankAccount
 );
 
 router.put(
   '/:staff_profile_id/bank-accounts/:staff_bank_account_id',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'NANNY', 'NURSE', 'CARETAKER', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'),
   staffController.updateStaffBankAccount
 );
 
 router.delete(
   '/:staff_profile_id/bank-accounts/:staff_bank_account_id',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'NANNY', 'NURSE', 'CARETAKER', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'),
   staffController.deleteStaffBankAccount
 );
 

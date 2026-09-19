@@ -3475,6 +3475,7 @@ exports.getAllBookings = async (req, res) => {
                 us.mobile_number as staff_mobile,
                 s.profile_picture_url,
                 us.email as staff_email,
+                coord.full_name as coordinator_name,
                 CASE
                     WHEN b.status = 'ACTIVE' AND b.daily_rate > 0 THEN
                         ROUND(
@@ -3496,6 +3497,7 @@ exports.getAllBookings = async (req, res) => {
             LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
             LEFT JOIN staff_profiles s ON b.assigned_staff_id = s.staff_profile_id
             LEFT JOIN users us ON s.user_id = us.user_id
+            LEFT JOIN internal_staff coord ON coord.id = b.coordinator_staff_id
             LEFT JOIN (
                 SELECT
                     booking_id,
@@ -4722,6 +4724,10 @@ exports.adminDirectBooking = async (req, res) => {
         daily_rate,
         shift_rate,
         admin_notes,
+        // 'REASSIGN' | 'KEEP' — same coordinator-lock choice as proxy service
+        // requests (see serviceRequestController.createServiceRequest), only
+        // meaningful when this client already has a different coordinator.
+        coordinator_action,
     } = req.body;
 
     if (!client_profile_id || !service_type || !service_model || !start_date) {
@@ -4745,13 +4751,40 @@ exports.adminDirectBooking = async (req, res) => {
             return res.status(404).json({ message: 'Client not found.' });
         }
 
+        // Coordinator locking (see requireOwnCoordinatorRecord in
+        // middleware/authMiddleware.js): whoever's creating this proxy booking
+        // becomes its sole coordinator. Mirrors the exact logic in
+        // serviceRequestController.createServiceRequest.
+        let coordinatorStaffId = null;
+        const callerStaffRes = await dbClient.query(`SELECT id FROM internal_staff WHERE user_id = $1`, [req.user.user_id]);
+        const callerStaffId = callerStaffRes.rows[0]?.id || null;
+
+        if (callerStaffId) {
+            const clientCoordRes = await dbClient.query(`SELECT coordinator_staff_id FROM client_profiles WHERE client_profile_id = $1`, [client_profile_id]);
+            const existingCoordinatorId = clientCoordRes.rows[0]?.coordinator_staff_id || null;
+
+            if (!existingCoordinatorId) {
+                await dbClient.query(`UPDATE client_profiles SET coordinator_staff_id = $1 WHERE client_profile_id = $2`, [callerStaffId, client_profile_id]);
+                await dbClient.query(`UPDATE patient_profiles SET coordinator_staff_id = $1 WHERE client_id = $2 AND coordinator_staff_id IS NULL`, [callerStaffId, client_profile_id]);
+                coordinatorStaffId = callerStaffId;
+            } else if (existingCoordinatorId === callerStaffId) {
+                coordinatorStaffId = callerStaffId;
+            } else if (coordinator_action === 'KEEP') {
+                coordinatorStaffId = existingCoordinatorId;
+            } else {
+                await dbClient.query(`UPDATE client_profiles SET coordinator_staff_id = $1 WHERE client_profile_id = $2`, [callerStaffId, client_profile_id]);
+                await dbClient.query(`UPDATE patient_profiles SET coordinator_staff_id = $1 WHERE client_id = $2`, [callerStaffId, client_profile_id]);
+                coordinatorStaffId = callerStaffId;
+            }
+        }
+
         let finalPatientId = patient_id;
 
         // If no existing patient, create one
         if (!patient_id) {
             const patientRes = await dbClient.query(
-                `INSERT INTO patient_profiles (client_id, full_name, age, gender, relationship_to_client, medical_condition, residential_address, emergency_contact_name, emergency_contact_number)
-                 VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8, $9) RETURNING patient_id`,
+                `INSERT INTO patient_profiles (client_id, full_name, age, gender, relationship_to_client, medical_condition, residential_address, emergency_contact_name, emergency_contact_number, coordinator_staff_id)
+                 VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8, $9, $10) RETURNING patient_id`,
                 [
                     client_profile_id,
                     new_patient_full_name,
@@ -4762,6 +4795,7 @@ exports.adminDirectBooking = async (req, res) => {
                     new_patient_residential_address || null,
                     new_patient_emergency_contact_name || null,
                     new_patient_emergency_contact_number || null,
+                    coordinatorStaffId,
                 ]
             );
             finalPatientId = patientRes.rows[0].patient_id;
@@ -4786,8 +4820,8 @@ exports.adminDirectBooking = async (req, res) => {
         const parsedShiftRate = shift_rate ? parseFloat(shift_rate) : null;
 
         const bookingRes = await dbClient.query(
-            `INSERT INTO bookings (client_id, patient_id, service_type, service_model, start_date, assigned_staff_id, status, preferred_gender, request_id, service_mode, scheduled_end_time, ot_rate, daily_rate, shift_rate, amount_quotated, amount_paid)
-             VALUES ($1, $2, $3, $4::service_model_enum, $5, NULL, 'PENDING', $6::gender_preference_enum, NULL, NULL, $7, 500.00, $8, $9, 0, 0)
+            `INSERT INTO bookings (client_id, patient_id, service_type, service_model, start_date, assigned_staff_id, status, preferred_gender, request_id, service_mode, scheduled_end_time, ot_rate, daily_rate, shift_rate, amount_quotated, amount_paid, coordinator_staff_id)
+             VALUES ($1, $2, $3, $4::service_model_enum, $5, NULL, 'PENDING', $6::gender_preference_enum, NULL, NULL, $7, 500.00, $8, $9, 0, 0, $10)
              RETURNING booking_id, booking_code`,
             [
                 client_profile_id, finalPatientId, service_type,
@@ -4796,6 +4830,7 @@ exports.adminDirectBooking = async (req, res) => {
                 scheduledEndTime,
                 parsedDailyRate,
                 parsedShiftRate,
+                coordinatorStaffId,
             ]
         );
         const { booking_id, booking_code } = bookingRes.rows[0];

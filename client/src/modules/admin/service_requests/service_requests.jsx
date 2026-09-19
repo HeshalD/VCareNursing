@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Search, Phone, MapPin, Calendar, FileText,
   Eye, Calculator, Settings, Shield, Loader2,
-  ChevronRight, Wallet, UserPlus, CalendarCheck,
+  ChevronRight, Wallet, UserPlus, CalendarCheck, UserCog,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -237,13 +237,14 @@ const ServiceRequests = () => {
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Location</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Start Date</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Coordinator</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-16 text-center">
+                  <td colSpan={8} className="py-16 text-center">
                     <div className="flex flex-col items-center gap-2">
                       <FileText className="w-8 h-8 text-slate-200" />
                       <p className="text-sm text-slate-400">No service requests match your filters.</p>
@@ -314,6 +315,18 @@ const ServiceRequests = () => {
                         <BookingStatusBadge status={r.booking_status} />
                       )}
                     </div>
+                  </td>
+
+                  {/* Coordinator */}
+                  <td className="px-4 py-3 align-top">
+                    {r.coordinator_name ? (
+                      <div className="flex items-center gap-1.5 text-xs text-slate-700">
+                        <UserCog className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                        <span className="font-medium">{r.coordinator_name}</span>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-slate-400">Unassigned</span>
+                    )}
                   </td>
 
                   {/* Actions */}

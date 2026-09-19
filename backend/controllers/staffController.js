@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { userHasPermission } = require('../middleware/authMiddleware');
 const { sendWhatsAppMessage } = require('../utils/whatsapp');
 const { sendStaffDeductionNotice, sendStaffBonusNotice, sendStaffSalarySheet } = require('../utils/metaWhatsapp');
 const { sendSms } = require('../utils/sms');
@@ -25,11 +26,7 @@ async function _canAccessStaffRecord(req, staff_profile_id, permissionKey) {
     const actorRole = _extractActorRole(req.user.role);
     if (actorRole === 'SUPER_ADMIN') return true;
 
-    const permRes = await db.query(
-        'SELECT 1 FROM staff_permissions WHERE user_id = $1 AND permission_key = $2',
-        [req.user.user_id, permissionKey]
-    );
-    if (permRes.rows.length > 0) return true;
+    if (await userHasPermission(req.user, permissionKey)) return true;
 
     const ownProfile = await db.query('SELECT staff_profile_id FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
     return ownProfile.rows.length > 0 && String(ownProfile.rows[0].staff_profile_id) === String(staff_profile_id);

@@ -137,6 +137,23 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
   const [useClientAddress, setUseClientAddress]       = useState(false);
   const [emergencyContacts, setEmergencyContacts]     = useState([{ name: '', number: '' }]);
 
+  // Coordinator lock (see requireOwnCoordinatorRecord on the backend): if the
+  // selected existing client already belongs to a different internal staff
+  // member, the admin must choose whether to take over as coordinator or
+  // leave the existing owner in place before this request can be created.
+  const [myStaffId, setMyStaffId]                     = useState(null);
+  const [coordinatorAction, setCoordinatorAction]     = useState(null); // 'REASSIGN' | 'KEEP' | null
+
+  useEffect(() => {
+    apiClient.getMyInternalStaffId().then((res) => setMyStaffId(res.staff_id)).catch(() => {});
+  }, []);
+
+  const coordinatorMismatch = !!(
+    selectedClient?.coordinator_staff_id &&
+    myStaffId &&
+    selectedClient.coordinator_staff_id !== myStaffId
+  );
+
   useEffect(() => {
     if (open) {
       if (presetClient) {
@@ -153,6 +170,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
       setClients([]);
       setUseClientAddress(false);
       setEmergencyContacts([{ name: '', number: '' }]);
+      setCoordinatorAction(null);
       setError(null);
       setSuccess(null);
     }
@@ -216,6 +234,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
     setCareProfiles([]);
     setUseClientAddress(false);
     setEmergencyContacts([{ name: '', number: '' }]);
+    setCoordinatorAction(null);
     setFormData(prev => ({
       ...prev,
       payer_name: client.full_name || '',
@@ -327,6 +346,11 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
     setSuccess(null);
     try {
       if (clientMode === 'existing' && !selectedClient) { setError('Please select a client before submitting.'); setFormLoading(false); return; }
+      if (coordinatorMismatch && !coordinatorAction) {
+        setError(`This client is already coordinated by ${selectedClient.coordinator_name || 'another staff member'}. Choose how to proceed above.`);
+        setFormLoading(false);
+        return;
+      }
       if (clientMode === 'new' && formData.client_type === 'CORPORATE_PROXY' && !formData.company_name) {
         setError('Company name is required for a corporate client.'); setFormLoading(false); return;
       }
@@ -375,6 +399,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
         // its own emergency contact(s), edited on its own profile page.
         ...(selectedCareProfile ? {} : buildEmergencyContactFields(emergencyContacts)),
         status: 'NEW_LEAD',
+        coordinator_action: coordinatorAction || undefined,
       });
       setSuccess('Service request created successfully!');
       setTimeout(() => { onClose(); onSuccess(); }, 1500);
@@ -631,6 +656,37 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                       </p>
                     </div>
                   )}
+                </div>
+              )}
+
+              {selectedClient && coordinatorMismatch && (
+                <div className="mx-4 mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <p className="text-sm text-amber-800">
+                      This client is already coordinated by <span className="font-semibold">{selectedClient.coordinator_name || 'another staff member'}</span>. Choose how to proceed:
+                    </p>
+                  </div>
+                  <div className="flex gap-2 mt-3">
+                    <button
+                      type="button"
+                      onClick={() => setCoordinatorAction('REASSIGN')}
+                      className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold border transition-colors ${
+                        coordinatorAction === 'REASSIGN' ? 'border-blue-500 bg-blue-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      Reassign coordinator to me
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCoordinatorAction('KEEP')}
+                      className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold border transition-colors ${
+                        coordinatorAction === 'KEEP' ? 'border-blue-500 bg-blue-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      Keep existing coordinator
+                    </button>
+                  </div>
                 </div>
               )}
 

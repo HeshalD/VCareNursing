@@ -163,10 +163,12 @@ exports.getAllLeads = async (req, res) => {
                    b.booking_id,
                    q.total_amount AS quote_total_amount,
                    (SELECT COALESCE(SUM(amount_received), 0) FROM payment_tracking
-                    WHERE quote_id = sr.active_quote_id AND status = 'VERIFIED') AS quote_total_paid
+                    WHERE quote_id = sr.active_quote_id AND status = 'VERIFIED') AS quote_total_paid,
+                   coord.full_name AS coordinator_name
             FROM service_requests sr
             LEFT JOIN bookings b ON b.request_id = sr.request_id
             LEFT JOIN quotations q ON q.quote_id = sr.active_quote_id
+            LEFT JOIN internal_staff coord ON coord.id = sr.coordinator_staff_id
             ORDER BY sr.created_at DESC
         `);
         res.status(200).json({ status: 'success', data: result.rows });
@@ -276,7 +278,12 @@ exports.createServiceRequest = async (req, res) => {
         remarks,
         preferred_gender,
         preferred_staff_id,
-        status
+        status,
+        // 'REASSIGN' | 'KEEP' — only meaningful when client_id already has a
+        // different coordinator_staff_id than the caller (see the coordinator-
+        // lock warning in the proxy service request drawer). Defaults to
+        // REASSIGN when omitted (e.g. brand-new client, no conflict possible).
+        coordinator_action
     } = req.body;
     const rawPayerMobile = req.body.payer_mobile;
 
@@ -363,6 +370,42 @@ exports.createServiceRequest = async (req, res) => {
             });
         }
 
+        // Coordinator locking (proxy mode only — see requireOwnCoordinatorRecord
+        // in middleware/authMiddleware.js): whoever's creating this request
+        // becomes its sole coordinator. If it's for an existing client who
+        // already has a different coordinator, the frontend must have already
+        // asked the admin to choose REASSIGN (take over as coordinator) or
+        // KEEP (leave the existing coordinator as owner of both the client and
+        // this new request).
+        let coordinatorStaffId = null;
+        const callerStaffRes = await db.query(`SELECT id FROM internal_staff WHERE user_id = $1`, [req.user.user_id]);
+        const callerStaffId = callerStaffRes.rows[0]?.id || null;
+
+        if (callerStaffId && client_id) {
+            const clientRes = await db.query(`SELECT coordinator_staff_id FROM client_profiles WHERE client_profile_id = $1`, [client_id]);
+            const existingCoordinatorId = clientRes.rows[0]?.coordinator_staff_id || null;
+
+            if (!existingCoordinatorId) {
+                // First time this client gets a coordinator — no conflict.
+                await db.query(`UPDATE client_profiles SET coordinator_staff_id = $1 WHERE client_profile_id = $2`, [callerStaffId, client_id]);
+                await db.query(`UPDATE patient_profiles SET coordinator_staff_id = $1 WHERE client_id = $2 AND coordinator_staff_id IS NULL`, [callerStaffId, client_id]);
+                coordinatorStaffId = callerStaffId;
+            } else if (existingCoordinatorId === callerStaffId) {
+                coordinatorStaffId = callerStaffId;
+            } else if (coordinator_action === 'KEEP') {
+                coordinatorStaffId = existingCoordinatorId;
+            } else {
+                // REASSIGN (or unspecified, defaulting to reassign for safety —
+                // frontend always presents the choice on a real mismatch).
+                await db.query(`UPDATE client_profiles SET coordinator_staff_id = $1 WHERE client_profile_id = $2`, [callerStaffId, client_id]);
+                await db.query(`UPDATE patient_profiles SET coordinator_staff_id = $1 WHERE client_id = $2`, [callerStaffId, client_id]);
+                coordinatorStaffId = callerStaffId;
+            }
+        } else if (callerStaffId) {
+            // Brand-new client registered in this same request — no conflict possible.
+            coordinatorStaffId = callerStaffId;
+        }
+
         // Insert new service request
         const insertQuery = `
             INSERT INTO service_requests (
@@ -391,6 +434,7 @@ exports.createServiceRequest = async (req, res) => {
                 preferred_staff_id,
                 status,
                 gender,
+                coordinator_staff_id,
                 created_at
             ) VALUES (
                 $1, $2, $3, $4, $5, $6::gender_enum, $7::client_type_enum, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::service_model_enum, $18,
@@ -398,7 +442,7 @@ exports.createServiceRequest = async (req, res) => {
                      THEN point($20::double precision, $19::double precision)
                      ELSE NULL
                 END,
-                $21, $22, $23::gender_preference_enum, $24, $25, $26::gender_enum, NOW()
+                $21, $22, $23::gender_preference_enum, $24, $25, $26::gender_enum, $27, NOW()
             )
             RETURNING
                 request_id,
@@ -427,6 +471,7 @@ exports.createServiceRequest = async (req, res) => {
                 preferred_staff_id,
                 status,
                 gender,
+                coordinator_staff_id,
                 created_at
         `;
 
@@ -456,11 +501,16 @@ exports.createServiceRequest = async (req, res) => {
             finalPreferredGender.toUpperCase(),
             preferred_staff_id || null,
             finalStatus,
-            patient_gender || null
+            patient_gender || null,
+            coordinatorStaffId
         ];
 
         const result = await db.query(insertQuery, insertValues);
         const newRequest = result.rows[0];
+
+        if (coordinatorStaffId && patient_id) {
+            await db.query(`UPDATE patient_profiles SET coordinator_staff_id = COALESCE(coordinator_staff_id, $1) WHERE patient_id = $2`, [coordinatorStaffId, patient_id]);
+        }
 
         // Log activity (non-fatal)
         try {
