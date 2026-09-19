@@ -15,6 +15,7 @@ import LanguageMultiSelect from '../../../components/common/LanguageMultiSelect'
 import PhoneNumbersField from '../../../components/common/PhoneNumbersField';
 import { formatMobileNumber, formatMobileNumbers } from '../../../utils/phoneFormat';
 import { sanitizeNicInput, validateNic } from '../../../utils/nicFormat';
+import BankSelect from '../../../components/common/BankSelect';
 
 const STAFF_ROLES = ['CARETAKER', 'NURSING_ASSISTANT', 'NURSE', 'PHYSIOTHERAPIST', 'NANNY', 'COUNSELLOR'];
 const GENDERS = ['MALE', 'FEMALE', 'OTHER'];
@@ -1086,10 +1087,9 @@ const WorkerVerificationDetailsPage = () => {
                 <label className="block text-xs font-medium text-slate-600 mb-1">
                   Bank Name <span className="text-red-500">*</span>
                 </label>
-                <input
+                <BankSelect
                   value={bankModal.form.bank_name}
-                  onChange={e => setBankModal(p => ({ ...p, form: { ...p.form, bank_name: e.target.value } }))}
-                  placeholder="e.g. Commercial Bank"
+                  onChange={v => setBankModal(p => ({ ...p, form: { ...p.form, bank_name: v } }))}
                   className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:border-blue-300 focus:ring-1 focus:ring-blue-100 outline-none"
                 />
               </div>

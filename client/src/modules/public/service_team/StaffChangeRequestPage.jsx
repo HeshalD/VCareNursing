@@ -9,6 +9,7 @@ import { useAuth } from '../../../context/AuthContext';
 import StaffSidebar from './StaffSidebar';
 import DateInput from '../../../components/common/DateInput';
 import { sanitizeNicInput, validateNic } from '../../../utils/nicFormat';
+import BankSelect from '../../../components/common/BankSelect';
 
 const REQUEST_TYPE_META = [
   { id: 'PROFILE_UPDATE', icon: User },
@@ -48,6 +49,17 @@ const StatusBadge = ({ status }) => {
     </span>
   );
 };
+
+const BankField = ({ label, value, onChange }) => (
+  <div>
+    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">{label}</label>
+    <BankSelect
+      value={value}
+      onChange={onChange}
+      className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+    />
+  </div>
+);
 
 const InputField = ({ label, value, onChange, type = 'text', options = [], placeholder = '', maxLength, error }) => {
   const { t } = useTranslation('staffChangeRequest');
@@ -493,7 +505,7 @@ const StaffChangeRequestPage = () => {
               {requestType === 'BANK_ACCOUNT_ADD' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <InputField label="Account Holder Name" value={bankForm.account_holder_name} onChange={v => setBankForm(p => ({ ...p, account_holder_name: v }))} placeholder="Full name on bank account" />
-                  <InputField label="Bank Name" value={bankForm.bank_name} onChange={v => setBankForm(p => ({ ...p, bank_name: v }))} placeholder="e.g. Commercial Bank" />
+                  <BankField label="Bank Name" value={bankForm.bank_name} onChange={v => setBankForm(p => ({ ...p, bank_name: v }))} />
                   <InputField label="Branch Name" value={bankForm.branch_name} onChange={v => setBankForm(p => ({ ...p, branch_name: v }))} placeholder="e.g. Nugegoda Branch" />
                   <InputField label="Account Number" value={bankForm.account_number} onChange={v => setBankForm(p => ({ ...p, account_number: v }))} placeholder="Account number" />
                 </div>
@@ -537,7 +549,7 @@ const StaffChangeRequestPage = () => {
                       <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">New Values (leave blank to keep unchanged)</p>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <InputField label="Account Holder Name" value={bankForm.account_holder_name} onChange={v => setBankForm(p => ({ ...p, account_holder_name: v }))} placeholder={selectedBankAccount?.account_holder_name || ''} />
-                        <InputField label="Bank Name" value={bankForm.bank_name} onChange={v => setBankForm(p => ({ ...p, bank_name: v }))} placeholder={selectedBankAccount?.bank_name || ''} />
+                        <BankField label="Bank Name" value={bankForm.bank_name} onChange={v => setBankForm(p => ({ ...p, bank_name: v }))} />
                         <InputField label="Branch Name" value={bankForm.branch_name} onChange={v => setBankForm(p => ({ ...p, branch_name: v }))} placeholder={selectedBankAccount?.branch_name || ''} />
                         <InputField label="Account Number" value={bankForm.account_number} onChange={v => setBankForm(p => ({ ...p, account_number: v }))} placeholder={selectedBankAccount?.account_number || ''} />
                       </div>

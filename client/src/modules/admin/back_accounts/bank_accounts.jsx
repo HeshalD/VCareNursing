@@ -21,6 +21,7 @@ import apiClient from '../../../api/api';
 import { categoryBadge, relatedTo, flowAmountClass, flowSign } from '../../../constants/transactionCategories';
 import DateInput from '../../../components/common/DateInput';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
+import BankSelect from '../../../components/common/BankSelect';
 
 const parseToken = (token) => {
 	try {
@@ -860,10 +861,10 @@ const BankAccounts = () => {
 								</Field>
 								<div className="grid grid-cols-2 gap-3">
 									<Field label="Bank Name" required>
-										<input
+										<BankSelect
 											required
 											value={formData.bank_name}
-											onChange={(e) => setFormData({ ...formData, bank_name: e.target.value })}
+											onChange={(v) => setFormData({ ...formData, bank_name: v })}
 											className={inputCls}
 										/>
 									</Field>

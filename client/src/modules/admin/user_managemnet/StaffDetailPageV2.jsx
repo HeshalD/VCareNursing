@@ -52,6 +52,7 @@ import StaffCareTimeline from './StaffCareTimeline';
 import StaffSwitcherSidebar from './StaffSwitcherSidebar';
 import { dotForAction, ROLE_DOT, fmt as fmtActivityDate, ACTION_TYPE_OPTIONS as ACTIVITY_ACTION_TYPES } from '../activity_log/activityLogConstants';
 import { Tag as ActivityTag, DetailsTable as ActivityDetailsTable } from '../activity_log/activityLogComponents';
+import BankSelect from '../../../components/common/BankSelect';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const moneyFormatter = new Intl.NumberFormat('en-LK', {
@@ -2536,12 +2537,13 @@ const StaffDetailPageV2 = () => {
               <label className="block text-xs font-medium text-slate-600 mb-1">
                 {label} {required && <span className="text-rose-500">*</span>}
               </label>
-              <input
+              {key === 'bank_name' ? (<BankSelect value={bankModal.form.bank_name} onChange={v => setBankModal(p => ({ ...p, form: { ...p.form, bank_name: v } }))} className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-100" />) : (
+                            <input
                 value={bankModal.form[key]}
                 onChange={e => setBankModal(p => ({ ...p, form: { ...p.form, [key]: e.target.value } }))}
                 placeholder={placeholder}
                 className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-100"
-              />
+              />)}
             </div>
           ))}
           <div className="grid grid-cols-2 gap-3">

@@ -40,6 +40,7 @@ import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
+import BankSelect from '../../../components/common/BankSelect';
 
 const moneyFormatter = new Intl.NumberFormat('en-LK', {
   style: 'currency',
@@ -1612,10 +1613,9 @@ const StaffDetailPage = () => {
                 <label className="block text-xs font-medium text-slate-600 mb-1">
                   Bank Name <span className="text-rose-500">*</span>
                 </label>
-                <input
+                <BankSelect
                   value={bankModal.form.bank_name}
-                  onChange={(e) => setBankModal((p) => ({ ...p, form: { ...p.form, bank_name: e.target.value } }))}
-                  placeholder="e.g. Commercial Bank"
+                  onChange={v => setBankModal((p) => ({ ...p, form: { ...p.form, bank_name: v } }))}
                   className="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-100"
                 />
               </div>
