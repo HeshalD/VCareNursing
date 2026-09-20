@@ -76,6 +76,8 @@ import WorkerBookings from './modules/public/service_team/WorkerBookings';
 import StaffMyProfile from './modules/public/service_team/StaffMyProfile';
 import StaffChangeRequestPage from './modules/public/service_team/StaffChangeRequestPage';
 import StaffLeaveRequestPage from './modules/public/service_team/StaffLeaveRequestPage';
+import StaffPortalGuard from './modules/public/service_team/StaffPortalGuard';
+import StaffAccessRevokedPage from './modules/public/service_team/StaffAccessRevokedPage';
 import ChangeRequestsPage from './modules/admin/change_requests/ChangeRequestsPage';
 import ActivityLogPage from './modules/admin/activity_log/ActivityLogPage';
 import AdminReviewsPage from './modules/admin/reviews/AdminReviewsPage';
@@ -152,12 +154,13 @@ function App() {
             <Route path="/client/pay-receipt/:token" element={<ClientPaymentReceiptPage />} />
             <Route path="/verify-staff-otp" element={<VerifyStaffOTP />} />
             <Route path="/worker-registration-success" element={<WorkerRegistrationSuccessPage />} />
-            <Route path="/services/provider-dashboard" element={<WorkerDashboardDemo />} />
-            <Route path="/services/earnings" element={<Earnings />} />
-            <Route path="/services/bookings" element={<WorkerBookings />} />
-            <Route path="/services/my-profile" element={<StaffMyProfile />} />
-            <Route path="/services/change-request" element={<StaffChangeRequestPage />} />
-            <Route path="/services/leave-request" element={<StaffLeaveRequestPage />} />
+            <Route path="/staff-access-revoked" element={<StaffAccessRevokedPage />} />
+            <Route path="/services/provider-dashboard" element={<StaffPortalGuard><WorkerDashboardDemo /></StaffPortalGuard>} />
+            <Route path="/services/earnings" element={<StaffPortalGuard><Earnings /></StaffPortalGuard>} />
+            <Route path="/services/bookings" element={<StaffPortalGuard><WorkerBookings /></StaffPortalGuard>} />
+            <Route path="/services/my-profile" element={<StaffPortalGuard><StaffMyProfile /></StaffPortalGuard>} />
+            <Route path="/services/change-request" element={<StaffPortalGuard><StaffChangeRequestPage /></StaffPortalGuard>} />
+            <Route path="/services/leave-request" element={<StaffPortalGuard><StaffLeaveRequestPage /></StaffPortalGuard>} />
             <Route element={<ClientLayout />}>
               <Route path="/client/profile" element={<ClientProfile />} />
               <Route path="/client/bookings" element={<ClientBookings />} />

@@ -4,13 +4,14 @@ import {
   Loader2, X, Plus, Package, Image as ImageIcon, Trash2, Pencil,
   ShoppingBag, FileText, CreditCard, Search, Check, AlertCircle,
   Repeat, RotateCcw, Wrench, Undo2, Wallet, Download, History, Eye,
-  ExternalLink, ChevronDown, Upload, ChevronLeft, ChevronRight, Tag,
+  ExternalLink, EyeOff, ChevronDown, Upload, ChevronLeft, ChevronRight, Tag,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import DateInput from '../../../components/common/DateInput';
 import ImageCropModal from '../../../components/common/ImageCropModal';
+import CitySelect from '../../../components/common/CitySelect';
 
 // Matches the public CatalogPage product card image box, which is a
 // square (aspect-square) slot.
@@ -48,6 +49,34 @@ const PAYMENT_METHODS = ['CASH', 'BANK_TRANSFER', 'CASH_DEPOSIT', 'CHEQUE'];
 const inputCls = 'w-full px-3 py-2 text-sm border border-slate-300 rounded-lg bg-white text-slate-800 placeholder-slate-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-colors';
 const primaryBtnCls = 'inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 const ghostBtnCls = 'inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+function VisibilityBadge({ product }) {
+  const on = product.is_public !== false;
+  return (
+    <span
+      className={`ml-2 inline-flex items-center gap-1 rounded px-1.5 py-0.5 align-middle text-[10px] font-semibold ${
+        on ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500'
+      }`}
+      title={on ? 'Shown on the public catalog page' : 'Hidden from the public catalog page'}
+    >
+      {on ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+      {on ? 'On display' : 'Not displayed'}
+    </span>
+  );
+}
+
+function SelectCheckbox({ checked, indeterminate = false, onChange, title }) {
+  return (
+    <input
+      type="checkbox"
+      title={title}
+      checked={checked}
+      ref={(el) => { if (el) el.indeterminate = indeterminate && !checked; }}
+      onChange={onChange}
+      className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+    />
+  );
+}
+
 const iconBtnCls = 'inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
 const StatusDot = ({ active, activeLabel = 'Active', inactiveLabel = 'Inactive' }) => (
   <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${active ? 'text-emerald-700' : 'text-slate-500'}`}>
@@ -67,7 +96,7 @@ const CLIENT_TYPES = ['INDIVIDUAL', 'CORPORATE_PROXY'];
 
 const emptyWalkInClient = () => ({
   honorific: '', full_name: '', gender: '', client_type: 'INDIVIDUAL',
-  company_name: '', display_name_source: 'FULL_NAME', email: '', mobile_number: '', primary_address: '',
+  company_name: '', display_name_source: 'FULL_NAME', email: '', mobile_number: '', primary_address: '', city_id: '',
 });
 
 // Collects the same required fields as the normal "Add Client" flow
@@ -141,6 +170,12 @@ const WalkInClientFields = ({ value, onChange }) => {
           className="rounded-md border border-slate-300 bg-white text-slate-800 placeholder-slate-400 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
         />
       </div>
+      <CitySelect
+        value={value.city_id}
+        onChange={(city) => set({ city_id: city ? city.city_id : '' })}
+        placeholder="City (optional)"
+        className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+      />
       <input
         type="text"
         placeholder="Primary address (optional)"
@@ -198,6 +233,9 @@ function CatalogTab() {
   const [editingProduct, setEditingProduct] = useState(null);
   const [historyProduct, setHistoryProduct] = useState(null);
   const [error, setError] = useState('');
+  const [selected, setSelected] = useState(() => new Set());
+  const [displayFilter, setDisplayFilter] = useState('ALL'); // 'ALL' | 'ON' | 'OFF'
+  const [visibilityBusy, setVisibilityBusy] = useState(false);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -249,13 +287,70 @@ function CatalogTab() {
     }
   };
 
-  const rentalProducts = products.filter((p) => p.product_type === 'RENTAL');
-  const serviceProducts = products.filter((p) => p.product_type === 'ONE_TIME_SERVICE');
-  const itemProducts = products.filter((p) => p.product_type === 'ITEM');
+  const isOn = (p) => p.is_public !== false;
+  const onDisplayCount = products.filter(isOn).length;
+  const shownProducts = products.filter((p) =>
+    displayFilter === 'ALL' || (displayFilter === 'ON' ? isOn(p) : !isOn(p))
+  );
+  const rentalProducts = shownProducts.filter((p) => p.product_type === 'RENTAL');
+  const serviceProducts = shownProducts.filter((p) => p.product_type === 'ONE_TIME_SERVICE');
+  const itemProducts = shownProducts.filter((p) => p.product_type === 'ITEM');
+
+  const toggleOne = (id) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const groupState = (list) => {
+    const n = list.filter((p) => selected.has(p.product_id)).length;
+    return { checked: list.length > 0 && n === list.length, indeterminate: n > 0 && n < list.length };
+  };
+  const toggleGroup = (list) => setSelected((prev) => {
+    const next = new Set(prev);
+    const allIn = list.length > 0 && list.every((p) => next.has(p.product_id));
+    list.forEach((p) => { if (allIn) next.delete(p.product_id); else next.add(p.product_id); });
+    return next;
+  });
+
+  const applyVisibility = async (isPublic) => {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    setVisibilityBusy(true);
+    setError('');
+    try {
+      await apiClient.setProductsVisibility(ids, isPublic);
+      setSelected(new Set());
+      await fetchAll();
+    } catch (err) {
+      setError(err.message || 'Failed to update catalog visibility');
+    } finally {
+      setVisibilityBusy(false);
+    }
+  };
 
   return (
     <>
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs text-slate-500">
+            <span className="font-semibold text-blue-600">{onDisplayCount}</span> on public display ·{' '}
+            <span className="font-semibold text-slate-600">{products.length - onDisplayCount}</span> not displayed
+          </span>
+          <div className="flex gap-1 rounded-lg bg-slate-100 p-0.5">
+            {[['ALL', 'All'], ['ON', 'On display'], ['OFF', 'Not displayed']].map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setDisplayFilter(id)}
+                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                  displayFilter === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         <button
           type="button"
           onClick={openCreate}
@@ -268,6 +363,37 @@ function CatalogTab() {
       {error && (
         <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
           <AlertCircle className="h-4 w-4 shrink-0" /> {error}
+        </div>
+      )}
+
+      {selected.size > 0 && (
+        <div className="sticky top-2 z-20 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2.5 shadow-sm">
+          <span className="text-sm font-medium text-blue-800">{selected.size} selected</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={visibilityBusy}
+              onClick={() => applyVisibility(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+            >
+              {visibilityBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />} Show on public catalog
+            </button>
+            <button
+              type="button"
+              disabled={visibilityBusy}
+              onClick={() => applyVisibility(false)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              <EyeOff className="h-3.5 w-3.5" /> Hide from public catalog
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelected(new Set())}
+              className="text-xs font-medium text-slate-500 hover:text-slate-700"
+            >
+              Clear
+            </button>
+          </div>
         </div>
       )}
 
@@ -286,6 +412,12 @@ function CatalogTab() {
             <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800">
               <Repeat className="h-4 w-4 text-purple-500" /> Rental Items
               <span className="rounded-full bg-purple-50 px-2 py-0.5 text-[11px] font-medium text-purple-600">{rentalProducts.length}</span>
+              {rentalProducts.length > 0 && (
+                <label className="ml-2 flex items-center gap-1.5 text-xs font-normal text-slate-500 cursor-pointer">
+                  <SelectCheckbox {...groupState(rentalProducts)} onChange={() => toggleGroup(rentalProducts)} title="Select all rentals" />
+                  Select all
+                </label>
+              )}
             </h3>
             {rentalProducts.length === 0 ? (
               <div className="rounded-lg border border-slate-200 bg-white p-6 text-center text-sm text-slate-400">
@@ -297,6 +429,8 @@ function CatalogTab() {
                   <RentalProductPanel
                     key={p.product_id}
                     product={p}
+                    selected={selected.has(p.product_id)}
+                    onToggleSelect={() => toggleOne(p.product_id)}
                     units={units.filter((u) => u.product_id === p.product_id)}
                     onEdit={() => openEdit(p)}
                     onDeactivate={() => handleDeactivate(p)}
@@ -323,6 +457,7 @@ function CatalogTab() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50">
+                        <th className="px-4 py-3 w-8"><SelectCheckbox {...groupState(itemProducts)} onChange={() => toggleGroup(itemProducts)} title="Select all in this group" /></th>
                         <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Image</th>
                         <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Name</th>
                         <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Category</th>
@@ -335,6 +470,9 @@ function CatalogTab() {
                     <tbody className="divide-y divide-slate-100">
                       {itemProducts.map((p) => (
                         <tr key={p.product_id} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-3 w-8">
+                            <SelectCheckbox checked={selected.has(p.product_id)} onChange={() => toggleOne(p.product_id)} title="Select for bulk display change" />
+                          </td>
                           <td className="px-4 py-3">
                             {p.image_url ? (
                               <img src={p.image_url} alt={p.name} className="h-9 w-9 rounded object-cover border border-slate-200" />
@@ -344,7 +482,7 @@ function CatalogTab() {
                               </div>
                             )}
                           </td>
-                          <td className="px-4 py-3 font-semibold text-slate-900">{p.name}</td>
+                          <td className="px-4 py-3 font-semibold text-slate-900">{p.name}<VisibilityBadge product={p} /></td>
                           <td className="px-4 py-3 text-slate-500">{p.category_name || '—'}</td>
                           <td className="px-4 py-3 text-right font-medium text-slate-800 whitespace-nowrap">{formatMoney(p.price)}</td>
                           <td className="px-4 py-3 text-right text-slate-600">
@@ -402,6 +540,7 @@ function CatalogTab() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50">
+                        <th className="px-4 py-3 w-8"><SelectCheckbox {...groupState(serviceProducts)} onChange={() => toggleGroup(serviceProducts)} title="Select all in this group" /></th>
                         <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Image</th>
                         <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Name</th>
                         <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Category</th>
@@ -413,6 +552,9 @@ function CatalogTab() {
                     <tbody className="divide-y divide-slate-100">
                       {serviceProducts.map((p) => (
                         <tr key={p.product_id} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-3 w-8">
+                            <SelectCheckbox checked={selected.has(p.product_id)} onChange={() => toggleOne(p.product_id)} title="Select for bulk display change" />
+                          </td>
                           <td className="px-4 py-3">
                             {p.image_url ? (
                               <img src={p.image_url} alt={p.name} className="h-9 w-9 rounded object-cover border border-slate-200" />
@@ -422,7 +564,7 @@ function CatalogTab() {
                               </div>
                             )}
                           </td>
-                          <td className="px-4 py-3 font-semibold text-slate-900">{p.name}</td>
+                          <td className="px-4 py-3 font-semibold text-slate-900">{p.name}<VisibilityBadge product={p} /></td>
                           <td className="px-4 py-3 text-slate-500">{p.category_name || '—'}</td>
                           <td className="px-4 py-3 text-right font-medium text-slate-800 whitespace-nowrap">{formatMoney(p.price)}</td>
                           <td className="px-4 py-3 whitespace-nowrap">
@@ -591,7 +733,7 @@ function ProductPurchaseHistoryModal({ product, onClose }) {
 // unit for that product inline (status, notes, who's renting it and until
 // when if RENTED, mark-maintenance toggle) plus an inline "add unit" form —
 // so units never require leaving the Catalog tab to manage.
-function RentalProductPanel({ product, units, onEdit, onDeactivate, onChanged, setError }) {
+function RentalProductPanel({ product, selected, onToggleSelect, units, onEdit, onDeactivate, onChanged, setError }) {
   const [unitCode, setUnitCode] = useState('');
   const [notes, setNotes] = useState('');
   const [addingUnit, setAddingUnit] = useState(false);
@@ -639,6 +781,7 @@ function RentalProductPanel({ product, units, onEdit, onDeactivate, onChanged, s
     <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-slate-50 px-4 py-3">
         <div className="flex items-center gap-3">
+          <SelectCheckbox checked={!!selected} onChange={onToggleSelect} title="Select for bulk display change" />
           {product.image_url ? (
             <img src={product.image_url} alt={product.name} className="h-9 w-9 rounded object-cover border border-slate-200" />
           ) : (
@@ -652,6 +795,7 @@ function RentalProductPanel({ product, units, onEdit, onDeactivate, onChanged, s
               {!product.is_available && (
                 <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">Deactivated</span>
               )}
+              <VisibilityBadge product={product} />
             </p>
             <p className="text-xs text-slate-400">
               {product.category_name || 'Uncategorized'} · {formatMoney(product.price)} / rental
@@ -2085,6 +2229,7 @@ function NewProductQuoteModal({ onClose, onCreated }) {
           mobile_number: walkInClient.mobile_number.trim(),
           gender: walkInClient.gender,
           primary_address: walkInClient.primary_address || undefined,
+          city_id: walkInClient.city_id || undefined,
           client_type: walkInClient.client_type || 'INDIVIDUAL',
           honorific: walkInClient.honorific || undefined,
           company_name: walkInClient.company_name || undefined,
@@ -3317,6 +3462,7 @@ function NewRentalAgreementModal({ rentalProducts, onClose, onCreated }) {
           mobile_number: walkInClient.mobile_number.trim(),
           gender: walkInClient.gender,
           primary_address: walkInClient.primary_address || undefined,
+          city_id: walkInClient.city_id || undefined,
           client_type: walkInClient.client_type || 'INDIVIDUAL',
           honorific: walkInClient.honorific || undefined,
           company_name: walkInClient.company_name || undefined,

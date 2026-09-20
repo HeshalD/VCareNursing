@@ -4,6 +4,7 @@ const { logActivity } = require('../utils/activityLogger');
 const { sendClientWelcomeNew } = require('../utils/metaWhatsapp');
 const { sendSms } = require('../utils/sms');
 const { toE164, isValidPhone } = require('../utils/phone');
+const { resolveCity } = require('../utils/cityHelper');
 
 async function safeLog(params) {
   try {
@@ -37,6 +38,15 @@ exports.createWalkInCustomer = async (req, res) => {
     return res.status(400).json({ message: 'A valid mobile number is required.' });
   }
   const mobile_number = toE164(rawMobileNumber);
+
+  // A supplied city must come from the master list (sl_cities); optional here.
+  // Resolved before a DB connection is taken so a bad city_id can't leak one.
+  let city;
+  try {
+    city = await resolveCity(req.body.city_id);
+  } catch (cityError) {
+    return res.status(400).json({ message: cityError.message });
+  }
 
   const resolvedDisplayNameSource =
     client_type === 'CORPORATE_PROXY' && company_name && display_name_source === 'COMPANY_NAME'
@@ -75,12 +85,13 @@ exports.createWalkInCustomer = async (req, res) => {
     const userId = userRes.rows[0].user_id;
 
     const profileRes = await dbClient.query(
-      `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address, company_name, honorific, display_name_source)
-       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8) RETURNING client_profile_id`,
+      `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address, company_name, honorific, display_name_source, city_id)
+       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8, $9) RETURNING client_profile_id`,
       [
         userId, full_name, client_type || 'INDIVIDUAL',
         gender.toUpperCase(), primary_address || null,
         company_name || null, honorific || null, resolvedDisplayNameSource,
+        city ? city.city_id : null,
       ]
     );
     const clientProfileId = profileRes.rows[0].client_profile_id;

@@ -46,6 +46,44 @@ async function markOnLeaveIfActiveToday(staffProfileId, startDate, endDate) {
   }
 }
 
+// Restores the staff dashboard access the leave cron revoked when a leave expired
+// (report-back or extension both resolve the expiry). Only an automatic LEAVE_EXPIRED
+// lock is undone — a manual admin lock stays — and only if no other expired,
+// unreturned leave is still keeping them locked out.
+async function restorePortalAccessAfterLeave(req, adminName, leave, reason) {
+  try {
+    const restored = await pool.query(
+      `UPDATE staff_profiles sp
+       SET portal_access_disabled = false, portal_access_disabled_reason = NULL
+       WHERE sp.staff_profile_id = $1
+         AND sp.portal_access_disabled = true
+         AND sp.portal_access_disabled_reason = 'LEAVE_EXPIRED'
+         AND NOT EXISTS (
+           SELECT 1 FROM staff_leave_requests lr
+           WHERE lr.staff_profile_id = sp.staff_profile_id
+             AND lr.status = 'APPROVED' AND lr.actual_return_date IS NULL
+             AND lr.end_date < CURRENT_DATE AND lr.expiry_handled_at IS NOT NULL
+             AND lr.leave_id <> $2
+         )
+       RETURNING sp.full_name`,
+      [leave.staff_profile_id, leave.leave_id]
+    );
+    if (restored.rows.length) {
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName: adminName,
+        actorRole: extractActorRole(req.user.role),
+        actionType: 'STAFF_PORTAL_ACCESS_ENABLED',
+        entityType: 'STAFF',
+        entityId: String(leave.staff_profile_id),
+        details: { staff_name: restored.rows[0].full_name, reason, leave_id: leave.leave_id },
+      });
+    }
+  } catch (err) {
+    console.error('restorePortalAccessAfterLeave error:', err.message);
+  }
+}
+
 // Flips current_status back to AVAILABLE on a report-back. Only moves ON_LEAVE ->
 // AVAILABLE — if the staff member somehow isn't ON_LEAVE (e.g. cron already reset a
 // long-overdue leave), there's nothing to undo.
@@ -567,6 +605,8 @@ const reportBack = async (req, res) => {
 
     await markAvailableAfterLeave(leave.staff_profile_id);
 
+    await restorePortalAccessAfterLeave(req, adminName, leave, 'REPORTED_BACK_FROM_LEAVE');
+
     try {
       await logActivity({
         actorUserId: req.user.user_id,
@@ -588,6 +628,83 @@ const reportBack = async (req, res) => {
     return res.json({ status: 'success', data: leave });
   } catch (err) {
     console.error('reportBack error:', err);
+    return res.status(500).json({ status: 'error', message: 'Server error' });
+  }
+};
+
+// POST /api/staff-leave/:leaveId/extend — admin extends an approved, not-yet-returned leave
+// (typically one that just expired) to a new end date. The leave is live again, so it can
+// expire again later (expiry_handled_at reset) and the staff member's dashboard access
+// is restored if the expiry cron had revoked it.
+const extendLeave = async (req, res) => {
+  const { leaveId } = req.params;
+  const { new_end_date } = req.body;
+
+  if (!new_end_date) {
+    return res.status(400).json({ status: 'error', message: 'New end date is required' });
+  }
+
+  try {
+    const leaveRes = await pool.query(
+      `SELECT leave_id, staff_profile_id, start_date::text AS start_date, end_date::text AS end_date,
+              (CURRENT_DATE)::text AS today
+       FROM staff_leave_requests
+       WHERE leave_id = $1 AND status = 'APPROVED' AND actual_return_date IS NULL`,
+      [leaveId]
+    );
+    if (!leaveRes.rows.length) {
+      return res.status(404).json({ status: 'error', message: 'Active approved leave not found' });
+    }
+    const { staff_profile_id, start_date, end_date: oldEnd, today } = leaveRes.rows[0];
+
+    if (new_end_date <= oldEnd) {
+      return res.status(400).json({ status: 'error', message: 'New end date must be after the current end date' });
+    }
+    if (new_end_date < today) {
+      return res.status(400).json({ status: 'error', message: 'New end date cannot be in the past' });
+    }
+
+    const overlap = await pool.query(
+      `${OVERLAP_CHECK_SQL} AND leave_id <> $4`,
+      [staff_profile_id, oldEnd, new_end_date, leaveId]
+    );
+    if (overlap.rows.length) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'This staff member has another pending or approved leave overlapping the extended dates.'
+      });
+    }
+
+    const adminName = await getReviewerName(req.user.user_id);
+    const result = await pool.query(
+      `UPDATE staff_leave_requests
+       SET end_date = $1, expiry_handled_at = NULL
+       WHERE leave_id = $2
+       RETURNING leave_id, staff_profile_id, start_date::text AS start_date, end_date::text AS end_date`,
+      [new_end_date, leaveId]
+    );
+    const leave = result.rows[0];
+
+    await markOnLeaveIfActiveToday(staff_profile_id, leave.start_date, leave.end_date);
+    await restorePortalAccessAfterLeave(req, adminName, leave, 'LEAVE_EXTENDED');
+
+    try {
+      await logActivity({
+        actorUserId: req.user.user_id,
+        actorName: adminName,
+        actorRole: extractActorRole(req.user.role),
+        actionType: 'LEAVE_EXTENDED',
+        entityType: 'STAFF_LEAVE',
+        entityId: String(leave.leave_id),
+        details: { staff_profile_id, start_date, previous_end_date: oldEnd, new_end_date: leave.end_date },
+      });
+    } catch (logErr) {
+      console.error('Activity log failed (extendLeave):', logErr.message);
+    }
+
+    return res.json({ status: 'success', data: leave });
+  } catch (err) {
+    console.error('extendLeave error:', err);
     return res.status(500).json({ status: 'error', message: 'Server error' });
   }
 };
@@ -663,4 +780,5 @@ module.exports = {
   adminCreateLeave,
   getOnLeaveStaff,
   reportBack,
+  extendLeave,
 };

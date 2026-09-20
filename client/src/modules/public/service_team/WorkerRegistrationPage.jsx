@@ -14,6 +14,7 @@ import apiClient from '../../../api/api';
 import DateInput, { isoToDisplay } from '../../../components/common/DateInput';
 import PhoneInput, { isValidPhoneNumber } from '../../../components/common/PhoneInput';
 import LanguageMultiSelect from '../../../components/common/LanguageMultiSelect';
+import CitySelect from '../../../components/common/CitySelect';
 import PhoneNumbersField from '../../../components/common/PhoneNumbersField';
 import { DEFAULT_LANGUAGES } from '../../../data/languages';
 import { sanitizeNicInput, validateNic } from '../../../utils/nicFormat';
@@ -49,7 +50,7 @@ const WorkerRegistrationPage = () => {
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState({
     full_name: '', email: '', mobile_number: '', secondary_phone_numbers: [], applied_roles: [],
-    qualifications: '', home_address: '', location: '', latitude: '', longitude: '',
+    qualifications: '', home_address: '', location: '', city_id: '', latitude: '', longitude: '',
     documents: [], profile_picture: null, gender: '', willing_to_live_in: false, date_of_birth: '',
     nic_number: '', nic_front: null, nic_back: null, experience_level: '', languages: [...DEFAULT_LANGUAGES]
   });
@@ -63,6 +64,7 @@ const WorkerRegistrationPage = () => {
   const [profilePictureToCrop, setProfilePictureToCrop] = useState(null);
   const [mobileConflict, setMobileConflict] = useState('');
   const [clientProfile, setClientProfile] = useState(null);
+  const [selectedCity, setSelectedCity] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({
     full_name: '',
     email: '',
@@ -300,7 +302,7 @@ const WorkerRegistrationPage = () => {
         break;
       case 'location':
         if (!value || value.trim() === '') {
-          error = 'Location is required';
+          error = 'Please select your city from the list';
         }
         break;
       case 'gender':
@@ -370,6 +372,14 @@ const WorkerRegistrationPage = () => {
     const error = validateField(name, value);
     setFieldErrors(prev => ({ ...prev, [name]: error }));
     if (name === 'mobile_number') setMobileConflict('');
+  };
+
+  // The city comes from the master list: keep its id for the API, and its name in
+  // `location` so the validation and the review summary keep working unchanged.
+  const handleCityChange = (city) => {
+    setSelectedCity(city);
+    setFormData(prev => ({ ...prev, city_id: city ? city.city_id : '', location: city ? city.name : '' }));
+    setFieldErrors(prev => ({ ...prev, location: city ? '' : 'Please select your city from the list' }));
   };
 
   const handleMobileBlur = async (value) => {
@@ -450,6 +460,7 @@ const WorkerRegistrationPage = () => {
         qualifications: formData.qualifications,
         home_address: formData.home_address,
         location: formData.location,
+        city_id: formData.city_id,
         latitude: formData.latitude,
         longitude: formData.longitude,
         gender: formData.gender,
@@ -998,45 +1009,29 @@ const WorkerRegistrationPage = () => {
                       <h2 className="text-2xl font-bold text-slate-800 mb-6 hidden md:block">Location Details</h2>
                       <div className="grid md:grid-cols-2 gap-6">
                         <div>
-                          <label className="text-sm font-semibold text-slate-600 block mb-1">Province</label>
-                          <div className="relative">
-                            <select
-                              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none appearance-none text-slate-900"
-                              value={formData.province}
-                              onChange={e => setFormData({ ...formData, province: e.target.value })}
-                              required
-                            >
-                              <option value="">Select Province</option>
-                              <option value="western">Western</option>
-                              <option value="central">Central</option>
-                              <option value="eastern">Eastern</option>
-                              <option value="north central">North Central</option>
-                              <option value="northen">Nothern</option>
-                              <option value="nothern western">Nothern Western</option>
-                              <option value="sabaragamuwa">Sabaragamuwa</option>
-                              <option value="southern">Southern</option>
-                              <option value="uva">Uva</option>
-                            </select>
-                            <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-                          </div>
-                        </div>
-                          <div>
                           <label className="text-sm font-semibold text-slate-600 block mb-1">City</label>
-                          <input
-                            type="text"
-                            className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 placeholder:text-slate-400 ${
-                              fieldErrors.location 
-                                ? 'bg-red-50 border-red-300' 
+                          <CitySelect
+                            value={formData.city_id}
+                            onChange={handleCityChange}
+                            required
+                            placeholder="Search and select your city"
+                            className={`w-full px-4 py-3 border rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 ${
+                              fieldErrors.location
+                                ? 'bg-red-50 border-red-300'
                                 : 'bg-slate-50 border-slate-200'
                             }`}
-                            value={formData.location}
-                            onChange={e => handleInputChange('location', e.target.value)}
-                            placeholder="e.g. Colombo"
-                            required
                           />
                           {fieldErrors.location && (
                             <p className="text-xs text-red-500 mt-1">{fieldErrors.location}</p>
                           )}
+                        </div>
+                        <div>
+                          <label className="text-sm font-semibold text-slate-600 block mb-1">District / Province</label>
+                          <div className="w-full px-4 py-3 bg-slate-100 border border-slate-200 rounded-xl text-slate-600 min-h-[50px]">
+                            {selectedCity
+                              ? `${selectedCity.district} District, ${selectedCity.province}`
+                              : <span className="text-slate-400">Filled in from your city</span>}
+                          </div>
                         </div>
                         <div className="md:col-span-2">
                           <label className="text-sm font-semibold text-slate-600 block mb-1">

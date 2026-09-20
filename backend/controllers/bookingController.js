@@ -3849,6 +3849,9 @@ exports.swapStaff = async (req, res) => {
         new_daily_rate,
         new_ot_rate,
         new_scheduled_end_time,
+        // What the incoming staff member is PAID per day. Applies to their
+        // assignment only — never touches bookings.daily_rate (client billing).
+        new_staff_daily_rate,
         // The incoming staff's first logged in_time, if already known. Optional —
         // if omitted, their first day (and every day after, until logged) is just
         // an ordinary un-logged LIVE_IN day, handled by the existing attendance UI.
@@ -4011,7 +4014,9 @@ exports.swapStaff = async (req, res) => {
                 return res.status(400).json({ status: 'error', message: 'A staff swap is already scheduled for this booking.' });
             }
 
-            const newDailyRate = new_daily_rate ?? bookingDetail.daily_rate ?? bookingDetail.quote_daily_rate ?? 0;
+            const newDailyRate = (new_staff_daily_rate !== undefined && new_staff_daily_rate !== null && new_staff_daily_rate !== '' && Number(new_staff_daily_rate) >= 0)
+                ? Number(new_staff_daily_rate)
+                : (new_daily_rate ?? bookingDetail.daily_rate ?? bookingDetail.quote_daily_rate ?? 0);
             const insertRes = await client.query(
                 `INSERT INTO booking_staff_assignments
                     (booking_id, staff_profile_id, assigned_on, assigned_by, daily_rate,
@@ -4071,7 +4076,9 @@ exports.swapStaff = async (req, res) => {
 
         // 4. Open the new assignment ACTIVE and open-ended, starting today (or the
         // requested date) — concurrent with the outgoing staff's still-open one.
-        const newDailyRate = new_daily_rate ?? bookingDetail.daily_rate ?? bookingDetail.quote_daily_rate ?? 0;
+        const newDailyRate = (new_staff_daily_rate !== undefined && new_staff_daily_rate !== null && new_staff_daily_rate !== '' && Number(new_staff_daily_rate) >= 0)
+                ? Number(new_staff_daily_rate)
+                : (new_daily_rate ?? bookingDetail.daily_rate ?? bookingDetail.quote_daily_rate ?? 0);
         const newAssignmentRes = await client.query(
             `INSERT INTO booking_staff_assignments
                 (booking_id, staff_profile_id, assigned_on, assigned_by, daily_rate,

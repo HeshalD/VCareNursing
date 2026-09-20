@@ -9,6 +9,7 @@ const { creditRecruiterForStaff } = require('../services/recruiterService');
 const { resolveBankAccountId } = require('../utils/pettyCash');
 const { toE164, toE164ListWithNames, isValidPhone } = require('../utils/phone');
 const { isValidNic, normalizeNic, NIC_FORMAT_MESSAGE } = require('../utils/nic');
+const { resolveCity } = require('../utils/cityHelper');
 
 const _MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const _METHOD_LABELS = { BANK_TRANSFER: 'Bank Transfer', CASH: 'Cash', CHEQUE: 'Cheque' };
@@ -338,6 +339,7 @@ exports.getStaffByID = async (req, res) => {
                 sp.document_urls,
                 sp.home_address,
                 sp.location,
+                sp.city_id,
                 sp.gps_coordinates,
                 sp.profile_picture_url,
                 sp.current_status,
@@ -419,7 +421,9 @@ exports.getStaffByUserID = async (req, res) => {
                 sp.secondary_phone_numbers,
                 sp.youtube_links,
                 sp.location,
+                sp.city_id,
                 sp.nic_number,
+                sp.portal_access_disabled,
                 sp.created_at,
                 u.user_id,
                 u.email,
@@ -436,9 +440,20 @@ exports.getStaffByUserID = async (req, res) => {
         const result = await db.query(query, [user_id]);
 
         if (result.rows.length === 0) {
-            return res.status(404).json({ 
+            return res.status(404).json({
                 status: 'error',
-                message: 'Staff member not found' 
+                message: 'Staff member not found'
+            });
+        }
+
+        // Every staff-dashboard page loads the caller's own profile through this
+        // endpoint, so it doubles as the "is my dashboard access disabled?" gate.
+        // Admins looking up someone else's profile are unaffected.
+        if (result.rows[0].portal_access_disabled && String(req.user?.user_id) === String(user_id)) {
+            return res.status(403).json({
+                code: 'STAFF_PORTAL_DISABLED',
+                status: 'error',
+                message: 'Your staff dashboard access has been disabled. Please contact admin.'
             });
         }
 
@@ -1393,11 +1408,61 @@ exports.reactivateStaffAccount = async (req, res) => {
     }
 };
 
+// Admin: enable/disable staff-dashboard access for one or many staff members.
+// Body: { staff_profile_ids: [...], disabled: boolean }. Unlike deactivate, this
+// leaves users.is_active and availability untouched — only the staff dashboard is locked.
+exports.setStaffPortalAccess = async (req, res) => {
+    const single = req.params.staff_profile_id;
+    const ids = Array.from(new Set((single ? [single] : req.body.staff_profile_ids) || []));
+    const { disabled } = req.body;
+
+    if (typeof disabled !== 'boolean' || ids.length === 0 || ids.length > 1000) {
+        return res.status(400).json({ status: 'error', message: 'Provide staff_profile_ids and a boolean "disabled".' });
+    }
+
+    try {
+        const updateRes = await db.query(
+            `UPDATE staff_profiles SET portal_access_disabled = $1,
+                    portal_access_disabled_reason = CASE WHEN $1 THEN 'MANUAL' ELSE NULL END
+             WHERE staff_profile_id = ANY($2::uuid[])
+             RETURNING staff_profile_id, full_name`,
+            [disabled, ids]
+        );
+
+        try {
+            const actorNameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+            const actorName = actorNameRes.rows[0]?.full_name || 'Admin';
+            const actorRole = Array.isArray(req.user?.role) ? req.user.role[0] : req.user?.role;
+            const cleanRole = typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole);
+            await Promise.all(updateRes.rows.map(row => logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: cleanRole,
+                actionType: disabled ? 'STAFF_PORTAL_ACCESS_DISABLED' : 'STAFF_PORTAL_ACCESS_ENABLED',
+                entityType: 'STAFF',
+                entityId: String(row.staff_profile_id),
+                details: { staff_name: row.full_name, bulk: ids.length > 1 },
+            })));
+        } catch (logErr) {
+            console.error('Activity log failed (setStaffPortalAccess):', logErr.message);
+        }
+
+        return res.status(200).json({
+            status: 'success',
+            message: `Staff dashboard access ${disabled ? 'disabled' : 'enabled'} for ${updateRes.rowCount} staff member(s)`,
+            data: { updated: updateRes.rowCount, requested: ids.length, disabled }
+        });
+    } catch (error) {
+        console.error('setStaffPortalAccess Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error while updating staff dashboard access' });
+    }
+};
+
 // Get all staff members with optional filtering
 exports.getAllStaff = async (req, res) => {
     try {
         // Optional query parameters for filtering
-        const { status, verification_status, role, search = '', pending_migration = '', page = 1, limit = 10 } = req.query;
+        const { status, verification_status, role, search = '', pending_migration = '', portal_access = '', page = 1, limit = 10 } = req.query;
 
         // Build WHERE clause dynamically
         let whereClause = '';
@@ -1424,6 +1489,14 @@ exports.getAllStaff = async (req, res) => {
 
         if (pending_migration === 'true') {
             whereClause += ` AND sp.onboarding_status = 'PENDING_MIGRATION'`;
+        }
+
+        // Staff dashboard (portal) access: 'enabled' = can log in to the staff portal,
+        // 'disabled' = locked out (manually, or automatically after an expired leave).
+        if (portal_access === 'enabled') {
+            whereClause += ` AND sp.portal_access_disabled = false`;
+        } else if (portal_access === 'disabled') {
+            whereClause += ` AND sp.portal_access_disabled = true`;
         }
 
         if (search) {
@@ -1471,7 +1544,9 @@ exports.getAllStaff = async (req, res) => {
               COUNT(*) FILTER (WHERE LOWER(sp.current_status) = 'unavailable') AS unavailable_count,
               COUNT(*) FILTER (WHERE LOWER(sp.current_status) = 'assigned') AS assigned_count,
               COUNT(*) FILTER (WHERE LOWER(sp.current_status) = 'on_leave') AS on_leave_count,
-              COUNT(*) FILTER (WHERE sp.onboarding_status = 'PENDING_MIGRATION') AS pending_migration_count
+              COUNT(*) FILTER (WHERE sp.onboarding_status = 'PENDING_MIGRATION') AS pending_migration_count,
+              COUNT(*) FILTER (WHERE sp.portal_access_disabled = false) AS portal_enabled_count,
+              COUNT(*) FILTER (WHERE sp.portal_access_disabled = true) AS portal_disabled_count
             FROM staff_profiles sp
             JOIN users u ON sp.user_id = u.user_id
         `);
@@ -1492,6 +1567,7 @@ exports.getAllStaff = async (req, res) => {
                 sp.document_urls,
                 sp.home_address,
                 sp.location,
+                sp.city_id,
                 sp.gps_coordinates,
                 sp.profile_picture_url,
                 sp.current_status,
@@ -1515,6 +1591,7 @@ exports.getAllStaff = async (req, res) => {
                 sp.nic_back_url,
                 sp.staff_code,
                 sp.onboarding_status,
+                sp.portal_access_disabled,
                 CAST(sp.average_rating AS FLOAT) as average_rating,
                 u.user_id,
                 u.email,
@@ -1576,6 +1653,8 @@ exports.getAllStaff = async (req, res) => {
                 assigned: parseInt(c.assigned_count, 10),
                 on_leave: parseInt(c.on_leave_count, 10),
                 pending_migration: parseInt(c.pending_migration_count, 10),
+                portal_enabled: parseInt(c.portal_enabled_count, 10),
+                portal_disabled: parseInt(c.portal_disabled_count, 10),
             }
         });
 
@@ -1600,6 +1679,7 @@ exports.getAvailableStaff = async (req, res) => {
                 sp.document_urls,
                 sp.home_address,
                 sp.location,
+                sp.city_id,
                 sp.gps_coordinates,
                 sp.profile_picture_url,
                 sp.current_status,
@@ -2809,6 +2889,15 @@ exports.updateStaffProfile = async (req, res) => {
 
         const existingStaff = existingResult.rows[0];
 
+        // A city picked from the master list wins over the free-text `location`;
+        // when none is sent the city (and location) are left as they were.
+        let city;
+        try {
+            city = await resolveCity(req.body.city_id);
+        } catch (cityError) {
+            return res.status(cityError.status || 400).json({ status: 'error', message: cityError.message });
+        }
+
         // Validate required fields if provided
         if (full_name === '' || designation === '' || gender === '' || date_of_birth === '') {
             return res.status(400).json({
@@ -3001,6 +3090,7 @@ exports.updateStaffProfile = async (req, res) => {
                 languages = COALESCE($19, languages),
                 youtube_links = COALESCE($20, youtube_links),
                 secondary_phone_numbers = COALESCE($21::jsonb, secondary_phone_numbers),
+                city_id = COALESCE($22, city_id),
                 onboarding_status = CASE
                     WHEN onboarding_status = 'PENDING_MIGRATION'
                      AND (SELECT is_complete FROM completeness)
@@ -3028,6 +3118,7 @@ exports.updateStaffProfile = async (req, res) => {
                 document_urls,
                 home_address,
                 location,
+                city_id,
                 profile_picture_url,
                 gender,
                 willing_to_live_in,
@@ -3051,7 +3142,7 @@ exports.updateStaffProfile = async (req, res) => {
             qualifications || null,
             finalDocumentUrls,
             home_address || null,
-            location || null,
+            city ? city.name : (location || null),
             finalProfilePicture || null,
             gender ? gender.toUpperCase() : null,
             willing_to_live_in !== undefined ? willing_to_live_in : null,
@@ -3065,7 +3156,8 @@ exports.updateStaffProfile = async (req, res) => {
             experience_level || null,
             languagesToSet,
             youtubeLinksToSet,
-            secondaryPhonesToSet === null ? null : JSON.stringify(secondaryPhonesToSet)
+            secondaryPhonesToSet === null ? null : JSON.stringify(secondaryPhonesToSet),
+            city ? city.city_id : null
         ];
 
         const result = await db.query(updateQuery, updateValues);
@@ -3224,6 +3316,16 @@ exports.createStaffProfile = async (req, res) => {
         }
         const finalEmail = email && String(email).trim() ? String(email).trim() : null;
 
+        // Optional on proxy-create, but a supplied city must come from the master
+        // list. Resolved before the user row is created so a bad city_id can't leave
+        // an orphaned user behind.
+        let city;
+        try {
+            city = await resolveCity(req.body.city_id);
+        } catch (cityError) {
+            return res.status(cityError.status || 400).json({ status: 'error', message: cityError.message });
+        }
+
         // Check if user already exists by mobile (or email, when one was provided)
         const userCheckResult = await db.query(
             `SELECT user_id, email, mobile_number
@@ -3331,11 +3433,12 @@ exports.createStaffProfile = async (req, res) => {
                 languages,
                 youtube_links,
                 secondary_phone_numbers,
+                city_id,
                 current_status,
                 verification_status,
                 created_at
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, 'AVAILABLE', 'VERIFIED', NOW()
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, $23, 'AVAILABLE', 'VERIFIED', NOW()
             )
             RETURNING
                 staff_profile_id,
@@ -3354,6 +3457,7 @@ exports.createStaffProfile = async (req, res) => {
                 document_urls,
                 home_address,
                 location,
+                city_id,
                 profile_picture_url,
                 nic_number,
                 nic_front_url,
@@ -3373,7 +3477,7 @@ exports.createStaffProfile = async (req, res) => {
             qualifications || null,
             finalDocumentUrls.length > 0 ? finalDocumentUrls : null,
             home_address || null,
-            location || null,
+            city ? city.name : (location || null),
             uploadedProfilePicture || null,
             normalizeNic(nic_number),
             uploadedNicFront || null,
@@ -3388,7 +3492,8 @@ exports.createStaffProfile = async (req, res) => {
             uploadedPoliceReport || null,
             createLanguages,
             createYoutubeLinks,
-            JSON.stringify(createSecondaryPhones)
+            JSON.stringify(createSecondaryPhones),
+            city ? city.city_id : null
         ];
 
         const result = await db.query(insertQuery, insertValues);

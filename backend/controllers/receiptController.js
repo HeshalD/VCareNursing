@@ -80,6 +80,7 @@ const getAllReceipts = async (req, res) => {
 
         const dataRes = await db.query(
             `SELECT r.receipt_id, r.receipt_code, r.client_id, cp.full_name AS client_name,
+                    cp.honorific, cp.client_code,
                     u.mobile_number, r.source_type, r.total_amount, r.payment_method,
                     r.payment_date, r.reference_number, r.line_items, r.pdf_url,
                     r.whatsapp_sent, r.whatsapp_sent_at, r.send_error, r.created_at

@@ -15,6 +15,7 @@
 // elsewhere in the app and this cron shouldn't clobber a state it doesn't own).
 const cron = require('node-cron');
 const db = require('../config/db');
+const { logActivity } = require('../utils/activityLogger');
 
 const runStaffLeaveStatus = async () => {
   console.log('─── Staff Leave Status Cron Started ───');
@@ -53,7 +54,42 @@ const runStaffLeaveStatus = async () => {
       console.log(`Leave expired, reverted to AVAILABLE: ${endedRes.rows.map(r => r.full_name).join(', ')}`);
     }
 
-    console.log(`─── Staff Leave Status Cron Finished — ${startedRes.rows.length} started, ${endedRes.rows.length} ended ───`);
+    // 3. Leaves that expired without the staff member being reported back lock their
+    //    staff dashboard. expiry_handled_at makes each leave fire once, so an admin who
+    //    later re-enables access by hand isn't re-locked by the same leave on the next run.
+    //    An access lock an admin already applied by hand is left as MANUAL.
+    const lockedRes = await client.query(
+      `WITH expired AS (
+         UPDATE staff_leave_requests
+         SET expiry_handled_at = NOW()
+         WHERE status = 'APPROVED'
+           AND actual_return_date IS NULL
+           AND end_date < CURRENT_DATE
+           AND expiry_handled_at IS NULL
+         RETURNING staff_profile_id, leave_id, end_date::text AS end_date
+       )
+       UPDATE staff_profiles sp
+       SET portal_access_disabled = true, portal_access_disabled_reason = 'LEAVE_EXPIRED'
+       FROM (SELECT staff_profile_id, MAX(leave_id::text) AS leave_id, MAX(end_date) AS end_date
+             FROM expired GROUP BY staff_profile_id) e
+       WHERE sp.staff_profile_id = e.staff_profile_id
+         AND sp.portal_access_disabled = false
+       RETURNING sp.staff_profile_id, sp.full_name, e.leave_id, e.end_date`
+    );
+    for (const row of lockedRes.rows) {
+      console.log(`Leave expired, dashboard access disabled: ${row.full_name}`);
+      logActivity({
+        actorUserId: null,
+        actorName: 'System (Staff Leave Cron)',
+        actorRole: 'SYSTEM',
+        actionType: 'STAFF_PORTAL_ACCESS_DISABLED',
+        entityType: 'STAFF',
+        entityId: String(row.staff_profile_id),
+        details: { staff_name: row.full_name, reason: 'LEAVE_EXPIRED', leave_id: row.leave_id, leave_end_date: row.end_date },
+      }).catch((e) => console.error('Activity log error:', e.message));
+    }
+
+    console.log(`─── Staff Leave Status Cron Finished — ${startedRes.rows.length} started, ${endedRes.rows.length} ended, ${lockedRes.rows.length} locked ───`);
   } catch (error) {
     console.error('Staff leave status cron error:', error);
   } finally {

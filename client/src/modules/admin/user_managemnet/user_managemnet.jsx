@@ -7,6 +7,7 @@ import useAutoRefresh from '../../../hooks/useAutoRefresh';
 import useDebouncedValue from '../../../hooks/useDebouncedValue';
 import PhoneInput from '../../../components/common/PhoneInput';
 import PhoneNumbersField from '../../../components/common/PhoneNumbersField';
+import CitySelect from '../../../components/common/CitySelect';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 
 const PAGE_SIZE = 50;
@@ -36,7 +37,7 @@ const CLIENT_TYPES = ['INDIVIDUAL', 'CORPORATE_PROXY'];
 
 const BLANK_FORM = {
   full_name: '', email: '', mobile_number: '', secondary_phone_numbers: [],
-  gender: '', primary_address: '', client_type: 'INDIVIDUAL',
+  gender: '', primary_address: '', city_id: '', client_type: 'INDIVIDUAL',
   honorific: '', company_name: '', display_name_source: 'FULL_NAME',
 };
 
@@ -264,6 +265,7 @@ const ClientManagement = () => {
         secondary_phone_numbers: formData.secondary_phone_numbers.filter(Boolean),
         gender: formData.gender || undefined,
         primary_address: formData.primary_address || undefined,
+        city_id: formData.city_id || undefined,
         client_type: formData.client_type || 'INDIVIDUAL',
         honorific: formData.honorific || undefined,
         company_name: formData.company_name || undefined,
@@ -652,7 +654,14 @@ const ClientManagement = () => {
 
               {/* Address */}
               <SectionHeader title="Address" />
-              <div className="px-5 pt-4 pb-6">
+              <div className="px-5 pt-4 pb-6 space-y-3">
+                <Field label="City">
+                  <CitySelect
+                    value={formData.city_id}
+                    onChange={city => setFormData(p => ({ ...p, city_id: city ? city.city_id : '' }))}
+                    className={inputCls(false)}
+                  />
+                </Field>
                 <Field label="Primary Address">
                   <input type="text" name="primary_address" value={formData.primary_address} onChange={handleInput}
                     placeholder="e.g. 45/A, Galle Road, Dehiwala, Colombo" className={inputCls(false)} />

@@ -5,10 +5,12 @@ const jwt = require('jsonwebtoken');
 const sendEmail = require('../utils/email');
 const { sendWhatsAppOtp } = require('../utils/whatsapp');
 const { sendSmsOtp } = require('../utils/sms');
+const { resolveCity } = require('../utils/cityHelper');
 const { toE164, isValidPhone } = require('../utils/phone');
 
 // Roles that may only log into the admin dashboard from a device the SUPER_ADMIN has assigned them.
 const DEVICE_RESTRICTED_ROLES = new Set(['COORDINATOR', 'ACCOUNTS']);
+const STAFF_WORKER_ROLES = new Set(['STAFF', 'NURSE', 'CARETAKER', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR']);
 
 function parseRoles(rawRole) {
   if (Array.isArray(rawRole)) {
@@ -35,6 +37,17 @@ exports.registerClient = async (req, res, next) => {
     }
     const mobile_number = toE164(rawMobileNumber);
 
+    // The city must come from the master list (sl_cities); required on public sign-up.
+    let city;
+    try {
+      city = await resolveCity(req.body.city_id);
+    } catch (cityError) {
+      return res.status(400).json({ message: cityError.message });
+    }
+    if (!city) {
+      return res.status(400).json({ message: "Please select your city from the list." });
+    }
+
     // Display name only makes sense once a company name exists; otherwise it's always the person's name.
     const resolvedDisplayNameSource =
       client_type === 'CORPORATE_PROXY' && company_name && display_name_source === 'COMPANY_NAME'
@@ -59,8 +72,8 @@ exports.registerClient = async (req, res, next) => {
     // Upsert into pending_registrations — overwrite any previous attempt from the same number
     await db.query(
       `INSERT INTO pending_registrations
-         (mobile_number, password_hash, email, full_name, client_type, gender, primary_address, company_name, honorific, display_name_source, otp_code, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         (mobile_number, password_hash, email, full_name, client_type, gender, primary_address, company_name, honorific, display_name_source, otp_code, expires_at, city_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        ON CONFLICT (mobile_number) DO UPDATE
          SET password_hash       = EXCLUDED.password_hash,
              email               = EXCLUDED.email,
@@ -73,11 +86,13 @@ exports.registerClient = async (req, res, next) => {
              display_name_source = EXCLUDED.display_name_source,
              otp_code            = EXCLUDED.otp_code,
              expires_at          = EXCLUDED.expires_at,
+             city_id             = EXCLUDED.city_id,
              created_at          = NOW()`,
       [
         mobile_number, hashedPassword, email, full_name,
         client_type || 'INDIVIDUAL', gender, primary_address,
         company_name || null, honorific || null, resolvedDisplayNameSource, otp, expiresAt,
+        city.city_id,
       ]
     );
 
@@ -176,12 +191,13 @@ exports.verifyOtp = async (req, res) => {
     const userId = newUser.rows[0].user_id;
 
     const newProfile = await dbClient.query(
-      `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address, company_name, honorific, display_name_source)
-       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8) RETURNING client_profile_id`,
+      `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address, company_name, honorific, display_name_source, city_id)
+       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8, $9) RETURNING client_profile_id`,
       [
         userId, pending.full_name, pending.client_type,
         pending.gender, pending.primary_address,
         pending.company_name, pending.honorific, pending.display_name_source,
+        pending.city_id || null,
       ]
     );
     const profileId = newProfile.rows[0].client_profile_id;
@@ -280,7 +296,7 @@ exports.login = async (req, res) => {
     );
 
     const staffProfilePromise = db.query(
-      'SELECT staff_profile_id, full_name, verification_status, profile_picture_url FROM staff_profiles WHERE user_id = $1',
+      'SELECT staff_profile_id, full_name, verification_status, profile_picture_url, portal_access_disabled FROM staff_profiles WHERE user_id = $1',
       [user.user_id]
     );
 
@@ -288,7 +304,17 @@ exports.login = async (req, res) => {
     const [clientRes, staffRes] = await Promise.all([clientProfilePromise, staffProfilePromise]);
 
     const clientProfile = clientRes.rows[0] || null;
-    const staffProfile = staffRes.rows[0] || null;
+    let staffProfile = staffRes.rows[0] || null;
+
+    // Admin has disabled this worker's staff-dashboard access. A staff-only account
+    // can't sign in at all; a dual-role user still gets in, but as a client only.
+    if (staffProfile?.portal_access_disabled) {
+      const holdsInternalRole = roles.some(r => r !== 'CLIENT' && !STAFF_WORKER_ROLES.has(r));
+      if (!clientProfile && !holdsInternalRole) {
+        return res.status(403).json({ code: 'STAFF_PORTAL_DISABLED', message: 'Your staff dashboard access has been disabled. Please contact admin.' });
+      }
+      staffProfile = null;
+    }
 
     // 4. Generate JWT Token
     // Priority: client profile > staff profile > internal_staff (for COORDINATOR/ACCOUNTS)
@@ -478,7 +504,7 @@ exports.createClientProfileForExistingUser = async (req, res) => {
     }
 
     const staffRes = await dbClient.query(
-      'SELECT full_name, gender, home_address FROM staff_profiles WHERE user_id = $1',
+      'SELECT full_name, gender, home_address, city_id FROM staff_profiles WHERE user_id = $1',
       [userId]
     );
     const staffProfile = staffRes.rows[0];
@@ -488,8 +514,8 @@ exports.createClientProfileForExistingUser = async (req, res) => {
     }
 
     const newProfile = await dbClient.query(
-      `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address, company_name, honorific, display_name_source)
-       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8) RETURNING client_profile_id`,
+      `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address, company_name, honorific, display_name_source, city_id)
+       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8, $9) RETURNING client_profile_id`,
       [
         userId,
         staffProfile.full_name,
@@ -499,6 +525,7 @@ exports.createClientProfileForExistingUser = async (req, res) => {
         client_type === 'CORPORATE_PROXY' ? (company_name || null) : null,
         honorific || null,
         resolvedDisplayNameSource,
+        staffProfile.city_id || null,
       ]
     );
 

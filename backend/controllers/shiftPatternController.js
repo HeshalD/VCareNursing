@@ -364,7 +364,7 @@ exports.assignStaffToSlot = async (req, res) => {
  */
 exports.reassignSlotStaff = async (req, res) => {
     const { booking_id, shift_slot_id } = req.params;
-    const { new_staff_id, effective_date, reason, old_staff_out_time, new_staff_in_time } = req.body;
+    const { new_staff_id, effective_date, reason, old_staff_out_time, new_staff_in_time, new_staff_daily_rate } = req.body;
     const actorUserId = req.user?.user_id || null;
 
     if (!new_staff_id || !effective_date) {
@@ -443,7 +443,9 @@ exports.reassignSlotStaff = async (req, res) => {
                 new_staff_id,
                 shift_slot_id,
                 actorUserId,
-                current?.daily_rate || 0,
+                (new_staff_daily_rate !== undefined && new_staff_daily_rate !== null && new_staff_daily_rate !== '' && Number(new_staff_daily_rate) >= 0)
+                    ? Number(new_staff_daily_rate)
+                    : (current?.daily_rate || 0),
                 effDateStr,
                 isFuture ? 'SCHEDULED' : 'ACTIVE',
                 reason || null,

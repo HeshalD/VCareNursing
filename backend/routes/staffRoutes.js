@@ -305,6 +305,27 @@ router.get(
   staffController.getAttendanceCalendar
 );
 
+// Caller's own staff-dashboard status. Any logged-in user may ask; the answer
+// comes from the token's user (see protect), so no id is passed or trusted.
+router.get('/portal-status/me', protect, (req, res) => {
+  res.status(200).json({ status: 'success', data: { portal_access_disabled: Boolean(req.user.staff_portal_disabled) } });
+});
+
+// Enable/disable staff-dashboard access (bulk, then single)
+router.post(
+  '/portal-access/bulk',
+  protect,
+  requirePermission('STAFF_PORTAL_ACCESS'),
+  staffController.setStaffPortalAccess
+);
+
+router.patch(
+  '/:staff_profile_id/portal-access',
+  protect,
+  requirePermission('STAFF_PORTAL_ACCESS'),
+  staffController.setStaffPortalAccess
+);
+
 // Soft deactivate/reactivate staff account
 router.patch(
   '/:staff_profile_id/deactivate',

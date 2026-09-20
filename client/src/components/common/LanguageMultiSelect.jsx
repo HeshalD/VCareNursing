@@ -1,102 +1,74 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { X, Plus, Search } from 'lucide-react';
-import { LANGUAGES } from '../../data/languages';
+import React, { useState } from 'react';
+import { Plus } from 'lucide-react';
 
-// Chip-based language picker. `value` is an array of language name strings.
-// Search/select from the bundled LANGUAGES list, or type a custom one and add it.
+const STANDARD_LANGUAGES = ['English', 'Sinhala', 'Tamil'];
+
+// Checkbox language picker. `value` is an array of language name strings.
+// English / Sinhala / Tamil are plain checkboxes; anything else is added as a custom
+// language (shown as its own checked checkbox, uncheck to remove).
 const LanguageMultiSelect = ({ value = [], onChange, className = '' }) => {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const containerRef = useRef(null);
-
-  useEffect(() => {
-    const onClickOutside = (e) => {
-      if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onClickOutside);
-    return () => document.removeEventListener('mousedown', onClickOutside);
-  }, []);
+  const [custom, setCustom] = useState('');
 
   const selected = Array.isArray(value) ? value : [];
-
-  const addLanguage = (lang) => {
-    const trimmed = lang.trim();
-    if (!trimmed) return;
-    if (selected.some(l => l.toLowerCase() === trimmed.toLowerCase())) return;
-    onChange([...selected, trimmed]);
-    setQuery('');
-  };
-
-  const removeLanguage = (lang) => {
-    onChange(selected.filter(l => l !== lang));
-  };
-
-  const filtered = LANGUAGES.filter(l =>
-    !selected.some(s => s.toLowerCase() === l.toLowerCase()) &&
-    l.toLowerCase().includes(query.trim().toLowerCase())
+  const has = (lang) => selected.some(l => l.toLowerCase() === lang.toLowerCase());
+  const customLanguages = selected.filter(
+    l => !STANDARD_LANGUAGES.some(s => s.toLowerCase() === l.toLowerCase())
   );
 
-  const canAddCustom = query.trim().length > 0 &&
-    !LANGUAGES.some(l => l.toLowerCase() === query.trim().toLowerCase()) &&
-    !selected.some(l => l.toLowerCase() === query.trim().toLowerCase());
+  const toggle = (lang) => {
+    if (has(lang)) onChange(selected.filter(l => l.toLowerCase() !== lang.toLowerCase()));
+    else onChange([...selected, lang]);
+  };
+
+  const addCustom = () => {
+    const trimmed = custom.trim();
+    if (!trimmed) return;
+    if (!has(trimmed)) onChange([...selected, trimmed]);
+    setCustom('');
+  };
+
+  const checkbox = (lang) => (
+    <label key={lang} className="inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer select-none">
+      <input
+        type="checkbox"
+        checked={has(lang)}
+        onChange={() => toggle(lang)}
+        className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-200"
+      />
+      {lang}
+    </label>
+  );
 
   return (
-    <div ref={containerRef} className={`relative ${className}`}>
-      <div className="flex flex-wrap gap-1.5 mb-2">
-        {selected.length === 0 && (
-          <span className="text-xs text-slate-400">No languages selected</span>
-        )}
-        {selected.map(lang => (
-          <span key={lang} className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-100 text-xs font-medium rounded-full">
-            {lang}
-            <button type="button" onClick={() => removeLanguage(lang)} className="hover:text-blue-900">
-              <X className="w-3 h-3" />
-            </button>
-          </span>
-        ))}
+    <div className={className}>
+      <div className="flex flex-wrap gap-x-5 gap-y-2">
+        {STANDARD_LANGUAGES.map(checkbox)}
+        {customLanguages.map(checkbox)}
       </div>
 
-      <div className="relative">
-        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+      <div className="flex items-center gap-2 mt-3">
         <input
           type="text"
-          value={query}
-          onFocus={() => setOpen(true)}
-          onChange={e => { setQuery(e.target.value); setOpen(true); }}
+          value={custom}
+          onChange={e => setCustom(e.target.value)}
           onKeyDown={e => {
-            if (e.key === 'Enter' && canAddCustom) {
+            if (e.key === 'Enter') {
               e.preventDefault();
-              addLanguage(query);
+              addCustom();
             }
           }}
-          placeholder="Search or add a language..."
-          className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-colors"
+          placeholder="Other language..."
+          className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-colors"
         />
+        <button
+          type="button"
+          onClick={addCustom}
+          disabled={!custom.trim()}
+          className="inline-flex items-center gap-1 px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-100 rounded-lg hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          <Plus className="w-3.5 h-3.5" /> Add
+        </button>
       </div>
-
-      {open && (filtered.length > 0 || canAddCustom) && (
-        <div className="absolute z-20 mt-1 w-full max-h-52 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-lg">
-          {filtered.map(lang => (
-            <button
-              key={lang}
-              type="button"
-              onClick={() => addLanguage(lang)}
-              className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-700 transition-colors"
-            >
-              {lang}
-            </button>
-          ))}
-          {canAddCustom && (
-            <button
-              type="button"
-              onClick={() => addLanguage(query)}
-              className="w-full flex items-center gap-1.5 text-left px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-50 transition-colors border-t border-slate-100"
-            >
-              <Plus className="w-3.5 h-3.5" /> Add "{query.trim()}"
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 };

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Search, Phone, MapPin, Calendar, FileText,
   Eye, Calculator, Settings, Shield, Loader2,
-  ChevronRight, Wallet, UserPlus, CalendarCheck, UserCog,
+  ChevronRight, Wallet, UserPlus, CalendarCheck, UserCog, User,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -55,6 +55,18 @@ const BookingStatusBadge = ({ status }) => {
     <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${cfg.text}`}>
       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
       {cfg.label}
+    </span>
+  );
+};
+
+const EnteredViaBadge = ({ value }) => {
+  const isProxy = value === 'PROXY';
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${
+      isProxy ? 'bg-amber-50 text-amber-700' : 'bg-blue-50 text-blue-700'
+    }`}>
+      {isProxy ? <Shield className="w-3 h-3" /> : <User className="w-3 h-3" />}
+      {isProxy ? 'Proxy' : 'Client'}
     </span>
   );
 };
@@ -238,13 +250,14 @@ const ServiceRequests = () => {
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Start Date</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Coordinator</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Entered Via</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-16 text-center">
+                  <td colSpan={9}className="py-16 text-center">
                     <div className="flex flex-col items-center gap-2">
                       <FileText className="w-8 h-8 text-slate-200" />
                       <p className="text-sm text-slate-400">No service requests match your filters.</p>
@@ -327,6 +340,11 @@ const ServiceRequests = () => {
                     ) : (
                       <span className="text-xs text-slate-400">Unassigned</span>
                     )}
+                  </td>
+
+                  {/* Entered Via */}
+                  <td className="px-4 py-3 align-top">
+                    <EnteredViaBadge value={r.entered_via} />
                   </td>
 
                   {/* Actions */}

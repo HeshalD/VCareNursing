@@ -316,10 +316,10 @@ class ApiClient {
     });
   }
 
-  async updateClientProfile(clientId, { full_name, mobile_number, email, primary_address, gender, secondary_phone_numbers }) {
+  async updateClientProfile(clientId, { full_name, mobile_number, email, primary_address, gender, secondary_phone_numbers, city_id }) {
     return this.request(`/client/${clientId}/profile`, {
       method: 'PATCH',
-      body: JSON.stringify({ full_name, mobile_number, email, primary_address, gender, secondary_phone_numbers }),
+      body: JSON.stringify({ full_name, mobile_number, email, primary_address, gender, secondary_phone_numbers, city_id: city_id || undefined }),
     });
   }
 
@@ -1009,6 +1009,11 @@ class ApiClient {
     });
   }
 
+  // Master list of Sri Lankan cities (public - the registration form needs it)
+  async getSriLankaCities() {
+    return this.request('/locations/cities');
+  }
+
   async getNextStaffCode(start) {
     return this.request(`/staff/next-staff-code${start ? `?start=${start}` : ''}`);
   }
@@ -1378,6 +1383,24 @@ class ApiClient {
   async reactivateStaffAccount(staffProfileId) {
     return this.request(`/staff/${staffProfileId}/reactivate`, {
       method: 'PATCH',
+    });
+  }
+
+  async getMyStaffPortalStatus() {
+    return this.request('/staff/portal-status/me');
+  }
+
+  async setStaffPortalAccess(staffProfileId, disabled) {
+    return this.request(`/staff/${staffProfileId}/portal-access`, {
+      method: 'PATCH',
+      body: JSON.stringify({ disabled }),
+    });
+  }
+
+  async bulkSetStaffPortalAccess(staffProfileIds, disabled) {
+    return this.request('/staff/portal-access/bulk', {
+      method: 'POST',
+      body: JSON.stringify({ staff_profile_ids: staffProfileIds, disabled }),
     });
   }
 
@@ -2096,6 +2119,13 @@ class ApiClient {
     return this.request('/staff-leave/on-leave');
   }
 
+  async extendLeave(leaveId, newEndDate) {
+    return this.request(`/staff-leave/${leaveId}/extend`, {
+      method: 'POST',
+      body: JSON.stringify({ new_end_date: newEndDate }),
+    });
+  }
+
   async reportLeaveBack(leaveId, returnDate) {
     return this.request(`/staff-leave/${leaveId}/report-back`, {
       method: 'POST',
@@ -2617,6 +2647,13 @@ class ApiClient {
       method: 'PUT',
       headers: { ...(this.token && { Authorization: `Bearer ${this.token}` }) },
       body: formData,
+    });
+  }
+
+  async setProductsVisibility(productIds, isPublic) {
+    return this.request('/products/visibility', {
+      method: 'PATCH',
+      body: JSON.stringify({ product_ids: productIds, is_public: isPublic }),
     });
   }
 

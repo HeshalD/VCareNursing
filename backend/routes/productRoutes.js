@@ -16,6 +16,14 @@ router.post('/categories', protect, requirePermission('PRODUCT_CATEGORY_MANAGE')
 // Must be registered before the '/:id' catch-all route below.
 router.get('/mine', protect, productController.getMyOrders);
 
+// Bulk public-catalog visibility. Registered before '/:id' routes.
+router.patch(
+  '/visibility',
+  protect,
+  requirePermission('PRODUCT_EDIT'),
+  productController.setProductsVisibility
+);
+
 router.get('/:id', productController.getProduct);
 
 router.get(

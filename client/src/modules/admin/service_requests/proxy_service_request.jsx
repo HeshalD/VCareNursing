@@ -12,6 +12,7 @@ import PhoneInput, { isValidPhoneNumber } from '../../../components/common/Phone
 import useDebouncedValue from '../../../hooks/useDebouncedValue';
 import { formatMobileNumber, formatMobileNumbers } from '../../../utils/phoneFormat';
 import PhoneNumbersField from '../../../components/common/PhoneNumbersField';
+import CitySelect from '../../../components/common/CitySelect';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -55,7 +56,7 @@ const CLIENT_TYPE_OPTIONS = ['INDIVIDUAL', 'FAMILY', 'CORPORATE_PROXY'];
 
 const BLANK_FORM = {
   payer_name: '', payer_mobile: '', payer_email: '', payer_gender: '',
-  client_type: 'INDIVIDUAL', company_name: '', honorific: '', payer_primary_address: '',
+  client_type: 'INDIVIDUAL', company_name: '', honorific: '', payer_primary_address: '', payer_city_id: '',
   payer_secondary_phones: [],
   patient_name: '', patient_age: '',
   patient_gender: '', relationship_to_client: '', patient_condition: '', service_type: '',
@@ -197,7 +198,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
     setFormData(prev => ({
       ...prev,
       payer_name: '', payer_mobile: '', payer_email: '', payer_gender: '',
-      client_type: 'INDIVIDUAL', company_name: '', honorific: '', payer_primary_address: '',
+      client_type: 'INDIVIDUAL', company_name: '', honorific: '', payer_primary_address: '', payer_city_id: '',
       payer_secondary_phones: [],
       patient_name: '', patient_age: '', patient_gender: '',
       relationship_to_client: '', patient_condition: '', location_address: '',
@@ -254,7 +255,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
     setFormData(prev => ({
       ...prev,
       payer_name: '', payer_mobile: '', payer_email: '', payer_gender: '',
-      client_type: 'INDIVIDUAL', company_name: '', honorific: '', payer_primary_address: '',
+      client_type: 'INDIVIDUAL', company_name: '', honorific: '', payer_primary_address: '', payer_city_id: '',
       payer_secondary_phones: [],
       patient_name: '', patient_age: '', patient_gender: '',
       relationship_to_client: '', patient_condition: '', location_address: '',
@@ -380,6 +381,7 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
             company_name: formData.company_name || undefined,
             honorific: formData.honorific || undefined,
             primary_address: formData.payer_primary_address || undefined,
+            city_id: formData.payer_city_id || undefined,
             secondary_phone_numbers: secondaryPhones,
           });
           clientId = clientRes.data.clientProfileId;
@@ -633,6 +635,12 @@ export function AddRequestDrawer({ open, onClose, onSuccess, presetClient = null
                         />
                         <PhoneInput name="payer_mobile" value={formData.payer_mobile} onChange={handleInputChange} placeholder="Mobile number *" />
                       </div>
+                      <CitySelect
+                        value={formData.payer_city_id}
+                        onChange={(city) => setFormData(prev => ({ ...prev, payer_city_id: city ? city.city_id : '' }))}
+                        placeholder="City (optional)"
+                        className="w-full rounded-md border border-slate-300 bg-white text-slate-800 px-2.5 py-1.5 text-sm outline-none focus:border-blue-500"
+                      />
                       <textarea
                         name="payer_primary_address"
                         placeholder="Primary address (optional)"

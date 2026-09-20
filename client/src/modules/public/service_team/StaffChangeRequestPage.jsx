@@ -10,6 +10,7 @@ import StaffSidebar from './StaffSidebar';
 import DateInput from '../../../components/common/DateInput';
 import { sanitizeNicInput, validateNic } from '../../../utils/nicFormat';
 import BankSelect from '../../../components/common/BankSelect';
+import CitySelect from '../../../components/common/CitySelect';
 
 const REQUEST_TYPE_META = [
   { id: 'PROFILE_UPDATE', icon: User },
@@ -23,7 +24,7 @@ const GENDER_OPTIONS = ['MALE', 'FEMALE', 'OTHER'];
 const PROFILE_FIELD_META = [
   { key: 'full_name', labelKey: 'fullName', type: 'text' },
   { key: 'home_address', labelKey: 'homeAddress', type: 'textarea' },
-  { key: 'location', labelKey: 'location', type: 'text' },
+  { key: 'location', labelKey: 'location', type: 'city' },
   { key: 'gender', labelKey: 'gender', type: 'select', options: GENDER_OPTIONS },
   { key: 'date_of_birth', labelKey: 'dateOfBirth', type: 'date' },
   { key: 'willing_to_live_in', labelKey: 'willingToLiveIn', type: 'boolean' },
@@ -61,8 +62,23 @@ const BankField = ({ label, value, onChange }) => (
   </div>
 );
 
-const InputField = ({ label, value, onChange, type = 'text', options = [], placeholder = '', maxLength, error }) => {
+const InputField = ({ label, value, onChange, type = 'text', options = [], placeholder = '', maxLength, error, legacyText }) => {
   const { t } = useTranslation('staffChangeRequest');
+  if (type === 'city') {
+    // `value` is the city_id; onChange receives the whole city object (or null).
+    return (
+      <div>
+        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">{label}</label>
+        <CitySelect
+          value={value}
+          onChange={onChange}
+          legacyText={legacyText}
+          required
+          className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+        />
+      </div>
+    );
+  }
   if (type === 'textarea') {
     return (
       <div>
@@ -291,6 +307,7 @@ const StaffChangeRequestPage = () => {
               prefilled[f.key] = f.type === 'boolean' ? false : '';
             }
           });
+          prefilled.city_id = data.city_id ?? '';
           setProfileChanges(prefilled);
 
           // Fetch bank accounts for this staff member
@@ -350,8 +367,12 @@ const StaffChangeRequestPage = () => {
           const current = staffData?.[f.key];
           const submitted = profileChanges[f.key];
           const currentNorm = f.type === 'date' && current ? current.split('T')[0] : current;
-          if (String(submitted) !== String(currentNorm ?? '')) {
+          // A city counts as changed when its id differs too, since the old free-text
+          // location can already spell the same name as the city being picked.
+          const cityIdChanged = f.type === 'city' && String(profileChanges.city_id ?? '') !== String(staffData?.city_id ?? '');
+          if (cityIdChanged || String(submitted) !== String(currentNorm ?? '')) {
             changes[f.key] = submitted;
+            if (f.type === 'city') changes.city_id = profileChanges.city_id;
           }
         });
 
@@ -484,8 +505,11 @@ const StaffChangeRequestPage = () => {
                         label={field.label}
                         type={field.type}
                         options={field.options}
-                        value={profileChanges[field.key] ?? (field.type === 'boolean' ? false : '')}
-                        onChange={val => handleProfileFieldChange(field.key, val)}
+                        value={field.type === 'city' ? (profileChanges.city_id ?? '') : (profileChanges[field.key] ?? (field.type === 'boolean' ? false : ''))}
+                        legacyText={field.type === 'city' ? profileChanges.location : undefined}
+                        onChange={val => (field.type === 'city'
+                          ? setProfileChanges(prev => ({ ...prev, city_id: val ? val.city_id : '', location: val ? val.name : prev.location }))
+                          : handleProfileFieldChange(field.key, val))}
                         maxLength={field.key === 'nic_number' ? 12 : undefined}
                         placeholder={field.key === 'nic_number' ? 'e.g. 000000000V or 200332112486' : ''}
                         error={field.key === 'nic_number' ? validateNic(profileChanges.nic_number) : ''}

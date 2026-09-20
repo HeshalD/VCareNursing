@@ -464,8 +464,8 @@ async function findConflictingAssignment(executor, staffId, serviceStartDate, ex
 async function createBackfilledQuoteForBooking(client, { clientId, patientFullName, serviceType, serviceModel, startDate, clientDailyRate, totalContractAmount }) {
   const requestRes = await client.query(
     `INSERT INTO service_requests (
-       client_id, patient_name, service_type, service_model, start_date, status, remarks, created_at
-     ) VALUES ($1, $2, $3, $4::service_model_enum, $5, 'BOOKING_CREATED', 'LEGACY_IMPORT', COALESCE($5::date, NOW()))
+       client_id, patient_name, service_type, service_model, start_date, status, remarks, entered_via, created_at
+     ) VALUES ($1, $2, $3, $4::service_model_enum, $5, 'BOOKING_CREATED', 'LEGACY_IMPORT', 'PROXY',COALESCE($5::date, NOW()))
      RETURNING request_id`,
     [clientId, patientFullName, serviceType, serviceModel, startDate]
   );

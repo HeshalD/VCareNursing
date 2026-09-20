@@ -38,6 +38,8 @@ import {
   Save,
   Send,
   ScrollText,
+  ShieldCheck,
+  ShieldOff,
   Star,
   StickyNote,
   Trash2,
@@ -53,6 +55,7 @@ import StaffSwitcherSidebar from './StaffSwitcherSidebar';
 import { dotForAction, ROLE_DOT, fmt as fmtActivityDate, ACTION_TYPE_OPTIONS as ACTIVITY_ACTION_TYPES } from '../activity_log/activityLogConstants';
 import { Tag as ActivityTag, DetailsTable as ActivityDetailsTable } from '../activity_log/activityLogComponents';
 import BankSelect from '../../../components/common/BankSelect';
+import CitySelect from '../../../components/common/CitySelect';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 const moneyFormatter = new Intl.NumberFormat('en-LK', {
@@ -624,6 +627,7 @@ const StaffDetailPageV2 = () => {
   const [activityExpandedRow, setActivityExpandedRow] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
+  const [portalUpdating, setPortalUpdating] = useState(false);
   const [availabilityUpdating, setAvailabilityUpdating] = useState(false);
   const [payoutSubmitting, setPayoutSubmitting] = useState(false);
   const [payoutSubmitError, setPayoutSubmitError] = useState('');
@@ -672,6 +676,7 @@ const StaffDetailPageV2 = () => {
   const totalBookings = overviewBookingHistory.length;
   const activeStatus = String(profile.current_status || '').toLowerCase();
   const isActive = Boolean(profile.is_active);
+  const portalDisabled = Boolean(profile.portal_access_disabled);
   const currentAssignment = currentBooking || overviewCurrentBooking;
   const isPendingMigration = String(profile.onboarding_status || '').toUpperCase() === 'PENDING_MIGRATION';
   const missingMigrationFields = isPendingMigration
@@ -906,6 +911,18 @@ const StaffDetailPageV2 = () => {
     }
   };
 
+  const handleTogglePortalAccess = async () => {
+    try {
+      setPortalUpdating(true);
+      await runAdminRequest(() => apiClient.setStaffPortalAccess(staffProfileId, !portalDisabled));
+      await loadPage();
+    } catch (e) {
+      setError(e?.message || 'Failed to update staff dashboard access');
+    } finally {
+      setPortalUpdating(false);
+    }
+  };
+
   // Manual override for staff stuck UNAVAILABLE (e.g. after a legacy import or a
   // booking that ended without the normal cron/assignment flow flipping them back).
   // Deliberately scoped to UNAVAILABLE → AVAILABLE only — flipping an ASSIGNED
@@ -1110,6 +1127,7 @@ const StaffDetailPageV2 = () => {
       experience_level: profile.experience_level || '',
       nic_number: profile.nic_number || '',
       location: profile.location || '',
+      city_id: profile.city_id || '',
       home_address: profile.home_address || '',
       gender: (profile.gender || '').toUpperCase(),
       date_of_birth: profile.date_of_birth ? String(profile.date_of_birth).slice(0, 10) : '',
@@ -1415,6 +1433,29 @@ const StaffDetailPageV2 = () => {
             >
               {statusUpdating && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               {isActive ? 'Deactivate account' : 'Reactivate account'}
+            </button>
+
+            <div className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border mt-3 ${portalDisabled ? 'bg-red-50 border-red-100' : 'bg-emerald-50 border-emerald-100'}`}>
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${portalDisabled ? 'bg-red-500' : 'bg-emerald-500'}`} />
+              <div>
+                <div className="text-sm font-semibold text-slate-900">{portalDisabled ? 'Dashboard access disabled' : 'Dashboard access enabled'}</div>
+                <div className="text-xs text-slate-500 mt-0.5">
+                  {portalDisabled
+                    ? 'Locked out of the staff dashboard. Bookings and payroll are unaffected.'
+                    : 'Can sign in to the staff dashboard (earnings, bookings, leave).'}
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleTogglePortalAccess}
+              disabled={portalUpdating}
+              className={`mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-lg border text-sm font-semibold transition-colors disabled:opacity-60 ${portalDisabled ? 'border-emerald-200 text-emerald-700 hover:bg-emerald-50' : 'border-red-200 text-red-600 hover:bg-red-50'}`}
+            >
+              {portalUpdating
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : portalDisabled ? <ShieldCheck className="w-3.5 h-3.5" /> : <ShieldOff className="w-3.5 h-3.5" />}
+              {portalDisabled ? 'Enable dashboard access' : 'Disable dashboard access'}
             </button>
 
             <div className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border mt-3 ${activeStatus === 'unavailable' ? 'bg-slate-50 border-slate-200' : 'bg-emerald-50 border-emerald-100'}`}>
@@ -2756,9 +2797,17 @@ const StaffDetailPageV2 = () => {
           {/* Address & location */}
           <EditSectionHeader title="Address & Location" />
           <div className="px-6 pt-4 pb-2 space-y-3">
-            <EditField label="Location">
-              <input value={editModal.form.location} onChange={e => editField('location', e.target.value)}
-                placeholder="e.g. Colombo" className={editInputCls} />
+            <EditField label="City">
+              <CitySelect
+                value={editModal.form.city_id}
+                legacyText={editModal.form.location}
+                required
+                onChange={city => setEditModal(p => ({
+                  ...p,
+                  form: { ...p.form, city_id: city ? city.city_id : '', location: city ? city.name : p.form.location },
+                }))}
+                className={editInputCls}
+              />
             </EditField>
             <EditField label="Home Address">
               <input value={editModal.form.home_address} onChange={e => editField('home_address', e.target.value)}

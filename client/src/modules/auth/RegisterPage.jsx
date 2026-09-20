@@ -5,6 +5,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import loginBg from '../../assets/images/Gemini_Generated_Image_5nmpua5nmpua5nmp.png';
 import apiClient from '../../api/api';
 import PhoneInput, { isValidPhoneNumber } from '../../components/common/PhoneInput';
+import CitySelect from '../../components/common/CitySelect';
 
 const RegisterPage = () => {
   const navigate = useNavigate();
@@ -22,6 +23,7 @@ const RegisterPage = () => {
     terms_accepted: false,
     gender: '',
     primary_address: '',
+    city_id: '',
     company_name: '',
     display_name_source: 'FULL_NAME'
   });
@@ -32,7 +34,8 @@ const RegisterPage = () => {
     phone: '',
     password: '',
     gender: '',
-    primary_address: ''
+    primary_address: '',
+    city_id: ''
   });
 
   const [passwordStrength, setPasswordStrength] = useState({
@@ -89,6 +92,11 @@ const RegisterPage = () => {
       case 'gender':
         if (!value) {
           error = 'Gender is required';
+        }
+        break;
+      case 'city_id':
+        if (!value) {
+          error = 'Please select your city from the list';
         }
         break;
       case 'primary_address':
@@ -199,6 +207,7 @@ const RegisterPage = () => {
         terms_accepted: formData.terms_accepted,
         gender: formData.gender,
         primary_address: formData.primary_address,
+        city_id: formData.city_id,
         company_name: formData.client_type === 'CORPORATE_PROXY' ? (formData.company_name || undefined) : undefined,
         display_name_source: formData.client_type === 'CORPORATE_PROXY' && formData.company_name
           ? formData.display_name_source
@@ -484,6 +493,24 @@ const RegisterPage = () => {
                 </div>
                 {fieldErrors.gender && (
                   <p className="text-xs text-red-500 mt-1">{fieldErrors.gender}</p>
+                )}
+              </div>
+
+              {/* City */}
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-slate-700 block">City</label>
+                <CitySelect
+                  value={formData.city_id}
+                  onChange={(city) => handleInputChange('city_id', city ? city.city_id : '')}
+                  required
+                  placeholder="Search and select your city"
+                  className={`w-full bg-slate-50 border rounded-lg px-4 py-3 text-slate-900 focus:outline-none transition-all ${fieldErrors.city_id
+                      ? 'border-red-500'
+                      : 'border-slate-200 focus:border-blue-500'
+                    }`}
+                />
+                {fieldErrors.city_id && (
+                  <p className="text-xs text-red-500 mt-1">{fieldErrors.city_id}</p>
                 )}
               </div>
 

@@ -10,6 +10,7 @@ const html_to_pdf = require('html-pdf-node');
 const dailyInvoiceTemplate = require('../templates/dailyInvoiceTemplate');
 const { uploadBufferToS3 } = require('../config/s3Config');
 const { toE164, isValidPhone, toE164ListWithNames } = require('../utils/phone');
+const { resolveCity } = require('../utils/cityHelper');
 const { userHasPermission } = require('../middleware/authMiddleware');
 
 async function getActorName(userId) {
@@ -324,9 +325,12 @@ exports.getAdminClientDetail = async (req, res) => {
          u.is_active,
          u.created_at as user_created_at,
          u.last_login,
-         u.is_email_verified
+         u.is_email_verified,
+         sc.name AS city_name,
+         sc.district AS city_district
        FROM client_profiles cp
        JOIN users u ON cp.user_id = u.user_id
+       LEFT JOIN sl_cities sc ON sc.city_id = cp.city_id
        WHERE cp.client_profile_id = $1`,
       [client_id]
     );
@@ -899,6 +903,15 @@ exports.updateClientProfile = async (req, res) => {
   }
   const secondaryPhones = toE164ListWithNames(rawSecondaryPhones) || [];
 
+  // A supplied city must come from the master list (sl_cities); optional here.
+  // Resolved before a DB connection is taken so a bad city_id can't leak one.
+  let city;
+  try {
+    city = await resolveCity(req.body.city_id);
+  } catch (cityError) {
+    return res.status(400).json({ message: cityError.message });
+  }
+
   const dbClient = await db.pool.connect();
   try {
     await dbClient.query('BEGIN');
@@ -917,13 +930,14 @@ exports.updateClientProfile = async (req, res) => {
       `UPDATE client_profiles
        SET full_name = $1, primary_address = $2, gender = $3::gender_enum, updated_at = NOW(),
            secondary_phone_numbers = $5::jsonb,
+           city_id = COALESCE($6, city_id),
            onboarding_status = CASE
                WHEN onboarding_status = 'CONTACT_PENDING' THEN 'ACTIVE'
                WHEN onboarding_status = 'PENDING_MIGRATION' AND $2 IS NOT NULL AND $3 IS NOT NULL THEN 'ACTIVE'
                ELSE onboarding_status
            END
        WHERE client_profile_id = $4`,
-      [full_name.trim(), primary_address?.trim() || null, gender || null, client_id, JSON.stringify(secondaryPhones)]
+      [full_name.trim(), primary_address?.trim() || null, gender || null, client_id, JSON.stringify(secondaryPhones), city ? city.city_id : null]
     );
 
     await dbClient.query(
@@ -932,8 +946,9 @@ exports.updateClientProfile = async (req, res) => {
     );
 
     const updated = await dbClient.query(
-      `SELECT cp.*, u.email, u.mobile_number
+      `SELECT cp.*, u.email, u.mobile_number, sc.name AS city_name, sc.district AS city_district
        FROM client_profiles cp JOIN users u ON cp.user_id = u.user_id
+       LEFT JOIN sl_cities sc ON sc.city_id = cp.city_id
        WHERE cp.client_profile_id = $1`,
       [client_id]
     );
@@ -1364,6 +1379,15 @@ exports.proxyCreateClient = async (req, res) => {
       ? 'COMPANY_NAME'
       : 'FULL_NAME';
 
+  // A supplied city must come from the master list (sl_cities); optional here.
+  // Resolved before a DB connection is taken so a bad city_id can't leak one.
+  let city;
+  try {
+    city = await resolveCity(req.body.city_id);
+  } catch (cityError) {
+    return res.status(400).json({ message: cityError.message });
+  }
+
   const bcrypt = require('bcryptjs');
   const dbClient = await db.pool.connect();
   try {
@@ -1390,13 +1414,13 @@ exports.proxyCreateClient = async (req, res) => {
     const userId = userRes.rows[0].user_id;
 
     const profileRes = await dbClient.query(
-      `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address, company_name, honorific, display_name_source, onboarding_status, secondary_phone_numbers)
-       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8, $9, $10::jsonb) RETURNING client_profile_id`,
+      `INSERT INTO client_profiles (user_id, full_name, client_type, gender, primary_address, company_name, honorific, display_name_source, onboarding_status, secondary_phone_numbers, city_id)
+       VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $7, $8, $9, $10::jsonb, $11) RETURNING client_profile_id`,
       [
         userId, resolvedFullName, resolvedClientType,
         gender ? gender.toUpperCase() : null, primary_address || null,
         company_name || null, honorific || null, resolvedDisplayNameSource, onboardingStatus,
-        JSON.stringify(secondaryPhones),
+        JSON.stringify(secondaryPhones), city ? city.city_id : null,
       ]
     );
     const clientProfileId = profileRes.rows[0].client_profile_id;

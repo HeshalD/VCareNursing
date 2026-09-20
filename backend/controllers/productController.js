@@ -21,7 +21,7 @@ function normalizeProductType(product_type) {
 
 // 1. Get All Products (catalog browse — public + admin, optionally filtered)
 exports.getAllProducts = async (req, res) => {
-  const { product_type, category_id, include_unavailable } = req.query;
+  const { product_type, category_id, include_unavailable, public_only } = req.query;
 
   try {
     const conditions = [];
@@ -29,6 +29,9 @@ exports.getAllProducts = async (req, res) => {
 
     if (!include_unavailable) {
       conditions.push('p.is_available = true');
+    }
+    if (public_only) {
+      conditions.push('p.is_public = true');
     }
     if (product_type) {
       params.push(product_type);
@@ -258,6 +261,37 @@ exports.updateProduct = async (req, res) => {
 };
 
 // Deactivate Product (soft delete — matches preset-item convention elsewhere)
+// Bulk show/hide products on the public catalog page.
+exports.setProductsVisibility = async (req, res) => {
+  const { product_ids, is_public } = req.body || {};
+
+  if (!Array.isArray(product_ids) || product_ids.length === 0 || typeof is_public !== 'boolean') {
+    return res.status(400).json({ message: 'product_ids (non-empty array) and is_public (boolean) are required' });
+  }
+
+  try {
+    const result = await db.query(
+      `UPDATE products SET is_public = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE product_id = ANY($2::uuid[]) RETURNING product_id`,
+      [is_public, product_ids]
+    );
+
+    await safeLog({
+      actorUserId: req.user?.user_id,
+      actorRole: extractActorRole(req.user?.role),
+      actionType: is_public ? 'PRODUCTS_SHOWN_ON_CATALOG' : 'PRODUCTS_HIDDEN_FROM_CATALOG',
+      entityType: 'PRODUCT',
+      entityId: null,
+      details: { product_ids: result.rows.map((r) => r.product_id), is_public },
+    });
+
+    res.status(200).json({ status: 'success', updated: result.rowCount });
+  } catch (error) {
+    console.error('Set Products Visibility Error:', error);
+    res.status(500).json({ message: 'Error updating catalog visibility' });
+  }
+};
+
 exports.deactivateProduct = async (req, res) => {
   const { id } = req.params;
 

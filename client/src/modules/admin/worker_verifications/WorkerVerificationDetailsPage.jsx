@@ -16,6 +16,7 @@ import PhoneNumbersField from '../../../components/common/PhoneNumbersField';
 import { formatMobileNumber, formatMobileNumbers } from '../../../utils/phoneFormat';
 import { sanitizeNicInput, validateNic } from '../../../utils/nicFormat';
 import BankSelect from '../../../components/common/BankSelect';
+import CitySelect from '../../../components/common/CitySelect';
 
 const STAFF_ROLES = ['CARETAKER', 'NURSING_ASSISTANT', 'NURSE', 'PHYSIOTHERAPIST', 'NANNY', 'COUNSELLOR'];
 const GENDERS = ['MALE', 'FEMALE', 'OTHER'];
@@ -236,6 +237,7 @@ const WorkerVerificationDetailsPage = () => {
         qualifications: data.qualifications || '',
         home_address: data.home_address || '',
         location: data.location || '',
+        city_id: data.city_id || '',
         nic_number: data.nic_number || '',
         gender: data.gender || '',
         date_of_birth: data.date_of_birth ? data.date_of_birth.substring(0, 10) : '',
@@ -292,6 +294,7 @@ const WorkerVerificationDetailsPage = () => {
       qualifications: application.qualifications || '',
       home_address: application.home_address || '',
       location: application.location || '',
+      city_id: application.city_id || '',
       nic_number: application.nic_number || '',
       gender: application.gender || '',
       date_of_birth: application.date_of_birth ? application.date_of_birth.substring(0, 10) : '',
@@ -694,8 +697,16 @@ const WorkerVerificationDetailsPage = () => {
                       onChange={e => setEditData(p => ({ ...p, home_address: e.target.value }))}
                       className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:border-blue-400 outline-none resize-none" />
                   </div>
-                  <EditField label="City / Location" value={editData.location}
-                    onChange={v => setEditData(p => ({ ...p, location: v }))} />
+                  <div>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">City / Location</label>
+                    <CitySelect
+                      value={editData.city_id}
+                      legacyText={editData.location}
+                      required
+                      onChange={city => setEditData(p => ({ ...p, city_id: city ? city.city_id : '', location: city ? city.name : p.location }))}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:border-blue-400 outline-none bg-white"
+                    />
+                  </div>
                 </div>
               ) : (
                 <div className="divide-y divide-slate-50">

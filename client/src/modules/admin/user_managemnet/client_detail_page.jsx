@@ -65,6 +65,7 @@ import RecordPaymentDrawer from './RecordPaymentDrawer';
 import AddCareProfileDrawer from './AddCareProfileDrawer';
 import { AddRequestDrawer as AddServiceRequestDrawer } from '../service_requests/proxy_service_request';
 import ClientSwitcherSidebar from './ClientSwitcherSidebar';
+import CitySelect from '../../../components/common/CitySelect';
 
 const money = new Intl.NumberFormat('en-LK', {
   style: 'currency',
@@ -272,7 +273,7 @@ const ClientDetailPage = () => {
   const [billingError, setBillingError] = useState('');
 
   const [editingProfile, setEditingProfile] = useState(false);
-  const [profileForm, setProfileForm] = useState({ full_name: '', mobile_number: '', secondary_phone_numbers: [], email: '', primary_address: '', gender: '' });
+  const [profileForm, setProfileForm] = useState({ full_name: '', mobile_number: '', secondary_phone_numbers: [], email: '', primary_address: '', city_id: '', gender: '' });
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState('');
   const [sentReviewIds, setSentReviewIds] = useState(new Set());
@@ -856,6 +857,7 @@ const ClientDetailPage = () => {
       secondary_phone_numbers: clientProfile.secondary_phone_numbers?.length ? [...clientProfile.secondary_phone_numbers] : [],
       email: clientProfile.email || '',
       primary_address: clientProfile.primary_address || '',
+      city_id: clientProfile.city_id || '',
       gender: clientProfile.gender || '',
     });
     setProfileError('');
@@ -3853,6 +3855,15 @@ const ClientDetailPage = () => {
                         </select>
                       </div>
                       <div className="@md:col-span-2 @4xl:col-span-4">
+                        <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">City</label>
+                        <CitySelect
+                          value={profileForm.city_id}
+                          onChange={(city) => setProfileForm(f => ({ ...f, city_id: city ? city.city_id : '' }))}
+                          required
+                          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 bg-white"
+                        />
+                      </div>
+                      <div className="@md:col-span-2 @4xl:col-span-4">
                         <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1">Address</label>
                         <input
                           type="text"
@@ -3896,6 +3907,7 @@ const ClientDetailPage = () => {
                     <InfoRow label="Full Name"   value={clientProfile.full_name || '-'} />
                     <InfoRow label="Email"       value={clientProfile.email || '-'} />
                     <InfoRow label="Phone"       value={formatMobileNumber(clientProfile.mobile_number) || '-'} />
+                    <InfoRow label="City"        value={clientProfile.city_name ? `${clientProfile.city_name}, ${clientProfile.city_district}` : '-'} />
                     <InfoRow label="Address"     value={clientProfile.primary_address || '-'} />
                     <InfoRow label="Type"        value={clientProfile.client_type || '-'} />
                     <InfoRow label="Gender"      value={clientProfile.gender || '-'} />

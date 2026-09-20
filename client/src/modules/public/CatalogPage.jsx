@@ -74,7 +74,7 @@ const CatalogPage = () => {
   useEffect(() => {
     (async () => {
       try {
-        const res = await apiClient.getProducts();
+        const res = await apiClient.getProducts({ public_only: 'true' });
         setProducts(Array.isArray(res?.data) ? res.data : []);
       } catch {
         setError('Failed to load products. Please try again later.');

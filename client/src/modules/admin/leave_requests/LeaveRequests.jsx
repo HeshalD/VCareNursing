@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import {
   CheckCircle, XCircle, Search, AlertTriangle,
   ArrowLeftRight, CalendarDays, User, Loader2, X,
-  Plus, LogIn, ChevronDown,
+  Plus, LogIn, ChevronDown, CalendarPlus,
 } from 'lucide-react';
 
 const fmt = (d) =>
@@ -32,10 +33,60 @@ const StatusBadge = ({ status }) => {
   );
 };
 
+// Colour-coded "time left" badge for staff currently on leave. Hotter colour = sooner
+// they're due back; anything beyond 5 days falls back to a neutral pill.
+const EXPIRY_BADGES = [
+  { label: 'Expires today',    cls: 'bg-red-100 text-red-700 ring-red-200' },
+  { label: 'Expires tomorrow', cls: 'bg-orange-100 text-orange-700 ring-orange-200' },
+  { label: 'Expires in 2 days', cls: 'bg-amber-100 text-amber-700 ring-amber-200' },
+  { label: 'Expires in 3 days', cls: 'bg-yellow-100 text-yellow-700 ring-yellow-200' },
+  { label: 'Expires in 4 days', cls: 'bg-sky-100 text-sky-700 ring-sky-200' },
+  { label: 'Expires in 5 days', cls: 'bg-blue-100 text-blue-700 ring-blue-200' },
+];
+
+const ExpiryBadge = ({ daysRemaining }) => {
+  const n = Math.max(0, Number(daysRemaining));
+  const cfg = EXPIRY_BADGES[n] || { label: `Expires in ${n} days`, cls: 'bg-slate-100 text-slate-600 ring-slate-200' };
+  return (
+    <span className={`inline-block rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${cfg.cls}`}>
+      {cfg.label}
+    </span>
+  );
+};
+
+const StaffLink = ({ id, children }) =>
+  id ? (
+    <Link to={`/admin/staff/${id}/detail`} className="hover:text-blue-600 hover:underline transition-colors">
+      {children}
+    </Link>
+  ) : (
+    <>{children}</>
+  );
+
 const STATUS_TABS = ['All', 'Pending', 'Approved', 'Rejected'];
 const TAB_TO_STATUS = { Pending: 'PENDING', Approved: 'APPROVED', Rejected: 'REJECTED' };
 
-const VIEW_TABS = ['Requests', 'On Leave'];
+const VIEW_TABS = ['Requests', 'On Leave', 'Expired'];
+
+const addDays = (iso, n) => {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+
+const diffDays = (fromISO, toISO) =>
+  Math.round((new Date(`${toISO}T00:00:00Z`) - new Date(`${fromISO}T00:00:00Z`)) / 86400000);
+
+const todayISO = () => {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
+// An approved leave is expired once its end date has passed or the staff member was
+// reported back (early or on schedule).
+const isExpiredLeave = (l, today) =>
+  l.status === 'APPROVED' && (Boolean(l.actual_return_date) || (l.end_date && l.end_date < today));
 
 const LeaveRequests = () => {
   const [view, setView] = useState('Requests');
@@ -49,6 +100,14 @@ const LeaveRequests = () => {
   const [onLeaveStaff, setOnLeaveStaff] = useState([]);
   const [onLeaveLoading, setOnLeaveLoading] = useState(false);
   const [returningId, setReturningId] = useState(null);
+
+  // Extend leave modal (Expired tab)
+  const [extendLeave, setExtendLeave] = useState(null);
+  const [extendDate, setExtendDate] = useState('');
+  const [extendMin, setExtendMin] = useState('');
+  const [extendDays, setExtendDays] = useState('');
+  const [extendBusy, setExtendBusy] = useState(false);
+  const [extendError, setExtendError] = useState('');
 
   // Log Leave (admin-create) modal
   const [showAddModal, setShowAddModal] = useState(false);
@@ -186,12 +245,73 @@ const LeaveRequests = () => {
     }
   };
 
+  const openExtend = (leave) => {
+    const next = new Date(`${leave.end_date}T00:00:00`);
+    next.setDate(next.getDate() + 1);
+    const pad = (n) => String(n).padStart(2, '0');
+    const nextISO = `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}`;
+    const today = todayISO();
+    const minDate = nextISO > today ? nextISO : today;
+    setExtendLeave(leave);
+    setExtendDate(minDate);
+    setExtendMin(minDate);
+    setExtendDays(String(diffDays(leave.end_date, minDate)));
+    setExtendError('');
+  };
+
+  // Days and date are two views of the same value: days counts from the leave's current
+  // end date, so editing either one recalculates the other.
+  const handleExtendDaysChange = (value) => {
+    setExtendDays(value);
+    const n = parseInt(value, 10);
+    if (Number.isInteger(n) && n > 0) setExtendDate(addDays(extendLeave.end_date, n));
+  };
+
+  const handleExtendDateChange = (value) => {
+    setExtendDate(value);
+    setExtendDays(value ? String(diffDays(extendLeave.end_date, value)) : '');
+  };
+
+  const submitExtend = async () => {
+    if (!extendDate) {
+      setExtendError('Please choose a new end date.');
+      return;
+    }
+    try {
+      setExtendBusy(true);
+      setExtendError('');
+      await apiClient.extendLeave(extendLeave.leave_id, extendDate);
+      setExtendLeave(null);
+      await fetchLeaves();
+      await fetchOnLeaveStaff();
+    } catch (err) {
+      console.error('extendLeave error:', err);
+      setExtendError(err.message || 'Failed to extend leave.');
+    } finally {
+      setExtendBusy(false);
+    }
+  };
+
   const counts = useMemo(() => ({
     All: leaves.length,
     Pending: leaves.filter((l) => l.status === 'PENDING').length,
     Approved: leaves.filter((l) => l.status === 'APPROVED').length,
     Rejected: leaves.filter((l) => l.status === 'REJECTED').length,
   }), [leaves]);
+
+  const expiredLeaves = useMemo(() => {
+    const today = todayISO();
+    const q = searchTerm.toLowerCase();
+    return leaves
+      .filter((l) => isExpiredLeave(l, today))
+      .filter((l) => !q || l.full_name?.toLowerCase().includes(q) || l.staff_code?.toLowerCase().includes(q))
+      .sort((a, b) => (b.actual_return_date || b.end_date).localeCompare(a.actual_return_date || a.end_date));
+  }, [leaves, searchTerm]);
+
+  const expiredCount = useMemo(() => {
+    const today = todayISO();
+    return leaves.filter((l) => isExpiredLeave(l, today)).length;
+  }, [leaves]);
 
   const activeTab = statusFilter === 'all'
     ? 'All'
@@ -334,7 +454,7 @@ const LeaveRequests = () => {
 
   if (loading) {
     return (
-      <AdminLayout title="Leave Requests" subtitle="Loading…">
+      <AdminLayout title="Staff Leaves" subtitle="Loading…">
         <div className="flex items-center justify-center h-64">
           <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
         </div>
@@ -344,7 +464,7 @@ const LeaveRequests = () => {
 
   if (error) {
     return (
-      <AdminLayout title="Leave Requests">
+      <AdminLayout title="Staff Leaves">
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>
       </AdminLayout>
     );
@@ -352,8 +472,8 @@ const LeaveRequests = () => {
 
   return (
     <AdminLayout
-      title="Leave Requests"
-      subtitle="Review and process staff time-off requests."
+      title="Staff Leaves"
+      subtitle="Leave requests, staff currently on leave, and expired leaves."
     >
       {/* View switch + actions */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
@@ -369,6 +489,9 @@ const LeaveRequests = () => {
               {tab}
               {tab === 'On Leave' && onLeaveStaff.length > 0 && (
                 <span className="ml-1.5 tabular-nums text-slate-400">{onLeaveStaff.length}</span>
+              )}
+              {tab === 'Expired' && expiredCount > 0 && (
+                <span className="ml-1.5 tabular-nums text-slate-400">{expiredCount}</span>
               )}
             </button>
           ))}
@@ -438,8 +561,8 @@ const LeaveRequests = () => {
                     {filteredLeaves.map((leave) => (
                       <tr key={leave.leave_id} className="hover:bg-slate-50 transition-colors">
                         <td className="px-4 py-3">
-                          <p className="font-semibold text-slate-900 leading-tight">{leave.full_name || '—'}</p>
-                          <p className="text-xs text-slate-400 mt-0.5 font-mono">{leave.staff_code || ''}{leave.gender ? ` · ${leave.gender === 'MALE' ? 'Male' : leave.gender === 'FEMALE' ? 'Female' : leave.gender}` : ''}</p>
+                          <p className="font-semibold text-slate-900 leading-tight"><StaffLink id={leave.staff_profile_id}>{leave.full_name || '—'}</StaffLink></p>
+                          <p className="text-xs text-slate-400 mt-0.5 font-mono"><StaffLink id={leave.staff_profile_id}>{leave.staff_code || ''}</StaffLink>{leave.gender ?` · ${leave.gender === 'MALE' ? 'Male' : leave.gender === 'FEMALE' ? 'Female' : leave.gender}` : ''}</p>
                         </td>
                         <td className="px-4 py-3 text-slate-700 whitespace-nowrap">
                           {fmt(leave.start_date)} <span className="text-slate-400">→</span> {fmt(leave.end_date)}
@@ -495,7 +618,7 @@ const LeaveRequests = () => {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50">
-                    {['Staff', 'Leave Period', 'Days Remaining', 'Reason', ''].map((h) => (
+                    {['Staff', 'Leave Period', 'Expires', 'Reason', ''].map((h) => (
                       <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">
                         {h}
                       </th>
@@ -506,18 +629,14 @@ const LeaveRequests = () => {
                   {onLeaveStaff.map((s) => (
                     <tr key={s.leave_id} className="hover:bg-slate-50 transition-colors">
                       <td className="px-4 py-3">
-                        <p className="font-semibold text-slate-900 leading-tight">{s.full_name}</p>
-                        <p className="text-xs text-slate-400 mt-0.5 font-mono">{s.staff_code || ''}{s.designation ? ` · ${s.designation}` : ''}</p>
+                        <p className="font-semibold text-slate-900 leading-tight"><StaffLink id={s.staff_profile_id}>{s.full_name}</StaffLink></p>
+                        <p className="text-xs text-slate-400 mt-0.5 font-mono"><StaffLink id={s.staff_profile_id}>{s.staff_code || ''}</StaffLink>{s.designation ? ` · ${s.designation}` : ''}</p>
                       </td>
                       <td className="px-4 py-3 text-slate-700 whitespace-nowrap">
                         {fmt(s.start_date)} <span className="text-slate-400">→</span> {fmt(s.end_date)}
                       </td>
-                      <td className="px-4 py-3 text-slate-700 tabular-nums">
-                        {Number(s.days_remaining) <= 0 ? (
-                          <span className="text-amber-600 font-medium">Ends today</span>
-                        ) : (
-                          `${s.days_remaining} day${Number(s.days_remaining) === 1 ? '' : 's'}`
-                        )}
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <ExpiryBadge daysRemaining={s.days_remaining} />
                       </td>
                       <td className="px-4 py-3 text-slate-600 max-w-xs truncate">{s.reason || '—'}</td>
                       <td className="px-4 py-3 text-right">
@@ -539,6 +658,115 @@ const LeaveRequests = () => {
         </div>
       )}
 
+      {view === 'Expired' && (
+        <>
+          <div className="flex justify-end mb-4">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Search by staff name or code…"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-8 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none w-64"
+              />
+            </div>
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+            {expiredLeaves.length === 0 ? (
+              <div className="text-center py-16 text-slate-400 text-sm">
+                No expired leaves.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50">
+                      {['Staff', 'Leave Period', 'Days', 'Reason', 'Outcome', ''].map((h) => (
+                        <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {expiredLeaves.map((leave) => {
+                      const returnedEarly = leave.actual_return_date && leave.actual_return_date <= leave.end_date;
+                      return (
+                        <tr key={leave.leave_id} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-3">
+                            <p className="font-semibold text-slate-900 leading-tight"><StaffLink id={leave.staff_profile_id}>{leave.full_name || '—'}</StaffLink></p>
+                            <p className="text-xs text-slate-400 mt-0.5 font-mono"><StaffLink id={leave.staff_profile_id}>{leave.staff_code || ''}</StaffLink>{leave.designation ? ` · ${leave.designation}` : ''}</p>
+                          </td>
+                          <td className="px-4 py-3 text-slate-700 whitespace-nowrap">
+                            {fmt(leave.start_date)} <span className="text-slate-400">→</span> {fmt(leave.end_date)}
+                          </td>
+                          <td className="px-4 py-3 text-slate-700 tabular-nums">{dayCount(leave.start_date, leave.end_date)}</td>
+                          <td className="px-4 py-3 text-slate-600 max-w-xs truncate">{leave.reason || '—'}</td>
+                          <td className="px-4 py-3 whitespace-nowrap text-xs">
+                            {leave.actual_return_date ? (
+                              <>
+                                <span className="font-medium text-emerald-700">
+                                  {returnedEarly ? 'Returned early' : 'Reported back'}
+                                </span>
+                                <span className="block text-slate-400 mt-0.5">
+                                  {fmt(leave.actual_return_date)}{leave.returned_by_name ? ` · ${leave.returned_by_name}` : ''}
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <span className="font-medium text-slate-600">Expired, not reported back</span>
+                                <span className="block text-slate-400 mt-0.5">Ended {fmt(leave.end_date)}</span>
+                              </>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-right whitespace-nowrap">
+                            {!leave.actual_return_date && (
+                              <>
+                                <button
+                                  onClick={() => openExtend(leave)}
+                                  title="Extend this leave and restore staff dashboard access"
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 mr-2 text-xs font-semibold text-amber-700 border border-slate-200 rounded-lg hover:bg-amber-50 hover:border-amber-200 transition-colors"
+                                >
+                                  <CalendarPlus className="w-3.5 h-3.5" />
+                                  Extend Leave
+                                </button>
+                                <button
+                                  onClick={() => handleReportBack(leave)}
+                                  disabled={returningId === leave.leave_id}
+                                  title="Mark as reported back and restore staff dashboard access"
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 mr-2 text-xs font-semibold text-emerald-700 border border-slate-200 rounded-lg hover:bg-emerald-50 hover:border-emerald-200 transition-colors disabled:opacity-50"
+                                >
+                                  {returningId === leave.leave_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <LogIn className="w-3.5 h-3.5" />}
+                                  Mark Report Back
+                                </button>
+                              </>
+                            )}
+                            <button
+                              onClick={() => openReview(leave)}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-blue-600 border border-slate-200 rounded-lg hover:bg-blue-50 hover:border-blue-200 transition-colors"
+                            >
+                              View
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {expiredLeaves.length > 0 && (
+              <div className="border-t border-slate-100 px-4 py-2.5 text-xs text-slate-400">
+                {expiredLeaves.length} expired leave{expiredLeaves.length !== 1 ? 's' : ''}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
       {/* Review modal */}
       {reviewLeave && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -548,7 +776,7 @@ const LeaveRequests = () => {
               <div>
                 <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
                   <User className="w-4 h-4 text-slate-400" />
-                  {reviewLeave.full_name}
+                  <StaffLink id={reviewLeave.staff_profile_id}>{reviewLeave.full_name}</StaffLink>
                 </h2>
                 <p className="text-xs text-slate-400 mt-1">
                   {fmt(reviewLeave.start_date)} → {fmt(reviewLeave.end_date)} · {dayCount(reviewLeave.start_date, reviewLeave.end_date)} day(s)
@@ -771,6 +999,77 @@ const LeaveRequests = () => {
                 )}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Extend leave modal */}
+      {extendLeave && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setExtendLeave(null)} />
+          <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-sm border border-slate-200" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-slate-200 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-900">Extend Leave</h2>
+                <p className="text-xs text-slate-400 mt-1">
+                  {extendLeave.full_name} · currently {fmt(extendLeave.start_date)} → {fmt(extendLeave.end_date)}
+                </p>
+              </div>
+              <button onClick={() => setExtendLeave(null)} className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              {extendError && (
+                <div className="px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg">{extendError}</div>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Extend by (days)</label>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={diffDays(extendLeave.end_date, extendMin)}
+                    step={1}
+                    value={extendDays}
+                    onChange={(e) => handleExtendDaysChange(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-colors"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">New end date</label>
+                  <input
+                    type="date"
+                    value={extendDate}
+                    min={extendMin}
+                    onChange={(e) => handleExtendDateChange(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-colors"
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-slate-400">
+                Days are counted from the current end date ({fmt(extendLeave.end_date)}). Changing either field updates the other.
+                {extendDate ? ` New end date: ${fmt(extendDate)}.` : ''}
+              </p>
+              <p className="text-xs text-slate-400">The staff member's dashboard access will be restored.</p>
+            </div>
+            <div className="flex items-center gap-2 px-5 py-4 border-t border-slate-200 bg-slate-50">
+              <button
+                onClick={() => setExtendLeave(null)}
+                disabled={extendBusy}
+                className="flex-1 px-4 py-2 border border-slate-200 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitExtend}
+                disabled={extendBusy}
+                className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500 transition-colors disabled:opacity-50"
+              >
+                {extendBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarPlus className="w-4 h-4" />}
+                Extend
+              </button>
+            </div>
           </div>
         </div>
       )}

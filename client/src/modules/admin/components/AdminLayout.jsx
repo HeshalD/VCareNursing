@@ -69,7 +69,7 @@ const NAV_SECTIONS = [
         permKey: 'VIEW_SERVICE_REQUESTS',
       },
       { icon: AlertTriangle, label: 'Termination Requests', path: '/admin/termination-requests', permKey: 'VIEW_TERMINATION_REQUESTS' },
-      { icon: CalendarOff, label: 'Leave Requests', path: '/admin/leave-requests', permKey: 'VIEW_STAFF_LEAVES' },
+      { icon: CalendarOff, label: 'Staff Leaves', path: '/admin/leave-requests', permKey: 'VIEW_STAFF_LEAVES' },
       { icon: CalendarClock, label: 'Upcoming Events', path: '/admin/upcoming-events', permKey: 'VIEW_UPCOMING_EVENTS' },
       {
         icon: CalendarDays, label: 'Bookings', path: '/admin/bookings',

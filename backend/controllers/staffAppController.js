@@ -9,6 +9,7 @@ const { logActivity } = require('../utils/activityLogger');
 const { creditRecruiterForStaff } = require('../services/recruiterService');
 const { toE164, toE164ListWithNames, isValidPhone } = require('../utils/phone');
 const { isValidNic, normalizeNic, NIC_FORMAT_MESSAGE } = require('../utils/nic');
+const { resolveCity } = require('../utils/cityHelper');
 
 const getUploadedFileUrl = (files, fieldName) => (files && files[fieldName] && files[fieldName][0]) ? files[fieldName][0].location : null;
 
@@ -130,14 +131,21 @@ exports.submitApplication = async (req, res) => {
       }
     }
 
+    // The city must come from the master list (sl_cities); its name overwrites the
+    // free-text `location` so the stored value is always a clean city name.
+    const city = await resolveCity(req.body.city_id);
+    if (!city) {
+      return res.status(400).json({ message: 'Please select your city from the list.' });
+    }
+
     const query = `
       INSERT INTO staff_applications
-      (full_name, email, mobile_number, applied_roles, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, date_of_birth, experience_level, languages, secondary_phone_numbers)
+      (full_name, email, mobile_number, applied_roles, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, date_of_birth, experience_level, languages, secondary_phone_numbers, city_id)
       VALUES ($1, $2, $3, $4::user_role_enum[], $5, $6, $7, $8,
         CASE WHEN $9::float IS NOT NULL AND $10::float IS NOT NULL
              THEN point($10::float, $9::float)
              ELSE NULL
-        END, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18, $19::jsonb)
+        END, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18, $19::jsonb, $20)
       RETURNING *;
     `;
 
@@ -149,7 +157,7 @@ exports.submitApplication = async (req, res) => {
       qualifications,
       document_urls,
       home_address,
-      location,
+      city.name,
       (latitude && latitude !== "") ? latitude : null,
       (longitude && longitude !== "") ? longitude : null,
       profile_picture_url,
@@ -160,7 +168,8 @@ exports.submitApplication = async (req, res) => {
       date_of_birth,
       experience_level || null,
       languagesArray,
-      JSON.stringify(secondaryPhoneNumbers)
+      JSON.stringify(secondaryPhoneNumbers),
+      city.city_id
     ]);
 
     const application = result.rows[0];
@@ -194,6 +203,7 @@ exports.submitApplication = async (req, res) => {
     });
 
   } catch (error) {
+    if (error.status === 400) return res.status(400).json({ message: error.message });
     console.error("Submission Error:", error);
     res.status(500).json({ message: "Error submitting application", error: error.message });
   }
@@ -494,8 +504,8 @@ exports.acceptApplication = async (req, res) => {
         }
 
         const profileInsertQuery = `
-          INSERT INTO staff_profiles (staff_code, user_id, full_name, designation, verification_status, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, willing_to_live_in, date_of_birth, admin_remarks, experience_level, languages, secondary_phone_numbers)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18, $19, $20, $21::jsonb)
+          INSERT INTO staff_profiles (staff_code, user_id, full_name, designation, verification_status, qualifications, document_urls, home_address, location, gps_coordinates, profile_picture_url, nic_number, nic_front_url, nic_back_url, gender, willing_to_live_in, date_of_birth, admin_remarks, experience_level, languages, secondary_phone_numbers, city_id)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::gender_enum, $16, $17, $18, $19, $20, $21::jsonb, $22)
           RETURNING staff_profile_id
         `;
         const profileResult = await client.query(profileInsertQuery, [
@@ -519,7 +529,8 @@ exports.acceptApplication = async (req, res) => {
           admin_remarks || null,
           app.experience_level || null,
           app.languages || [],
-          JSON.stringify(app.secondary_phone_numbers || [])
+          JSON.stringify(app.secondary_phone_numbers || []),
+          app.city_id || null
         ]);
 
         // Auto-create staff wallet on approval
@@ -916,6 +927,11 @@ exports.updateApplication = async (req, res) => {
 
     const nicToStore = normalizeNic(nic_number) || current.nic_number;
 
+    // A city picked from the master list wins over the free-text `location`; when
+    // none is sent the city_id is left as it was.
+    const city = await resolveCity(req.body.city_id);
+    const locationToStore = city ? city.name : location;
+
     await db.query(
       `UPDATE staff_applications
        SET full_name = $1, email = $2, mobile_number = $3,
@@ -924,12 +940,14 @@ exports.updateApplication = async (req, res) => {
            gender = $9::gender_enum, date_of_birth = $10,
            profile_picture_url = $11, experience_level = $12,
            languages = COALESCE($14, languages),
-           secondary_phone_numbers = COALESCE($15::jsonb, secondary_phone_numbers)
+           secondary_phone_numbers = COALESCE($15::jsonb, secondary_phone_numbers),
+           city_id = COALESCE($16, city_id)
        WHERE application_id = $13`,
       [full_name, email, mobile_number, rolesArray, qualifications,
-       home_address, location, nicToStore, gender, date_of_birth,
+       home_address, locationToStore, nicToStore, gender, date_of_birth,
        profilePictureUrl, experience_level || null, applicationId, languagesArray,
-       secondaryPhoneNumbers === null ? null : JSON.stringify(secondaryPhoneNumbers)]
+       secondaryPhoneNumbers === null ? null : JSON.stringify(secondaryPhoneNumbers),
+       city ? city.city_id : null]
     );
 
     const updated = await db.query(
@@ -949,7 +967,7 @@ exports.updateApplication = async (req, res) => {
     diff('mobile_number',    current.mobile_number,     mobile_number);
     diff('qualifications',   current.qualifications,    qualifications);
     diff('home_address',     current.home_address,      home_address);
-    diff('location',         current.location,          location);
+    diff('location',         current.location,          locationToStore);
     diff('nic_number',       current.nic_number,        nicToStore);
     diff('gender',           current.gender,            gender);
     diff('experience_level', current.experience_level,  experience_level || null);
@@ -995,6 +1013,7 @@ exports.updateApplication = async (req, res) => {
 
     res.status(200).json({ status: 'success', data: updated.rows[0] });
   } catch (error) {
+    if (error.status === 400) return res.status(400).json({ message: error.message });
     console.error('Update Application Error:', error);
     res.status(500).json({ message: 'Error updating application', error: error.message });
   }
@@ -1066,12 +1085,16 @@ exports.staffLogin = async (req, res) => {
 
         // 3. Check if user has staff profile
         const staffProfileResult = await db.query(
-            'SELECT staff_profile_id, full_name, verification_status FROM staff_profiles WHERE user_id = $1',
+            'SELECT staff_profile_id, full_name, verification_status, portal_access_disabled FROM staff_profiles WHERE user_id = $1',
             [user.user_id]
         );
 
         if (staffProfileResult.rows.length === 0) {
             return res.status(403).json({ message: "No staff profile found. Please complete your application first." });
+        }
+
+        if (staffProfileResult.rows[0].portal_access_disabled) {
+            return res.status(403).json({ code: 'STAFF_PORTAL_DISABLED', message: "Your staff dashboard access has been disabled. Please contact admin." });
         }
 
         // 4. Check if this is a temporary password

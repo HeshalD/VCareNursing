@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const { logActivity } = require('../utils/activityLogger');
 const { isValidNic, normalizeNic, NIC_FORMAT_MESSAGE } = require('../utils/nic');
+const { resolveCity } = require('../utils/cityHelper');
 
 const ALLOWED_PROFILE_FIELDS = [
   'full_name', 'home_address', 'location', 'gender', 'date_of_birth',
@@ -73,8 +74,26 @@ exports.submitChangeRequest = async (req, res) => {
         submitted.nic_number = normalizeNic(submitted.nic_number);
       }
 
+      // A requested city must come from the master list. The chosen city_id is
+      // stored next to the name so approval can set both `location` and `city_id`.
+      let requestedCity = null;
+      if (validFields.includes('location')) {
+        try {
+          requestedCity = await resolveCity(submitted.city_id);
+        } catch (cityError) {
+          return res.status(400).json({ status: 'error', message: cityError.message });
+        }
+        if (!requestedCity) {
+          return res.status(400).json({ status: 'error', message: 'Please select your city from the list.' });
+        }
+      }
+
       for (const field of validFields) {
         requestedChanges[field] = { old_value: currentData[field], new_value: submitted[field] };
+      }
+      if (requestedCity) {
+        requestedChanges.location.new_value = requestedCity.name;
+        requestedChanges.location.new_city_id = requestedCity.city_id;
       }
 
     } else if (request_type === 'BANK_ACCOUNT_ADD') {
@@ -344,6 +363,12 @@ async function applyChanges(changeReq) {
     if (fields.length === 0) return;
     const setClauses = fields.map((f, i) => `${f} = $${i + 1}`);
     const values = fields.map(f => changes[f].new_value);
+    // An approved location change also moves the staff member's city_id
+    // (older requests without new_city_id only update the text, as before).
+    if (fields.includes('location') && changes.location.new_city_id) {
+      values.push(changes.location.new_city_id);
+      setClauses.push(`city_id = $${values.length}`);
+    }
     values.push(changeReq.staff_profile_id);
     await db.query(
       `UPDATE staff_profiles SET ${setClauses.join(', ')} WHERE staff_profile_id = $${values.length}`,

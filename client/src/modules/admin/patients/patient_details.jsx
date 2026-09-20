@@ -25,6 +25,11 @@ const GENDER_OPTIONS = [
   { value: 'OTHER', label: 'Other' },
 ];
 
+const RELATIONSHIP_OPTIONS = [
+  'Self', 'Parent', 'Child', 'Sibling', 'Spouse / Partner',
+  'Guardian', 'Caregiver', 'Friend', 'Neighbor', 'Other',
+];
+
 const genderLabel = (g) => GENDER_OPTIONS.find((o) => o.value === g)?.label || '-';
 
 // ─── Small reusables (mirrors client_detail_page.jsx) ────────────────────────
@@ -304,7 +309,14 @@ export default function PatientDetailPage() {
               </div>
               <div className="col-span-2">
                 <label className={labelCls}>Relationship to Client</label>
-                <input className={inputCls} value={profileForm.relationship_to_client} onChange={(e) => setProfileForm((f) => ({ ...f, relationship_to_client: e.target.value }))} />
+                <select className={inputCls} value={profileForm.relationship_to_client} onChange={(e) => setProfileForm((f) => ({ ...f, relationship_to_client: e.target.value }))}>
+                  <option value="">- Select -</option>
+                  {/* Keep a legacy free-text value selectable so it isn't silently dropped */}
+                  {profileForm.relationship_to_client && !RELATIONSHIP_OPTIONS.includes(profileForm.relationship_to_client) && (
+                    <option value={profileForm.relationship_to_client}>{profileForm.relationship_to_client}</option>
+                  )}
+                  {RELATIONSHIP_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
               </div>
               <div className="col-span-2">
                 <label className={labelCls}>Medical Condition</label>

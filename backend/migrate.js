@@ -1407,6 +1407,13 @@ async function runMigration() {
     ADD COLUMN IF NOT EXISTS cost_price NUMERIC(12,2) NOT NULL DEFAULT 0
   `);
 
+  // Whether the product is shown on the public catalog page (admin-controlled,
+  // separate from is_available which deactivates the product entirely).
+  await db.query(`
+    ALTER TABLE products
+    ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT true
+  `);
+
   // Walk-in customers: people who buy/rent a product but never create a
   // login account. Kept separate from client_profiles (which requires a
   // users row with mobile/password) rather than forcing fake credentials.
@@ -3220,6 +3227,11 @@ async function runMigration() {
   await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS secondary_phone_numbers TEXT[] DEFAULT '{}'`);
   await db.query(`ALTER TABLE staff_applications ADD COLUMN IF NOT EXISTS secondary_phone_numbers TEXT[] DEFAULT '{}'`);
 
+  // Admin switch to lock a staff member out of the staff dashboard (/services/*)
+  // without deactivating the whole user account (which would also block a
+  // dual-role client login and hide them from bookings).
+  await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS portal_access_disabled BOOLEAN NOT NULL DEFAULT false`);
+
   // =========================================================
   // PER-BOOKING WALLET EARMARKING
   // Service-charge money lives in the shared client_profiles.wallet_balance and
@@ -3427,6 +3439,25 @@ async function runMigration() {
   await db.query(`ALTER TABLE staff_leave_requests ADD COLUMN IF NOT EXISTS returned_by_name TEXT`);
   await db.query(`ALTER TABLE staff_leave_requests ADD COLUMN IF NOT EXISTS returned_at TIMESTAMP WITH TIME ZONE`);
 
+  // Why the staff dashboard is locked, so an automatic lock (leave expired without the
+  // staff member being reported back) can be undone on report-back without touching a
+  // lock an admin applied by hand. NULL when access is enabled.
+  await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS portal_access_disabled_reason VARCHAR(30)`);
+  await db.query(`UPDATE staff_profiles SET portal_access_disabled_reason = 'MANUAL' WHERE portal_access_disabled = true AND portal_access_disabled_reason IS NULL`);
+
+  // expiry_handled_at marks a leave whose expiry the staff-leave cron has already
+  // processed. On first creation every leave that has ALREADY expired is stamped as
+  // handled, so old leaves (which predate report-back) don't mass-disable staff the
+  // first time the cron runs. Guarded on the column not existing so a later restart
+  // can't silently swallow a freshly expired leave.
+  const expiryCol = await db.query(
+    `SELECT 1 FROM information_schema.columns WHERE table_name = 'staff_leave_requests' AND column_name = 'expiry_handled_at'`
+  );
+  if (!expiryCol.rows.length) {
+    await db.query(`ALTER TABLE staff_leave_requests ADD COLUMN expiry_handled_at TIMESTAMP WITH TIME ZONE`);
+    await db.query(`UPDATE staff_leave_requests SET expiry_handled_at = NOW() WHERE end_date < CURRENT_DATE`);
+  }
+
   // =========================================================
   // INTERNAL STAFF GOALS, PERFORMANCE TIERS & ADVANCES
   // Extends the internal staff salary system (see "INTERNAL STAFF SALARY"
@@ -3553,6 +3584,8 @@ async function runMigration() {
   // =========================================================
 
   await db.query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS coordinator_staff_id UUID REFERENCES internal_staff(id)`);
+  // How the request was entered: CLIENT = public/client portal, PROXY = admin proxy mode.
+  await db.query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS entered_via VARCHAR(10) NOT NULL DEFAULT 'CLIENT'`);
   await db.query(`ALTER TABLE bookings ADD COLUMN IF NOT EXISTS coordinator_staff_id UUID REFERENCES internal_staff(id)`);
   await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS coordinator_staff_id UUID REFERENCES internal_staff(id)`);
   await db.query(`ALTER TABLE patient_profiles ADD COLUMN IF NOT EXISTS coordinator_staff_id UUID REFERENCES internal_staff(id)`);
@@ -3561,6 +3594,47 @@ async function runMigration() {
   await db.query(`CREATE INDEX IF NOT EXISTS idx_bookings_coordinator ON bookings(coordinator_staff_id)`);
   await db.query(`CREATE INDEX IF NOT EXISTS idx_client_profiles_coordinator ON client_profiles(coordinator_staff_id)`);
   await db.query(`CREATE INDEX IF NOT EXISTS idx_patient_profiles_coordinator ON patient_profiles(coordinator_staff_id)`);
+
+  // =========================================================
+  // SRI LANKA CITIES (staff location master list)
+  // Staff/applicants used to type their city as free text (staff_profiles.location,
+  // staff_applications.location), which can't drive a staff map. sl_cities is a
+  // curated master list (province > district > city, with coordinates); staff now
+  // point at it through city_id. The free-text `location` column is kept and is
+  // written with the chosen city's name so every existing read of `location`
+  // (lists, documents, change requests) keeps working. Rows created before this
+  // list existed have city_id NULL until they are matched in a follow-up backfill.
+  // Seed data: backend/data/sriLankaLocations.json (GeoNames, CC BY 4.0).
+  // =========================================================
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS sl_cities (
+      city_id SERIAL PRIMARY KEY,
+      name VARCHAR(100) NOT NULL,
+      district VARCHAR(50) NOT NULL,
+      province VARCHAR(50) NOT NULL,
+      latitude NUMERIC(8,5) NOT NULL,
+      longitude NUMERIC(8,5) NOT NULL,
+      is_district_hq BOOLEAN NOT NULL DEFAULT false,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      UNIQUE (name, district)
+    );
+  `);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_sl_cities_district ON sl_cities(district)`);
+  await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS city_id INTEGER REFERENCES sl_cities(city_id)`);
+  await db.query(`ALTER TABLE staff_applications ADD COLUMN IF NOT EXISTS city_id INTEGER REFERENCES sl_cities(city_id)`);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_staff_profiles_city ON staff_profiles(city_id)`);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_staff_applications_city ON staff_applications(city_id)`);
+
+  // Clients (incl. walk-in customers, who are registered as full client_profiles rows)
+  // get the same city reference. Unlike staff there is no legacy free-text city
+  // column - primary_address stays the street-level address. pending_registrations
+  // carries the city between sign-up and OTP verification.
+  await db.query(`ALTER TABLE client_profiles ADD COLUMN IF NOT EXISTS city_id INTEGER REFERENCES sl_cities(city_id)`);
+  await db.query(`ALTER TABLE pending_registrations ADD COLUMN IF NOT EXISTS city_id INTEGER REFERENCES sl_cities(city_id)`);
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_client_profiles_city ON client_profiles(city_id)`);
+
+  await seedSriLankaCities();
 
   // =========================================================
 
@@ -3581,6 +3655,35 @@ async function runMigration() {
   await seedPettyCashAccount();
 
   console.log('Migration completed successfully!');
+}
+
+// Upserts the curated city list. Idempotent: re-running refreshes name/coordinates
+// but never touches is_active, so a city an admin later switches off stays off.
+async function seedSriLankaCities() {
+  try {
+    const { cities } = require('./data/sriLankaLocations.json');
+    await db.query(
+      `INSERT INTO sl_cities (name, district, province, latitude, longitude, is_district_hq)
+       SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::numeric[], $5::numeric[], $6::boolean[])
+       ON CONFLICT (name, district) DO UPDATE SET
+         province = EXCLUDED.province,
+         latitude = EXCLUDED.latitude,
+         longitude = EXCLUDED.longitude,
+         is_district_hq = EXCLUDED.is_district_hq`,
+      [
+        cities.map(c => c.name),
+        cities.map(c => c.district),
+        cities.map(c => c.province),
+        cities.map(c => c.latitude),
+        cities.map(c => c.longitude),
+        cities.map(c => c.isDistrictHq),
+      ]
+    );
+    console.log(`Seeded/updated ${cities.length} Sri Lanka cities`);
+  } catch (error) {
+    console.error('Error seeding Sri Lanka cities:', error.message);
+    // Don't fail migration if seeding fails
+  }
 }
 
 async function seedPettyCashAccount() {

@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Receipt, Download, Send, Search, RefreshCcw, Loader2,
-  CheckCircle2, Clock, ChevronLeft, ChevronRight, Wallet, User,
+  CheckCircle2, Clock, ChevronLeft, ChevronRight, ChevronDown, Wallet, User,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
@@ -18,12 +19,19 @@ const fmtDateTime = (d) => d
   : null;
 
 const METHOD_LABELS = { BANK_TRANSFER: 'Bank Transfer', CASH_DEPOSIT: 'Cash Deposit', CASH: 'Cash', CHEQUE: 'Cheque', WALLET: 'Wallet' };
+const SOURCE_LABELS = {
+  CLIENT_PAYMENT: 'Client payment',
+  QUOTE_PAYMENT: 'Quotation payment',
+  BOOKING_PAYMENT: 'Booking payment',
+  PRODUCT_INVOICE: 'Product invoice',
+};
 const LIMIT = 20;
 
 // Icon-only row action — minimal equivalent of a bordered/solid text button.
 const iconBtnCls = 'inline-flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
 
 const ClientPaymentsLedgerPage = () => {
+  const navigate = useNavigate();
   const [receipts, setReceipts] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, limit: LIMIT, total: 0, total_pages: 1 });
   const [page, setPage] = useState(1);
@@ -32,6 +40,13 @@ const ClientPaymentsLedgerPage = () => {
   const [loading, setLoading] = useState(true);
   const [sendingIds, setSendingIds] = useState(new Set());
   const [error, setError] = useState('');
+  const [expandedIds, setExpandedIds] = useState(new Set());
+
+  const toggleExpanded = (id) => setExpandedIds((prev) => {
+    const n = new Set(prev);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    return n;
+  });
 
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
@@ -148,6 +163,8 @@ const ClientPaymentsLedgerPage = () => {
               <tbody className="divide-y divide-slate-100">
                 {receipts.map((r) => {
                   const isSending = sendingIds.has(r.receipt_id);
+                  const isExpanded = expandedIds.has(r.receipt_id);
+                  const lineItems = Array.isArray(r.line_items) ? r.line_items : [];
                   const showClientHeader = r.client_id !== lastClientId;
                   lastClientId = r.client_id;
                   return (
@@ -157,7 +174,22 @@ const ClientPaymentsLedgerPage = () => {
                           <td colSpan={7} className="px-4 py-2.5">
                             <div className="flex items-center gap-2 text-slate-700">
                               <User className="w-4 h-4 text-slate-400" />
-                              <span className="font-semibold">{r.client_name || 'Unknown client'}</span>
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/admin/users/${r.client_id}/detail`)}
+                                className="font-semibold hover:text-blue-600 hover:underline text-left"
+                              >
+                                {r.honorific ? `${r.honorific} ` : ''}{r.client_name || 'Unknown client'}
+                              </button>
+                              {r.client_code && (
+                                <button
+                                  type="button"
+                                  onClick={() => navigate(`/admin/users/${r.client_id}/detail`)}
+                                  className="font-mono text-xs text-slate-500 hover:text-blue-600 hover:underline"
+                                >
+                                  {r.client_code}
+                                </button>
+                              )}
                               {r.mobile_number && <span className="text-xs text-slate-400">· {formatMobileNumber(r.mobile_number)}</span>}
                             </div>
                           </td>
@@ -190,6 +222,14 @@ const ClientPaymentsLedgerPage = () => {
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-0.5">
                             <button
+                              onClick={() => toggleExpanded(r.receipt_id)}
+                              title={isExpanded ? 'Hide payment details' : 'Show what this payment was for'}
+                              aria-expanded={isExpanded}
+                              className={iconBtnCls}
+                            >
+                              <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                            </button>
+                            <button
                               disabled={isSending || !r.mobile_number}
                               onClick={() => handleSend(r.receipt_id)}
                               title={!r.mobile_number ? 'Client has no mobile number on record' : (r.whatsapp_sent ? 'Resend receipt via WhatsApp' : 'Send receipt via WhatsApp')}
@@ -213,6 +253,30 @@ const ClientPaymentsLedgerPage = () => {
                           </div>
                         </td>
                       </tr>
+                      {isExpanded && (
+                        <tr className="bg-slate-50/40">
+                          <td colSpan={7} className="px-4 py-3">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-2">
+                              Payment for · {SOURCE_LABELS[r.source_type] || r.source_type || 'Payment'}
+                            </p>
+                            {lineItems.length === 0 ? (
+                              <p className="text-xs text-slate-400 italic">No details recorded for this payment.</p>
+                            ) : (
+                              <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white">
+                                {lineItems.map((li, i) => (
+                                  <li key={i} className="flex items-start justify-between gap-4 px-3 py-2">
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-medium text-slate-700">{li.label || li.description || 'Payment'}</p>
+                                      {li.label && li.description && <p className="text-xs text-slate-400">{li.description}</p>}
+                                    </div>
+                                    <span className="text-sm text-slate-700 whitespace-nowrap">{fmt(li.amount)}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </td>
+                        </tr>
+                      )}
                     </React.Fragment>
                   );
                 })}

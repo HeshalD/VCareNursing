@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, Mars, Venus, Trash2, CheckCircle2 } from 'lucide-react';
+import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, Mars, Venus, Trash2, CheckCircle2, ChevronDown, ShieldOff, ShieldCheck, X } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
@@ -90,6 +90,7 @@ const StaffManagement = () => {
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search, 400);
   const [pendingMigrationOnly, setPendingMigrationOnly] = useState(false);
+  const [portalFilter, setPortalFilter] = useState('all'); // 'all' | 'enabled' | 'disabled'
   const [page, setPage] = useState(1);
   const [pagination, setPagination] = useState(null);
   const [counts, setCounts] = useState({ All: 0 });
@@ -103,14 +104,32 @@ const StaffManagement = () => {
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [availabilityError, setAvailabilityError] = useState(null);
   const [selectAllLoading, setSelectAllLoading] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const actionsRef = useRef(null);
+  const [portalConfirm, setPortalConfirm] = useState(null); // 'disable' | 'enable' | null
+  const [portalLoading, setPortalLoading] = useState(false);
+  const [portalError, setPortalError] = useState(null);
+
+  // Close the Actions dropdown on outside click / Escape.
+  useEffect(() => {
+    if (!actionsOpen) return undefined;
+    const onDown = (e) => { if (actionsRef.current && !actionsRef.current.contains(e.target)) setActionsOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setActionsOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [actionsOpen]);
 
   // Reset back to page 1 whenever a filter/search changes underneath the current page.
-  useEffect(() => { setPage(1); }, [activeTab, debouncedSearch, pendingMigrationOnly]);
+  useEffect(() => { setPage(1); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter]);
 
-  useEffect(() => { fetchWorkers(); }, [activeTab, debouncedSearch, pendingMigrationOnly, page]);
+  useEffect(() => { fetchWorkers(); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter, page]);
 
   // Clear selection whenever the underlying list changes to avoid acting on stale rows.
-  useEffect(() => { setSelectedIds(new Set()); }, [activeTab, debouncedSearch, pendingMigrationOnly, page]);
+  useEffect(() => { setSelectedIds(new Set()); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter, page]);
 
   const buildFilters = () => ({
     page,
@@ -118,6 +137,7 @@ const StaffManagement = () => {
     ...(activeTab !== 'All' ? { status: activeTab } : {}),
     ...(debouncedSearch ? { search: debouncedSearch } : {}),
     ...(pendingMigrationOnly ? { pending_migration: 'true' } : {}),
+    ...(portalFilter !== 'all' ? { portal_access: portalFilter } : {}),
   });
 
   const fetchWorkers = async ({ silent = false } = {}) => {
@@ -252,6 +272,25 @@ const StaffManagement = () => {
     }
   };
 
+  const handlePortalAccessConfirmed = async () => {
+    const disabled = portalConfirm === 'disable';
+    setPortalLoading(true);
+    setPortalError(null);
+    try {
+      const ids = Array.from(selectedIds);
+      await apiClient.bulkSetStaffPortalAccess(ids, disabled);
+      setSelectedIds(new Set());
+      setPortalConfirm(null);
+      await fetchWorkers();
+    } catch (err) {
+      setPortalError(err.message || 'Failed to update dashboard access for the selected staff.');
+    } finally {
+      setPortalLoading(false);
+    }
+  };
+
+  const runAction = (fn) => { setActionsOpen(false); fn(); };
+
   const pendingMigrationCount = counts.pending_migration || 0;
   const totalCount = pagination?.total_count ?? workers.length;
   const totalPages = pagination?.total_pages ?? 1;
@@ -283,41 +322,58 @@ const StaffManagement = () => {
       actions={
         <div className="flex items-center gap-2">
           {selectMode && selectedIds.size > 0 && (
-            <button
-              onClick={handleMarkSelectedAvailable}
-              disabled={availabilityLoading}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {availabilityLoading ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <CheckCircle2 className="w-4 h-4" />
+            <div className="relative" ref={actionsRef}>
+              <button
+                onClick={() => setActionsOpen(v => !v)}
+                disabled={availabilityLoading}
+                aria-haspopup="menu"
+                aria-expanded={actionsOpen}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 text-sm font-medium rounded-md hover:bg-slate-50 transition-colors disabled:opacity-50"
+              >
+                {availabilityLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+                Actions
+                <span className="tabular-nums text-xs text-slate-500 bg-slate-100 rounded px-1.5 py-0.5">{selectedIds.size}</span>
+                <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${actionsOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {actionsOpen && (
+                <div role="menu" className="absolute right-0 mt-1.5 w-60 bg-white border border-slate-200 rounded-lg shadow-lg py-1 z-40">
+                  <p className="px-3 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                    Apply to {selectedIds.size} selected
+                  </p>
+                  <button role="menuitem" onClick={() => runAction(handleMarkSelectedAvailable)}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-700 text-left">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500" /> Mark as Available
+                  </button>
+                  <button role="menuitem" onClick={() => runAction(() => { setPortalError(null); setPortalConfirm('disable'); })}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-700 text-left">
+                    <ShieldOff className="w-4 h-4 text-amber-500" /> Disable Dashboard Access
+                  </button>
+                  <button role="menuitem" onClick={() => runAction(() => { setPortalError(null); setPortalConfirm('enable'); })}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-700 text-left">
+                    <ShieldCheck className="w-4 h-4 text-blue-500" /> Enable Dashboard Access
+                  </button>
+                  <div className="my-1 border-t border-slate-100" />
+                  <button role="menuitem" onClick={() => runAction(openDeleteConfirm)}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-600 hover:bg-red-50 text-left">
+                    <Trash2 className="w-4 h-4" /> Delete
+                  </button>
+                </div>
               )}
-              Mark Available ({selectedIds.size})
-            </button>
-          )}
-          {selectMode && selectedIds.size > 0 && (
-            <button
-              onClick={openDeleteConfirm}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-500 transition-colors"
-            >
-              <Trash2 className="w-4 h-4" />
-              Delete Selected ({selectedIds.size})
-            </button>
+            </div>
           )}
           <button
             onClick={toggleSelectMode}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors ${
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border transition-colors ${
               selectMode
                 ? 'bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200'
-                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
             }`}
           >
             {selectMode ? 'Cancel' : 'Select'}
           </button>
           <button
             onClick={() => navigate('/admin/proxy-user-management')}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-500 transition-colors"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 transition-colors"
           >
             <Plus className="w-4 h-4" />
             Add Staff
@@ -327,19 +383,19 @@ const StaffManagement = () => {
     >
       {/* Toolbar */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
-        <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-1 w-fit flex-wrap">
+        <div className="flex items-center gap-5 border-b border-slate-200 flex-wrap self-stretch sm:self-auto">
           {STATUS_TABS.map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+              className={`-mb-px pb-2 pt-1 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tab
-                  ? 'bg-white text-slate-900 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-700'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
               }`}
             >
               {TAB_LABELS[tab]}
-              <span className="ml-1.5 tabular-nums text-slate-400">{counts[tab] ?? 0}</span>
+              <span className={`ml-1.5 tabular-nums text-xs ${activeTab === tab ? 'text-blue-500' : 'text-slate-400'}`}>{counts[tab] ?? 0}</span>
             </button>
           ))}
         </div>
@@ -357,16 +413,50 @@ const StaffManagement = () => {
           </button>
         )}
 
+        {/* Dashboard (staff portal) access filter */}
+        <div className="inline-flex items-center rounded-lg border border-slate-200 bg-white p-0.5 self-start sm:self-auto" role="group" aria-label="Dashboard access filter">
+          {[
+            { key: 'all', label: 'All access', count: null },
+            { key: 'enabled', label: 'Has access', count: counts.portal_enabled },
+            { key: 'disabled', label: 'No access', count: counts.portal_disabled },
+          ].map(opt => (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => setPortalFilter(opt.key)}
+              className={`px-2.5 py-1 rounded-md text-xs font-semibold whitespace-nowrap transition-colors ${
+                portalFilter === opt.key
+                  ? (opt.key === 'disabled' ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700')
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              {opt.label}
+              {opt.count != null && <span className="ml-1 tabular-nums opacity-70">{opt.count}</span>}
+            </button>
+          ))}
+        </div>
+
         <div className="relative sm:ml-auto">
           <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search by name, phone, code…"
-            className="pl-8 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none w-64"
+            className="pl-8 pr-3 py-1.5 text-sm border border-slate-300 rounded-md bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none w-64"
           />
         </div>
       </div>
+
+      {selectMode && selectedIds.size > 0 && (
+        <div className="mb-3 flex items-center gap-3 px-4 py-2 bg-blue-50 border border-blue-100 rounded-md text-sm text-blue-800">
+          <span className="font-medium tabular-nums">{selectedIds.size} selected</span>
+          <span className="text-blue-300">|</span>
+          <button onClick={() => setSelectedIds(new Set())} className="inline-flex items-center gap-1 text-blue-700 hover:text-blue-900">
+            <X className="w-3.5 h-3.5" /> Clear selection
+          </button>
+          <span className="ml-auto text-xs text-blue-600/80">Use the Actions menu (top right) to apply changes</span>
+        </div>
+      )}
 
       {availabilityError && (
         <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg">
@@ -375,11 +465,11 @@ const StaffManagement = () => {
       )}
 
       {/* Table */}
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-md overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-200 bg-slate-50">
+              <tr className="border-b border-slate-200 bg-slate-50/80">
                 {selectMode && (
                   <th className="px-4 py-3 w-10">
                     {selectAllLoading ? (
@@ -394,14 +484,14 @@ const StaffManagement = () => {
                     )}
                   </th>
                 )}
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Staff</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Gender</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Contact</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Role</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Location</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Compliance Docs</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Current Earnings</th>
+                <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Staff</th>
+                <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Gender</th>
+                <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Contact</th>
+                <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Role</th>
+                <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Location</th>
+                <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Status</th>
+                <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Compliance Docs</th>
+                <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Current Earnings</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
@@ -418,7 +508,7 @@ const StaffManagement = () => {
                   onClick={() => selectMode
                     ? toggleSelect(worker.staff_profile_id)
                     : navigate(`/admin/staff/${worker.staff_profile_id}/detail`)}
-                  className="hover:bg-slate-50 cursor-pointer transition-colors"
+                  className={`cursor-pointer transition-colors ${selectedIds.has(worker.staff_profile_id) ? 'bg-blue-50/60' : 'hover:bg-slate-50'}`}
                 >
                   {/* Select */}
                   {selectMode && (
@@ -444,9 +534,14 @@ const StaffManagement = () => {
                         </div>
                       )}
                       <div>
-                        <p className="font-semibold text-slate-900 leading-tight">{worker.full_name ?? '—'}</p>
+                        <p className="font-medium text-blue-600 leading-tight">{worker.full_name ?? '—'}</p>
                         {worker.staff_code && (
                           <p className="text-xs text-slate-400 font-mono">{worker.staff_code}</p>
+                        )}
+                        {worker.portal_access_disabled && (
+                          <span className="inline-flex items-center gap-1 mt-0.5 mr-1 text-[10px] font-semibold text-red-700 bg-red-50 border border-red-100 px-1.5 py-0.5 rounded">
+                            <ShieldOff className="w-2.5 h-2.5" /> Dashboard disabled
+                          </span>
                         )}
                         {worker.onboarding_status === 'PENDING_MIGRATION' && (
                           <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] font-semibold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
@@ -535,6 +630,36 @@ const StaffManagement = () => {
           </div>
         )}
       </div>
+
+      {/* Dashboard Access Confirmation Modal */}
+      {portalConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/30" onClick={() => !portalLoading && setPortalConfirm(null)} />
+          <div className="relative w-full max-w-sm bg-white rounded-lg shadow-2xl p-5">
+            <h2 className="text-sm font-semibold text-slate-900 mb-1.5">
+              {portalConfirm === 'disable' ? 'Disable' : 'Enable'} dashboard access for {selectedIds.size} staff member{selectedIds.size !== 1 ? 's' : ''}?
+            </h2>
+            <p className="text-xs text-slate-500 mb-4">
+              {portalConfirm === 'disable'
+                ? 'They will lose access to the staff dashboard and can no longer view earnings, bookings or leave. Their account, bookings and payroll are not affected.'
+                : 'They will be able to use the staff dashboard again.'}
+            </p>
+            {portalError && (
+              <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 text-red-700 text-xs rounded-md">{portalError}</div>
+            )}
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => setPortalConfirm(null)} disabled={portalLoading}
+                className="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-md text-sm font-medium hover:bg-slate-50 disabled:opacity-50">
+                Cancel
+              </button>
+              <button type="button" onClick={handlePortalAccessConfirmed} disabled={portalLoading}
+                className={`flex-1 px-4 py-2 text-white rounded-md text-sm font-medium disabled:opacity-50 ${portalConfirm === 'disable' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                {portalLoading ? 'Saving…' : portalConfirm === 'disable' ? 'Disable access' : 'Enable access'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (

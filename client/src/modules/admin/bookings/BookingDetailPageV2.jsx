@@ -439,6 +439,7 @@ const BookingDetailPageV2 = () => {
   // assignment stays open until it's explicitly closed later; see
   // closeStaffAssignment / the "Log out & close" action in Allocation history).
   const [swapModalOldOutTime, setSwapModalOldOutTime] = useState(''); // HH:mm
+  const [swapModalNewRate, setSwapModalNewRate]         = useState(''); // what the incoming staff is PAID per day/shift (step 3), prefilled from the outgoing staff's rate
   const [swapModalNewInTime, setSwapModalNewInTime]   = useState(''); // HH:mm — incoming staff's in time on swapModalStartDate (optional)
   // Sharing a candidate's profile with the client happens straight from the staff
   // picker — it's a "show the client who's available" step, independent of whether
@@ -1938,7 +1939,7 @@ const BookingDetailPageV2 = () => {
     finally { setPaymentSubmitting(false); }
   };
 
-  const closeSwapModal = () => { setShowSwapModal(false); setSwapModalStep(1); setSwapModalSearch(''); setSwapModalSelectedStaff(null); setSwapModalReason(''); setSwapModalError(''); setSwapModalPage(1); setSwapModalDesignation(''); setSwapModalStartDate(toDateInput(new Date())); setSwapModalSlotId(null); setSwapModalIsAssign(false); setSwapModalOldOutTime(''); setSwapModalNewInTime(''); setProfileSendingId(null); setProfileSentIds([]); setProfileSendError(''); };
+  const closeSwapModal = () => { setShowSwapModal(false); setSwapModalStep(1); setSwapModalSearch(''); setSwapModalSelectedStaff(null); setSwapModalReason(''); setSwapModalError(''); setSwapModalPage(1); setSwapModalDesignation(''); setSwapModalStartDate(toDateInput(new Date())); setSwapModalSlotId(null); setSwapModalIsAssign(false); setSwapModalOldOutTime(''); setSwapModalNewInTime(''); setSwapModalNewRate(''); setProfileSendingId(null); setProfileSentIds([]); setProfileSendError(''); };
   const selectSwapStaff = (s) => { setSwapModalSelectedStaff(s); setSwapModalStep(2); };
   // WhatsApp one candidate's profile to this booking's client, straight from the picker.
   // Deliberately independent of the swap itself: the admin can send several candidates
@@ -1960,6 +1961,19 @@ const BookingDetailPageV2 = () => {
   };
   const openSlotAssignModal = (slot) => { setSwapModalSlotId(slot.shift_slot_id); setSwapModalIsAssign(!slot.assignment); setShowSwapModal(true); };
 
+  // The outgoing staff's current pay rate for whatever this modal targets (a shift slot or the whole booking).
+  const swapCurrentPayRate = () => {
+    const r = swapModalSlotId
+      ? shiftSlots.find(s => s.shift_slot_id === swapModalSlotId)?.assignment?.daily_rate
+      : activeStaffRow?.daily_rate;
+    return r === null || r === undefined || r === '' ? null : Number(r);
+  };
+  const goToSwapPayStep = () => {
+    const cur = swapCurrentPayRate();
+    setSwapModalNewRate(cur !== null ? String(cur) : '');
+    setSwapModalStep(3);
+  };
+
   const confirmSwap = async () => {
     if (!swapModalSelectedStaff || (!swapModalSlotId && !swapModalReason.trim())) return;
     try {
@@ -1968,11 +1982,12 @@ const BookingDetailPageV2 = () => {
       // Time-only inputs — combine with the staff start date above into a full timestamp.
       const oldOutTime = swapModalOldOutTime ? `${swapModalStartDate}T${swapModalOldOutTime}` : null;
       const newInTime = swapModalNewInTime ? `${swapModalStartDate}T${swapModalNewInTime}` : null;
+      const newPayRate = swapModalNewRate !== '' && Number(swapModalNewRate) >= 0 ? Number(swapModalNewRate) : null;
       let response;
       if (swapModalSlotId) {
         response = swapModalIsAssign
-          ? await apiClient.assignStaffToShiftSlot(bookingId, swapModalSlotId, { staff_profile_id: swapModalSelectedStaff.staff_profile_id, service_start_date: swapModalStartDate, notes: swapModalReason.trim() || null, staff_in_time: newInTime })
-          : await apiClient.reassignShiftSlotStaff(bookingId, swapModalSlotId, { new_staff_id: swapModalSelectedStaff.staff_profile_id, effective_date: swapModalStartDate, reason: swapModalReason.trim() || null, old_staff_out_time: oldOutTime, new_staff_in_time: newInTime });
+          ? await apiClient.assignStaffToShiftSlot(bookingId, swapModalSlotId, { staff_profile_id: swapModalSelectedStaff.staff_profile_id, service_start_date: swapModalStartDate, notes: swapModalReason.trim() || null, staff_in_time: newInTime, daily_rate: newPayRate })
+          : await apiClient.reassignShiftSlotStaff(bookingId, swapModalSlotId, { new_staff_id: swapModalSelectedStaff.staff_profile_id, effective_date: swapModalStartDate, reason: swapModalReason.trim() || null, old_staff_out_time: oldOutTime, new_staff_in_time: newInTime, new_staff_daily_rate: newPayRate });
       } else {
         // Whole-booking LIVE_IN swap: the outgoing staff's assignment is left open —
         // no out-time is captured here at all. See bookingController.swapStaff's
@@ -1983,6 +1998,7 @@ const BookingDetailPageV2 = () => {
           swap_reason: swapModalReason.trim(),
           new_staff_start_date: swapModalStartDate,
           new_staff_in_time: newInTime,
+          new_staff_daily_rate: newPayRate,
         });
       }
       closeSwapModal(); await fetchDetail(); await fetchDailyRecords(); await fetchScheduledActions(); if (isShiftBased) await fetchShiftData();
@@ -4974,6 +4990,8 @@ const BookingDetailPageV2 = () => {
                 <p className="text-sm text-slate-500 mt-0.5">
                   {swapModalStep === 1
                     ? 'Select a replacement from available staff'
+                    : swapModalStep === 3
+                      ? `Step 3 of 3 — set what ${swapModalSelectedStaff?.full_name} will be paid`
                     : swapModalSlotId
                       ? (swapModalIsAssign ? `Assign ${swapModalSelectedStaff?.full_name} to this shift` : `Confirm: current staff → ${swapModalSelectedStaff?.full_name}`)
                       : `Confirm: ${normCurrentStaff?.name || 'Current staff'} → ${swapModalSelectedStaff?.full_name}`}
@@ -5166,13 +5184,48 @@ const BookingDetailPageV2 = () => {
                 </div>
                 <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 shrink-0">
                   <button onClick={() => setSwapModalStep(1)} className="text-sm font-medium text-slate-600 hover:text-slate-900 transition">← Back</button>
-                  <button onClick={confirmSwap} disabled={swapModalSubmitting || (!swapModalIsAssign && !swapModalReason.trim()) || !swapModalStartDate} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
-                    {swapModalSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Repeat2 className="h-4 w-4" />}
-                    {swapModalSubmitting ? 'Saving…' : swapModalIsAssign ? 'Confirm Assignment' : 'Confirm Swap'}
+                  <button onClick={goToSwapPayStep} disabled={(!swapModalIsAssign && !swapModalReason.trim()) || !swapModalStartDate} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
+                    Next: Staff pay →
                   </button>
                 </div>
               </>
             )}
+
+            {swapModalStep === 3 && swapModalSelectedStaff && (() => {
+              const cur = swapCurrentPayRate();
+              const curName = swapModalSlotId ? (shiftSlots.find(s => s.shift_slot_id === swapModalSlotId)?.assignment?.staff_name) : normCurrentStaff?.name;
+              const unit = swapModalSlotId ? 'shift' : 'day';
+              const newVal = swapModalNewRate !== '' ? Number(swapModalNewRate) : null;
+              const diff = cur !== null && newVal !== null ? newVal - cur : null;
+              return (
+                <>
+                  <div className="flex-1 overflow-y-auto p-6 space-y-5">
+                    {!swapModalIsAssign && (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Currently paying{curName ? ` — ${curName}` : ''}</p>
+                        <p className="text-xl font-bold text-slate-900">{cur !== null ? <>{formatMoney(cur)}<span className="text-sm font-medium text-slate-500"> / {unit}</span></> : <span className="text-sm font-medium text-slate-500">No rate on record</span>}</p>
+                      </div>
+                    )}
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">{swapModalSelectedStaff.full_name}'s pay per {unit}</label>
+                      <input type="number" min="0" step="0.01" autoFocus value={swapModalNewRate} onChange={e => setSwapModalNewRate(e.target.value)} onWheel={e => e.currentTarget.blur()} placeholder={cur !== null ? String(cur) : 'Enter amount'} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                      <p className="text-xs text-slate-400 mt-1.5">{cur !== null ? "Pre-filled with the current staff member's rate. Change it if the replacement is paid differently. " : ''}This is staff pay only; the client's billing rate is not affected.</p>
+                      {diff !== null && diff !== 0 && (
+                        <p className={`text-xs mt-1.5 font-medium ${diff > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>{formatMoney(Math.abs(diff))} per {unit} {diff > 0 ? 'more' : 'less'} than the current staff member.</p>
+                      )}
+                    </div>
+                    {swapModalError && <div className="rounded-xl bg-rose-50 border border-rose-200 p-3 text-sm text-rose-700">{swapModalError}</div>}
+                  </div>
+                  <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 shrink-0">
+                    <button onClick={() => setSwapModalStep(2)} className="text-sm font-medium text-slate-600 hover:text-slate-900 transition">← Back</button>
+                    <button onClick={confirmSwap} disabled={swapModalSubmitting || (!swapModalIsAssign && !swapModalReason.trim()) || !swapModalStartDate} className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gray-800 hover:bg-gray-900 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
+                      {swapModalSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Repeat2 className="h-4 w-4" />}
+                      {swapModalSubmitting ? 'Saving…' : swapModalIsAssign ? 'Confirm Assignment' : 'Confirm Swap'}
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}

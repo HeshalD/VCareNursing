@@ -435,6 +435,7 @@ exports.createServiceRequest = async (req, res) => {
                 status,
                 gender,
                 coordinator_staff_id,
+                entered_via,
                 created_at
             ) VALUES (
                 $1, $2, $3, $4, $5, $6::gender_enum, $7::client_type_enum, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::service_model_enum, $18,
@@ -442,7 +443,7 @@ exports.createServiceRequest = async (req, res) => {
                      THEN point($20::double precision, $19::double precision)
                      ELSE NULL
                 END,
-                $21, $22, $23::gender_preference_enum, $24, $25, $26::gender_enum, $27, NOW()
+                $21, $22, $23::gender_preference_enum, $24, $25, $26::gender_enum, $27, 'PROXY', NOW()
             )
             RETURNING
                 request_id,

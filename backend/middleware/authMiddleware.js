@@ -175,7 +175,12 @@ exports.protect = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     // Check if user still exists
-    const user = await db.query('SELECT user_id, role FROM users WHERE user_id = $1', [decoded.id]);
+    const user = await db.query(
+      `SELECT u.user_id, u.role,
+              COALESCE((SELECT sp.portal_access_disabled FROM staff_profiles sp WHERE sp.user_id = u.user_id), false) AS staff_portal_disabled
+       FROM users u WHERE u.user_id = $1`,
+      [decoded.id]
+    );
 
     if (user.rows.length === 0) {
       return res.status(401).json({ message: 'The user belonging to this token no longer exists.' });
@@ -207,6 +212,8 @@ exports.protect = async (req, res, next) => {
   }
 };
 
+const WORKER_ROLES = new Set(['STAFF', 'NURSE', 'CARETAKER', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR']);
+
 // LAYER 2: Do they have the right Role? (e.g., SUPER_ADMIN)
 exports.restrictTo = (...roles) => {
   return (req, res, next) => {
@@ -237,6 +244,19 @@ exports.restrictTo = (...roles) => {
       return res.status(403).json({
         message: 'Permission Denied: You do not have access to this action.'
       });
+    }
+
+    // Staff-dashboard lockout: a worker whose portal access was disabled by an
+    // admin is refused wherever their access rests solely on a worker role.
+    // Any non-worker role that also satisfies the route (e.g. SUPER_ADMIN) still passes.
+    if (req.user.staff_portal_disabled) {
+      const matched = roles.filter(r => cleanedUserRoles.includes(r));
+      if (matched.every(r => WORKER_ROLES.has(r))) {
+        return res.status(403).json({
+          code: 'STAFF_PORTAL_DISABLED',
+          message: 'Your staff dashboard access has been disabled. Please contact admin.'
+        });
+      }
     }
     next();
   };

@@ -11,6 +11,7 @@ import useDebouncedValue from '../../../hooks/useDebouncedValue';
 import LanguageMultiSelect from '../../../components/common/LanguageMultiSelect';
 import YoutubeLinksField from '../../../components/common/YoutubeLinksField';
 import PhoneNumbersField from '../../../components/common/PhoneNumbersField';
+import CitySelect from '../../../components/common/CitySelect';
 import { DEFAULT_LANGUAGES } from '../../../data/languages';
 import { sanitizeNicInput, validateNic } from '../../../utils/nicFormat';
 
@@ -173,7 +174,7 @@ const ProxyUserManagement = () => {
   const [formData, setFormData] = useState({
     user_id: '', full_name: '', email: '', mobile_number: '',
     designation: '', qualifications: '', documents: [],
-    home_address: '', location: '', profile_picture: null,
+    home_address: '', location: '', city_id: '', profile_picture: null,
     gender: '', role: [], experience_level: '',
     willing_to_live_in: false, date_of_birth: '',
     nic_number: '', nic_front: null, nic_back: null,
@@ -227,7 +228,7 @@ const ProxyUserManagement = () => {
   const blankForm = () => ({
     user_id: '', full_name: '', email: '', mobile_number: '',
     designation: '', qualifications: '', documents: [],
-    home_address: '', location: '', profile_picture: null,
+    home_address: '', location: '', city_id: '', profile_picture: null,
     gender: '', role: [], experience_level: '',
     willing_to_live_in: false, date_of_birth: '',
     nic_number: '', nic_front: null, nic_back: null,
@@ -266,6 +267,7 @@ const ProxyUserManagement = () => {
       documents: [],
       home_address: worker.location || '',
       location: worker.location_city || '',
+      city_id: worker.city_id || '',
       profile_picture: null,
       gender: worker.gender || '',
       role: parseRoles(worker.role),
@@ -404,6 +406,7 @@ const ProxyUserManagement = () => {
     fd.append('qualifications', formData.qualifications);
     fd.append('home_address', formData.home_address);
     fd.append('location', formData.location);
+    if (formData.city_id) fd.append('city_id', formData.city_id);
     fd.append('gender', formData.gender);
     if (formData.experience_level) fd.append('experience_level', formData.experience_level);
     fd.append('willing_to_live_in', formData.willing_to_live_in);
@@ -492,6 +495,7 @@ const ProxyUserManagement = () => {
     experience_level: staff.experience_level || '',
     date_of_birth: staff.date_of_birth || null,
     location_city: staff.location || '',
+    city_id: staff.city_id || '',
     nic_number: staff.nic_number || '',
     staff_code: staff.staff_code || '',
     admin_remarks: staff.admin_remarks || '',
@@ -781,8 +785,12 @@ const ProxyUserManagement = () => {
                 </div>
                 <div className="col-span-2">
                   <Field label="Location / City">
-                    <input type="text" name="location" value={formData.location} onChange={handleInputChange}
-                      className={inputCls(false)} />
+                    <CitySelect
+                      value={formData.city_id}
+                      legacyText={formData.location}
+                      onChange={city => setFormData(p => ({ ...p, city_id: city ? city.city_id : '', location: city ? city.name : '' }))}
+                      className={inputCls(false)}
+                    />
                   </Field>
                 </div>
               </div>
