@@ -447,7 +447,12 @@ exports.reassignSlotStaff = async (req, res) => {
                     ? Number(new_staff_daily_rate)
                     : (current?.daily_rate || 0),
                 effDateStr,
-                isFuture ? 'SCHEDULED' : 'ACTIVE',
+                // Always insert as SCHEDULED, even for an immediate reassignment — the old
+                // assignment on this shift_slot_id is still ACTIVE at this point, and
+                // uniq_active_slot_assignment allows only one ACTIVE row per slot.
+                // executeShiftReassignment closes the old row first, then promotes this
+                // one to ACTIVE.
+                'SCHEDULED',
                 reason || null,
             ]
         );

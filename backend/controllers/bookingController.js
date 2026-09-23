@@ -21,6 +21,7 @@ const {
     hasOpenAction,
     executeTermination,
     executeCompletion,
+    dispatchScheduledAction,
 } = require('../services/scheduledActions');
 const { computeRegFeeSplit, settleRegistrationFee } = require('../services/registrationFeeSplit');
 const {
@@ -4316,12 +4317,54 @@ exports.closeStaffAssignment = async (req, res) => {
         // at all and no way for the cron to notice, since every downstream check
         // (invoicing, pending-invoice seeding) assumes an ACTIVE LIVE_IN booking
         // always has at least one active assignment.
-        const otherActiveRes = await client.query(
+        let otherActiveRes = await client.query(
             `SELECT 1 FROM booking_staff_assignments
              WHERE booking_id = $1 AND status = 'ACTIVE' AND assignment_id != $2
              LIMIT 1`,
             [booking_id, assignment_id]
         );
+
+        // No other ACTIVE assignment yet, but a replacement's swap may already be
+        // queued and due (e.g. a same-day STAFF_SWAP whose SCHEDULED assignment
+        // hasn't been flipped to ACTIVE because the nightly pre-billing cron
+        // hasn't run yet today). Rather than making the admin wait for the cron,
+        // execute that due swap inline so its incoming assignment goes ACTIVE
+        // before we decide whether closing the outgoing one would leave the
+        // booking uncovered.
+        if (otherActiveRes.rows.length === 0) {
+            const businessDate = await getBusinessDate(client);
+            const dueSwapRes = await client.query(
+                `SELECT * FROM scheduled_actions
+                 WHERE booking_id = $1 AND action_type = 'STAFF_SWAP'
+                   AND status = 'SCHEDULED' AND effective_date <= $2
+                 ORDER BY effective_date ASC
+                 LIMIT 1
+                 FOR UPDATE`,
+                [booking_id, businessDate]
+            );
+            const dueSwap = dueSwapRes.rows[0] || null;
+            if (dueSwap) {
+                const actorName = await getActorName(req.user?.user_id);
+                const { notify } = await dispatchScheduledAction(client, dueSwap, {
+                    user_id: req.user?.user_id || null,
+                    name: actorName,
+                    role: extractActorRole(req.user?.role),
+                });
+                await client.query(
+                    `UPDATE scheduled_actions SET status = 'EXECUTED', executed_at = NOW() WHERE action_id = $1`,
+                    [dueSwap.action_id]
+                );
+                if (notify) notify().catch((e) => console.error('[closeStaffAssignment] due-swap notify error:', e.message));
+
+                otherActiveRes = await client.query(
+                    `SELECT 1 FROM booking_staff_assignments
+                     WHERE booking_id = $1 AND status = 'ACTIVE' AND assignment_id != $2
+                     LIMIT 1`,
+                    [booking_id, assignment_id]
+                );
+            }
+        }
+
         if (otherActiveRes.rows.length === 0) {
             await client.query('ROLLBACK');
             return res.status(400).json({

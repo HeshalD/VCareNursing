@@ -1316,6 +1316,14 @@ const BookingDetailPageV2 = () => {
     const assignments = getAssignmentsForDate(dateISO);
     const inputs = {};
     const invoiceInputs = {};
+    // A real, still-PENDING attendance row can already exist here without ever
+    // going through this form's draft/confirm flow — e.g. a swap's captured
+    // out/in time writes one directly (see applyPartialAttendanceTime call sites).
+    // Seed the draft cache from it so the row renders as already-logged instead
+    // of asking the admin to "Log in & start assignment" again for data that's
+    // already saved. A backend-persisted draft (fetched below) always wins over
+    // this, since that reflects a deliberate in-session edit.
+    const timeSavedFromRecords = {};
     assignments.forEach(a => {
       // Prefill from the scheduled shift (SHIFT_BASED) or the assignment's own service
       // start time (VISITING/LIVE_IN) so the admin isn't typing times from scratch —
@@ -1328,6 +1336,18 @@ const BookingDetailPageV2 = () => {
       if (existingRecord) {
         in_time = existingRecord.in_time ? new Date(existingRecord.in_time).toTimeString().slice(0, 5) : '';
         out_time = existingRecord.out_time ? new Date(existingRecord.out_time).toTimeString().slice(0, 5) : '';
+        // Still-open outgoing half of a swap (started before today, no end date
+        // yet) gets its own "Log out & close assignment" row regardless of any
+        // time already logged — don't let a record short-circuit that flow.
+        const { onlyStart, onlyEnd, sameDay } = liveInBoundary(a, dateISO);
+        const isSwapOutgoingOpenCandidate = isLiveIn && !a.shift_slot_id && !a.service_end_date && !onlyStart && !onlyEnd && !sameDay;
+        if (existingRecord.salary_status === 'PENDING' && existingRecord.in_time && existingRecord.out_time && !isSwapOutgoingOpenCandidate) {
+          timeSavedFromRecords[a.assignment_id] = {
+            service_date: dateISO, in_time: existingRecord.in_time, out_time: existingRecord.out_time,
+            hours_served: (new Date(existingRecord.out_time) - new Date(existingRecord.in_time)) / (1000 * 60 * 60),
+            shift_slot_id: a.shift_slot_id || null, reschedule_id: a.reschedule_id || null,
+          };
+        }
       } else if (a.shift_start_time) {
         in_time = a.shift_start_time.slice(0, 5);
         if (a.shift_duration_hours) out_time = addHoursToTime(in_time, parseFloat(a.shift_duration_hours));
@@ -1347,7 +1367,7 @@ const BookingDetailPageV2 = () => {
     setDayModalError('');
     setDayModalStep('edit');
     setEditingAttendanceIds(new Set());
-    setDraftTimeSaved({});
+    setDraftTimeSaved(timeSavedFromRecords);
     setDraftAbsent({});
     setDraftPresent({});
     setDraftException({});
@@ -1363,7 +1383,7 @@ const BookingDetailPageV2 = () => {
       apiClient.setToken(adminToken);
       const res = await apiClient.getDayDraft(bookingId, dateISO);
       const payload = res?.data?.payload;
-      if (!payload) return;
+      if (!payload) return; // no in-session draft — the pre-seeded record-backed times above stand
 
       const timeSaved = {}, absent = {}, present = {}, exception = {}, salaryDecisions = {}, waives = {};
       (payload.staff || []).forEach(entry => {
@@ -1390,7 +1410,11 @@ const BookingDetailPageV2 = () => {
         const key = entry.shift_slot_id || 'day';
         invoiceDecisions[key] = { approve: entry.approve, amount: entry.amount, shift_slot_id: entry.shift_slot_id || null, reschedule_id: entry.reschedule_id || null };
       });
-      setDraftTimeSaved(timeSaved);
+      // A record-seeded time entry is superseded by any explicit draft decision
+      // for the same assignment (absent/present/exception), not just another TIME entry.
+      const mergedTimeSaved = { ...timeSavedFromRecords, ...timeSaved };
+      [absent, present, exception].forEach(map => Object.keys(map).forEach(id => delete mergedTimeSaved[id]));
+      setDraftTimeSaved(mergedTimeSaved);
       setDraftAbsent(absent);
       setDraftPresent(present);
       setDraftException(exception);
