@@ -1308,6 +1308,22 @@ const BookingDetailPageV2 = () => {
       // assignment created BY that reschedule (same-day "cover shift" included,
       // where new_date === original_date) must still show up here.
       if (a.shift_slot_id && !a.reschedule_id && movedOriginsForDay.has(`${a.shift_slot_id}__${dateISO}`)) return false;
+      // A shift-slot reassignment closes the outgoing staff's assignment with
+      // service_end_date set to the SAME day the incoming staff's assignment
+      // starts — a shift hands off cleanly on that day, unlike LIVE_IN's
+      // overlap day. The outgoing staff never showed up on it, so once a
+      // successor assignment for the same slot starts on this one's end date,
+      // drop the outgoing staff from that date. A booking-ending termination
+      // has no successor, so its end date still shows (it was actually worked).
+      if (a.shift_slot_id && a.service_end_date && toLocalDateStr(a.service_end_date) === dateISO) {
+        const hasSuccessor = staffHistory.some(other =>
+          other.assignment_id !== a.assignment_id &&
+          !other.reschedule_id &&
+          other.shift_slot_id === a.shift_slot_id &&
+          toLocalDateStr(other.service_start_date) === dateISO
+        );
+        if (hasSuccessor) return false;
+      }
       return true;
     });
   };

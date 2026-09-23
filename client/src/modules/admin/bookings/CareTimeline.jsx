@@ -721,7 +721,21 @@ const CareTimeline = ({
       aStart.setHours(0, 0, 0, 0);
       const aEnd = (a.service_end_date || a.endDate) ? new Date(a.service_end_date || a.endDate) : null;
       if (aEnd) aEnd.setHours(23, 59, 59, 999);
-      if (dayDate >= aStart && (!aEnd || dayDate <= aEnd)) {
+      // A reassignment closes the outgoing staff's assignment with service_end_date
+      // set to the SAME day the incoming staff's assignment starts — a shift slot
+      // hands off cleanly, unlike LIVE_IN's overlap day. Detect that handoff (a
+      // successor assignment on the same slot starting exactly on this one's end
+      // date) and drop the outgoing staff from that day — they never showed up on
+      // it. A booking-ending termination has no successor, so its end date still
+      // shows normally (that day was actually worked).
+      const isReassignmentHandoffDay = a.shift_slot_id && a.service_end_date && dateISO === toLocalISO(aEnd) &&
+        staffAssignments.some((other) =>
+          other.assignment_id !== a.assignment_id &&
+          !other.reschedule_id &&
+          other.shift_slot_id === a.shift_slot_id &&
+          toLocalISO(new Date(other.service_start_date || other.startDate)) === dateISO
+        );
+      if (dayDate >= aStart && (!aEnd || dayDate <= aEnd) && !isReassignmentHandoffDay) {
         const id   = a.staff_profile_id || a.staffId || a.id;
         const slot = shiftSlots.find((s) => s.shift_slot_id === a.shift_slot_id);
         const shiftLabel = slot?.label || (slot?.shift_number ? `Shift ${slot.shift_number}` : 'Shift');
