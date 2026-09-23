@@ -947,7 +947,11 @@ const BookingDetailPageV2 = () => {
         const inRecord = startISO ? attendanceRecords.find(a => a.assignment_id === row.id && a.service_date?.slice(0, 10) === startISO) : null;
         const outRecord = endISO ? attendanceRecords.find(a => a.assignment_id === row.id && a.service_date?.slice(0, 10) === endISO) : null;
         const missingInTime = i > 0 && !inRecord?.in_time;
-        const missingOutTime = i < rows.length - 1 && !!row.effectiveEnd && !outRecord?.out_time;
+        // A shift-slot reassignment hands off cleanly — the outgoing staff's shift
+        // simply doesn't run again after their last occurrence, so there's no
+        // out-time to log for it (unlike a LIVE_IN swap, where the outgoing staff
+        // is still on duty until their actual out-time is logged).
+        const missingOutTime = !row.shiftSlotId && i < rows.length - 1 && !!row.effectiveEnd && !outRecord?.out_time;
         // An ended LIVE_IN assignment whose first or last day is still PENDING —
         // the cron deliberately never auto-pays those, and a scheduled termination
         // or completion runs overnight with nobody there to decide them, so they
