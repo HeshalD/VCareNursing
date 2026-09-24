@@ -36,12 +36,13 @@ const isUuid = (v) => typeof v === 'string' && UUID_RE.test(v);
 
 /**
  * Credit a client's registration fee to a salesperson and mark them current + origin.
+ * `credited_amount` optionally overrides the amount credited (defaults to reg_fee_amount).
  * Idempotent: if the client already has an origin salesperson, nothing changes and
  * { credited: false, alreadyCredited: true } is returned.
  *
  * @returns {Promise<{credited: boolean, alreadyCredited?: boolean, credited_amount?: number, assignment?: object}>}
  */
-async function creditSalespersonForRegistration(executor, { client_id, salesperson_id, assigned_by }) {
+async function creditSalespersonForRegistration(executor, { client_id, salesperson_id, assigned_by, credited_amount }) {
   if (!isUuid(client_id) || !isUuid(salesperson_id)) {
     throw new ClientSalespersonError('INVALID_ID', 'Invalid client or salesperson ID format');
   }
@@ -72,7 +73,11 @@ async function creditSalespersonForRegistration(executor, { client_id, salespers
     throw new ClientSalespersonError('CLIENT_NOT_FOUND', 'Client not found');
   }
 
-  const creditedAmount = parseFloat(clientRes.rows[0].reg_fee_amount || 0);
+  // An explicit amount (the quotation's registration fee line) wins over the client's stored
+  // reg_fee_amount, which isn't set yet when crediting happens at quotation-send time.
+  const creditedAmount = credited_amount != null && !isNaN(parseFloat(credited_amount))
+    ? parseFloat(credited_amount)
+    : parseFloat(clientRes.rows[0].reg_fee_amount || 0);
 
   const insertRes = await executor.query(
     `INSERT INTO client_salesperson_assignments

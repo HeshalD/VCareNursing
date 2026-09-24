@@ -3640,6 +3640,22 @@ async function runMigration() {
   await db.query(`ALTER TABLE pending_registrations ADD COLUMN IF NOT EXISTS city_id INTEGER REFERENCES sl_cities(city_id)`);
   await db.query(`CREATE INDEX IF NOT EXISTS idx_client_profiles_city ON client_profiles(city_id)`);
 
+  // Priority Membership (public "register" on /priority-membership) is just a
+  // registration-fee lead: a service_requests row with service_type =
+  // 'PRIORITY_MEMBERSHIP'. Guests verify their mobile by OTP first; this table
+  // holds those one-off codes (one live row per mobile). The guest's city rides
+  // on the request so the client profile created at payment time can use it.
+  await db.query(`ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS city_id INTEGER REFERENCES sl_cities(city_id)`);
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS priority_membership_otps (
+      mobile_number VARCHAR(20) PRIMARY KEY,
+      otp_code      VARCHAR(10) NOT NULL,
+      expires_at    TIMESTAMPTZ NOT NULL,
+      attempts      INTEGER NOT NULL DEFAULT 0,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
   await seedSriLankaCities();
 
   // =========================================================

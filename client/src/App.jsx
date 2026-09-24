@@ -16,6 +16,7 @@ import ChildCarePage from './modules/public/ChildCarePage';
 import ElderlyCarePage from './modules/public/ElderlyCarePage';
 import DoctorVisitsPage from './modules/public/DoctorVisitsPage';
 import AmbulanceServicePage from './modules/public/AmbulanceServicePage';
+import PriorityMembershipPage from './modules/public/PriorityMembershipPage';
 import ElderlyCareBookingPage from './modules/public/ElderlyCareBookingPage';
 import BookingSuccessPage from './modules/public/BookingSuccessPage';
 import WorkersTeamPage from './modules/public/service_team/WorkersTeamPage';
@@ -150,6 +151,7 @@ function App() {
             <Route path="/services/elderly-care" element={<ElderlyCarePage />} />
             <Route path="/services/doctor-visits" element={<DoctorVisitsPage />} />
             <Route path="/services/ambulance" element={<AmbulanceServicePage />} />
+            <Route path="/priority-membership" element={<PriorityMembershipPage />} />
             <Route path="/services/elderly-care/book" element={<ElderlyCareBookingPage />} />
             <Route path="/services/view-staff" element={<ViewStaffPage />} />
             <Route path="/services/staff-profile/:id" element={<StaffProfile/>}/>

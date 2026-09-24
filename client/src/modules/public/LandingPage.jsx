@@ -194,6 +194,31 @@ const ServiceGrid = () => {
 
 
 
+const PriorityMembershipBanner = () => (
+  <section className="py-20 bg-white">
+    <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="relative rounded-[24px] overflow-hidden bg-gradient-to-br from-blue-600 to-blue-800 text-white px-6 sm:px-10 md:px-14 py-12 md:py-14 shadow-lg">
+        <div className="absolute -top-16 -right-16 w-64 h-64 rounded-full bg-white/10 blur-2xl" />
+        <div className="relative flex flex-col md:flex-row md:items-center md:justify-between gap-8">
+          <div className="max-w-2xl">
+            <span className="inline-block px-3 py-1 mb-4 rounded-full bg-white/15 text-xs font-bold uppercase tracking-wider">Medical Concierge Service</span>
+            <h2 className="text-3xl md:text-4xl font-semibold mb-3">VCare Priority Membership</h2>
+            <p className="text-blue-100 text-lg leading-relaxed">
+              24x7 channelling support, priority ambulance, home doctor visits and medicine delivery, covering you and four family members.
+            </p>
+          </div>
+          <Link
+            to="/priority-membership"
+            className="flex-shrink-0 inline-flex items-center justify-center gap-2 px-8 py-4 bg-white text-blue-700 hover:bg-blue-50 rounded-full font-bold text-lg transition-colors"
+          >
+            Learn more <ArrowRight className="w-5 h-5" />
+          </Link>
+        </div>
+      </div>
+    </div>
+  </section>
+);
+
 const JoinTeamBanner = ({ blockStaffJoin, onStaffJoinBlocked }) => {
   const navigate = useNavigate();
   return (
@@ -536,6 +561,7 @@ const LandingPage = () => {
       <Navbar />
       <HeroSection blockStaffJoin={blockStaffJoin} onStaffJoinBlocked={() => setShowStaffJoinBlocked(true)} />
       <ServiceGrid />
+      <PriorityMembershipBanner />
       <BrowseStaffSection />
       <JoinTeamBanner blockStaffJoin={blockStaffJoin} onStaffJoinBlocked={() => setShowStaffJoinBlocked(true)} />
       <ReviewSection />

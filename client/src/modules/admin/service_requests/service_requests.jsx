@@ -59,6 +59,8 @@ const BookingStatusBadge = ({ status }) => {
   );
 };
 
+const PRIORITY_TYPE = 'PRIORITY_MEMBERSHIP';
+
 const EnteredViaBadge = ({ value }) => {
   const isProxy = value === 'PROXY';
   return (
@@ -102,6 +104,8 @@ const getStageAction = (r) => {
     if (!isFullyPaid) {
       return { icon: Wallet, title: 'Record Payment', path: `/admin/quotations/${r.active_quote_id}` };
     }
+    // A Priority Membership is just a registration fee — nothing to book once it's paid.
+    if (r.service_type === PRIORITY_TYPE) return null;
     // Fully paid — ready to convert. There's no standalone "create booking" page;
     // the Proceed/convert action lives on the request summary page itself.
     return { icon: CalendarCheck, title: 'Create Booking', path: `/admin/service-requests/${r.request_id}/summary` };
@@ -117,6 +121,7 @@ const ServiceRequests = () => {
   const [error, setError]                     = useState(null);
   const [search, setSearch]                   = useState('');
   const [activeTab, setActiveTab]             = useState('All');
+  const [priorityOnly, setPriorityOnly]       = useState(false);
   const [showPresetManager, setShowPresetManager] = useState(false);
 
   useEffect(() => { fetchRequests(); }, []);
@@ -147,8 +152,11 @@ const ServiceRequests = () => {
     const q = search.trim().toLowerCase();
     const textMatch = !q || [r.payer_name, r.patient_name, r.payer_mobile, r.service_type, r.service_request_code]
       .some(v => v?.toLowerCase().includes(q));
-    return statusMatch && textMatch;
+    const typeMatch = !priorityOnly || r.service_type === PRIORITY_TYPE;
+    return statusMatch && textMatch && typeMatch;
   });
+
+  const priorityCount = requests.filter(r => r.service_type === PRIORITY_TYPE).length;
 
   const counts = {
     All: requests.length,
@@ -226,6 +234,19 @@ const ServiceRequests = () => {
           ))}
         </div>
 
+        <button
+          type="button"
+          onClick={() => setPriorityOnly(v => !v)}
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors w-fit ${
+            priorityOnly
+              ? 'bg-violet-600 text-white border-violet-600'
+              : 'bg-white text-violet-700 border-violet-200 hover:bg-violet-50'
+          }`}
+        >
+          Priority Membership
+          <span className="ml-1.5 tabular-nums opacity-70">{priorityCount}</span>
+        </button>
+
         <div className="relative sm:ml-auto">
           <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
@@ -295,8 +316,14 @@ const ServiceRequests = () => {
 
                   {/* Service */}
                   <td className="px-4 py-3 align-top">
-                    <p className="font-medium text-slate-900">{r.service_type || '—'}</p>
-                    {r.service_model && (
+                    {r.service_type === PRIORITY_TYPE ? (
+                      <span className="inline-flex items-center text-xs font-semibold px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-100">
+                        Priority Membership
+                      </span>
+                    ) : (
+                      <p className="font-medium text-slate-900">{r.service_type || '—'}</p>
+                    )}
+                    {r.service_model && r.service_type !== PRIORITY_TYPE && (
                       <p className="text-xs text-slate-500 mt-0.5">{r.service_model.replace(/_/g, ' ')}</p>
                     )}
                     {r.preferred_gender && r.preferred_gender !== 'ANY' && (

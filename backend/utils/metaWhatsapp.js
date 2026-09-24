@@ -3,12 +3,11 @@ const { toMessagingDigits: formatNumber } = require('./phone');
 
 const API_URL = `https://graph.facebook.com/v21.0/${process.env.META_WA_PHONE_NUMBER_ID}/messages`;
 
-// TEMPORARY KILL SWITCH — WhatsApp sending is blocked. Remove this block to re-enable.
-const MESSAGING_BLOCKED = true;
+const { isWhatsAppEnabled } = require('./systemSettings');
 
 const sendDocument = async (mobileNumber, documentUrl, filename, caption = '') => {
-  if (MESSAGING_BLOCKED) {
-    console.log(`[Meta WA] BLOCKED (messaging disabled): document "${filename}" to ${mobileNumber}`);
+  if (!(await isWhatsAppEnabled())) {
+    console.log(`[Meta WA] BLOCKED (WhatsApp disabled in admin settings): document "${filename}" to ${mobileNumber}`);
     return { blocked: true };
   }
   const to = formatNumber(mobileNumber);
@@ -38,8 +37,8 @@ const sendDocument = async (mobileNumber, documentUrl, filename, caption = '') =
 };
 
 const sendTemplate = async (to, templateName, languageCode, bodyParams, headerParams = null, buttonComponents = null) => {
-  if (MESSAGING_BLOCKED) {
-    console.log(`[Meta WA] BLOCKED (messaging disabled): template "${templateName}" to ${to}`);
+  if (!(await isWhatsAppEnabled())) {
+    console.log(`[Meta WA] BLOCKED (WhatsApp disabled in admin settings): template "${templateName}" to ${to}`);
     return { blocked: true };
   }
   try {

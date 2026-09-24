@@ -561,6 +561,32 @@ class ApiClient {
   }
 
   // ── Salesperson crediting ──
+  // Priority Membership (public registration-fee request)
+  async sendPriorityMembershipOtp(mobileNumber) {
+    return this.request('/priority-membership/otp/send', {
+      method: 'POST',
+      body: JSON.stringify({ mobile_number: mobileNumber }),
+    });
+  }
+
+  async verifyPriorityMembershipOtp(mobileNumber, otp) {
+    return this.request('/priority-membership/otp/verify', {
+      method: 'POST',
+      body: JSON.stringify({ mobile_number: mobileNumber, otp_code: otp }),
+    });
+  }
+
+  async registerPriorityMembershipGuest(payload) {
+    return this.request('/priority-membership/register', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async registerPriorityMembership() {
+    return this.request('/priority-membership/register/me', { method: 'POST' });
+  }
+
   async getSalespersons() {
     return this.request('/salespersons');
   }

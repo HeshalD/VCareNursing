@@ -27,6 +27,7 @@ const SERVICE_TYPE_OPTIONS = [
   { value: 'PHYSIOTHERAPIST',   label: 'Physiotherapist' },
   { value: 'NANNY',             label: 'Nanny' },
   { value: 'COUNSELLOR',        label: 'Counsellor' },
+  { value: 'PRIORITY_MEMBERSHIP', label: 'Priority Membership' },
 ];
 
 const RELATIONSHIP_OPTIONS = [
@@ -896,7 +897,7 @@ const ServiceRequestSummaryPage = () => {
               <div className="flex items-center gap-1.5 text-xs text-slate-500">
                 <Stethoscope className="w-3.5 h-3.5 text-slate-400" />
                 <span className="font-medium text-slate-700">{serviceLabel(request.service_type)}</span>
-                {request.service_model && <span className="text-slate-400">· {modelLabel(request.service_model)}</span>}
+                {request.service_model && request.service_type !== 'PRIORITY_MEMBERSHIP' && <span className="text-slate-400">· {modelLabel(request.service_model)}</span>}
               </div>
               {request.start_date && (
                 <div className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -1113,7 +1114,7 @@ const ServiceRequestSummaryPage = () => {
                       </div>
                       <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-4">
                         <InfoRow label="Role / Type" value={serviceLabel(request.service_type)} />
-                        <InfoRow label="Service Model" value={modelLabel(request.service_model)} />
+                        <InfoRow label="Service Model" value={request.service_type === 'PRIORITY_MEMBERSHIP' ? '—' : modelLabel(request.service_model)} />
                         <InfoRow label="Preferred Gender" value={request.preferred_gender || 'Any'} />
                         <InfoRow label="Start Date" value={fmt(request.start_date)} />
                       </div>
@@ -1717,7 +1718,7 @@ const ServiceRequestSummaryPage = () => {
               <div className="p-4 space-y-2.5">
                 <SidebarField label="Status"       value={<StatusDot status={request.status} config={REQUEST_STATUS_CONFIG} />} />
                 <SidebarField label="Role"         value={serviceLabel(request.service_type)} />
-                <SidebarField label="Model"        value={modelLabel(request.service_model)} />
+                <SidebarField label="Model"        value={request.service_type === 'PRIORITY_MEMBERSHIP' ? '—' : modelLabel(request.service_model)} />
                 <SidebarField label="Gender Pref"  value={request.preferred_gender || 'Any'} />
                 <SidebarField label="Start Date"   value={fmt(request.start_date)} />
                 <SidebarField label="Quotations"   value={`${quotes.length} total`} />

@@ -4,6 +4,8 @@ const estimateTemplate = require('../templates/estimateTemplate');
 const { sendClientQuotation, sendClientProductQuotation, sendClientInvoice } = require('../utils/metaWhatsapp');
 const { uploadBufferToS3 } = require('../config/s3Config');
 const { logActivity } = require('../utils/activityLogger');
+const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
+const { getOrCreateClientProfileForQuotation, sendClientWelcomeCredentials, markRegFeeInvoicedFromQuote } = require('../services/clientBootstrapService');
 const { createRentalAgreementCore, RentalAgreementError } = require('./rentalController');
 const { generateAndUploadRegFeeInvoice } = require('../utils/regFeeInvoicePdf');
 const { createVendorBillCore, applyVendorBillPayment } = require('./vendorController');
@@ -252,6 +254,60 @@ exports.generateAndSendPDF = async (req, res) => {
 
         // 8. Update service request status to PENDING and set active_quote_id
         await db.query("UPDATE service_requests SET status = 'PENDING', active_quote_id = $1 WHERE request_id = $2", [quote_id, data.request_id]);
+
+        // Priority Membership leads from the website have no client account yet. As soon as
+        // the quotation reaches them, create it so payment and everything after runs as usual.
+        // Non-fatal: recording the payment creates the account too if this ever fails.
+        if (data.service_type === 'PRIORITY_MEMBERSHIP') {
+            const pg = await db.pool.connect();
+            try {
+                await pg.query('BEGIN');
+                const bootstrap = await getOrCreateClientProfileForQuotation(pg, { request_id: data.request_id });
+                await pg.query('COMMIT');
+                sendClientWelcomeCredentials(bootstrap);
+                // The quotation doubles as the registration fee invoice: mark the client as
+                // invoiced so only the payment is left to record.
+                await markRegFeeInvoicedFromQuote({
+                    quoteId: quote_id,
+                    clientId: bootstrap.client_id,
+                    pdfUrl,
+                    sentBy: req.user?.user_id,
+                });
+            } catch (bootstrapErr) {
+                await pg.query('ROLLBACK').catch(() => {});
+                console.error('Priority Membership client profile creation failed (non-fatal):', bootstrapErr.message);
+            } finally {
+                pg.release();
+            }
+        }
+
+        // Any quotation: a salesperson picked on its registration fee line is credited to the
+        // client as soon as the quotation goes out (same moment the standalone reg fee invoice
+        // credits), so they show on the client's page. Needs an existing client — for a lead
+        // with no account yet, the credit happens when the fee payment creates it. Idempotent
+        // and non-fatal.
+        try {
+            const regLine = await db.query(
+                `SELECT li.amount, li.salesperson_id, sr.client_id
+                 FROM quote_line_items li
+                 JOIN quotations q ON q.quote_id = li.quote_id
+                 JOIN service_requests sr ON sr.request_id = q.request_id
+                 WHERE li.quote_id = $1 AND li.is_registration_fee = true AND li.salesperson_id IS NOT NULL
+                 LIMIT 1`,
+                [quote_id]
+            );
+            const row = regLine.rows[0];
+            if (row?.client_id) {
+                await creditSalespersonForRegistration(db, {
+                    client_id: row.client_id,
+                    salesperson_id: row.salesperson_id,
+                    assigned_by: req.user?.user_id,
+                    credited_amount: row.amount,
+                });
+            }
+        } catch (creditErr) {
+            console.error('Failed to credit salesperson at quotation send (non-fatal):', creditErr.message);
+        }
 
         await safeLog({
             actorUserId: req.user?.user_id,
@@ -1212,7 +1268,15 @@ async function ensureRegFeeInvoiceRecord(serviceQuoteId, { clientId, registratio
         `SELECT invoice_id FROM client_reg_fee_invoices WHERE client_id = $1 AND invoice_code = $2`,
         [clientId, invoiceCode]
     );
-    if (existing.rows.length > 0) return;
+    if (existing.rows.length > 0) {
+        // Created as SENT when a Priority Membership quotation went out — the payment
+        // that just settled it flips it to PAID.
+        await db.query(
+            `UPDATE client_reg_fee_invoices SET status = 'PAID' WHERE invoice_id = $1 AND status <> 'PAID'`,
+            [existing.rows[0].invoice_id]
+        );
+        return;
+    }
 
     const bankResult = await db.query(
         `SELECT ba.account_id, ba.bank_name, ba.account_holder_name, ba.account_number, ba.branch_name

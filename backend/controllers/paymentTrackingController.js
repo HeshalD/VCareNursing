@@ -3,7 +3,7 @@ const bcrypt = require('bcrypt');
 const { logActivity } = require('../utils/activityLogger');
 const { createPaymentReceipt } = require('../services/receiptService');
 const { sendSms } = require('../utils/sms');
-const { sendClientWelcomeNew } = require('../utils/metaWhatsapp');
+const { getOrCreateClientProfileForQuotation, sendClientWelcomeCredentials } = require('../services/clientBootstrapService');
 const { ensureCombinedInvoice, ensureRegFeeInvoiceRecord } = require('./quoteController');
 const { applyInvoicePayment } = require('./invoiceController');
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
@@ -30,99 +30,6 @@ async function safeLog(params) {
     console.error('Activity log error:', err);
   }
 }
-
-const getOrCreateClientProfileForQuotation = async (client, quotation) => {
-  const requestResult = await client.query(
-    `SELECT request_id, client_id, payer_name, payer_mobile, location_address
-     FROM service_requests
-     WHERE request_id = $1`,
-    [quotation.request_id]
-  );
-
-  if (requestResult.rows.length === 0) {
-    throw new Error('Service request not found for this quotation');
-  }
-
-  const serviceRequest = requestResult.rows[0];
-
-  if (serviceRequest.client_id) {
-    return {
-      client_id: serviceRequest.client_id,
-      client_profile_created: false,
-      temp_password: null,
-      payer_mobile: serviceRequest.payer_mobile,
-      payer_name: serviceRequest.payer_name
-    };
-  }
-
-  if (!serviceRequest.payer_mobile) {
-    throw new Error('Service request is missing payer mobile number');
-  }
-
-  const payerName = serviceRequest.payer_name || 'New Client';
-  const payerAddress = serviceRequest.location_address || null;
-
-  let userId = null;
-  // Only set when THIS call creates a brand-new login account — used to send the
-  // welcome message with credentials after the transaction commits.
-  let tempPassword = null;
-  const userCheck = await client.query(
-    `SELECT user_id FROM users WHERE mobile_number = $1`,
-    [serviceRequest.payer_mobile]
-  );
-
-  if (userCheck.rows.length > 0) {
-    // Existing user (matched by mobile) — reuse it, never create a duplicate account.
-    userId = userCheck.rows[0].user_id;
-  } else {
-    tempPassword = Math.random().toString(36).slice(-8);
-    const hashedPassword = await bcrypt.hash(tempPassword, 12);
-
-    const newUser = await client.query(
-      `INSERT INTO users (mobile_number, password_hash, email, role, is_active)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING user_id`,
-      [serviceRequest.payer_mobile, hashedPassword, null, ['CLIENT'], true]
-    );
-
-    userId = newUser.rows[0].user_id;
-  }
-
-  const profileCheck = await client.query(
-    `SELECT client_profile_id FROM client_profiles WHERE user_id = $1`,
-    [userId]
-  );
-
-  let clientProfileId = null;
-  let clientProfileCreated = false;
-
-  if (profileCheck.rows.length > 0) {
-    clientProfileId = profileCheck.rows[0].client_profile_id;
-  } else {
-    const newProfile = await client.query(
-      `INSERT INTO client_profiles (user_id, full_name, primary_address, is_registration_fee_paid)
-       VALUES ($1, $2, $3, $4)
-       RETURNING client_profile_id`,
-      [userId, payerName, payerAddress, false]
-    );
-
-    clientProfileId = newProfile.rows[0].client_profile_id;
-    clientProfileCreated = true;
-  }
-
-  await client.query(
-    `UPDATE service_requests SET client_id = $1 WHERE request_id = $2`,
-    [clientProfileId, serviceRequest.request_id]
-  );
-
-  return {
-    client_id: clientProfileId,
-    client_profile_created: clientProfileCreated,
-    temp_password: tempPassword,
-    payer_mobile: serviceRequest.payer_mobile,
-    payer_name: payerName
-  };
-};
 
 /**
  * Record a payment for a quotation
@@ -459,17 +366,7 @@ const recordPayment = async (req, res) => {
     // sign in and set their own password. Mirrors the booking-conversion onboarding.
     // Only fires when a fresh user account was created here (temp_password is set), so
     // existing customers are never re-notified and no duplicate account is implied.
-    if (clientBootstrap.temp_password) {
-      const welcomeSms = `Welcome to VCare Nursing, ${clientBootstrap.payer_name}! An account has been created for you. Log in at https://vcarenursing.com/login\n\nUsername (mobile): ${clientBootstrap.payer_mobile}\nTemporary password: ${clientBootstrap.temp_password}\n\nYou'll be asked to set your own password on first login. - VCare Nursing`;
-
-      Promise.allSettled([
-        sendSms(clientBootstrap.payer_mobile, welcomeSms),
-        sendClientWelcomeNew(clientBootstrap.payer_mobile, clientBootstrap.payer_name)
-      ]).then(([smsResult, waResult]) => {
-        if (smsResult.status === 'rejected') console.error('Client welcome SMS failed:', smsResult.reason?.message);
-        if (waResult.status === 'rejected') console.error('Client welcome WhatsApp failed:', waResult.reason?.message);
-      });
-    }
+    sendClientWelcomeCredentials(clientBootstrap);
 
     // Generate a payment receipt (PDF stored on Cloudinary + tracked in DB).
     // Delivery to the client over WhatsApp is a separate, admin-triggered action.
@@ -1015,16 +912,7 @@ const recordAllocatedPayment = async (req, res) => {
 
     await client.query('COMMIT');
 
-    if (clientBootstrap.temp_password) {
-      const welcomeSms = `Welcome to VCare Nursing, ${clientBootstrap.payer_name}! An account has been created for you. Log in at https://vcarenursing.com/login\n\nUsername (mobile): ${clientBootstrap.payer_mobile}\nTemporary password: ${clientBootstrap.temp_password}\n\nYou'll be asked to set your own password on first login. - VCare Nursing`;
-      Promise.allSettled([
-        sendSms(clientBootstrap.payer_mobile, welcomeSms),
-        sendClientWelcomeNew(clientBootstrap.payer_mobile, clientBootstrap.payer_name)
-      ]).then(([smsResult, waResult]) => {
-        if (smsResult.status === 'rejected') console.error('Client welcome SMS failed:', smsResult.reason?.message);
-        if (waResult.status === 'rejected') console.error('Client welcome WhatsApp failed:', waResult.reason?.message);
-      });
-    }
+    sendClientWelcomeCredentials(clientBootstrap);
 
     ;(async () => {
       try {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -454,7 +454,10 @@ const ModularQuoteBuilder = () => {
 
   const hasRegistrationFeeItem = lineItems.some(i => i.is_registration_fee);
   const registrationFeeAlreadySettled = ['PAID', 'WAIVED'].includes(clientProfile?.reg_fee_status);
-  const canAddRegistrationFee = !!serviceRequest?.client_id && !hasRegistrationFeeItem && !registrationFeeAlreadySettled;
+  // Priority Membership requests are registration-fee-only leads. A guest one has no client
+  // account yet (it is created when the fee payment is recorded), so the fee must still be quotable.
+  const isPriorityMembership = serviceRequest?.service_type === 'PRIORITY_MEMBERSHIP';
+  const canAddRegistrationFee = (!!serviceRequest?.client_id || isPriorityMembership) && !hasRegistrationFeeItem && !registrationFeeAlreadySettled;
 
   // Dedicated rate line items — item_subtype is what quoteController reads to
   // populate quotations.daily_rate/per_shift_rate; one of each per quote.
@@ -467,8 +470,8 @@ const ModularQuoteBuilder = () => {
   const isDailyModel = isLiveInModel || isVisitingModel;
   const hasShiftRateItem = lineItems.some(i => i.item_subtype === 'RATE_SHIFT');
   const hasDailyRateItem = lineItems.some(i => i.item_subtype === 'RATE_DAILY');
-  const canAddShiftRate = isShiftBased && !hasShiftRateItem;
-  const canAddDailyRate = isDailyModel && !hasDailyRateItem;
+  const canAddShiftRate = isShiftBased && !hasShiftRateItem && !isPriorityMembership;
+  const canAddDailyRate = isDailyModel && !hasDailyRateItem && !isPriorityMembership;
 
   const addShiftRateItem = () =>
     setLineItems(prev => [
@@ -506,6 +509,14 @@ const ModularQuoteBuilder = () => {
       },
     ]);
   };
+
+  // Priority Membership quotes start with the registration fee line already in place.
+  const autoAddedRegFee = useRef(false);
+  useEffect(() => {
+    if (loading || autoAddedRegFee.current || !isPriorityMembership) return;
+    autoAddedRegFee.current = true;
+    if (lineItems.length === 0 && !registrationFeeAlreadySettled) addRegistrationFeeItem();
+  }, [loading, isPriorityMembership]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateLineItem = (index, updated) => {
     const next = [...lineItems];
