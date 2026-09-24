@@ -357,8 +357,17 @@ const sendInternalStaffSalarySheet = (mobileNumber, fullName, monthLabel, netPay
   );
 
 // The company's Independent Contractor Agreement (terms & conditions) PDF.
-// Hosted on Cloudinary; sent as a real PDF document attachment (not a text link).
-const STAFF_AGREEMENT_PDF_URL = 'https://res.cloudinary.com/dohaktkth/image/upload/v1780652809/INDEPENDENT_CONTRACTOR_AGREEMENT_knloa6.pdf';
+// Two versions (English / Sinhala), hosted on S3; sent as a real PDF document attachment (not a text link).
+const STAFF_AGREEMENT_PDFS = {
+  en: {
+    url: 'https://vcarenursing-files.s3.eu-north-1.amazonaws.com/contracts/VCare_Contractor_Agreement_Final+(1).pdf',
+    filename: 'VCare_Independent_Contractor_Agreement_English.pdf',
+  },
+  si: {
+    url: 'https://vcarenursing-files.s3.eu-north-1.amazonaws.com/contracts/VCare_Contractor_Agreement_Sinhala+(1).pdf',
+    filename: 'VCare_Independent_Contractor_Agreement_Sinhala.pdf',
+  },
+};
 
 // Sent to an approved applicant — header: agreement PDF. No body variables: the
 // approved Meta template has a static body (no {{1}}), so we pass no body params.
@@ -372,14 +381,17 @@ const STAFF_AGREEMENT_PDF_URL = 'https://res.cloudinary.com/dohaktkth/image/uplo
 //
 //   Thank you for choosing to work with VCare Nursing.
 // eslint-disable-next-line no-unused-vars -- fullName kept for call-site compatibility
-const sendStaffAgreement = (mobileNumber, fullName) =>
-  sendTemplate(
+const sendStaffAgreement = (mobileNumber, fullName, language = 'en') => {
+  const pdf = STAFF_AGREEMENT_PDFS[language];
+  if (!pdf) throw new Error(`Unknown agreement language: ${language}`);
+  return sendTemplate(
     formatNumber(mobileNumber),
     'vcare_staff_agreement',
     'en',
     [],
-    [{ type: 'document', document: { link: STAFF_AGREEMENT_PDF_URL, filename: 'VCare_Independent_Contractor_Agreement.pdf' } }]
+    [{ type: 'document', document: { link: pdf.url, filename: pdf.filename } }]
   );
+};
 
 // Sent to a client suggesting a candidate staff member.
 // Body vars: {{1}} = client/payer name, {{2}} = patient name, {{3}} = candidate name, {{4}} = role/designation

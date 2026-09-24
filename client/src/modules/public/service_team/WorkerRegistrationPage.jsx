@@ -19,6 +19,11 @@ import PhoneNumbersField from '../../../components/common/PhoneNumbersField';
 import { DEFAULT_LANGUAGES } from '../../../data/languages';
 import { sanitizeNicInput, validateNic } from '../../../utils/nicFormat';
 
+const CONTRACT_URLS = {
+  en: 'https://vcarenursing-files.s3.eu-north-1.amazonaws.com/contracts/VCare_Contractor_Agreement_Final+(1).pdf',
+  si: 'https://vcarenursing-files.s3.eu-north-1.amazonaws.com/contracts/VCare_Contractor_Agreement_Sinhala+(1).pdf',
+};
+
 // Parses an ISO (YYYY-MM-DD) string into a Date, or null if invalid/empty
 const parseDateOfBirth = (value) => {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '');
@@ -1403,15 +1408,26 @@ const WorkerRegistrationPage = () => {
                             <p className="text-xs text-slate-500 mb-2">
                               By submitting this application, you agree to VCare's terms of service and privacy policy.
                             </p>
-                            <a
-                              href="https://res.cloudinary.com/dohaktkth/image/upload/v1780652809/INDEPENDENT_CONTRACTOR_AGREEMENT_knloa6.pdf"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-800 hover:underline transition-colors"
-                            >
-                              <FileText className="w-3.5 h-3.5" />
-                              Read full Terms &amp; Conditions (PDF)
-                            </a>
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                              <a
+                                href={CONTRACT_URLS.en}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-800 hover:underline transition-colors"
+                              >
+                                <FileText className="w-3.5 h-3.5" />
+                                Read Terms &amp; Conditions (English)
+                              </a>
+                              <a
+                                href={CONTRACT_URLS.si}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-800 hover:underline transition-colors"
+                              >
+                                <FileText className="w-3.5 h-3.5" />
+                                නියම සහ කොන්දේසි කියවන්න (සිංහල)
+                              </a>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -1429,13 +1445,23 @@ const WorkerRegistrationPage = () => {
                             <p className="font-semibold text-amber-900">
                               I confirm that all the information provided above is accurate and complete, and I have read and agree to the{' '}
                               <a
-                                href="https://res.cloudinary.com/dohaktkth/image/upload/v1780652809/INDEPENDENT_CONTRACTOR_AGREEMENT_knloa6.pdf"
+                                href={CONTRACT_URLS.en}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-indigo-600 hover:underline"
                                 onClick={(e) => e.stopPropagation()}
                               >
-                                Terms &amp; Conditions
+                                Terms &amp; Conditions (English)
+                              </a>
+                              {' / '}
+                              <a
+                                href={CONTRACT_URLS.si}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-indigo-600 hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                සිංහල
                               </a>.
                             </p>
                             <p className="text-amber-700 mt-1">

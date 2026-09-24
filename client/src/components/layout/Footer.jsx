@@ -1,6 +1,7 @@
 import React from 'react';
 import { ShieldCheck, Facebook, Instagram, Mail, Phone, MapPin } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { CONTACT_NUMBERS } from '../../constants/contactNumbers';
 import logoUrl from '../../assets/Logo/VCareLogo.png';
 
 const Footer = () => {
@@ -67,10 +68,9 @@ const Footer = () => {
                   <Phone className="w-4 h-4 text-blue-600" />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <a href="tel:+94773939112" className="hover:text-blue-600">+94 (77) 393 9112</a>
-                  <a href="tel:+94767997796" className="hover:text-blue-600">+94 76 799 7796</a>
-                  <a href="tel:+94777004068" className="hover:text-blue-600">+94 777 00 4068</a>
-                  <a href="tel:0113176545" className="hover:text-blue-600">(011) 317 6545</a>
+                  {CONTACT_NUMBERS.map(n => (
+                    <a key={n.tel} href={`tel:${n.tel}`} className="hover:text-blue-600">{n.display}</a>
+                  ))}
                 </div>
               </li>
               <li className="flex items-center gap-4">

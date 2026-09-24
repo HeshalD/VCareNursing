@@ -1035,15 +1035,17 @@ class ApiClient {
     });
   }
 
-  async sendApplicationAgreement(applicationId) {
+  async sendApplicationAgreement(applicationId, language) {
     return this.request(`/staff/applications/${applicationId}/send-agreement`, {
       method: 'POST',
+      body: JSON.stringify({ language }),
     });
   }
 
-  async sendStaffAgreement(staffProfileId) {
+  async sendStaffAgreement(staffProfileId, language) {
     return this.request(`/staff/${staffProfileId}/send-agreement`, {
       method: 'POST',
+      body: JSON.stringify({ language }),
     });
   }
 
@@ -1298,6 +1300,21 @@ class ApiClient {
       ? `/staff/${staffProfileId}/current-earnings-breakdown?${queryParams}`
       : `/staff/${staffProfileId}/current-earnings-breakdown`;
     return this.request(url);
+  }
+
+  async getStaffMissingBankDetails() {
+    return this.request('/staff/missing-bank-details');
+  }
+
+  async getNotificationSettings() {
+    return this.request('/notification-settings');
+  }
+
+  async updateNotificationSettings(data) {
+    return this.request('/notification-settings', {
+      method: 'PUT',
+      body: JSON.stringify(data)
+    });
   }
 
   async getStaffBankAccounts(staffProfileId) {

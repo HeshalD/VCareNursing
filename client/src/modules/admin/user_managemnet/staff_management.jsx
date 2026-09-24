@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, Mars, Venus, Trash2, CheckCircle2, ChevronDown, ShieldOff, ShieldCheck, X } from 'lucide-react';
+import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, Mars, Venus, Trash2, CheckCircle2, ChevronDown, ShieldOff, ShieldCheck, X, Landmark } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
@@ -361,6 +361,13 @@ const StaffManagement = () => {
               )}
             </div>
           )}
+          <button
+            onClick={() => navigate('/admin/staff-missing-bank-details')}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 text-sm font-medium rounded-md hover:bg-slate-50 transition-colors"
+          >
+            <Landmark className="w-4 h-4 text-amber-500" />
+            Missing Bank Details
+          </button>
           <button
             onClick={toggleSelectMode}
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border transition-colors ${

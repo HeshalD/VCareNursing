@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import DateInput from '../../../components/common/DateInput';
 import PhoneInput from '../../../components/common/PhoneInput';
 import { formatMobileNumber, formatMobileNumbers } from '../../../utils/phoneFormat';
@@ -587,6 +587,7 @@ const StaffDetailPageV2 = () => {
   const { adminToken, isLoading: authLoading } = useAdminAuth();
   const navigate = useNavigate();
   const { staffProfileId } = useParams();
+  const [searchParams] = useSearchParams();
 
   const [detail, setDetail] = useState(null);
   const [mobileStaffSidebarOpen, setMobileStaffSidebarOpen] = useState(false);
@@ -613,13 +614,14 @@ const StaffDetailPageV2 = () => {
   const [deletingBankId, setDeletingBankId] = useState(null);
   const [editModal, setEditModal] = useState({ isOpen: false, saving: false, error: '', form: {} });
   const [sendingAgreement, setSendingAgreement] = useState(false);
+  const [agreementLanguage, setAgreementLanguage] = useState('');
   const [sendingDocRequest, setSendingDocRequest] = useState(false);
   const [sendActionError, setSendActionError] = useState('');
   const [sendActionSuccess, setSendActionSuccess] = useState('');
   const [sectionErrors, setSectionErrors] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [activeSection, setActiveSection] = useState('care-timeline');
+  const [activeSection, setActiveSection] = useState(searchParams.get('section') || 'care-timeline');
   const [activityLogs, setActivityLogs] = useState([]);
   const [activityLoading, setActivityLoading] = useState(false);
   const [activityPagination, setActivityPagination] = useState({ total: 0, page: 1, limit: 20 });
@@ -1213,7 +1215,7 @@ const StaffDetailPageV2 = () => {
     setSendActionError('');
     setSendActionSuccess('');
     try {
-      await runAdminRequest(() => apiClient.sendStaffAgreement(staffProfileId));
+      await runAdminRequest(() => apiClient.sendStaffAgreement(staffProfileId, agreementLanguage));
       setSendActionSuccess('Contract sent successfully.');
       await loadPage();
     } catch (err) {
@@ -2268,10 +2270,16 @@ const StaffDetailPageV2 = () => {
                   <p className="text-xs text-slate-500 mb-3">
                     Send the Independent Contractor Agreement PDF to {profile.full_name || 'this staff member'} via WhatsApp.
                   </p>
+                  <select value={agreementLanguage} onChange={(e) => setAgreementLanguage(e.target.value)}
+                    className="mr-2 px-2 py-1.5 text-xs border border-slate-300 rounded-lg bg-white text-slate-700">
+                    <option value="">Select language…</option>
+                    <option value="en">English</option>
+                    <option value="si">සිංහල (Sinhala)</option>
+                  </select>
                   <button
                     type="button"
                     onClick={handleSendAgreement}
-                    disabled={sendingAgreement || !profile.mobile_number}
+                    disabled={sendingAgreement || !profile.mobile_number || !agreementLanguage}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-500 transition-colors disabled:opacity-60"
                   >
                     {sendingAgreement ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}

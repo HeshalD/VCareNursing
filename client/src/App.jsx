@@ -14,6 +14,8 @@ import { AuthProvider } from './context/AuthContext';
 import HospitalStaffingPage from './modules/public/HospitalStaffingPage';
 import ChildCarePage from './modules/public/ChildCarePage';
 import ElderlyCarePage from './modules/public/ElderlyCarePage';
+import DoctorVisitsPage from './modules/public/DoctorVisitsPage';
+import AmbulanceServicePage from './modules/public/AmbulanceServicePage';
 import ElderlyCareBookingPage from './modules/public/ElderlyCareBookingPage';
 import BookingSuccessPage from './modules/public/BookingSuccessPage';
 import WorkersTeamPage from './modules/public/service_team/WorkersTeamPage';
@@ -44,6 +46,8 @@ import PayablesAging from './modules/admin/reports/payables_aging';
 import ProfitLoss from './modules/admin/reports/profit_loss';
 import BalanceSheet from './modules/admin/reports/balance_sheet';
 import Settings from './modules/admin/settings/settings';
+import StaffMissingBankDetails from './modules/admin/user_managemnet/staff_missing_bank_details';
+import NotificationsMessages from './modules/admin/notifications/notifications_messages';
 import AdminLoginPage from './modules/admin/AdminLoginPage';
 import DeviceActivationPage from './modules/admin/DeviceActivationPage';
 import { AdminAuthProvider } from './context/AdminAuthContext';
@@ -144,6 +148,8 @@ function App() {
             <Route path="/services/child-care" element={<ChildCarePage />} />
             <Route path='/services/child-care/book' element={<BabyCareBookingPage/>}/>
             <Route path="/services/elderly-care" element={<ElderlyCarePage />} />
+            <Route path="/services/doctor-visits" element={<DoctorVisitsPage />} />
+            <Route path="/services/ambulance" element={<AmbulanceServicePage />} />
             <Route path="/services/elderly-care/book" element={<ElderlyCareBookingPage />} />
             <Route path="/services/view-staff" element={<ViewStaffPage />} />
             <Route path="/services/staff-profile/:id" element={<StaffProfile/>}/>
@@ -471,6 +477,16 @@ function App() {
             <Route path="/admin/bulk-import" element={
               <AdminAuthProvider>
                 <BulkImportPage />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/staff-missing-bank-details" element={
+              <AdminAuthProvider>
+                <StaffMissingBankDetails />
+              </AdminAuthProvider>
+            } />
+            <Route path="/admin/notifications" element={
+              <AdminAuthProvider>
+                <NotificationsMessages />
               </AdminAuthProvider>
             } />
             <Route path="/admin/settings" element={

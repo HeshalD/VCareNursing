@@ -120,6 +120,7 @@ const WorkerVerificationDetailsPage = () => {
   const [actionError, setActionError] = useState('');
 
   const [sendingAgreement, setSendingAgreement] = useState(false);
+  const [agreementLanguage, setAgreementLanguage] = useState('');
 
   const [sendingDocRequest, setSendingDocRequest] = useState(false);
   const [uploadingDoc, setUploadingDoc] = useState({ gn: false, police: false });
@@ -332,10 +333,11 @@ const WorkerVerificationDetailsPage = () => {
     setActionError('');
     try {
       apiClient.setToken(adminToken);
-      const res = await apiClient.sendApplicationAgreement(applicationId);
+      const res = await apiClient.sendApplicationAgreement(applicationId, agreementLanguage);
       setApplication(prev => ({
         ...prev,
         agreement_sent_at: res.agreement_sent_at || new Date().toISOString(),
+        agreement_language: agreementLanguage,
       }));
     } catch (err) {
       setActionError(err.message || 'Failed to send the agreement via WhatsApp.');
@@ -837,17 +839,25 @@ const WorkerVerificationDetailsPage = () => {
                     <Check className="w-3.5 h-3.5" /> Sent {formatDate(application.agreement_sent_at)}
                   </span>
                 ) : (
-                  <button onClick={handleSendAgreement} disabled={sendingAgreement || !application.mobile_number}
+                  <div className="flex items-center gap-2">
+                  <select value={agreementLanguage} onChange={(e) => setAgreementLanguage(e.target.value)}
+                    className="px-2 py-1.5 text-xs border border-slate-300 rounded-lg bg-white text-slate-700">
+                    <option value="">Select language…</option>
+                    <option value="en">English</option>
+                    <option value="si">සිංහල (Sinhala)</option>
+                  </select>
+                  <button onClick={handleSendAgreement} disabled={sendingAgreement || !application.mobile_number || !agreementLanguage}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-semibold rounded-lg hover:bg-indigo-500 transition-all disabled:opacity-60">
                     {sendingAgreement ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
                     Send Agreement
                   </button>
+                  </div>
                 )}
               </SectionHeader>
               <div className="px-5 py-4">
                 <p className="text-xs text-slate-500">
                   {application.agreement_sent_at
-                    ? `Independent Contractor Agreement sent to ${application.full_name} via WhatsApp.`
+                    ? `Independent Contractor Agreement${application.agreement_language ? ` (${application.agreement_language === 'si' ? 'Sinhala' : 'English'})` : ''} sent to ${application.full_name} via WhatsApp.`
                     : `Send the Independent Contractor Agreement PDF to ${application.full_name}${application.mobile_number ? ` (${formatMobileNumber(application.mobile_number)})` : ''} via WhatsApp.`}
                 </p>
               </div>

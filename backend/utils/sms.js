@@ -1,12 +1,11 @@
 const axios = require('axios');
 const { toMessagingDigits } = require('./phone');
 
-// TEMPORARY KILL SWITCH — SMS sending is blocked. Remove this block to re-enable.
-const MESSAGING_BLOCKED = true;
+const { isSmsEnabled } = require('./systemSettings');
 
 const sendSmsOtp = async (mobileNumber, otp) => {
-  if (MESSAGING_BLOCKED) {
-    console.log(`[SMS] BLOCKED (messaging disabled): OTP to ${mobileNumber}`);
+  if (!(await isSmsEnabled())) {
+    console.log(`[SMS] BLOCKED (disabled in admin settings): OTP to ${mobileNumber}`);
     return { blocked: true };
   }
   const number = toMessagingDigits(mobileNumber);
@@ -33,8 +32,8 @@ const sendSmsOtp = async (mobileNumber, otp) => {
 };
 
 const sendSms = async (mobileNumber, message) => {
-  if (MESSAGING_BLOCKED) {
-    console.log(`[SMS] BLOCKED (messaging disabled): to ${mobileNumber}`);
+  if (!(await isSmsEnabled())) {
+    console.log(`[SMS] BLOCKED (disabled in admin settings): to ${mobileNumber}`);
     return { blocked: true };
   }
   const number = toMessagingDigits(mobileNumber);

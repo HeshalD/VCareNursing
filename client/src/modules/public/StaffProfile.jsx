@@ -154,7 +154,7 @@ export default function StaffProfile() {
   const [reviews, setReviews] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [bookClicked, setBookClicked] = useState(false);
+  const goToServices = () => navigate('/', { state: { scrollTo: 'services' } });
   const [relatedStaff, setRelatedStaff] = useState([]);
   const [relatedLoading, setRelatedLoading] = useState(false);
 
@@ -529,12 +529,10 @@ export default function StaffProfile() {
               </div>
 
               <button
-                onClick={() => setBookClicked(true)}
-                className={`w-full py-3.5 rounded-xl text-[15px] font-bold flex items-center justify-center gap-2 transition-colors text-white ${
-                  bookClicked ? "bg-emerald-600 hover:bg-emerald-700" : "bg-blue-600 hover:bg-blue-700"
-                }`}
+                onClick={goToServices}
+                className="w-full py-3.5 rounded-xl text-[15px] font-bold flex items-center justify-center gap-2 transition-colors text-white bg-blue-600 hover:bg-blue-700"
               >
-                {bookClicked ? <><CheckCircle size={17} /> Requested!</> : <><Calendar size={17} /> Book Now</>}
+                <Calendar size={17} /> Book Now
               </button>
               <button className="w-full mt-2.5 py-3 bg-white text-slate-600 border border-slate-200 rounded-xl text-sm font-medium flex items-center justify-center gap-2 hover:bg-slate-50 transition-colors">
                 <Heart size={14} /> Save Profile
@@ -582,7 +580,7 @@ export default function StaffProfile() {
             Every VCare professional is identity-verified, credential-checked, and background-cleared — so your loved ones are always in safe hands.
           </p>
           <button
-            onClick={() => setBookClicked(true)}
+            onClick={goToServices}
             className="px-8 py-3.5 bg-white text-blue-700 rounded-full text-[15px] font-bold hover:bg-blue-50 transition-colors inline-flex items-center gap-2"
           >
             <Calendar size={16} /> Book {s.name.split(" ")[0]} today

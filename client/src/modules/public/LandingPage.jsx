@@ -17,6 +17,8 @@ import heroBg from '../../assets/images/Gemini_Generated_Image_5nmpua5nmpua5nmp.
 import elderyCareImg from '../../assets/images/eldery_care.webp';
 import babyCareImg from '../../assets/images/baby_care.webp';
 import homeNursingImg from '../../assets/images/home_nursing.webp';
+import doctorVisitImg from '../../assets/images/doctor_visit.PNG';
+import ambulanceImg from '../../assets/images/ambulance.PNG';
 import logoUrl from '../../assets/Logo/VCareLogo.png';
 import patternBg from '../../assets/images/abstract-seamless-geometric-shape-lines-pattern-design-background_84443-23990.png';
 
@@ -159,7 +161,8 @@ const ServiceGrid = () => {
     { title: 'Elderly Care', img: elderyCareImg, link: '/services/elderly-care' },
     { title: 'Child Care', img: babyCareImg, link: '/services/child-care' },
     { title: 'Home nursing', img: homeNursingImg, link: '/services/home-nursing' },
-
+    { title: 'Doctor Visits', img: doctorVisitImg, link: '/services/doctor-visits' },
+    { title: 'Ambulance Service', img: ambulanceImg, link: '/services/ambulance' },
   ];
 
   return (
@@ -169,9 +172,9 @@ const ServiceGrid = () => {
           Specialized care solutions for every need
         </h2>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto">
+        <div className="flex flex-wrap justify-center gap-6 max-w-5xl mx-auto">
           {services.map((service, index) => (
-            <Link key={index} to={service.link} className="block group">
+            <Link key={index} to={service.link} className="block group w-full md:w-[calc((100%-3rem)/3)]">
               <div className="bg-white rounded-[24px] p-6 shadow-[0_2px_10px_rgba(0,0,0,0.04)] hover:shadow-md transition-shadow h-full flex flex-col items-center">
                 <div className="w-full flex justify-between items-center mb-8">
                   <span className="text-slate-800 font-medium text-lg">{service.title}</span>
@@ -508,6 +511,17 @@ const LandingPage = () => {
       // Clear state so banners don't reappear on refresh/back
       navigate(location.pathname, { replace: true, state: {} });
     }
+  }, [location, navigate]);
+
+  // Scroll to a section when navigated here with state.scrollTo (e.g. "Book Now" on staff profile)
+  useEffect(() => {
+    const target = location.state?.scrollTo;
+    if (!target) return;
+    const timer = setTimeout(() => {
+      document.getElementById(target)?.scrollIntoView({ behavior: 'smooth' });
+      navigate(location.pathname, { replace: true, state: {} });
+    }, 100);
+    return () => clearTimeout(timer);
   }, [location, navigate]);
 
   return (

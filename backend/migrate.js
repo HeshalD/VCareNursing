@@ -457,6 +457,12 @@ async function runMigration() {
     ADD COLUMN IF NOT EXISTS agreement_sent_at TIMESTAMP WITH TIME ZONE;
   `);
 
+  // Which language version of the agreement was sent ('en' | 'si')
+  await db.query(`
+    ALTER TABLE staff_applications
+    ADD COLUMN IF NOT EXISTS agreement_language VARCHAR(5);
+  `);
+
   await db.query(`
     CREATE TABLE IF NOT EXISTS staff_app_otps (
       id SERIAL PRIMARY KEY,
@@ -3653,6 +3659,16 @@ async function runMigration() {
   // =========================================================
 
   await seedPettyCashAccount();
+
+  // Key/value system settings (messaging on/off switches, etc.)
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS system_settings (
+      setting_key VARCHAR(100) PRIMARY KEY,
+      setting_value JSONB NOT NULL,
+      updated_by UUID,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
 
   console.log('Migration completed successfully!');
 }

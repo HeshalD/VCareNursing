@@ -4,7 +4,7 @@ import {
   Settings, LogOut, Bell, Search,
   ShieldCheck, FileText, SendHorizontal, Stethoscope, Baby, Heart, CalendarDays, AlertTriangle, Wallet, Landmark,
   ChevronLeft, ChevronRight, ChevronDown, ClipboardList, History, HeartPulse, ArrowLeftRight, Banknote, Star, Lock, UserCog, CalendarClock, Briefcase, Receipt, CalendarOff, MonitorSmartphone,
-  Menu, X, ReceiptText, Package, Upload, Truck, KeySquare
+  Menu, X, ReceiptText, Package, Upload, Truck, KeySquare, MessageSquare
 } from 'lucide-react';
 import logo from '../../../assets/Logo/VCareLogo.png';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -42,7 +42,7 @@ const NAV_SECTIONS = [
       { icon: Users, label: 'Client Management', path: '/admin/users', match: (p) => p === '/admin/users' || p.startsWith('/admin/users/'), permKey: 'VIEW_USER_MANAGEMENT' },
       {
         icon: UserCog, label: 'Staff Management', path: '/admin/staff-management',
-        match: (p) => p === '/admin/staff-management' || p === '/admin/proxy-user-management'
+        match: (p) => p === '/admin/staff-management' || p === '/admin/proxy-user-management' || p === '/admin/staff-missing-bank-details'
           || p.startsWith('/admin/staff/') || p === '/admin/staff-roster' || p.startsWith('/admin/staff-history/'),
         permKey: 'VIEW_USER_MANAGEMENT',
       },
@@ -117,6 +117,7 @@ const NAV_SECTIONS = [
     section: 'System',
     icon: Settings,
     items: [
+      { icon: MessageSquare, label: 'Notifications & Messages', path: '/admin/notifications', permKey: 'VIEW_NOTIFICATIONS' },
       { icon: Lock, label: 'Permissions', path: '/admin/permissions', permKey: 'PERMISSIONS_MANAGE' },
       { icon: KeySquare, label: 'Roles', path: '/admin/roles', permKey: 'PERMISSIONS_MANAGE' },
       { icon: MonitorSmartphone, label: 'Active Sessions', path: '/admin/active-sessions', permKey: 'VIEW_ACTIVE_SESSIONS' },

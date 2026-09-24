@@ -645,6 +645,10 @@ exports.acceptApplication = async (req, res) => {
 // PDF to an approved applicant via WhatsApp.
 exports.sendApplicationAgreement = async (req, res) => {
   const { applicationId } = req.params;
+  const language = req.body?.language;
+  if (!['en', 'si'].includes(language)) {
+    return res.status(400).json({ message: 'Select the agreement language (en or si).' });
+  }
 
   try {
     const appResult = await db.query(
@@ -673,11 +677,11 @@ exports.sendApplicationAgreement = async (req, res) => {
       return res.status(400).json({ message: 'This applicant does not have a mobile number on file.' });
     }
 
-    await sendStaffAgreement(app.mobile_number, app.full_name);
+    await sendStaffAgreement(app.mobile_number, app.full_name, language);
 
     const updated = await db.query(
-      'UPDATE staff_applications SET agreement_sent_at = CURRENT_TIMESTAMP WHERE application_id = $1 RETURNING agreement_sent_at',
-      [applicationId]
+      'UPDATE staff_applications SET agreement_sent_at = CURRENT_TIMESTAMP, agreement_language = $2 WHERE application_id = $1 RETURNING agreement_sent_at',
+      [applicationId, language]
     );
 
     // Activity log (non-fatal)
@@ -690,7 +694,7 @@ exports.sendApplicationAgreement = async (req, res) => {
         actionType: 'APPLICATION_AGREEMENT_SENT',
         entityType: 'STAFF_APPLICATION',
         entityId: String(applicationId),
-        details: { applicant_name: app.full_name, mobile_number: app.mobile_number },
+        details: { applicant_name: app.full_name, mobile_number: app.mobile_number, language },
       });
     } catch (logErr) {
       console.error('Activity log failed (send agreement):', logErr.message);
@@ -712,6 +716,10 @@ exports.sendApplicationAgreement = async (req, res) => {
 // has the staff profile, not the originating application, to hand.
 exports.sendApplicationAgreementByStaffId = async (req, res) => {
   const { staff_profile_id } = req.params;
+  const language = req.body?.language;
+  if (!['en', 'si'].includes(language)) {
+    return res.status(400).json({ message: 'Select the agreement language (en or si).' });
+  }
 
   try {
     const staffRes = await db.query(
@@ -752,11 +760,11 @@ exports.sendApplicationAgreementByStaffId = async (req, res) => {
       });
     }
 
-    await sendStaffAgreement(mobile_number, full_name);
+    await sendStaffAgreement(mobile_number, full_name, language);
 
     const updated = await db.query(
-      'UPDATE staff_applications SET agreement_sent_at = CURRENT_TIMESTAMP WHERE application_id = $1 RETURNING agreement_sent_at',
-      [application_id]
+      'UPDATE staff_applications SET agreement_sent_at = CURRENT_TIMESTAMP, agreement_language = $2 WHERE application_id = $1 RETURNING agreement_sent_at',
+      [application_id, language]
     );
 
     try {
@@ -768,7 +776,7 @@ exports.sendApplicationAgreementByStaffId = async (req, res) => {
         actionType: 'APPLICATION_AGREEMENT_SENT',
         entityType: 'STAFF_APPLICATION',
         entityId: String(application_id),
-        details: { applicant_name: full_name, mobile_number },
+        details: { applicant_name: full_name, mobile_number, language },
       });
     } catch (logErr) {
       console.error('Activity log failed (send agreement):', logErr.message);

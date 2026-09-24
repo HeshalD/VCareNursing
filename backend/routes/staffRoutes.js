@@ -157,6 +157,28 @@ router.post('/login', staffAppController.staffLogin);
 // Change Password (for staff members)
 router.post('/change-password', protect, staffAppController.changeStaffPassword);
 
+// Admin: active staff with no active bank account on file
+router.get('/missing-bank-details', protect, requirePermission('VIEW_USER_MANAGEMENT'), async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT sp.staff_profile_id, sp.full_name, sp.designation, sp.current_status,
+              sp.profile_picture_url, u.mobile_number, sp.created_at
+       FROM staff_profiles sp
+       JOIN users u ON u.user_id = sp.user_id
+       WHERE sp.is_active = true AND u.is_active = true
+         AND NOT EXISTS (
+           SELECT 1 FROM staff_bank_accounts sba
+           WHERE sba.staff_profile_id = sp.staff_profile_id AND sba.is_active = true
+         )
+       ORDER BY sp.full_name ASC`
+    );
+    res.json({ success: true, data: result.rows });
+  } catch (err) {
+    console.error('missing-bank-details error:', err.message);
+    res.status(500).json({ success: false, message: 'Failed to load staff' });
+  }
+});
+
 // Public: Get all staff with optional filtering (for landing page)
 router.get('/', staffController.getAllStaff);
 
