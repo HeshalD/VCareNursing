@@ -871,8 +871,11 @@ const ModularQuoteBuilder = () => {
                     <tbody>
                       {lineItems.length === 0 && productLineItems.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="py-10 text-center text-[13px] text-gray-400">
-                            No items added. Select a preset above or add a custom item below.
+                          <td colSpan={6} className="py-12 text-center">
+                            <p className="text-[13px] text-gray-400">No items added yet</p>
+                            <p className="text-[12px] text-gray-300 mt-1">
+                              Search a saved preset above, or use the buttons below to add a charge, discount, product or rental
+                            </p>
                           </td>
                         </tr>
                       ) : (
@@ -933,87 +936,81 @@ const ModularQuoteBuilder = () => {
                 </div>
 
                 {/* Add-item row */}
-                <div className="px-4 py-3 flex flex-wrap items-center gap-4 border-b border-gray-100">
-                  {canAddRegistrationFee ? (
-                    <>
+                <div className="px-4 py-3.5 border-b border-gray-100">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {canAddRegistrationFee && (
                       <button
                         onClick={addRegistrationFeeItem}
-                        className="inline-flex items-center gap-1.5 text-[13px] text-amber-700 hover:text-amber-800 font-medium transition-colors"
+                        className="inline-flex items-center gap-1.5 text-[12.5px] font-medium px-3 py-1.5 rounded-full border border-amber-100 bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors"
                       >
                         <BadgeDollarSign className="w-3.5 h-3.5" />
-                        Add Registration Fee
+                        Registration Fee
                       </button>
-                      <span className="text-gray-200 select-none">|</span>
-                    </>
-                  ) : registrationFeeAlreadySettled && (
-                    <span className="text-[11px] text-gray-400">Registration fee already settled for this client</span>
-                  )}
-                  {canAddShiftRate && (
-                    <>
+                    )}
+                    {canAddShiftRate && (
                       <button
                         onClick={addShiftRateItem}
-                        className="inline-flex items-center gap-1.5 text-[13px] text-indigo-600 hover:text-indigo-800 font-medium transition-colors"
+                        className="inline-flex items-center gap-1.5 text-[12.5px] font-medium px-3 py-1.5 rounded-full border border-indigo-100 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors"
                       >
                         <Clock3 className="w-3.5 h-3.5" />
-                        Add Shift Rate
+                        Shift Rate
                       </button>
-                      <span className="text-gray-200 select-none">|</span>
-                    </>
-                  )}
-                  {canAddDailyRate && (
-                    <>
+                    )}
+                    {canAddDailyRate && (
                       <button
                         onClick={addDailyRateItem}
-                        className="inline-flex items-center gap-1.5 text-[13px] text-blue-700 hover:text-blue-900 font-medium transition-colors"
+                        className="inline-flex items-center gap-1.5 text-[12.5px] font-medium px-3 py-1.5 rounded-full border border-blue-100 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
                       >
                         <CalendarClock className="w-3.5 h-3.5" />
-                        {isVisitingModel ? 'Add Visit Fee' : 'Add Care Rate'}
+                        {isVisitingModel ? 'Visit Fee' : 'Care Rate'}
                       </button>
-                      <span className="text-gray-200 select-none">|</span>
-                    </>
-                  )}
-                  <button
-                    onClick={() => addItem('CHARGE')}
-                    className="inline-flex items-center gap-1.5 text-[13px] text-blue-600 hover:text-blue-800 font-medium transition-colors"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    Add Charge
-                  </button>
-                  <span className="text-gray-200 select-none">|</span>
-                  <button
-                    onClick={() => addItem('DISCOUNT')}
-                    className="inline-flex items-center gap-1.5 text-[13px] text-gray-500 hover:text-gray-700 font-medium transition-colors"
-                  >
-                    <Percent className="w-3.5 h-3.5" />
-                    Add Discount
-                  </button>
-                  {serviceRequest?.client_id ? (
-                    <>
-                      <span className="text-gray-200 select-none">|</span>
-                      <button
-                        onClick={addProductLine}
-                        className="inline-flex items-center gap-1.5 text-[13px] text-purple-600 hover:text-purple-800 font-medium transition-colors"
-                      >
-                        <ShoppingBag className="w-3.5 h-3.5" />
-                        Add Item
-                      </button>
-                      <span className="text-gray-200 select-none">|</span>
-                      <button
-                        onClick={addDepositLine}
-                        className="inline-flex items-center gap-1.5 text-[13px] text-amber-600 hover:text-amber-700 font-medium transition-colors"
-                      >
-                        <Package className="w-3.5 h-3.5" />
-                        Add Refundable Deposit
-                      </button>
-                    </>
-                  ) : (
-                    <span className="text-[11px] text-gray-400">Link this lead to a client account to add products or rentals</span>
-                  )}
-                  {skippedCount > 0 && (
-                    <span className="ml-auto text-[11px] text-gray-400">
-                      {skippedCount} item{skippedCount > 1 ? 's' : ''} with Rs. 0 will be excluded
-                    </span>
-                  )}
+                    )}
+                    <button
+                      onClick={() => addItem('CHARGE')}
+                      className="inline-flex items-center gap-1.5 text-[12.5px] font-medium px-3 py-1.5 rounded-full border border-blue-100 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Custom Charge
+                    </button>
+                    <button
+                      onClick={() => addItem('DISCOUNT')}
+                      className="inline-flex items-center gap-1.5 text-[12.5px] font-medium px-3 py-1.5 rounded-full border border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors"
+                    >
+                      <Percent className="w-3.5 h-3.5" />
+                      Discount
+                    </button>
+                    {serviceRequest?.client_id && (
+                      <>
+                        <button
+                          onClick={addProductLine}
+                          className="inline-flex items-center gap-1.5 text-[12.5px] font-medium px-3 py-1.5 rounded-full border border-purple-100 bg-purple-50 text-purple-700 hover:bg-purple-100 transition-colors"
+                        >
+                          <ShoppingBag className="w-3.5 h-3.5" />
+                          Product / Rental
+                        </button>
+                        <button
+                          onClick={addDepositLine}
+                          className="inline-flex items-center gap-1.5 text-[12.5px] font-medium px-3 py-1.5 rounded-full border border-amber-100 bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors"
+                        >
+                          <Package className="w-3.5 h-3.5" />
+                          Refundable Deposit
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+                    {registrationFeeAlreadySettled && (
+                      <span className="text-[11px] text-gray-400">Registration fee already settled for this client</span>
+                    )}
+                    {!serviceRequest?.client_id && (
+                      <span className="text-[11px] text-gray-400">Link this lead to a client account to add products or rentals</span>
+                    )}
+                    {skippedCount > 0 && (
+                      <span className="text-[11px] text-gray-400 ml-auto">
+                        {skippedCount} item{skippedCount > 1 ? 's' : ''} with Rs. 0 will be excluded
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Totals + Terms */}

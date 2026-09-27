@@ -218,7 +218,14 @@ exports.listInvoices = async (req, res) => {
   const { category, status, client_id, walk_in_customer_id, quote_id } = req.query;
 
   try {
-    const conditions = [];
+    // Registration-fee line items get their own dedicated invoice the moment
+    // they're settled (see quoteController.ensureRegFeeInvoiceRecord) and are
+    // shown in the client's "Registration Fee Invoices" list — a LINE_ITEM
+    // invoice manually generated for that same line item (see
+    // invoiceController.generateLineItemInvoice /
+    // PaymentAllocationModal.handleCreateLineItemInvoice) would just be a
+    // duplicate document here, so it's excluded from this listing entirely.
+    const conditions = [`NOT (i.line_item_id IS NOT NULL AND sli.is_registration_fee = true)`];
     const params = [];
 
     if (category) {
@@ -250,12 +257,30 @@ exports.listInvoices = async (req, res) => {
                    THEN cp.company_name ELSE cp.full_name END as client_name,
               u.mobile_number as client_mobile,
               wc.full_name as walk_in_name, wc.mobile_number as walk_in_mobile,
-              COALESCE((SELECT SUM(ip.amount) FROM invoice_payments ip WHERE ip.invoice_id = i.invoice_id), 0) as amount_paid
+              COALESCE((SELECT SUM(ip.amount) FROM invoice_payments ip WHERE ip.invoice_id = i.invoice_id), 0) as amount_paid,
+              -- What this invoice is actually for, so the list doesn't just show
+              -- an amount with no context: the rental's product+unit, the single
+              -- line item it was raised for, or (for a whole PRODUCT-quote
+              -- invoice) every non-registration-fee item on that quote.
+              CASE
+                WHEN i.rental_agreement_id IS NOT NULL THEN rp.name || ' — Unit ' || ru.unit_code
+                WHEN i.line_item_id IS NOT NULL THEN sli.description
+                ELSE qli_agg.items_summary
+              END AS item_summary
        FROM invoices i
        LEFT JOIN quotations q ON i.quote_id = q.quote_id
        LEFT JOIN client_profiles cp ON i.client_id = cp.client_profile_id
        LEFT JOIN users u ON cp.user_id = u.user_id
        LEFT JOIN walk_in_customers wc ON i.walk_in_customer_id = wc.walk_in_customer_id
+       LEFT JOIN rental_agreements ra ON i.rental_agreement_id = ra.rental_agreement_id
+       LEFT JOIN products rp ON ra.product_id = rp.product_id
+       LEFT JOIN rental_units ru ON ra.unit_id = ru.unit_id
+       LEFT JOIN quote_line_items sli ON sli.line_item_id = i.line_item_id
+       LEFT JOIN LATERAL (
+         SELECT STRING_AGG(qli.description, ', ' ORDER BY qli.sort_order) AS items_summary
+         FROM quote_line_items qli
+         WHERE qli.quote_id = i.quote_id AND qli.is_registration_fee = false
+       ) qli_agg ON i.rental_agreement_id IS NULL AND i.line_item_id IS NULL
        ${where}
        ORDER BY i.created_at DESC`,
       params

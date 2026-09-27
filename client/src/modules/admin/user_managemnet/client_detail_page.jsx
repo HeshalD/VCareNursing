@@ -1702,6 +1702,7 @@ const ClientDetailPage = () => {
                         <th className="px-4 py-3 text-left">Date Sent</th>
                         <th className="px-4 py-3 text-left">Invoice Code</th>
                         <th className="px-4 py-3 text-left">Billed To</th>
+                        <th className="px-4 py-3 text-left">Period Covered</th>
                         <th className="px-4 py-3 text-left">Bank Account</th>
                         <th className="px-4 py-3 text-left">Status</th>
                         <th className="px-4 py-3 text-right">Amount</th>
@@ -1716,6 +1717,11 @@ const ClientDetailPage = () => {
                           <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{formatDateTime(inv.created_at)}</td>
                           <td className="px-4 py-3 font-mono text-xs text-gray-600">{inv.invoice_code}</td>
                           <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{inv.billed_to_name || '-'}</td>
+                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
+                            {inv.period_start && inv.period_end
+                              ? `${formatDate(inv.period_start)} – ${formatDate(inv.period_end)}`
+                              : '—'}
+                          </td>
                           <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
                             {[inv.bank_account_nickname, inv.bank_name].filter(Boolean).join(' â€” ') || 'â€”'}
                           </td>
@@ -1921,6 +1927,7 @@ const ClientDetailPage = () => {
                       <tr>
                         <th className="px-4 py-3 text-left">Invoice Code</th>
                         <th className="px-4 py-3 text-left">Billed To</th>
+                        <th className="px-4 py-3 text-left">Item(s)</th>
                         <th className="px-4 py-3 text-left">Category</th>
                         <th className="px-4 py-3 text-left">Status</th>
                         <th className="px-4 py-3 text-right">Amount</th>
@@ -1936,6 +1943,7 @@ const ClientDetailPage = () => {
                         <tr key={inv.invoice_id} className="hover:bg-gray-50 transition-colors">
                           <td className="px-4 py-3 font-mono text-xs text-gray-600 whitespace-nowrap">{inv.invoice_code}</td>
                           <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{inv.client_name || inv.walk_in_name || '-'}</td>
+                          <td className="px-4 py-3 text-gray-700 max-w-xs truncate" title={inv.item_summary || ''}>{inv.item_summary || '—'}</td>
                           <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{inv.category}</td>
                           <td className="px-4 py-3">
                             <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${PRODUCT_INVOICE_STATUS_COLORS[inv.status] || 'bg-gray-100 text-gray-600'}`}>
@@ -1999,7 +2007,7 @@ const ClientDetailPage = () => {
                         <th className="px-4 py-3 text-left">Generated</th>
                         <th className="px-4 py-3 text-left">Invoice Code</th>
                         <th className="px-4 py-3 text-left">Billed To</th>
-                        <th className="px-4 py-3 text-left">Estimate No.</th>
+                        <th className="px-4 py-3 text-left">Quotation</th>
                         <th className="px-4 py-3 text-right">Amount</th>
                         <th className="px-4 py-3 text-left">Actions</th>
                       </tr>
@@ -2419,6 +2427,7 @@ const ClientDetailPage = () => {
                       <tr>
                         <th className="px-4 py-3 text-left">Invoice Code</th>
                         <th className="px-4 py-3 text-left">Billed To</th>
+                        <th className="px-4 py-3 text-left">Item(s)</th>
                         <th className="px-4 py-3 text-left">Category</th>
                         <th className="px-4 py-3 text-left">Status</th>
                         <th className="px-4 py-3 text-right">Amount</th>
@@ -2434,6 +2443,7 @@ const ClientDetailPage = () => {
                         <tr key={inv.invoice_id} className="hover:bg-gray-50 transition-colors">
                           <td className="px-4 py-3 font-mono text-xs text-gray-600 whitespace-nowrap">{inv.invoice_code}</td>
                           <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{inv.client_name || inv.walk_in_name || '-'}</td>
+                          <td className="px-4 py-3 text-gray-700 max-w-xs truncate" title={inv.item_summary || ''}>{inv.item_summary || '—'}</td>
                           <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{inv.category}</td>
                           <td className="px-4 py-3">
                             <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${PRODUCT_INVOICE_STATUS_COLORS[inv.status] || 'bg-gray-100 text-gray-600'}`}>

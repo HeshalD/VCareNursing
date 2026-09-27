@@ -23,6 +23,16 @@ const getStatus = (totalAmount, totalPaid) => {
   return 'PARTIALLY_PAID';
 };
 
+// Payer name as typed on the request doesn't carry the client's honorific —
+// it lives separately on client_profiles, so it's prefixed for display only
+// when the payer wasn't already typed with one (same rule as quotations.jsx).
+const withHonorific = (honorific, name) => {
+  if (!name) return name;
+  if (!honorific) return name;
+  if (name.trim().toLowerCase().startsWith(honorific.trim().toLowerCase())) return name;
+  return `${honorific} ${name}`;
+};
+
 const PAYMENT_STATUS_CONFIG = {
   FULLY_PAID: { dot: 'bg-emerald-500', text: 'text-emerald-700', label: 'Fully Paid' },
   PARTIALLY_PAID: { dot: 'bg-amber-400', text: 'text-amber-700', label: 'Partially Paid' },
@@ -464,7 +474,18 @@ const QuotationDetailsPage = () => {
                     <FileText className="h-3.5 w-3.5" />
                     <span className="text-xs">{quote.estimate_number}</span>
                   </div>
-                  <h2 className="mt-1 text-lg font-semibold text-slate-900">{quote.payer_name}</h2>
+                  {quote.request_client_id ? (
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/admin/users/${quote.request_client_id}/detail`)}
+                      title="View client profile"
+                      className="mt-1 text-left text-lg font-semibold text-slate-900 hover:text-blue-600 hover:underline transition-colors"
+                    >
+                      {withHonorific(quote.client_honorific, quote.payer_name)}
+                    </button>
+                  ) : (
+                    <h2 className="mt-1 text-lg font-semibold text-slate-900">{withHonorific(quote.client_honorific, quote.payer_name)}</h2>
+                  )}
                   <p className="text-sm text-slate-500">{quote.patient_name} · {quote.service_type}</p>
                 </div>
                 <StatusDot config={PAYMENT_STATUS_CONFIG} status={status} />
@@ -679,7 +700,18 @@ const QuotationDetailsPage = () => {
                 <h3 className="text-sm font-semibold text-slate-900">Details</h3>
               </div>
               <div className="p-5 space-y-2 text-sm">
-                <Row label="Payer" value={quote.payer_name} />
+                <Row
+                  label="Payer"
+                  value={quote.request_client_id ? (
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/admin/users/${quote.request_client_id}/detail`)}
+                      className="font-medium text-blue-600 hover:underline"
+                    >
+                      {withHonorific(quote.client_honorific, quote.payer_name)}
+                    </button>
+                  ) : withHonorific(quote.client_honorific, quote.payer_name)}
+                />
                 <Row label="Mobile" value={formatMobileNumber(quote.payer_mobile)} />
                 <Row label="Service" value={quote.service_type} />
                 <Row label="Request Status" value={quote.request_status || 'N/A'} />

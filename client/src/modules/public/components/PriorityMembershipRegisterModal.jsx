@@ -39,8 +39,7 @@ const validate = (f) => {
   if (!f.full_name.trim()) e.full_name = 'Full name is required';
   else if (f.full_name.trim().length < 5 || f.full_name.trim().length > 30) e.full_name = 'Full name must be 5 to 30 characters';
   else if (!/^[a-zA-Z\s]+$/.test(f.full_name)) e.full_name = 'Full name should contain only letters';
-  if (!f.email.trim()) e.email = 'Email address is required';
-  else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email)) e.email = 'Valid email address is required';
+  if (f.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email)) e.email = 'Valid email address is required';
   if (!f.phone) e.phone = 'Mobile number is required';
   else if (!isValidPhoneNumber(f.phone)) e.phone = 'Enter a valid mobile number';
   if (!f.gender) e.gender = 'Gender is required';
@@ -133,7 +132,7 @@ const PriorityMembershipRegisterModal = ({ isOpen, onClose }) => {
         verification_token: ver.verification_token,
         mobile_number: form.phone,
         full_name: form.full_name.trim(),
-        email: form.email.trim(),
+        email: form.email.trim() || undefined,
         gender: form.gender,
         honorific: form.honorific || undefined,
         client_type: form.client_type,
@@ -274,7 +273,7 @@ const PriorityMembershipRegisterModal = ({ isOpen, onClose }) => {
                     </div>
                   </Field>
 
-                  <Field label="Email Address" error={errors.email}>
+                  <Field label={<>Email Address <span className="text-slate-400 font-normal">(optional)</span></>} error={errors.email}>
                     <div className="relative">
                       <input type="email" className={`${inputCls(errors.email)} pr-12`} placeholder="name@example.com"
                         value={form.email} onChange={(e) => set('email', e.target.value)} />

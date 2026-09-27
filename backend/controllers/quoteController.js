@@ -742,6 +742,7 @@ exports.getQuoteWithLineItems = async (req, res) => {
         const result = await db.query(`
             SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, s.service_model,
                 s.client_id as request_client_id,
+                cp.honorific as client_honorific,
                 pq.quote_id as product_quote_id,
                 COALESCE(json_agg(
                     json_build_object(
@@ -758,10 +759,11 @@ exports.getQuoteWithLineItems = async (req, res) => {
                 ) FILTER (WHERE li.line_item_id IS NOT NULL), '[]') as line_items
             FROM quotations q
             JOIN service_requests s ON q.request_id = s.request_id
+            LEFT JOIN client_profiles cp ON s.client_id = cp.client_profile_id
             LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
             LEFT JOIN quotations pq ON pq.linked_quote_id = q.quote_id AND pq.quote_type = 'PRODUCT'
             WHERE q.quote_id = $1
-            GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, s.service_model, s.client_id, pq.quote_id
+            GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type, s.service_model, s.client_id, cp.honorific, pq.quote_id
         `, [quote_id]);
 
         if (result.rows.length === 0) {
@@ -1270,10 +1272,15 @@ async function ensureRegFeeInvoiceRecord(serviceQuoteId, { clientId, registratio
     );
     if (existing.rows.length > 0) {
         // Created as SENT when a Priority Membership quotation went out — the payment
-        // that just settled it flips it to PAID.
+        // that just settled it flips it to PAID. settleRegistrationFee has already
+        // stamped client_profiles.reg_fee_paid_at/reg_fee_expires_at by this point
+        // (see paymentTrackingController.recordPayment), so copy that same window.
         await db.query(
-            `UPDATE client_reg_fee_invoices SET status = 'PAID' WHERE invoice_id = $1 AND status <> 'PAID'`,
-            [existing.rows[0].invoice_id]
+            `UPDATE client_reg_fee_invoices crfi SET status = 'PAID',
+                    period_start = cp.reg_fee_paid_at, period_end = cp.reg_fee_expires_at
+             FROM client_profiles cp
+             WHERE crfi.invoice_id = $1 AND cp.client_profile_id = $2 AND crfi.status <> 'PAID'`,
+            [existing.rows[0].invoice_id, clientId]
         );
         return;
     }
@@ -1303,8 +1310,9 @@ async function ensureRegFeeInvoiceRecord(serviceQuoteId, { clientId, registratio
         });
 
         await db.query(
-            `INSERT INTO client_reg_fee_invoices (client_id, invoice_code, amount, pdf_url, bank_account_id, status)
-             VALUES ($1, $2, $3, $4, $5, 'PAID')`,
+            `INSERT INTO client_reg_fee_invoices (client_id, invoice_code, amount, pdf_url, bank_account_id, status, period_start, period_end)
+             SELECT $1, $2, $3, $4, $5, 'PAID', cp.reg_fee_paid_at, cp.reg_fee_expires_at
+             FROM client_profiles cp WHERE cp.client_profile_id = $1`,
             [clientId, invoiceCode, feeAmount, pdfUrl, bank.account_id || null]
         );
     } catch (err) {

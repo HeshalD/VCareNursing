@@ -1,6 +1,7 @@
 import React from 'react';
 import { Trash2 } from 'lucide-react';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
+import ProductAutocomplete from './ProductAutocomplete';
 
 const fmt = (n) =>
   Number(n || 0).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -15,12 +16,13 @@ const ProductLineItemRow = ({ item, index, products, rentalUnits, canDelete, onU
 
   const selectProduct = (productId) => {
     const product = products.find((p) => p.product_id === productId);
-    set({
-      product_id: productId,
-      description: product ? product.name : '',
-      unit_price: product ? product.price : '',
-      unit_id: '',
-    });
+    if (product) {
+      set({ product_id: productId, description: product.name, unit_price: product.price, unit_id: '' });
+    } else {
+      // Detaching to a free-text custom item — keep whatever description the
+      // admin has already typed instead of wiping it.
+      set({ product_id: '', unit_id: '' });
+    }
   };
 
   if (item.isStandaloneDeposit) {
@@ -74,23 +76,12 @@ const ProductLineItemRow = ({ item, index, products, rentalUnits, canDelete, onU
       <tr className="group border-b border-gray-100 hover:bg-gray-50/60 transition-colors">
         <td className="py-3 pl-4 w-8 text-[12px] text-gray-300 select-none">{index + 1}</td>
         <td className="py-2 pr-3">
-          <select
-            value={item.product_id}
-            onChange={(e) => selectProduct(e.target.value)}
-            className="block mb-0.5 text-[11px] text-gray-400 bg-transparent border-0 outline-none focus:ring-0 p-0"
-          >
-            <option value="">Custom item…</option>
-            {products.map((p) => (
-              <option key={p.product_id} value={p.product_id}>{p.name}{p.product_type === 'RENTAL' ? ' (Rental)' : p.product_type === 'ONE_TIME_SERVICE' ? ' (Service)' : ''}</option>
-            ))}
-          </select>
-          <input
-            value={item.description || ''}
-            onChange={(e) => set({ description: e.target.value })}
-            placeholder="Type to enter item details"
-            className="w-full text-sm text-gray-800 bg-transparent placeholder-gray-300 border-0 outline-none focus:ring-0 p-0"
+          <ProductAutocomplete
+            products={products}
+            item={item}
+            onSelectProduct={selectProduct}
+            onChangeDescription={(description) => set({ description })}
           />
-          {rental && <span className="text-[11px] text-purple-600 font-medium">Rental</span>}
         </td>
         <td className="py-2 pr-3 w-24">
           <input

@@ -2839,6 +2839,14 @@ async function runMigration() {
   // send, whose timestamp is created_at).
   await db.query(`ALTER TABLE client_reg_fee_invoices ADD COLUMN IF NOT EXISTS whatsapp_resent_at TIMESTAMP WITH TIME ZONE`);
 
+  // The 365-day membership window this invoice's payment covers — set once the
+  // invoice actually flips to PAID (copied from client_profiles.reg_fee_paid_at/
+  // reg_fee_expires_at at that moment, see clientController.updateRegFeeStatus/
+  // verifyRegFeePayment/backdateRegFeePayment and quoteController.ensureRegFeeInvoiceRecord).
+  // Left NULL for invoices still SENT/PENDING — there's no settled period yet.
+  await db.query(`ALTER TABLE client_reg_fee_invoices ADD COLUMN IF NOT EXISTS period_start TIMESTAMP WITH TIME ZONE`);
+  await db.query(`ALTER TABLE client_reg_fee_invoices ADD COLUMN IF NOT EXISTS period_end TIMESTAMP WITH TIME ZONE`);
+
   // Temporary staging table for registrations awaiting OTP verification.
   // Rows are promoted to users + client_profiles on successful OTP verify, then deleted.
   await db.query(`

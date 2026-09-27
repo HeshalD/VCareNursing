@@ -136,7 +136,11 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
         // Care-rate/shift-rate lines are invoiced strictly through the booking's
         // own day-by-day invoice-decision flow, never here.
         && li.item_subtype !== 'RATE_DAILY'
-        && li.item_subtype !== 'RATE_SHIFT');
+        && li.item_subtype !== 'RATE_SHIFT'
+        // The registration fee gets its own dedicated invoice as soon as it's
+        // settled (see quoteController.ensureRegFeeInvoiceRecord) — offering it
+        // here too would just let an admin create a duplicate document for it.
+        && !li.is_registration_fee);
 
       const quoteIds = [quoteId, ...(pQuoteId ? [pQuoteId] : [])];
       const invoiceLists = await Promise.all(quoteIds.map((id) => apiClient.getLineItemInvoices(id)));
@@ -169,8 +173,9 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
   };
 
   // Bulk-creates invoices for every not-yet-invoiced line item currently shown
-  // (registration fee, other charges, products, rentals, deposits — rate lines
-  // are already excluded from `lineItems` itself, see loadLineItemsForInvoicing).
+  // (other charges, products, rentals, deposits — rate lines and the
+  // registration fee are already excluded from `lineItems` itself, see
+  // loadLineItemsForInvoicing).
   const handleCreateAllInvoices = async () => {
     const uninvoicedIds = lineItems.filter((li) => !li.invoice).map((li) => li.line_item_id);
     if (uninvoicedIds.length === 0) return;

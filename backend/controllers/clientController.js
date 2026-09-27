@@ -2223,9 +2223,9 @@ exports.updateRegFeeStatus = async (req, res) => {
       }
       try {
         await db.query(
-          `UPDATE client_reg_fee_invoices SET status = 'PAID'
+          `UPDATE client_reg_fee_invoices SET status = 'PAID', period_start = $2, period_end = $3
            WHERE client_id = $1 AND status = 'SENT'`,
-          [client_id]
+          [client_id, paidAt, expiresAt]
         );
       } catch (invErr) {
         console.error('Failed to sync registration fee invoice status:', invErr.message);
@@ -2324,8 +2324,10 @@ exports.verifyRegFeePayment = async (req, res) => {
     }
     try {
       await db.query(
-        `UPDATE client_reg_fee_invoices SET status = 'PAID'
-         WHERE client_id = $1 AND status = 'SENT'`,
+        `UPDATE client_reg_fee_invoices crfi SET status = 'PAID',
+                period_start = cp.reg_fee_paid_at, period_end = cp.reg_fee_expires_at
+         FROM client_profiles cp
+         WHERE cp.client_profile_id = $1 AND crfi.client_id = $1 AND crfi.status = 'SENT'`,
         [client_id]
       );
     } catch (invErr) {
@@ -2431,9 +2433,9 @@ exports.backdateRegFeePayment = async (req, res) => {
 
     try {
       await db.query(
-        `UPDATE client_reg_fee_invoices SET status = 'PAID'
+        `UPDATE client_reg_fee_invoices SET status = 'PAID', period_start = $2, period_end = $3
          WHERE client_id = $1 AND status = 'SENT'`,
-        [client_id]
+        [client_id, paidAt, expiresAt]
       );
     } catch (invErr) {
       console.error('Failed to sync registration fee invoice status:', invErr.message);
@@ -2819,7 +2821,7 @@ exports.getClientRegFeeInvoices = async (req, res) => {
   try {
     const result = await db.query(
       `SELECT crfi.invoice_id, crfi.invoice_code, crfi.amount, crfi.pdf_url, crfi.status, crfi.created_at,
-              crfi.whatsapp_resent_at,
+              crfi.whatsapp_resent_at, crfi.period_start, crfi.period_end,
               ba.account_nickname AS bank_account_nickname, ba.bank_name,
               CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
                    THEN cp.company_name ELSE cp.full_name END AS billed_to_name

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Settings, Search, ChevronDown } from 'lucide-react';
+import { Settings, Search, ChevronDown } from 'lucide-react';
 
 const PresetItemSelector = ({ presets = [], onSelectPreset, onManagePresets, loading = false }) => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -9,6 +9,15 @@ const PresetItemSelector = ({ presets = [], onSelectPreset, onManagePresets, loa
     preset.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     preset.description?.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  const handleSearchKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      setShowDropdown(false);
+    } else if (e.key === 'Enter' && filteredPresets.length > 0) {
+      e.preventDefault();
+      handleSelectPreset(filteredPresets[0]);
+    }
+  };
 
   const groupedPresets = filteredPresets.reduce((groups, preset) => {
     const type = preset.item_type;
@@ -60,8 +69,8 @@ const PresetItemSelector = ({ presets = [], onSelectPreset, onManagePresets, loa
           onMouseEnter={e => !loading && (e.currentTarget.style.background = '#0C447C')}
           onMouseLeave={e => !loading && (e.currentTarget.style.background = '#185FA5')}
         >
-          <Plus size={15} />
-          Add preset item
+          <Search size={15} />
+          Search saved items
           <ChevronDown
             size={14}
             style={{
@@ -135,7 +144,8 @@ const PresetItemSelector = ({ presets = [], onSelectPreset, onManagePresets, loa
                   type="text"
                   value={searchTerm}
                   onChange={e => setSearchTerm(e.target.value)}
-                  placeholder="Search presets…"
+                  onKeyDown={handleSearchKeyDown}
+                  placeholder="Search saved items by name…"
                   autoFocus
                   style={{
                     width: '100%',
