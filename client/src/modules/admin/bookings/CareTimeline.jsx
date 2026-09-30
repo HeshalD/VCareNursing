@@ -639,7 +639,10 @@ const CareTimeline = ({
       const decidedBy = [...new Set(salaryRecs.filter((r) => r.decided_by_name).map((r) => r.decided_by_name))].join(', ') || null;
       const amount = salaryRecs.reduce((sum, r) => sum + (r.salary_status === 'PAID' ? Number(r.salary_amount || 0) : 0), 0);
       salary = { status, decidedBy, amount };
-    } else if (manualSalaryDay) {
+    } else if (manualSalaryDay && serviceModel !== 'LIVE_IN') {
+      // LIVE_IN salary is paid automatically every night, so a day with no attendance
+      // record is simply not paid yet — not something the admin has to act on. Real
+      // PENDING rows (first/last day, mid-swap) still surface above.
       salary = { status: 'PENDING', decidedBy: null, amount: 0 };
     }
     const invRec = invoiceByDate.get(dateISO);

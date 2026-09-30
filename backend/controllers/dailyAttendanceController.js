@@ -1397,6 +1397,175 @@ exports.revokeStaffSalaryRange = async (req, res) => {
     }
 };
 
+// ─── LIVE_IN: mark absent + revoke salary (date list / range) ──────────────────
+// LIVE_IN staff are auto-paid every day by the nightly cron, so an admin never marks
+// them present — they only step in for the exceptions. This is that exception tool:
+// for each selected date it marks the staff member ABSENT and takes back any salary
+// already paid for it. Staff side only; the client invoice is left alone.
+
+const expandDateSelection = ({ dates, from, to }) => {
+    if (Array.isArray(dates) && dates.length > 0) {
+        if (dates.length > 366 || !dates.every(d => ISO_DATE.test(d || ''))) return null;
+        return [...new Set(dates)].sort();
+    }
+    if (!ISO_DATE.test(from || '') || !ISO_DATE.test(to || '') || from > to) return null;
+    const out = [];
+    for (let d = new Date(`${from}T00:00:00Z`); d <= new Date(`${to}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)) {
+        out.push(d.toISOString().slice(0, 10));
+        if (out.length > 366) return null;
+    }
+    return out;
+};
+
+/**
+ * @route   POST /api/bookings/:booking_id/attendance/absent-range
+ * @desc    LIVE_IN only. Marks the assignment's staff member ABSENT for each selected
+ *          date and reverses any salary already paid for it. Dates outside the
+ *          assignment's service span, and days already marked absent / skipped /
+ *          revoked, are reported back in `skipped` rather than failing the request.
+ * @access  Private (ATTENDANCE_MARK_ABSENT)
+ * @body    assignment_id, dates[] or from/to (YYYY-MM-DD), reason (required)
+ */
+exports.markAbsentRange = async (req, res) => {
+    const { booking_id } = req.params;
+    const { assignment_id, dates, from, to, reason } = req.body;
+
+    const selected = expandDateSelection({ dates, from, to });
+    if (!assignment_id) {
+        return res.status(400).json({ status: 'error', message: 'assignment_id is required' });
+    }
+    if (!selected) {
+        return res.status(400).json({ status: 'error', message: 'Valid dates, or from/to (YYYY-MM-DD, from <= to, max 366 days), are required' });
+    }
+    if (!reason || !reason.trim()) {
+        return res.status(400).json({ status: 'error', message: 'A reason is required' });
+    }
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const bookingRes = await client.query(
+            `SELECT booking_id, service_model FROM bookings WHERE booking_id = $1 FOR UPDATE`,
+            [booking_id]
+        );
+        if (bookingRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Booking not found' });
+        }
+        if (bookingRes.rows[0].service_model !== 'LIVE_IN') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ status: 'error', message: 'Mark absent + revoke salary is only available for LIVE_IN bookings' });
+        }
+
+        const assignmentRes = await client.query(
+            `SELECT assignment_id, staff_profile_id,
+                    service_start_date::text AS service_start_date,
+                    service_end_date::text AS service_end_date
+             FROM booking_staff_assignments
+             WHERE assignment_id = $1 AND booking_id = $2`,
+            [assignment_id, booking_id]
+        );
+        if (assignmentRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ status: 'error', message: 'Assignment not found for this booking' });
+        }
+        const assignment = assignmentRes.rows[0];
+
+        const decidedByName = await getDeciderName(req.user?.user_id);
+        const marked = [];
+        const skipped = [];
+        let totalReversed = 0;
+
+        for (const service_date of selected) {
+            if (assignment.service_start_date && service_date < assignment.service_start_date) {
+                skipped.push({ service_date, reason: 'Before this staff member started' });
+                continue;
+            }
+            if (assignment.service_end_date && service_date > assignment.service_end_date) {
+                skipped.push({ service_date, reason: 'After this staff member left' });
+                continue;
+            }
+
+            const existingRes = await client.query(
+                `SELECT attendance_id, attendance_status, salary_status, salary_amount
+                 FROM staff_daily_attendance
+                 WHERE assignment_id = $1 AND service_date = $2 AND reschedule_id IS NULL
+                 FOR UPDATE`,
+                [assignment_id, service_date]
+            );
+            const existing = existingRes.rows[0] || null;
+
+            if (existing && (existing.salary_status === 'SKIPPED' || existing.salary_status === 'REVOKED')) {
+                skipped.push({ service_date, reason: `Already ${existing.salary_status.toLowerCase()}` });
+                continue;
+            }
+
+            if (existing && existing.salary_status === 'PAID') {
+                const amount = Number(existing.salary_amount || 0);
+                let reversalTransactionId = null;
+                if (amount > 0) {
+                    reversalTransactionId = await reverseStaffSalary(client, {
+                        staff_profile_id: assignment.staff_profile_id,
+                        booking_id,
+                        amount,
+                        notes: `Reversal of ${service_date} salary — marked absent: ${reason.trim()}`
+                    });
+                }
+                await client.query(
+                    `UPDATE staff_daily_attendance
+                     SET attendance_status = 'ABSENT',
+                         salary_status = 'REVOKED',
+                         reversal_transaction_id = $1,
+                         revoked_at = NOW(),
+                         revoked_by_user_id = $2,
+                         revoked_by_name = $3,
+                         revoke_reason = $4,
+                         notes = $4,
+                         updated_at = NOW()
+                     WHERE attendance_id = $5`,
+                    [reversalTransactionId, req.user?.user_id || null, decidedByName, reason.trim(), existing.attendance_id]
+                );
+                totalReversed += amount;
+                marked.push({ service_date, salary_reversed: amount });
+                continue;
+            }
+
+            // No row yet, or a PENDING one — nothing was paid, so just record the absence.
+            await applyAttendanceException(client, {
+                booking_id, assignment_id, service_date, shift_slot_id: null,
+                attendance_status: 'ABSENT', notes: reason.trim(),
+                deciderUserId: req.user?.user_id, deciderName: decidedByName,
+            });
+            marked.push({ service_date, salary_reversed: 0 });
+        }
+
+        await client.query('COMMIT');
+
+        if (marked.length > 0) {
+            logActivity({
+                actorUserId: req.user?.user_id,
+                actorRole: req.user?.role,
+                actionType: 'STAFF_MARKED_ABSENT',
+                entityType: 'BOOKING',
+                entityId: String(booking_id),
+                details: { assignment_id, reason: reason.trim(), service_dates: marked.map(m => m.service_date), total_salary_reversed: totalReversed },
+            }).catch(err => console.error('Activity log failed:', err));
+        }
+
+        res.json({ status: 'success', data: { marked, skipped, total_salary_reversed: totalReversed } });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        if (error.statusCode) {
+            return res.status(error.statusCode).json({ status: 'error', message: error.message });
+        }
+        console.error('Mark absent range error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to mark the selected days absent' });
+    } finally {
+        client.release();
+    }
+};
+
 // ─── Amount corrections ───────────────────────────────────────────────────────
 // Restating a wrong figure on an already-decided day. Distinct from revokeDays
 // above: a revoke cancels the day and hands the money back under a settlement

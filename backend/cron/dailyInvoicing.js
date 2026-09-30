@@ -234,6 +234,19 @@ const startDailyInvoicing = () => {
         }
 
         try {
+          // The admin already decided today (e.g. marked the staff absent in advance) —
+          // don't pay over that decision. The insert below would be a no-op on conflict,
+          // but the credit itself is not, so the check has to come first.
+          const alreadyDecided = await client.query(
+            `SELECT 1 FROM staff_daily_attendance
+             WHERE assignment_id = $1 AND service_date = $2 AND shift_slot_id IS NULL AND reschedule_id IS NULL`,
+            [assignment.assignment_id, today]
+          );
+          if (alreadyDecided.rows.length > 0) {
+            console.log(`⏭️  Staff Earnings: ${assignment.staff_name} already has an attendance decision for ${today} — not auto-paying`);
+            continue;
+          }
+
           const salaryAmount = parseFloat(assignment.daily_rate);
           const salaryTransactionId = await creditStaffSalary(client, {
             staff_profile_id: assignment.staff_profile_id,

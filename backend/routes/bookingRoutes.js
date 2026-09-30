@@ -198,6 +198,7 @@ router.get('/:booking_id/attendance', protect, requirePermission('VIEW_BOOKINGS'
 router.get('/:booking_id/attendance/history', protect, requirePermission('VIEW_BOOKINGS'), dailyAttendanceController.getAttendanceHistory);
 router.post('/:booking_id/attendance', protect, requirePermission('ATTENDANCE_RECORD'), dailyAttendanceController.upsertAttendance);
 router.post('/:booking_id/attendance/absent', protect, requirePermission('ATTENDANCE_MARK_ABSENT'), dailyAttendanceController.markAbsent);
+router.post('/:booking_id/attendance/absent-range', protect, requirePermission('ATTENDANCE_MARK_ABSENT'), dailyAttendanceController.markAbsentRange);
 // Flat "present" mark for a non-boundary day — no in/out time captured.
 router.post('/:booking_id/attendance/present', protect, requirePermission('ATTENDANCE_RECORD'), dailyAttendanceController.markPresent);
 // Admin exception reasons (ON_LEAVE, LEFT_WITHOUT_NOTICE) — like Absent, but with a mandatory reason.

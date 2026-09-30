@@ -10,6 +10,7 @@ import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import CareTimeline from './CareTimeline';
+import MarkAbsentModal from './MarkAbsentModal';
 import StaffScheduleTimeline from '../components/StaffScheduleTimeline';
 import BookingSwitcherSidebar from './BookingSwitcherSidebar';
 import vcareLogo from '../../../assets/Logo/VCareLogo.png';
@@ -745,6 +746,20 @@ const BookingDetailPageV2 = () => {
   // confirmation modal and dailyAttendanceController.revokeDays on the backend).
   const isSuperAdmin = isSuperAdminToken(adminToken);
   const revokeEnabled = (isLiveIn || isShiftBased) && isSuperAdmin;
+
+  // LIVE_IN staff are auto-paid daily, so absence is the exception the admin records:
+  // marks the on-duty staff member absent for the chosen days and reverses their pay.
+  const [showMarkAbsentModal, setShowMarkAbsentModal] = useState(false);
+  const markAbsentEnabled = isLiveIn && hasPermission('ATTENDANCE_MARK_ABSENT');
+
+  const markAbsentRange = async (selection, reason) => {
+    apiClient.setToken(adminToken);
+    const res = await apiClient.markAbsentRange(bookingId, {
+      assignment_id: activeStaffRow?.assignment_id, ...selection, reason,
+    });
+    await Promise.all([fetchDetail(), fetchDailyRecords()]);
+    return res;
+  };
 
   const revokeDays = async (targets, reason, password, settlementAction) => {
     apiClient.setToken(adminToken);
@@ -3680,6 +3695,11 @@ const BookingDetailPageV2 = () => {
                 <Card>
                   <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 16 }}>
                     <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase', color: '#A39D91' }}>Currently on duty</div>
+                    {!isTerminated && markAbsentEnabled && activeStaffRow && (
+                      <button onClick={() => setShowMarkAbsentModal(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 13px', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#b91c1c', cursor: 'pointer', flexShrink: 0, marginLeft: 'auto' }}>
+                        Mark absent
+                      </button>
+                    )}
                     {!isTerminated && (
                       <button onClick={() => setShowSwapModal(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#374151', border: 'none', borderRadius: 8, padding: '8px 13px', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', cursor: 'pointer', flexShrink: 0 }}>
                         <Repeat2 style={{ width: 14, height: 14 }} /> Initiate Swap
@@ -5016,6 +5036,14 @@ const BookingDetailPageV2 = () => {
       {/* ══════════════════════════════════════════════════════
           SWAP MODAL
       ══════════════════════════════════════════════════════ */}
+      {showMarkAbsentModal && activeStaffRow && (
+        <MarkAbsentModal
+          staffName={activeStaffRow.full_name || activeStaffRow.staff_name || 'This staff member'}
+          minDate={toDateInput(activeStaffRow.service_start_date)}
+          onClose={() => setShowMarkAbsentModal(false)}
+          onSubmit={markAbsentRange}
+        />
+      )}
       {showSwapModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col">
@@ -6382,11 +6410,10 @@ const BookingDetailPageV2 = () => {
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
                                     <td className={tdCls} colSpan={5}>
-                                      <span className="text-xs text-gray-400">No time entry needed for this day</span>
+                                      <span className="text-xs text-gray-400">Salary is paid automatically — only mark an exception</span>
                                     </td>
                                     <td className={tdCls}>
                                       <div className="flex items-center gap-1.5 flex-wrap">
-                                        <button onClick={() => markPresentFlat(a)} className="px-3 py-1 text-[11px] font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded transition">Present</button>
                                         <button onClick={() => markAbsent(a)} title="No-show — skips their salary only" className="px-3 py-1 text-[11px] font-semibold text-red-700 bg-red-50 hover:bg-red-100 rounded transition">Absent</button>
                                         <button onClick={() => openExceptionForm(a.assignment_id, 'ON_LEAVE')} title="Staff went on leave mid-assignment" className="px-2.5 py-1 text-[11px] font-semibold text-orange-700 bg-orange-50 hover:bg-orange-100 rounded transition">On Leave</button>
                                         <button onClick={() => openExceptionForm(a.assignment_id, 'LEFT_WITHOUT_NOTICE')} title="Staff left without telling anyone" className="px-2.5 py-1 text-[11px] font-semibold text-orange-700 bg-orange-50 hover:bg-orange-100 rounded transition">Left w/o Notice</button>

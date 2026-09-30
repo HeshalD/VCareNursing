@@ -1743,6 +1743,14 @@ class ApiClient {
     return this.request(`/bookings/${bookingId}/daily-invoices`);
   }
 
+  // LIVE_IN only — marks the staff member absent for a set of dates/range and takes back any salary already paid.
+  async markAbsentRange(bookingId, { assignment_id, dates, from, to, reason }) {
+    return this.request(`/bookings/${bookingId}/attendance/absent-range`, {
+      method: 'POST',
+      body: JSON.stringify({ assignment_id, dates, from, to, reason }),
+    });
+  }
+
   async revokeAttendanceDays(bookingId, { targets, reason, password, settlement_action }) {
     return this.request(`/bookings/${bookingId}/attendance/revoke`, {
       method: 'POST',
