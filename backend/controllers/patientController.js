@@ -118,7 +118,7 @@ exports.getAllPatients = async (req, res) => {
             db.query(
                 `SELECT
                     p.*,
-                    c.full_name       AS client_name,
+                    NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
                     c.client_code,
                     c.primary_address AS client_address,
                     u.mobile_number   AS client_mobile
@@ -288,7 +288,7 @@ exports.getPatientDetail = async (req, res) => {
             db.query(
                 `SELECT
                     p.*,
-                    c.full_name       AS client_name,
+                    NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
                     c.primary_address AS client_address,
                     c.client_profile_id,
                     u.mobile_number   AS client_mobile,
@@ -378,7 +378,7 @@ exports.getPatientById = async (req, res) => {
         const query = `
             SELECT 
                 p.*, 
-                c.full_name as client_name,
+                NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
                 c.primary_address as client_address,
                 u.mobile_number as client_mobile
             FROM patient_profiles p

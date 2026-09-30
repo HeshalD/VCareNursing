@@ -4,6 +4,7 @@ import {
   AlertCircle, History, Loader2, ChevronRight, UserCheck, Check, Info
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
+import { StaffLink } from '../components/EntityLinks';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
@@ -295,7 +296,7 @@ const ChangeRequestsPage = () => {
                           <User className="w-4 h-4 text-slate-400" />
                         </div>
                         <div>
-                          <p className="font-semibold text-slate-900 leading-tight">{req.staff_name}</p>
+                          <p className="font-semibold text-slate-900 leading-tight"><StaffLink id={req.staff_profile_id}>{req.staff_name}</StaffLink></p>
                           <p className="text-xs text-slate-400">{formatMobileNumber(req.staff_mobile)}</p>
                         </div>
                       </div>
@@ -358,7 +359,7 @@ const ChangeRequestsPage = () => {
                       <User className="w-4 h-4 text-slate-400" />
                     </div>
                     <div>
-                      <p className="text-sm font-semibold text-slate-900">{selectedRequest.staff_name}</p>
+                      <p className="text-sm font-semibold text-slate-900"><StaffLink id={selectedRequest.staff_profile_id}>{selectedRequest.staff_name}</StaffLink></p>
                       <p className="text-xs text-slate-400">{formatMobileNumber(selectedRequest.staff_mobile)}</p>
                     </div>
                   </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import {
   Eye, XCircle, Loader2, Calendar, Activity, Clock, CheckCircle,
   FileText, Download, MessageSquare, Stethoscope, Baby, Heart,
@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { withHonorific } from '../../../utils/clientName';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import DateInput from '../../../components/common/DateInput';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
@@ -526,7 +527,7 @@ const Statements = () => {
       if (clientStatusFilter === 'active' && !c.is_active) return false;
       if (clientStatusFilter === 'inactive' && c.is_active) return false;
       if (!q) return true;
-      return [c.full_name, c.mobile_number, c.email, c.client_code, c.client_type]
+      return [withHonorific(c.honorific, c.full_name), c.mobile_number, c.email, c.client_code, c.client_type]
         .some((v) => v && String(v).toLowerCase().includes(q));
     });
   }, [clients, clientSearch, clientStatusFilter]);
@@ -536,7 +537,7 @@ const Statements = () => {
       .filter((c) => selectedClients.has(c.client_profile_id))
       .map((c) => ({
         client_profile_id: c.client_profile_id,
-        client_name: c.full_name,
+        client_name: withHonorific(c.honorific, c.full_name),
         patient_name: formatMobileNumber(c.mobile_number) || '',
         booking_code: null,
         booking_id: c.client_profile_id,
@@ -1317,8 +1318,7 @@ const Statements = () => {
                       className="flex flex-col gap-1.5 shrink-0"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <button
-                        onClick={() => navigate(`/admin/bookings/${booking.booking_id}/detail`)}
+                      <button type="button" onClick={() => navigate(`/admin/bookings/${booking.booking_id}/detail`)}
                         className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-100 text-slate-700 text-xs font-medium rounded-lg hover:bg-slate-200 transition-colors"
                       >
                         <Eye className="w-3 h-3" />
@@ -1658,13 +1658,12 @@ const Statements = () => {
                         className="flex flex-col gap-1.5 shrink-0"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <button
-                          onClick={() => navigate(`/admin/users/${client.client_profile_id}/detail`)}
+                        <Link to={`/admin/users/${client.client_profile_id}/detail`} onClick={(e) => e.stopPropagation()}
                           className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-100 text-slate-700 text-xs font-medium rounded-lg hover:bg-slate-200 transition-colors"
                         >
                           <Eye className="w-3 h-3" />
                           View
-                        </button>
+                        </Link>
                         <button
                           onClick={() => handleClientDownload(client)}
                           disabled={actionLoading[dlKey]}

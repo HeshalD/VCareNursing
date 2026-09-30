@@ -131,7 +131,7 @@ exports.getAllReviews = async (req, res) => {
     let query = `
       SELECT sr.*,
              sp.full_name as staff_name,
-             cp.full_name as client_name,
+             NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
              b.service_type as booking_service_type,
              b.status as booking_status,
              b.start_date as booking_start_date
@@ -260,7 +260,7 @@ exports.getReviewsByStaffId = async (req, res) => {
 
     // Get reviews for this staff
     const reviewsQuery = `
-      SELECT sr.*, cp.full_name as client_name
+      SELECT sr.*, NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name
       FROM staff_reviews sr
       LEFT JOIN client_profiles cp ON sr.client_profile_id = cp.client_profile_id
       WHERE sr.staff_profile_id = $1 AND sr.is_visible = $2
@@ -321,7 +321,7 @@ exports.getReviewById = async (req, res) => {
 
   try {
     const result = await db.pool.query(
-      `SELECT sr.*, sp.full_name as staff_name, cp.full_name as client_name
+      `SELECT sr.*, sp.full_name as staff_name, NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name
        FROM staff_reviews sr
        LEFT JOIN staff_profiles sp ON sr.staff_profile_id = sp.staff_profile_id
        LEFT JOIN client_profiles cp ON sr.client_profile_id = cp.client_profile_id
@@ -927,7 +927,7 @@ exports.getUnreviewedBookings = async (req, res) => {
     const dataRes = await db.pool.query(
       `SELECT
          b.booking_id, b.service_type, b.status, b.start_date, b.end_date,
-         cp.full_name as client_name, cp.client_profile_id,
+         NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name, cp.client_profile_id,
          u.mobile_number as client_mobile,
          sp.full_name as staff_name, sp.staff_profile_id
        ${baseFrom}
@@ -960,7 +960,7 @@ exports.sendReviewRequest = async (req, res) => {
     const result = await db.pool.query(
       `SELECT
          b.booking_id, b.service_type, b.status,
-         cp.full_name as client_name, cp.client_profile_id,
+         NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name, cp.client_profile_id,
          u.mobile_number as client_mobile,
          sp.full_name as staff_name
        FROM bookings b

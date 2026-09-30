@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
+import { ClientLink, PatientLink } from '../components/EntityLinks';
 import apiClient from '../../../api/api';
 import {
   User,
@@ -189,12 +190,12 @@ const QuotePreviewPanel = ({
         <div className="px-8 py-5 border-b border-gray-100 grid grid-cols-2 gap-6">
           <div>
             <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1.5">Billed To</p>
-            <p className="text-sm font-semibold text-gray-900">{serviceRequest.payer_name}</p>
+            <p className="text-sm font-semibold text-gray-900"><ClientLink id={serviceRequest.client_id}>{serviceRequest.payer_name}</ClientLink></p>
             <p className="text-[12px] text-gray-500 mt-0.5">{formatMobileNumber(serviceRequest.payer_mobile)}</p>
           </div>
           <div>
             <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1.5">Care Recipient</p>
-            <p className="text-sm font-semibold text-gray-900">{serviceRequest.patient_name}</p>
+            <p className="text-sm font-semibold text-gray-900"><PatientLink id={serviceRequest.patient_id}>{serviceRequest.patient_name}</PatientLink></p>
             {serviceRequest.patient_age && (
               <p className="text-[12px] text-gray-500 mt-0.5">Age {serviceRequest.patient_age}</p>
             )}
@@ -762,7 +763,7 @@ const ModularQuoteBuilder = () => {
             <div className="px-5 py-4 space-y-3">
               <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">Care Recipient</p>
               <div className="grid grid-cols-2 gap-3">
-                <InfoRow label="Name"      value={serviceRequest?.patient_name} />
+                <InfoRow label="Name"      value={serviceRequest?.patient_name ? <PatientLink id={serviceRequest.patient_id}>{serviceRequest.patient_name}</PatientLink> : null} />
                 <InfoRow label="Age"       value={serviceRequest?.patient_age ? `${serviceRequest.patient_age} yrs` : null} />
                 <InfoRow label="Condition" value={serviceRequest?.patient_condition} />
                 <InfoRow label="Gender"    value={serviceRequest?.preferred_gender || 'Any'} />

@@ -164,8 +164,10 @@ exports.getAllLeads = async (req, res) => {
                    q.total_amount AS quote_total_amount,
                    (SELECT COALESCE(SUM(amount_received), 0) FROM payment_tracking
                     WHERE quote_id = sr.active_quote_id AND status = 'VERIFIED') AS quote_total_paid,
-                   coord.full_name AS coordinator_name
+                   coord.full_name AS coordinator_name,
+                   cp.honorific AS client_honorific
             FROM service_requests sr
+            LEFT JOIN client_profiles cp ON cp.client_profile_id = sr.client_id
             LEFT JOIN bookings b ON b.request_id = sr.request_id
             LEFT JOIN quotations q ON q.quote_id = sr.active_quote_id
             LEFT JOIN internal_staff coord ON coord.id = sr.coordinator_staff_id
@@ -195,7 +197,7 @@ exports.getServiceRequestById = async (req, res) => {
     try {
         const { id } = req.params;
         const result = await db.query(
-            `SELECT sr.*, cp.client_code
+            `SELECT sr.*, cp.client_code, cp.honorific AS client_honorific
              FROM service_requests sr
              LEFT JOIN client_profiles cp ON sr.client_id = cp.client_profile_id
              WHERE sr.request_id = $1`,
@@ -585,7 +587,7 @@ exports.getClientServiceRequests = async (req, res) => {
         
         const result = await db.query(`
             SELECT sr.*, 
-                   cp.full_name as client_name,
+                   NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
                    u.mobile_number as client_mobile
             FROM service_requests sr
             LEFT JOIN client_profiles cp ON sr.client_id = cp.client_profile_id
@@ -613,7 +615,7 @@ exports.getClientServiceRequestsWithQuotes = async (req, res) => {
         
         const result = await db.query(`
             SELECT sr.*, 
-                   cp.full_name as client_name,
+                   NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
                    u.mobile_number as client_mobile,
                    q.estimate_number,
                    q.daily_rate,
@@ -764,7 +766,7 @@ exports.getClientServiceRequestsWithPayments = async (req, res) => {
         
         const result = await db.query(`
             SELECT sr.*, 
-                   cp.full_name as client_name,
+                   NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
                    u.mobile_number as client_mobile,
                    ps.slip_id,
                    ps.slip_url,

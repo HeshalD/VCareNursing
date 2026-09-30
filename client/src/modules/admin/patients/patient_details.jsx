@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, Link } from 'react-router-dom';
 import {
   ArrowLeft, ArrowRight, Pencil, Loader2, AlertCircle, HeartPulse,
   User, Phone, MapPin, Stethoscope, CalendarDays, Users, Briefcase,
@@ -84,10 +84,10 @@ const ExpandableRow = ({ summary, actions, children }) => {
   return (
     <div>
       <div className="flex w-full items-center gap-2 px-5 py-3.5 transition-colors hover:bg-gray-50">
-        <button type="button" onClick={() => setOpen((v) => !v)} className="flex min-w-0 flex-1 items-center gap-4 text-left">
+        <div role="button" tabIndex={0} onClick={() => setOpen((v) => !v)} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setOpen((v) => !v); } }} className="cursor-pointer flex min-w-0 flex-1 items-center gap-4 text-left">
           <div className="min-w-0 flex-1">{summary}</div>
           <ChevronDown className={`h-4 w-4 shrink-0 text-gray-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
-        </button>
+        </div>
         {actions}
       </div>
       {open && (
@@ -393,13 +393,11 @@ export default function PatientDetailPage() {
           <div className="col-span-2"><InfoRow label="Address" value={patient.client_address} /></div>
         </div>
         <div className="mt-4 border-t border-gray-100 pt-4">
-          <button
-            type="button"
-            onClick={() => navigate(`/admin/users/${patient.client_id}/detail`)}
+          <Link to={`/admin/users/${patient.client_id}/detail`} onClick={(e) => e.stopPropagation()}
             className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
           >
             <ArrowRight className="h-3.5 w-3.5" /> View Client Profile
-          </button>
+          </Link>
         </div>
       </DataCard>
 
@@ -464,9 +462,7 @@ export default function PatientDetailPage() {
                 </div>
               </div>
               <div className="mt-4 flex justify-end border-t border-gray-100 pt-4">
-                <button
-                  type="button"
-                  onClick={() => navigate(`/admin/bookings/${b.booking_id}/detail`)}
+                <button type="button" onClick={() => navigate(`/admin/bookings/${b.booking_id}/detail`)}
                   className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
                 >
                   <ArrowRight className="h-3.5 w-3.5" /> View Booking
@@ -511,13 +507,11 @@ export default function PatientDetailPage() {
               <InfoRow label="First Worked" value={fmt(s.first_worked)} />
             </div>
             <div className="mt-4 flex justify-end border-t border-gray-100 pt-4">
-              <button
-                type="button"
-                onClick={() => navigate(`/admin/staff/${s.staff_profile_id}/detail`)}
+              <Link to={`/admin/staff/${s.staff_profile_id}/detail`} onClick={(e) => e.stopPropagation()}
                 className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
               >
                 <ArrowRight className="h-3.5 w-3.5" /> View Staff Profile
-              </button>
+              </Link>
             </div>
           </ExpandableRow>
         ))}

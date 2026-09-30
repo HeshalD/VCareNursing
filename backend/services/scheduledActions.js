@@ -386,7 +386,7 @@ const executeStaffSwap = async (client, payload) => {
 
             const ctx = await db.query(
                 `SELECT p.full_name AS patient_name,
-                        cp.full_name AS client_name, uc.mobile_number AS client_mobile,
+                        NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name, uc.mobile_number AS client_mobile,
                         os.full_name AS old_name, uo.mobile_number AS old_mobile,
                         ns.full_name AS new_name, un.mobile_number AS new_mobile,
                         COALESCE(sr.location_address, cp.primary_address, '') AS location,

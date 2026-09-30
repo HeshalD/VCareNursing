@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, Link } from 'react-router-dom';
 import {
   Activity,
   ArrowLeft,
@@ -371,13 +371,12 @@ export default function CurrentEarningsBreakdownPage() {
       <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
         {/* Header */}
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate(`/admin/staff/${staffProfileId}/detail`)}
+          <Link to={`/admin/staff/${staffProfileId}/detail`} onClick={(e) => e.stopPropagation()}
             className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 transition-colors"
           >
             <ArrowLeft className="h-4 w-4" />
             Back to Staff Profile
-          </button>
+          </Link>
           <div>
             <h1 className="text-xl font-bold text-slate-900">Current Earnings Breakdown</h1>
             {data?.staff_name && (

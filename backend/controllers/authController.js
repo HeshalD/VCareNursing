@@ -293,7 +293,7 @@ exports.login = async (req, res) => {
     // 3. DUAL ROLE DISCOVERY (The Critical Step)
     // We check both tables to see what "hats" this user wears.
     const clientProfilePromise = db.query(
-      'SELECT client_profile_id, full_name, client_type, gender, primary_address FROM client_profiles WHERE user_id = $1',
+      'SELECT client_profile_id, full_name, honorific, client_type, gender, primary_address FROM client_profiles WHERE user_id = $1',
       [user.user_id]
     );
 
@@ -336,6 +336,7 @@ exports.login = async (req, res) => {
       id: user.user_id,
       role: user.role,
       full_name: fullName,
+      honorific: clientProfile?.full_name ? (clientProfile.honorific || null) : null,
       mobile_number: mobile_number,
       gender: clientProfile?.gender || null,
       primary_address: clientProfile?.primary_address || null,
@@ -382,6 +383,7 @@ exports.login = async (req, res) => {
           client_id: clientProfile ? clientProfile.client_profile_id : null,
           client_info: clientProfile ? {
             name: clientProfile.full_name,
+            honorific: clientProfile.honorific || null,
             type: clientProfile.client_type
           } : null,
           is_staff: !!staffProfile,
@@ -450,7 +452,7 @@ exports.getMyAccountInfo = async (req, res) => {
     const account = userRes.rows[0];
 
     const [clientRes, staffRes] = await Promise.all([
-      db.query('SELECT client_profile_id, full_name, gender, primary_address FROM client_profiles WHERE user_id = $1', [userId]),
+      db.query('SELECT client_profile_id, full_name, honorific, gender, primary_address FROM client_profiles WHERE user_id = $1', [userId]),
       db.query('SELECT staff_profile_id, full_name, gender, home_address FROM staff_profiles WHERE user_id = $1', [userId]),
     ]);
 
@@ -464,6 +466,7 @@ exports.getMyAccountInfo = async (req, res) => {
         mobile_number: account.mobile_number,
         email: account.email,
         full_name: clientProfile?.full_name || staffProfile?.full_name || null,
+        honorific: clientProfile?.full_name ? (clientProfile.honorific || null) : null,
         gender: clientProfile?.gender || staffProfile?.gender || null,
         primary_address: clientProfile?.primary_address || staffProfile?.home_address || null,
         has_client_profile: !!clientProfile,
@@ -564,7 +567,7 @@ exports.getUnifiedOverview = async (req, res) => {
     const query = `
       SELECT 
         u.user_id, u.mobile_number, u.email, u.is_active,
-        cp.client_profile_id, cp.full_name AS client_name, cp.client_type, cp.wallet_balance,
+        cp.client_profile_id, NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name, cp.client_type, cp.wallet_balance,
         sp.staff_profile_id, sp.full_name AS staff_name, sp.designation, sp.verification_status, sp.profile_picture_url
       FROM users u
       LEFT JOIN client_profiles cp ON u.user_id = cp.user_id

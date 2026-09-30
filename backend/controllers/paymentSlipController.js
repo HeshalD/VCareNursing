@@ -14,7 +14,7 @@ exports.getClientPaymentSlips = async (req, res) => {
                    sr.service_type,
                    sr.payer_name,
                    sr.payer_mobile,
-                   cp.full_name as client_name,
+                   NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
                    u.mobile_number as client_mobile
             FROM payment_slips ps
             JOIN quotations q ON ps.quote_id = q.quote_id

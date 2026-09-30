@@ -17,7 +17,7 @@ import {
   XCircle,
   DollarSign,
 } from 'lucide-react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams, Link } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
@@ -716,14 +716,12 @@ const BookingDetailPage = () => {
           <div className="flex items-center gap-3 flex-wrap mb-2">
             <h1 className="text-2xl font-extrabold text-[#2A2722] tracking-tight">
               {heroProfilePath ? (
-                <button
-                  type="button"
-                  onClick={() => navigate(heroProfilePath)}
+                <Link to={heroProfilePath} onClick={(e) => e.stopPropagation()}
                   title={patientDetails.patient_id ? 'Open care profile' : 'Open client profile'}
                   className="hover:text-[#137A6B] hover:underline underline-offset-4 transition-colors"
                 >
                   {heroName}
-                </button>
+                </Link>
               ) : heroName}
               {bookingSummary.service_type ? ` · ${bookingSummary.service_type}` : ''}
             </h1>
@@ -746,14 +744,12 @@ const BookingDetailPage = () => {
                   <span key="client">
                     for{' '}
                     {clientProfilePath ? (
-                      <button
-                        type="button"
-                        onClick={() => navigate(clientProfilePath)}
+                      <Link to={clientProfilePath} onClick={(e) => e.stopPropagation()}
                         title="Open client profile"
                         className="font-semibold hover:text-[#137A6B] hover:underline underline-offset-2 transition-colors"
                       >
                         {clientDetails.client_name}
-                      </button>
+                      </Link>
                     ) : clientDetails.client_name}
                   </span>
                 );
@@ -1275,7 +1271,7 @@ const BookingDetailPage = () => {
             <Card>
               <div className="flex items-center gap-3 mb-5">
                 <div className="w-10 h-10 rounded-xl bg-[#E4F1ED] text-[#137A6B] flex items-center justify-center text-sm font-extrabold flex-shrink-0">
-                  {(clientDetails.client_name || 'C').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()}
+                  {(clientDetails.client_name || 'C').split(' ').filter((w) => !/^(mr|mrs|ms|miss|dr|rev|prof|master)\.?$/i.test(w)).map((w) => w[0]).join('').slice(0, 2).toUpperCase()}
                 </div>
                 <h3 className="text-[15px] font-bold text-[#2A2722]">Client</h3>
               </div>

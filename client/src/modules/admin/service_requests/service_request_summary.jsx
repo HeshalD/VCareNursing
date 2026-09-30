@@ -12,6 +12,7 @@ import apiClient from '../../../api/api';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
 import PhoneInput from '../../../components/common/PhoneInput';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
+import { withHonorific } from '../../../utils/clientName';
 import PaymentAllocationModal from '../service_quotes/PaymentAllocationModal';
 import ReceiptSendPopup from '../service_quotes/ReceiptSendPopup';
 import InvoiceSendPopup from '../service_quotes/InvoiceSendPopup';
@@ -397,7 +398,7 @@ const ServiceRequestSummaryPage = () => {
               try {
                 const invRes = await apiClient.getProductInvoices({ quote_id: q.product_quote_id });
                 const invoices = Array.isArray(invRes?.data) ? invRes.data : [];
-                product_paid = invoices.filter(i => i.status === 'PAID').reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+                product_paid = invoices.filter(i => i.status === 'PAID' && !i.is_duplicate).reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
               } catch { /* non-critical */ }
             }
             const combined_total = q.total_amount + product_total;
@@ -825,7 +826,7 @@ const ServiceRequestSummaryPage = () => {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2.5 mb-1">
                 <h2 className="text-lg font-bold text-slate-900 truncate">
-                  {editMode ? editForm.payer_name || '—' : request.payer_name}
+                  {editMode ? editForm.payer_name || '—' : withHonorific(request.client_honorific || request.honorific, request.payer_name)}
                 </h2>
               </div>
               <p className="text-xs text-slate-400">
@@ -1070,7 +1071,7 @@ const ServiceRequestSummaryPage = () => {
                           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Client / Payer</p>
                         </div>
                         <div className="p-4 grid grid-cols-1 gap-3">
-                          <InfoRow label="Full Name" value={request.payer_name} />
+                          <InfoRow label="Full Name" value={withHonorific(request.client_honorific || request.honorific, request.payer_name)} />
                           <InfoRow label="Mobile" value={formatMobileNumber(request.payer_mobile)} />
                           {request.client_code && <InfoRow label="Client Code" value={request.client_code} />}
                           {request.location_address && (

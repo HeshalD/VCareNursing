@@ -6,6 +6,7 @@ import {
   CheckCircle,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
+import { ClientLink, PatientLink, StaffLink } from '../components/EntityLinks';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import StaffScheduleTimeline from '../components/StaffScheduleTimeline';
@@ -438,8 +439,8 @@ const BookingStaffAssignmentPage = () => {
               <div className="rounded-lg border border-gray-200 bg-white p-5">
                 <h3 className="text-sm font-semibold text-gray-800">Booking Summary</h3>
                 <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  <Stat label="Client"       value={formData.booking.client_name} />
-                  <Stat label="Care Profile" value={formData.booking.patient_name} />
+                  <Stat label="Client"       value={formData.booking.client_name ? <ClientLink id={formData.booking.client_id}>{formData.booking.client_name}</ClientLink> : null} />
+                  <Stat label="Care Profile" value={formData.booking.patient_name ? <PatientLink id={formData.booking.patient_id}>{formData.booking.patient_name}</PatientLink> : null} />
                   <Stat label="Service"      value={formData.booking.service_type} />
                   <Stat label="Status"       value={formData.booking.booking_status} />
                 </div>
@@ -911,7 +912,7 @@ const BookingStaffAssignmentPage = () => {
                         return (
                           <div key={s.shift_number} className="border-b border-gray-100 pb-3 last:border-b-0 last:pb-0">
                             <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">{s.label || `Shift ${s.shift_number}`}</p>
-                            <p className="mt-0.5 text-sm font-medium text-gray-900">{staffMember?.staff_name || '—'}</p>
+                            <p className="mt-0.5 text-sm font-medium text-gray-900">{staffMember?.staff_name ? <StaffLink id={staffMember.staff_profile_id}>{staffMember.staff_name}</StaffLink> : '—'}</p>
                           </div>
                         );
                       })}
@@ -921,7 +922,7 @@ const BookingStaffAssignmentPage = () => {
                   )
                 ) : selectedStaff ? (
                   <div className="space-y-0 divide-y divide-gray-100">
-                    <DetailRow label="Name"     value={selectedStaff.staff_name || selectedStaff.full_name} />
+                    <DetailRow label="Name"     value={<StaffLink id={selectedStaff.staff_profile_id}>{selectedStaff.staff_name || selectedStaff.full_name}</StaffLink>} />
                     <DetailRow label="Role"     value={selectedStaff.specialization || selectedStaff.designation} />
                     <DetailRow label="Status"   value={selectedStaff.current_status || 'AVAILABLE'} />
                     <DetailRow label="Earnings" value={money(selectedStaff.current_earnings || 0)} />

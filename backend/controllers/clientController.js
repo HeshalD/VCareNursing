@@ -449,6 +449,7 @@ exports.getAdminClientDetail = async (req, res) => {
          sr.payer_name,
          sr.payer_mobile,
          sr.patient_name,
+         sr.patient_id,
          sr.service_type,
          sr.status as request_status,
          sr.active_quote_id,
@@ -456,7 +457,7 @@ exports.getAdminClientDetail = async (req, res) => {
          b.booking_code,
          pq.quote_id as product_quote_id,
          CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
-              THEN cp.company_name ELSE cp.full_name END AS billed_to_name,
+              THEN cp.company_name ELSE NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') END AS billed_to_name,
          COALESCE((
            SELECT SUM(pt.amount_received)
            FROM payment_tracking pt
@@ -487,6 +488,7 @@ exports.getAdminClientDetail = async (req, res) => {
          bsa.updated_at,
          sp.full_name as staff_name,
          sp.designation,
+         b.patient_id,
          p.full_name as patient_name
        FROM booking_staff_assignments bsa
        JOIN bookings b ON bsa.booking_id = b.booking_id
@@ -2589,7 +2591,7 @@ exports.getClientInvoices = async (req, res) => {
             ss.label AS shift_label, ss.shift_number,
             b.booking_id, b.booking_code, b.service_type,
             CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
-                 THEN cp.company_name ELSE cp.full_name END AS client_name
+                 THEN cp.company_name ELSE NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') END AS client_name
          FROM booking_daily_invoices bdi
          JOIN bookings b ON bdi.booking_id = b.booking_id
          LEFT JOIN booking_shift_slots ss ON bdi.shift_slot_id = ss.shift_slot_id
@@ -2650,7 +2652,7 @@ exports.getAdminInvoices = async (req, res) => {
             ss.label AS shift_label, ss.shift_number,
             b.booking_id, b.booking_code, b.service_type,
             CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
-                 THEN cp.company_name ELSE cp.full_name END AS client_name,
+                 THEN cp.company_name ELSE NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') END AS client_name,
             cp.client_profile_id
          FROM booking_daily_invoices bdi
          JOIN bookings b ON bdi.booking_id = b.booking_id
@@ -2703,7 +2705,7 @@ async function getDailyInvoiceRow(dailyInvoiceId) {
         ss.label AS shift_label, ss.shift_number,
         b.booking_id, b.booking_code, b.service_type, b.client_id,
         CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
-             THEN cp.company_name ELSE cp.full_name END AS client_name,
+             THEN cp.company_name ELSE NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') END AS client_name,
         u.mobile_number AS client_mobile
      FROM booking_daily_invoices bdi
      JOIN bookings b ON bdi.booking_id = b.booking_id
@@ -2841,7 +2843,7 @@ exports.getClientRegFeeInvoices = async (req, res) => {
               crfi.whatsapp_resent_at, crfi.period_start, crfi.period_end,
               ba.account_nickname AS bank_account_nickname, ba.bank_name,
               CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
-                   THEN cp.company_name ELSE cp.full_name END AS billed_to_name
+                   THEN cp.company_name ELSE NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') END AS billed_to_name
        FROM client_reg_fee_invoices crfi
        LEFT JOIN bank_accounts ba ON crfi.bank_account_id = ba.account_id
        LEFT JOIN client_profiles cp ON crfi.client_id = cp.client_profile_id
@@ -2960,7 +2962,7 @@ exports.getAllRegFeeInvoices = async (req, res) => {
         `SELECT crfi.invoice_id, crfi.invoice_code, crfi.amount, crfi.pdf_url, crfi.status, crfi.created_at,
                 cp.client_profile_id,
                 CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
-                     THEN cp.company_name ELSE cp.full_name END AS client_name,
+                     THEN cp.company_name ELSE NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') END AS client_name,
                 cp.reg_fee_status AS membership_status, cp.reg_fee_expires_at AS membership_expires_at
          FROM client_reg_fee_invoices crfi
          LEFT JOIN client_profiles cp ON crfi.client_id = cp.client_profile_id
@@ -3116,7 +3118,7 @@ exports.getAllOverdueInvoices = async (req, res) => {
                 oi.status, oi.resolution, oi.invoiced_at, oi.resolved_at,
                 cp.client_profile_id,
                 CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
-                     THEN cp.company_name ELSE cp.full_name END AS client_name
+                     THEN cp.company_name ELSE NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') END AS client_name
          FROM overdue_invoices oi
          LEFT JOIN client_profiles cp ON oi.client_id = cp.client_profile_id
          ${where}

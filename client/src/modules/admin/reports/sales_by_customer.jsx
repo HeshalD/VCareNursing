@@ -4,6 +4,7 @@ import {
   ArrowLeft, ChevronDown, ChevronsUpDown, Download, Loader2, RefreshCw, X,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
+import { ClientLink } from '../components/EntityLinks';
 import apiClient from '../../../api/api';
 
 const money = new Intl.NumberFormat('en-LK', {
@@ -350,7 +351,7 @@ const SalesByCustomer = () => {
                       onClick={() => navigate(`/admin/users/${row.client_id}/detail`)}
                     >
                       <td className="px-6 py-3">
-                        <span className="text-blue-600 font-medium hover:underline">{row.name}</span>
+                        <ClientLink id={row.client_id} className="text-blue-600 font-medium hover:underline">{row.name}</ClientLink>
                       </td>
                       <td className="px-6 py-3 text-right whitespace-nowrap text-blue-600">{row.invoice_count}</td>
                       <td className="px-6 py-3 text-right whitespace-nowrap text-blue-600">{formatMoney(row.sales)}</td>

@@ -175,7 +175,7 @@ exports.getSalesAttribution = async (req, res) => {
   const { start, end } = monthRange(month);
   try {
     const registrations = await db.query(
-      `SELECT csa.id, csa.client_id, cp.full_name AS client_name,
+      `SELECT csa.id, csa.client_id, NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
               csa.credited_amount, csa.commission_amount, csa.assigned_at
        FROM client_salesperson_assignments csa
        JOIN client_profiles cp ON csa.client_id = cp.client_profile_id
@@ -186,7 +186,7 @@ exports.getSalesAttribution = async (req, res) => {
     );
 
     const bookings = await db.query(
-      `SELECT bsa.id, bsa.booking_id, b.booking_code, cp.full_name AS client_name,
+      `SELECT bsa.id, bsa.booking_id, b.client_id, b.booking_code, NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
               bsa.credited_amount, bsa.assigned_at
        FROM booking_salesperson_assignments bsa
        JOIN bookings b ON bsa.booking_id = b.booking_id
@@ -539,6 +539,7 @@ exports.previewSheet = async (req, res) => {
 
 function buildPayslipData(sheet) {
   return {
+    staff_id: sheet.staff_id,
     staff_name: sheet.staff_name,
     designation: sheet.staff_role,
     month: sheet.month,
@@ -877,7 +878,7 @@ exports.getCoordinatorWork = async (req, res) => {
         [staffId]
       ),
       db.query(
-        `SELECT b.booking_id, b.booking_code, b.service_type, b.status, b.start_date, cp.full_name AS client_name
+        `SELECT b.booking_id, b.booking_code, b.service_type, b.status, b.start_date, NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name
          FROM bookings b LEFT JOIN client_profiles cp ON cp.client_profile_id = b.client_id
          WHERE b.coordinator_staff_id = $1 ORDER BY b.start_date DESC LIMIT 100`,
         [staffId]
@@ -889,7 +890,7 @@ exports.getCoordinatorWork = async (req, res) => {
         [staffId]
       ),
       db.query(
-        `SELECT pp.patient_id, pp.full_name, pp.age, pp.relationship_to_client, cp.full_name AS client_name
+        `SELECT pp.patient_id, pp.full_name, pp.age, pp.relationship_to_client, NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name
          FROM patient_profiles pp LEFT JOIN client_profiles cp ON cp.client_profile_id = pp.client_id
          WHERE pp.coordinator_staff_id = $1 ORDER BY pp.created_at DESC LIMIT 100`,
         [staffId]

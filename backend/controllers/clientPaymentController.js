@@ -559,7 +559,7 @@ const getPaymentRecordDetail = async (req, res) => {
          r.*,
          ba.account_nickname AS bank_account_nickname,
          ba.bank_name,
-         cp.full_name AS client_name
+         NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name
        FROM client_payment_records r
        LEFT JOIN bank_accounts ba ON ba.account_id = r.bank_account_id
        LEFT JOIN client_profiles cp ON cp.client_profile_id = r.client_id

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams, Link } from 'react-router-dom';
 import DateInput from '../../../components/common/DateInput';
 import PhoneInput from '../../../components/common/PhoneInput';
 import { formatMobileNumber, formatMobileNumbers } from '../../../utils/phoneFormat';
@@ -3083,13 +3083,11 @@ const StaffDetailPageV2 = () => {
             <ArrowLeft className="w-3.5 h-3.5" /> Back to roster
           </button>
           {linkedClientProfileId && (
-            <button
-              type="button"
-              onClick={() => navigate(`/admin/users/${linkedClientProfileId}/detail`)}
+            <Link to={`/admin/users/${linkedClientProfileId}/detail`} onClick={(e) => e.stopPropagation()}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-indigo-200 bg-indigo-50 text-indigo-700 text-sm font-semibold rounded-lg hover:bg-indigo-100 transition-colors"
             >
               <ArrowLeftRight className="w-3.5 h-3.5" /> Switch to Client View
-            </button>
+            </Link>
           )}
         </div>
         <div className="flex items-center gap-2.5">

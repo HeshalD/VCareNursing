@@ -59,7 +59,7 @@ async function _sendSalaryPayoutNotifications(staffProfileId, payoutAmount, paym
         SELECT
             bsa.booking_id, b.booking_code,
             bsa.service_start_date, bsa.service_end_date, bsa.daily_rate,
-            cp.full_name AS client_name,
+            NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
             pp.full_name AS patient_name,
             COALESCE(json_agg(
                 json_build_object('date', t.created_at::date, 'amount', t.amount)
@@ -518,8 +518,8 @@ exports.getAdminStaffDetail = async (req, res) => {
         // on this booking — service_end_date stays NULL until the cron actually runs, so
         // without this the assignment looks open-ended even though it's due to wrap up.
         const currentAssignRes = await db.query(`
-            SELECT bsa.*, b.booking_id, b.booking_code, b.status as booking_status, b.start_date, b.daily_rate as booking_daily_rate,
-                   c.full_name as client_name, p.full_name as patient_name,
+            SELECT bsa.*, b.booking_id, b.booking_code, b.status as booking_status, b.start_date, b.daily_rate as booking_daily_rate, b.client_id, b.patient_id,
+                   NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name, p.full_name as patient_name,
                    pending_end.effective_date as pending_end_date, pending_end.action_type as pending_end_action_type
             FROM booking_staff_assignments bsa
             LEFT JOIN bookings b ON bsa.booking_id = b.booking_id
@@ -544,8 +544,8 @@ exports.getAdminStaffDetail = async (req, res) => {
         // 4) Previous assignments / booking history (recent)
         const historyRes = await db.query(`
             SELECT bsa.assignment_id, bsa.booking_id, bsa.service_start_date, bsa.service_end_date, bsa.daily_rate, bsa.amount_allocated, bsa.status,
-                   b.client_id, b.status as booking_status, b.service_type, b.service_model,
-                   c.full_name as client_name, p.full_name as patient_name,
+                   b.client_id, b.patient_id, b.status as booking_status, b.service_type, b.service_model,
+                   NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name, p.full_name as patient_name,
                    COALESCE(salary_totals.total_salary_paid, 0) as total_salary_paid
             FROM booking_staff_assignments bsa
             LEFT JOIN bookings b ON bsa.booking_id = b.booking_id
@@ -589,7 +589,7 @@ exports.getAdminStaffDetail = async (req, res) => {
 
         // 5) Reviews summary & recent reviews
         const reviewsRes = await db.query(`
-            SELECT sr.review_id, sr.rating, sr.review_text, sr.created_at, cp.full_name as client_name
+            SELECT sr.review_id, sr.rating, sr.review_text, sr.created_at, sr.client_profile_id, NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name
             FROM staff_reviews sr
             LEFT JOIN client_profiles cp ON sr.client_profile_id = cp.client_profile_id
             WHERE sr.staff_profile_id = $1 AND sr.is_visible = true
@@ -734,7 +734,7 @@ exports.getCurrentBooking = async (req, res) => {
         const currentAssignRes = await db.query(`
             SELECT bsa.assignment_id, bsa.booking_id, bsa.assigned_on, bsa.service_start_date, bsa.service_end_date, bsa.daily_rate, bsa.amount_allocated, bsa.status,
                          b.booking_id as booking_id, b.booking_code, b.status as booking_status, b.start_date as booking_start_date, b.daily_rate as booking_daily_rate,
-                         c.client_profile_id, c.full_name as client_name,
+                         c.client_profile_id, NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
                          p.patient_id, p.full_name as patient_name,
                          pending_end.effective_date as pending_end_date, pending_end.action_type as pending_end_action_type
             FROM booking_staff_assignments bsa
@@ -786,7 +786,7 @@ exports.getBookingHistory = async (req, res) => {
         const dataQuery = `
             SELECT bsa.assignment_id, bsa.booking_id, bsa.service_start_date, bsa.service_end_date, bsa.daily_rate, bsa.amount_allocated, bsa.status,
                          b.client_id, b.status as booking_status, b.service_type, b.service_model,
-                         c.full_name as client_name, p.full_name as patient_name,
+                         NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name, p.full_name as patient_name,
                          COALESCE(salary_totals.total_salary, 0) as total_salary
             FROM booking_staff_assignments bsa
             LEFT JOIN bookings b ON bsa.booking_id = b.booking_id
@@ -846,7 +846,7 @@ exports.getStaffSchedules = async (req, res) => {
                    bsa.service_start_date,
                    COALESCE(bsa.service_end_date, sa.effective_date) AS service_end_date,
                    b.booking_code, b.service_model,
-                   c.full_name AS client_name, p.full_name AS patient_name,
+                   NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name, p.full_name AS patient_name,
                    s.shift_number, s.label AS shift_label
             FROM booking_staff_assignments bsa
             JOIN bookings b ON bsa.booking_id = b.booking_id
@@ -890,7 +890,7 @@ exports.getFutureBookings = async (req, res) => {
         const dataRes = await db.query(`
             SELECT bsa.assignment_id, bsa.booking_id, bsa.assigned_on, bsa.service_start_date, bsa.daily_rate, bsa.amount_allocated, bsa.status,
                    b.status as booking_status, b.service_type, b.service_model,
-                   c.full_name as client_name, p.full_name as patient_name,
+                   NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name, p.full_name as patient_name,
                    s.shift_number, s.label as shift_label, s.start_time as shift_start_time,
                    sa.action_id
             FROM booking_staff_assignments bsa
@@ -922,15 +922,8 @@ exports.getAttendanceCalendar = async (req, res) => {
     const { staff_profile_id } = req.params;
 
     try {
-        const actorRole = _extractActorRole(req.user.role);
-        if (!['SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'].includes(actorRole)) {
-            const ownProfile = await db.query(
-                'SELECT staff_profile_id FROM staff_profiles WHERE user_id = $1',
-                [req.user.user_id]
-            );
-            if (!ownProfile.rows.length || String(ownProfile.rows[0].staff_profile_id) !== String(staff_profile_id)) {
-                return res.status(403).json({ status: 'error', message: 'Not authorized to view this attendance calendar' });
-            }
+        if (!(await _canAccessStaffRecord(req, staff_profile_id, 'VIEW_USER_MANAGEMENT'))) {
+            return res.status(403).json({ status: 'error', message: 'Not authorized to view this attendance calendar' });
         }
 
         const [assignmentsRes, attendanceRes, reschedulesRes, pendingResumptionsRes] = await Promise.all([
@@ -940,7 +933,7 @@ exports.getAttendanceCalendar = async (req, res) => {
                     bsa.daily_rate, bsa.status as assignment_status, bsa.shift_slot_id, bsa.reschedule_id,
                     ss.shift_number, ss.label as shift_label, ss.start_time as shift_start_time,
                     b.booking_code, b.status as booking_status, b.service_type, b.service_model,
-                    c.full_name as client_name, p.full_name as patient_name,
+                    NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name, p.full_name as patient_name,
                     pending_end.effective_date as pending_end_date, pending_end.action_type as pending_end_action_type
                 FROM booking_staff_assignments bsa
                 LEFT JOIN bookings b ON bsa.booking_id = b.booking_id
@@ -982,7 +975,7 @@ exports.getAttendanceCalendar = async (req, res) => {
             db.query(`
                 SELECT
                     bp.booking_id, bp.resume_date::text as resume_date, bp.paused_date::text as paused_date,
-                    b.daily_rate, c.full_name as client_name, p.full_name as patient_name,
+                    b.daily_rate, NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name, p.full_name as patient_name,
                     (SELECT MIN(sa.effective_date)::text FROM scheduled_actions sa
                      WHERE sa.booking_id = bp.booking_id AND sa.action_type IN ('COMPLETION', 'TERMINATION') AND sa.status = 'SCHEDULED'
                     ) as scheduled_end_date
@@ -1654,7 +1647,7 @@ exports.getAllStaff = async (req, res) => {
             JOIN users u ON sp.user_id = u.user_id
             LEFT JOIN LATERAL (
                 SELECT bsa.service_end_date,
-                       COALESCE(cp.full_name, sr.payer_name) AS booking_client_name
+                       COALESCE(NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), ''), sr.payer_name) AS booking_client_name
                 FROM booking_staff_assignments bsa
                 JOIN bookings b ON bsa.booking_id = b.booking_id
                 LEFT JOIN client_profiles cp ON b.client_id = cp.client_profile_id
@@ -2799,7 +2792,7 @@ exports.getStaffAssignments = async (req, res) => {
                 p.emergency_contact_name,
                 p.emergency_contact_number,
                 c.primary_address as client_address,
-                c.full_name as client_name,
+                NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
                 u.mobile_number as client_mobile
             FROM bookings b
             JOIN patient_profiles p ON b.patient_id = p.patient_id
@@ -3728,7 +3721,7 @@ exports.getTotalEarningsBreakdown = async (req, res) => {
                 b.start_date                          AS booking_start_date,
                 b.service_type,
                 b.service_model,
-                c.full_name                           AS client_name,
+                NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
                 p.full_name                           AS patient_name,
                 bsa.daily_rate,
                 bsa.service_start_date,
@@ -3850,7 +3843,7 @@ exports.getCurrentEarningsBreakdown = async (req, res) => {
                     ) AS running_balance,
                     b.service_type,
                     b.service_model,
-                    c.full_name                          AS client_name,
+                    NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
                     p.full_name                          AS patient_name,
                     spt.notes                            AS payout_notes,
                     spt.paid_at,
@@ -4268,7 +4261,7 @@ exports.getStaffMonthlyEarnings = async (req, res) => {
                 bsa.service_end_date,
                 bsa.daily_rate,
                 bsa.status,
-                cp.full_name AS client_name,
+                NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
                 pp.full_name AS patient_name,
                 COALESCE(
                     json_agg(

@@ -522,7 +522,7 @@ const getAccountTransactions = async (req, res) => {
         t.bank_verified_at,
         t.bank_verified_by,
         verifier.full_name as bank_verified_by_name,
-        cp.full_name as client_name,
+        NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
         sp.full_name as staff_name
       FROM transactions t
       LEFT JOIN client_profiles cp ON t.client_id = cp.client_profile_id

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft, Loader2, Briefcase, TrendingUp, Receipt, CalendarClock, Wallet,
   Mail, Phone, CalendarDays, ExternalLink, History, UserPlus, Users, IdCard,
@@ -345,9 +345,8 @@ const SalespersonDetailPage = () => {
                 ) : (
                   <div className="divide-y divide-slate-100">
                     {currentClients.map((c) => (
-                      <button
+                      <Link to={`/admin/users/${c.client_id}/detail`} onClick={(e) => e.stopPropagation()}
                         key={c.id}
-                        onClick={() => goToClient(c.client_id)}
                         className="flex w-full items-center justify-between gap-3 px-5 py-3.5 text-left hover:bg-slate-50 transition-colors"
                       >
                         <div className="min-w-0">
@@ -362,7 +361,7 @@ const SalespersonDetailPage = () => {
                           </div>
                         </div>
                         <ExternalLink className="w-4 h-4 text-slate-300 shrink-0" />
-                      </button>
+                      </Link>
                     ))}
                   </div>
                 )}
@@ -397,9 +396,9 @@ const SalespersonDetailPage = () => {
                           return (
                             <tr key={c.id} className="hover:bg-slate-50 transition-colors">
                               <td className="px-4 py-3">
-                                <button onClick={() => goToClient(c.client_id)} className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:underline">
+                                <Link to={`/admin/users/${c.client_id}/detail`} onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:underline">
                                   {c.client_name || '—'}
-                                </button>
+                                </Link>
                                 <div className="text-xs text-slate-400 mt-0.5">{formatMobileNumber(c.mobile_number) || '—'}</div>
                               </td>
                               <td className="px-4 py-3"><StatusDot status={c.reg_fee_status} /></td>

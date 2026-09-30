@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
+import { StaffLink } from '../components/EntityLinks';
 import apiClient from '../../../api/api';
 
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
@@ -311,7 +312,7 @@ const SalarySheetLedgerPage = () => {
                       </td>
                       <td className="px-4 py-3 text-slate-600 text-xs whitespace-nowrap">{fmtDate(s.paid_at)}</td>
                       <td className="px-4 py-3">
-                        <p className="font-semibold text-slate-800">{s.staff_name}</p>
+                        <p className="font-semibold text-slate-800"><StaffLink id={s.staff_profile_id}>{s.staff_name}</StaffLink></p>
                         <p className="text-xs text-slate-500">{s.designation || '—'}</p>
                       </td>
                       <td className="px-4 py-3">

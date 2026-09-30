@@ -56,7 +56,6 @@ router.get(
 router.get(
   '/staff/:staff_profile_id/bookings',
   protect,
-  restrictTo('STAFF', 'NURSE', 'CARETAKER', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR', 'SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS'),
   staffAssignmentController.getStaffAssignmentBookings
 );
 

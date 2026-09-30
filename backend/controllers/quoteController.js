@@ -170,7 +170,7 @@ exports.getClientQuotes = async (req, res) => {
                    sr.service_type,
                    sr.status as request_status,
                    sr.created_at as request_created_at,
-                   cp.full_name as client_name,
+                   NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
                    u.mobile_number as client_mobile
             FROM quotations q
             JOIN service_requests sr ON q.request_id = sr.request_id
@@ -991,7 +991,7 @@ exports.getProductQuoteWithLineItems = async (req, res) => {
         const result = await db.query(`
             SELECT q.*,
                    CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
-                        THEN cp.company_name ELSE cp.full_name END as client_name,
+                        THEN cp.company_name ELSE NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') END AS client_name,
                    u.mobile_number as client_mobile,
                    wc.full_name as walk_in_name, wc.mobile_number as walk_in_mobile,
                 COALESCE(json_agg(
@@ -1025,7 +1025,7 @@ exports.getProductQuoteWithLineItems = async (req, res) => {
             LEFT JOIN products p ON li.product_id = p.product_id
             LEFT JOIN vendors v ON p.vendor_id = v.vendor_id
             WHERE q.quote_id = $1 AND q.quote_type = 'PRODUCT'
-            GROUP BY q.quote_id, cp.full_name, cp.company_name, cp.display_name_source, u.mobile_number, wc.full_name, wc.mobile_number
+            GROUP BY q.quote_id, cp.full_name, cp.honorific, cp.company_name, cp.display_name_source, u.mobile_number, wc.full_name, wc.mobile_number
         `, [quote_id]);
 
         if (result.rows.length === 0) {
@@ -1062,7 +1062,7 @@ exports.listProductQuotes = async (req, res) => {
         const result = await db.query(`
             SELECT q.*,
                    CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
-                        THEN cp.company_name ELSE cp.full_name END as client_name,
+                        THEN cp.company_name ELSE NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') END AS client_name,
                    u.mobile_number as client_mobile,
                    wc.full_name as walk_in_name, wc.mobile_number as walk_in_mobile,
                    sq.estimate_number as linked_estimate_number,
@@ -1167,7 +1167,7 @@ async function buildProductQuotePdfData(quote_id) {
     const result = await db.query(`
         SELECT q.*,
                CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
-                    THEN cp.company_name ELSE cp.full_name END as client_name,
+                    THEN cp.company_name ELSE NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') END AS client_name,
                u.mobile_number as client_mobile,
                wc.full_name as walk_in_name, wc.mobile_number as walk_in_mobile,
                COALESCE(json_agg(
@@ -1191,7 +1191,7 @@ async function buildProductQuotePdfData(quote_id) {
         LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
         LEFT JOIN rental_units ru ON li.unit_id = ru.unit_id
         WHERE q.quote_id = $1 AND q.quote_type = 'PRODUCT'
-        GROUP BY q.quote_id, cp.full_name, cp.company_name, cp.display_name_source, u.mobile_number, wc.full_name, wc.mobile_number
+        GROUP BY q.quote_id, cp.full_name, cp.honorific, cp.company_name, cp.display_name_source, u.mobile_number, wc.full_name, wc.mobile_number
     `, [quote_id]);
 
     if (result.rows.length === 0) return null;
@@ -1509,7 +1509,7 @@ exports.listCombinedInvoices = async (req, res) => {
                    q.invoice_pdf_url, q.invoice_generated_at,
                    s.payer_name, s.payer_mobile,
                    CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
-                        THEN cp.company_name ELSE cp.full_name END AS billed_to_name
+                        THEN cp.company_name ELSE NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') END AS billed_to_name
             FROM quotations q
             JOIN service_requests s ON q.request_id = s.request_id
             LEFT JOIN client_profiles cp ON s.client_id = cp.client_profile_id

@@ -3,10 +3,11 @@ import {
   Receipt, Download, Send, Search, RefreshCcw, Loader2,
   CheckCircle2, Clock, ChevronLeft, ChevronRight, ChevronDown, Wallet, User,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
+import { withHonorific } from '../../../utils/clientName';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
 
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
@@ -174,21 +175,17 @@ const ClientPaymentsLedgerPage = () => {
                           <td colSpan={7} className="px-4 py-2.5">
                             <div className="flex items-center gap-2 text-slate-700">
                               <User className="w-4 h-4 text-slate-400" />
-                              <button
-                                type="button"
-                                onClick={() => navigate(`/admin/users/${r.client_id}/detail`)}
+                              <Link to={`/admin/users/${r.client_id}/detail`} onClick={(e) => e.stopPropagation()}
                                 className="font-semibold hover:text-blue-600 hover:underline text-left"
                               >
-                                {r.honorific ? `${r.honorific} ` : ''}{r.client_name || 'Unknown client'}
-                              </button>
+                                {withHonorific(r.honorific, r.client_name) || 'Unknown client'}
+                              </Link>
                               {r.client_code && (
-                                <button
-                                  type="button"
-                                  onClick={() => navigate(`/admin/users/${r.client_id}/detail`)}
+                                <Link to={`/admin/users/${r.client_id}/detail`} onClick={(e) => e.stopPropagation()}
                                   className="font-mono text-xs text-slate-500 hover:text-blue-600 hover:underline"
                                 >
                                   {r.client_code}
-                                </button>
+                                </Link>
                               )}
                               {r.mobile_number && <span className="text-xs text-slate-400">· {formatMobileNumber(r.mobile_number)}</span>}
                             </div>

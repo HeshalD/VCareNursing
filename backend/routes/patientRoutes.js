@@ -11,13 +11,22 @@ router.get(
     patientController.getAllPatients
 );
 
-// Route to add a patient (Admin / Internal Staff, or a Client adding their own care profile).
-// NOTE: shared with CLIENT self-service — deliberately NOT gated by requirePermission,
-// since a client account has no staff_permissions row and would always be denied.
+// Route to add a patient (Internal Staff with PATIENT_CREATE, or a Client adding their own care profile).
+// Shared with CLIENT self-service, so clients bypass the permission check (they have no
+// staff_permissions row). Everyone else must hold PATIENT_CREATE — a hard-coded role list
+// here wrongly denied SALES / CUSTOM_ROLE staff who had been granted the permission.
+const clientOrPatientCreate = async (req, res, next) => {
+    const raw = req.user.role;
+    const roles = (Array.isArray(raw) ? raw : String(raw || '').split(','))
+        .map(r => String(r).replace(/\{|\}/g, '').trim());
+    if (roles.includes('CLIENT')) return next();
+    return requirePermission('PATIENT_CREATE')(req, res, next);
+};
+
 router.post(
     '/create',
     protect,
-    restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'CLIENT'),
+    clientOrPatientCreate,
     patientController.createPatientProfile
 );
 

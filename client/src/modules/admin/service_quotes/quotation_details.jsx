@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, Link } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, FileText, RefreshCw, Receipt, CheckCircle2, Clock3, ClipboardList, Plus, Download, Send, Loader2, BadgeDollarSign, Pencil, Trash2, Save } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -248,7 +248,9 @@ const QuotationDetailsPage = () => {
         try {
           const invRes = await apiClient.getProductInvoices({ quote_id: quoteData.product_quote_id });
           const invoices = Array.isArray(invRes?.data) ? invRes.data : [];
-          const paidInvoices = invoices.filter((i) => i.status === 'PAID');
+          // A duplicate line-item invoice only mirrors the real invoice's status; counting it as
+          // well would add the same money twice.
+          const paidInvoices = invoices.filter((i) => i.status === 'PAID' && !i.is_duplicate);
           freshProductPaid = paidInvoices.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
           setProductPaid(freshProductPaid);
           setProductInvoice(paidInvoices[0] || null);
@@ -443,8 +445,7 @@ const QuotationDetailsPage = () => {
             <RefreshCw className="h-4 w-4" />
           </button>
           {quote && paymentRecorded && quote.request_id ? (
-            <button
-              onClick={() => navigate(`/admin/service-requests/${quote.request_id}/summary`)}
+            <button type="button" onClick={() => navigate(`/admin/service-requests/${quote.request_id}/summary`)}
               className={primaryBtnCls}
             >
               Proceed to Service Request <ArrowRight className="h-4 w-4" />
@@ -475,14 +476,12 @@ const QuotationDetailsPage = () => {
                     <span className="text-xs">{quote.estimate_number}</span>
                   </div>
                   {quote.request_client_id ? (
-                    <button
-                      type="button"
-                      onClick={() => navigate(`/admin/users/${quote.request_client_id}/detail`)}
+                    <Link to={`/admin/users/${quote.request_client_id}/detail`} onClick={(e) => e.stopPropagation()}
                       title="View client profile"
                       className="mt-1 text-left text-lg font-semibold text-slate-900 hover:text-blue-600 hover:underline transition-colors"
                     >
                       {withHonorific(quote.client_honorific, quote.payer_name)}
-                    </button>
+                    </Link>
                   ) : (
                     <h2 className="mt-1 text-lg font-semibold text-slate-900">{withHonorific(quote.client_honorific, quote.payer_name)}</h2>
                   )}
@@ -703,13 +702,11 @@ const QuotationDetailsPage = () => {
                 <Row
                   label="Payer"
                   value={quote.request_client_id ? (
-                    <button
-                      type="button"
-                      onClick={() => navigate(`/admin/users/${quote.request_client_id}/detail`)}
+                    <Link to={`/admin/users/${quote.request_client_id}/detail`} onClick={(e) => e.stopPropagation()}
                       className="font-medium text-blue-600 hover:underline"
                     >
                       {withHonorific(quote.client_honorific, quote.payer_name)}
-                    </button>
+                    </Link>
                   ) : withHonorific(quote.client_honorific, quote.payer_name)}
                 />
                 <Row label="Mobile" value={formatMobileNumber(quote.payer_mobile)} />

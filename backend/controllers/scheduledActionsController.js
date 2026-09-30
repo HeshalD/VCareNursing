@@ -45,10 +45,13 @@ exports.getUpcomingEvents = async (req, res) => {
                     sa.action_id, sa.action_type, sa.effective_date::text AS effective_date,
                     sa.status, sa.payload, sa.reason, sa.created_at,
                     b.booking_id, b.booking_code,
-                    c.full_name AS client_name,
+                    NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
                     p.full_name AS patient_name,
                     os.full_name AS current_staff_name,
-                    ns.full_name AS incoming_staff_name
+                    ns.full_name AS incoming_staff_name,
+                    b.client_id, b.patient_id,
+                    b.assigned_staff_id AS current_staff_id,
+                    ns.staff_profile_id AS incoming_staff_id
                 FROM scheduled_actions sa
                 JOIN bookings b ON sa.booking_id = b.booking_id
                 LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
@@ -67,8 +70,9 @@ exports.getUpcomingEvents = async (req, res) => {
                     st.termination_id, st.termination_code, st.urgency,
                     st.requested_end_date::text AS requested_end_date, st.reason, st.created_at,
                     b.booking_id, b.booking_code,
-                    c.full_name AS client_name,
-                    p.full_name AS patient_name
+                    NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
+                    p.full_name AS patient_name,
+                    b.client_id, b.patient_id
                 FROM service_terminations st
                 JOIN bookings b ON st.booking_id = b.booking_id
                 LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
@@ -80,8 +84,9 @@ exports.getUpcomingEvents = async (req, res) => {
             db.query(`
                 SELECT
                     b.booking_id, b.booking_code, b.daily_rate,
-                    c.full_name AS client_name,
+                    NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
                     p.full_name AS patient_name,
+                    b.client_id, b.patient_id,
                     ROUND((COALESCE(bill.total_paid, 0) - COALESCE(bill.total_invoiced, 0)) / b.daily_rate, 1) AS balance_days_remaining,
                     (COALESCE(bill.total_paid, 0) - COALESCE(bill.total_invoiced, 0)) AS remaining_balance
                 FROM bookings b
@@ -106,9 +111,10 @@ exports.getUpcomingEvents = async (req, res) => {
                 SELECT
                     bsa.assignment_id, bsa.booking_id,
                     b.booking_code,
-                    c.full_name AS client_name,
+                    NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
                     p.full_name AS patient_name,
-                    sp.full_name AS current_staff_name
+                    sp.full_name AS current_staff_name,
+                    b.client_id, b.patient_id, sp.staff_profile_id AS current_staff_id
                 FROM booking_staff_assignments bsa
                 JOIN bookings b ON bsa.booking_id = b.booking_id
                 JOIN staff_profiles sp ON bsa.staff_profile_id = sp.staff_profile_id
@@ -129,7 +135,7 @@ exports.getUpcomingEvents = async (req, res) => {
                 SELECT
                     lr.leave_id, lr.start_date::text AS start_date, lr.end_date::text AS end_date,
                     lr.reason, lr.requested_at,
-                    sp.full_name AS current_staff_name, sp.staff_code
+                    sp.full_name AS current_staff_name, sp.staff_code, sp.staff_profile_id AS current_staff_id
                 FROM staff_leave_requests lr
                 JOIN staff_profiles sp ON sp.staff_profile_id = lr.staff_profile_id
                 WHERE lr.status = 'PENDING'
@@ -141,7 +147,7 @@ exports.getUpcomingEvents = async (req, res) => {
                 SELECT
                     lr.leave_id, lr.start_date::text AS start_date, lr.end_date::text AS end_date,
                     lr.reason,
-                    sp.full_name AS current_staff_name, sp.staff_code
+                    sp.full_name AS current_staff_name, sp.staff_code, sp.staff_profile_id AS current_staff_id
                 FROM staff_leave_requests lr
                 JOIN staff_profiles sp ON sp.staff_profile_id = lr.staff_profile_id
                 WHERE lr.status = 'APPROVED'
@@ -161,9 +167,13 @@ exports.getUpcomingEvents = async (req, res) => {
                 booking_id: row.booking_id,
                 booking_code: row.booking_code,
                 client_name: row.client_name,
+                client_id: row.client_id,
                 patient_name: row.patient_name,
+                patient_id: row.patient_id,
                 current_staff_name: row.current_staff_name,
+                current_staff_id: row.current_staff_id,
                 incoming_staff_name: row.incoming_staff_name,
+                incoming_staff_id: row.incoming_staff_id,
                 effective_date: row.effective_date,
                 status: row.status,
                 reason: row.reason,
@@ -180,7 +190,9 @@ exports.getUpcomingEvents = async (req, res) => {
                 booking_id: row.booking_id,
                 booking_code: row.booking_code,
                 client_name: row.client_name,
+                client_id: row.client_id,
                 patient_name: row.patient_name,
+                patient_id: row.patient_id,
                 termination_code: row.termination_code,
                 urgency: row.urgency,
                 effective_date: row.requested_end_date,
@@ -201,7 +213,9 @@ exports.getUpcomingEvents = async (req, res) => {
                 booking_id: row.booking_id,
                 booking_code: row.booking_code,
                 client_name: row.client_name,
+                client_id: row.client_id,
                 patient_name: row.patient_name,
+                patient_id: row.patient_id,
                 balance_days_remaining: row.balance_days_remaining === null ? null : parseFloat(row.balance_days_remaining),
                 remaining_balance: remaining,
                 effective_date: null,
@@ -218,8 +232,11 @@ exports.getUpcomingEvents = async (req, res) => {
                 booking_id: row.booking_id,
                 booking_code: row.booking_code,
                 client_name: row.client_name,
+                client_id: row.client_id,
                 patient_name: row.patient_name,
+                patient_id: row.patient_id,
                 current_staff_name: row.current_staff_name,
+                current_staff_id: row.current_staff_id,
                 effective_date: today,
                 status: 'PENDING',
                 due_bucket: 'TODAY',
@@ -236,6 +253,7 @@ exports.getUpcomingEvents = async (req, res) => {
                 client_name: null,
                 patient_name: null,
                 current_staff_name: row.current_staff_name,
+                current_staff_id: row.current_staff_id,
                 staff_code: row.staff_code,
                 start_date: row.start_date,
                 end_date: row.end_date,
@@ -256,6 +274,7 @@ exports.getUpcomingEvents = async (req, res) => {
                 client_name: null,
                 patient_name: null,
                 current_staff_name: row.current_staff_name,
+                current_staff_id: row.current_staff_id,
                 staff_code: row.staff_code,
                 start_date: row.start_date,
                 end_date: row.end_date,

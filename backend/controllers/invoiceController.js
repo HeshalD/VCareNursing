@@ -130,44 +130,75 @@ async function generateLineItemInvoice(lineItemId, { actorUserId } = {}) {
     return ensureInvoicePdf(existing.rows[0].invoice_id);
   }
 
-  const liRes = await db.query(
-    `SELECT li.line_item_id, li.amount, li.quote_id,
-            q.client_id AS quote_client_id, q.walk_in_customer_id, q.request_id
-     FROM quote_line_items li
-     JOIN quotations q ON li.quote_id = q.quote_id
-     WHERE li.line_item_id = $1`,
-    [lineItemId]
-  );
-  if (liRes.rows.length === 0) return null;
-  const li = liRes.rows[0];
-
-  // SERVICE-type quotes carry the client on service_requests, not on the
-  // quotations row itself (see migrate.js:1389 — client_id there is only
-  // populated for PRODUCT-type quotes).
-  let client_id = li.quote_client_id;
-  if (!client_id && li.request_id) {
-    const reqRes = await db.query(`SELECT client_id FROM service_requests WHERE request_id = $1`, [li.request_id]);
-    client_id = reqRes.rows[0]?.client_id || null;
-  }
-
+  const pg = await db.pool.connect();
   let invoice;
   try {
-    const insertRes = await db.query(
-      `INSERT INTO invoices (category, client_id, walk_in_customer_id, quote_id, line_item_id, amount, status, created_by)
-       VALUES ('LINE_ITEM', $1, $2, $3, $4, $5, 'PENDING', $6)
-       RETURNING *`,
-      [client_id, li.walk_in_customer_id, li.quote_id, lineItemId, li.amount, actorUserId || null]
+    await pg.query('BEGIN');
+
+    // Lock the quotation row: acceptProductQuote takes the same lock, so an item can't be
+    // invoiced here and by the quote's own product invoice at the same moment.
+    const liRes = await pg.query(
+      `SELECT li.line_item_id, li.amount, li.quote_id,
+              q.client_id AS quote_client_id, q.walk_in_customer_id, q.request_id,
+              q.quote_type, q.status AS quote_status
+       FROM quote_line_items li
+       JOIN quotations q ON li.quote_id = q.quote_id
+       WHERE li.line_item_id = $1
+       FOR UPDATE OF q`,
+      [lineItemId]
     );
-    invoice = insertRes.rows[0];
-  } catch (err) {
-    // Unique violation on idx_invoices_line_item_unique — another request
-    // won the race, use its invoice instead.
-    if (err.code === '23505') {
-      const raceRes = await db.query(`SELECT * FROM invoices WHERE line_item_id = $1`, [lineItemId]);
-      invoice = raceRes.rows[0];
-    } else {
-      throw err;
+    if (liRes.rows.length === 0) {
+      await pg.query('ROLLBACK');
+      return null;
     }
+    const li = liRes.rows[0];
+
+    // Once a product quote has been accepted, every one of its items is already billed (by the
+    // quote's product invoice or a rental agreement's invoice). A second, individual invoice for
+    // the same item would just be a duplicate, so none is created. To invoice an item on its own,
+    // do it before the quote is accepted.
+    if (li.quote_type === 'PRODUCT' && li.quote_status === 'ACCEPTED') {
+      await pg.query('ROLLBACK');
+      return null;
+    }
+
+    // SERVICE-type quotes carry the client on service_requests, not on the
+    // quotations row itself (see migrate.js:1389 — client_id there is only
+    // populated for PRODUCT-type quotes).
+    let client_id = li.quote_client_id;
+    if (!client_id && li.request_id) {
+      const reqRes = await pg.query(`SELECT client_id FROM service_requests WHERE request_id = $1`, [li.request_id]);
+      client_id = reqRes.rows[0]?.client_id || null;
+    }
+
+    try {
+      await pg.query('SAVEPOINT create_line_item_invoice');
+      const insertRes = await pg.query(
+        `INSERT INTO invoices (category, client_id, walk_in_customer_id, quote_id, line_item_id, amount, status, created_by)
+         VALUES ('LINE_ITEM', $1, $2, $3, $4, $5, 'PENDING', $6)
+         RETURNING *`,
+        [client_id, li.walk_in_customer_id, li.quote_id, lineItemId, li.amount, actorUserId || null]
+      );
+      invoice = insertRes.rows[0];
+    } catch (err) {
+      // Unique violation on idx_invoices_line_item_unique — another request
+      // won the race, use its invoice instead.
+      if (err.code === '23505') {
+        await pg.query('ROLLBACK TO SAVEPOINT create_line_item_invoice');
+        const raceRes = await pg.query(`SELECT * FROM invoices WHERE line_item_id = $1`, [lineItemId]);
+        invoice = raceRes.rows[0];
+      } else {
+        throw err;
+      }
+    }
+    await pg.query('COMMIT');
+  } catch (err) {
+    await pg.query('ROLLBACK').catch(() => {});
+    // The database guard (migrate.js) refused it: the item is already billed by its accepted quote.
+    if (err.message === 'line_item_already_invoiced') return null;
+    throw err;
+  } finally {
+    pg.release();
   }
   if (!invoice) return null;
 
@@ -192,9 +223,12 @@ exports.createLineItemInvoices = async (req, res) => {
 
   try {
     const invoices = [];
+    // Items that were not invoiced because they are already billed (see generateLineItemInvoice).
+    const skipped = [];
     for (const lineItemId of line_item_ids) {
       const invoice = await generateLineItemInvoice(lineItemId, { actorUserId: req.user?.user_id });
       if (invoice) invoices.push(invoice);
+      else skipped.push(lineItemId);
     }
 
     await safeLog({
@@ -206,7 +240,7 @@ exports.createLineItemInvoices = async (req, res) => {
       details: { line_item_ids, invoice_codes: invoices.map(i => i.invoice_code) },
     });
 
-    res.status(201).json({ status: 'success', data: invoices });
+    res.status(201).json({ status: 'success', data: invoices, skipped_line_item_ids: skipped });
   } catch (error) {
     console.error('Create Line Item Invoices Error:', error);
     res.status(500).json({ message: 'Failed to create line item invoices' });
@@ -288,7 +322,7 @@ exports.listInvoices = async (req, res) => {
     const result = await db.query(
       `SELECT i.*, q.estimate_number, q.quote_type,
               CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
-                   THEN cp.company_name ELSE cp.full_name END as client_name,
+                   THEN cp.company_name ELSE NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') END AS client_name,
               u.mobile_number as client_mobile,
               wc.full_name as walk_in_name, wc.mobile_number as walk_in_mobile,
               -- A per-line-item invoice is only a document: money is never recorded against it
@@ -378,7 +412,7 @@ exports.getInvoice = async (req, res) => {
     const result = await db.query(
       `SELECT i.*, q.estimate_number,
               CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
-                   THEN cp.company_name ELSE cp.full_name END as client_name,
+                   THEN cp.company_name ELSE NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') END AS client_name,
               u.mobile_number as client_mobile,
               wc.full_name as walk_in_name, wc.mobile_number as walk_in_mobile,
               COALESCE(json_agg(
@@ -396,7 +430,7 @@ exports.getInvoice = async (req, res) => {
        LEFT JOIN walk_in_customers wc ON i.walk_in_customer_id = wc.walk_in_customer_id
        LEFT JOIN quote_line_items li ON li.quote_id = i.quote_id AND (i.line_item_id IS NULL OR li.line_item_id = i.line_item_id)
        WHERE i.invoice_id = $1
-       GROUP BY i.invoice_id, q.estimate_number, cp.full_name, cp.company_name, cp.display_name_source, u.mobile_number, wc.full_name, wc.mobile_number`,
+       GROUP BY i.invoice_id, q.estimate_number, cp.full_name, cp.honorific, cp.company_name, cp.display_name_source, u.mobile_number, wc.full_name, wc.mobile_number`,
       [invoice_id]
     );
 
@@ -422,7 +456,7 @@ async function ensureInvoicePdf(invoiceId) {
   const invRes = await db.query(
     `SELECT i.*,
             CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
-                 THEN cp.company_name ELSE cp.full_name END as client_name,
+                 THEN cp.company_name ELSE NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') END AS client_name,
             u.mobile_number as client_mobile,
             wc.full_name as walk_in_name, wc.mobile_number as walk_in_mobile
      FROM invoices i

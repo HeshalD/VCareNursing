@@ -18,7 +18,7 @@ const getActiveBookingBalances = async (client) => {
         b.daily_rate,
         b.shift_rate,
         b.service_model,
-        cp.full_name as client_name,
+        NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
         uc.mobile_number as client_mobile,
         COALESCE(SUM(CASE WHEN t.transaction_type = 'CREDIT' AND COALESCE(t.category::text, '') != 'STAFF_SALARY' THEN t.amount ELSE 0 END), 0) as total_paid,
         COALESCE(SUM(CASE WHEN t.transaction_type = 'DEBIT' THEN t.amount ELSE 0 END), 0) as total_invoiced,
@@ -128,7 +128,7 @@ const startDailyInvoicing = () => {
           b.invoicing_mode,
           q.daily_rate as quote_daily_rate,
           sp.full_name as staff_name,
-          c.full_name as client_name
+          NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name
          FROM booking_staff_assignments bsa
          JOIN bookings b ON bsa.booking_id = b.booking_id
          LEFT JOIN service_requests sr ON b.request_id = sr.request_id

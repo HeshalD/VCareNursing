@@ -271,7 +271,7 @@ const QuotationsPage = () => {
               try {
                 const invRes = await apiClient.getProductInvoices({ quote_id: quote.product_quote_id });
                 const invoices = Array.isArray(invRes?.data) ? invRes.data : [];
-                productPaid = invoices.filter((i) => i.status === 'PAID').reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+                productPaid = invoices.filter((i) => i.status === 'PAID' && !i.is_duplicate).reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
               } catch { /* non-critical */ }
             }
             const total_amount = serviceTotal + productTotal;

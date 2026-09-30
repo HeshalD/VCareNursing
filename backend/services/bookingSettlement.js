@@ -36,7 +36,7 @@ const getBookingSettlementSnapshot = async (client, booking_id, targetDateInput 
             b.daily_rate,
             b.ot_rate,
             b.wallet_earmarked,
-            c.full_name as client_name,
+            NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
             c.wallet_balance,
             sr.active_quote_id as quote_id,
             q.total_amount,

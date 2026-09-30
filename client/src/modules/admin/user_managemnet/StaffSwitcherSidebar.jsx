@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { Search, Loader2 } from 'lucide-react';
 import apiClient from '../../../api/api';
 import useDebouncedValue from '../../../hooks/useDebouncedValue';
@@ -75,10 +75,8 @@ const StaffSwitcherSidebar = ({ activeStaffId, onNavigate }) => {
             {staff.map((s) => {
               const active = String(s.staff_profile_id) === String(activeStaffId);
               return (
-                <button
-                  key={s.staff_profile_id}
-                  type="button"
-                  onClick={() => handleSelect(s.staff_profile_id)}
+                <Link
+                  key={s.staff_profile_id} to={`/admin/staff/${s.staff_profile_id}/detail`} onClick={() => onNavigate?.()}
                   className={`flex w-full items-center gap-2.5 border-l-2 px-3 py-2.5 text-left transition-colors ${
                     active ? 'border-blue-600 bg-blue-50' : 'border-transparent hover:bg-gray-50'
                   }`}
@@ -96,7 +94,7 @@ const StaffSwitcherSidebar = ({ activeStaffId, onNavigate }) => {
                       {s.staff_code || '—'}{s.gender ? ` · ${s.gender === 'MALE' ? 'Male' : s.gender === 'FEMALE' ? 'Female' : s.gender}` : ''}{s.mobile_number ? ` · ${formatMobileNumber(s.mobile_number)}` : ''}
                     </p>
                   </div>
-                </button>
+                </Link>
               );
             })}
             {pagination?.has_next && (

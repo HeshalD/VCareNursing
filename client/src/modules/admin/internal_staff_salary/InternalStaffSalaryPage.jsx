@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Loader2, Settings2, X, Plus } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
+import { InternalStaffLink } from '../components/EntityLinks';
 import apiClient from '../../../api/api';
 
 const STATUS_TABS = ['All', 'DRAFT', 'FINALIZED'];
@@ -227,7 +228,7 @@ const InternalStaffSalaryPage = () => {
                     onClick={() => navigate(`/admin/internal-staff-salary/build/${sheet.id}`)}
                     className="hover:bg-slate-50 cursor-pointer transition-colors"
                   >
-                    <td className="px-4 py-3 font-semibold text-slate-900">{sheet.staff_name}</td>
+                    <td className="px-4 py-3 font-semibold text-slate-900"><InternalStaffLink id={sheet.staff_id}>{sheet.staff_name}</InternalStaffLink></td>
                     <td className="px-4 py-3 text-slate-600">{monthLabel(sheet.month)}</td>
                     <td className="px-4 py-3"><SheetStatusBadge status={sheet.status} /></td>
                     <td className="px-4 py-3 text-right font-medium text-slate-800">{money(sheet.net_payable)}</td>

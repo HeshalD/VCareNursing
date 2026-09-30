@@ -7,6 +7,7 @@ import {
   TriangleAlert, FileText,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
+import { ClientLink, PatientLink, StaffLink } from '../components/EntityLinks';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import StaffScheduleTimeline from '../components/StaffScheduleTimeline';
@@ -240,6 +241,8 @@ const BookingStaffRosterPage = () => {
   // Derived display values
   const clientName   = request?.payer_name       || booking?.client_name   || '—';
   const patientName  = request?.patient_name     || booking?.patient_name  || '—';
+  const clientId     = request?.client_id        || booking?.client_id     || booking?.client_profile_id;
+  const patientId    = request?.patient_id       || booking?.patient_id    || booking?.resolved_patient_id;
   const serviceModel = request?.service_model    || booking?.service_model;
   const serviceType  = request?.service_type     || booking?.service_type;
   const prefGender   = request?.preferred_gender || booking?.preferred_gender;
@@ -313,14 +316,14 @@ const BookingStaffRosterPage = () => {
             <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1">
               <div className="flex items-center gap-2 shrink-0">
                 <FileText className="h-3.5 w-3.5 text-gray-400 shrink-0" />
-                <span className="font-semibold text-sm text-gray-900">{clientName}</span>
+                <span className="font-semibold text-sm text-gray-900"><ClientLink id={clientId}>{clientName}</ClientLink></span>
                 {requestCode && (
                   <span className="font-mono text-xs text-gray-400">{requestCode}</span>
                 )}
               </div>
               <span className="hidden h-3 w-px bg-gray-200 sm:block" />
               <span className="text-sm text-gray-500">
-                Patient: <span className="font-medium text-gray-700">{patientName}</span>
+                Patient: <span className="font-medium text-gray-700"><PatientLink id={patientId}>{patientName}</PatientLink></span>
               </span>
               {serviceType && (
                 <Chip>{humanize(serviceType)}</Chip>
@@ -357,7 +360,7 @@ const BookingStaffRosterPage = () => {
                 <section>
                   <SectionHeading icon={User} label="Client / Payer" />
                   <dl className="mt-3 space-y-3">
-                    <DetailRow label="Name"     value={request?.payer_name      || booking?.client_name} />
+                    <DetailRow label="Name"     value={(request?.payer_name || booking?.client_name) ? <ClientLink id={clientId}>{request?.payer_name || booking?.client_name}</ClientLink> : null} />
                     <DetailRow label="Mobile"   value={formatMobileNumber(request?.payer_mobile    || booking?.client_mobile)} />
                     <DetailRow label="Location" value={request?.location_address || booking?.client_address} />
                   </dl>
@@ -365,7 +368,7 @@ const BookingStaffRosterPage = () => {
                 <section>
                   <SectionHeading icon={Stethoscope} label="Care Profile" />
                   <dl className="mt-3 space-y-3">
-                    <DetailRow label="Patient"      value={request?.patient_name || booking?.patient_name} />
+                    <DetailRow label="Patient"      value={(request?.patient_name || booking?.patient_name) ? <PatientLink id={patientId}>{request?.patient_name || booking?.patient_name}</PatientLink> : null} />
                     <DetailRow label="Age"          value={request?.patient_age  ?? booking?.patient_age} />
                     <DetailRow label="Relationship" value={request?.relationship_to_client || booking?.relationship_to_client} />
                   </dl>
@@ -569,7 +572,7 @@ const BookingStaffRosterPage = () => {
                             )}
                             <div>
                               <div className="flex items-center gap-1.5">
-                                <p className="font-semibold text-gray-900 leading-tight">{member.full_name}</p>
+                                <p className="font-semibold text-gray-900 leading-tight"><StaffLink id={member.staff_profile_id}>{member.full_name}</StaffLink></p>
                                 {isPreferred && (
                                   <Star className="h-3 w-3 fill-yellow-400 text-yellow-400 shrink-0" title="Client's preferred staff" />
                                 )}
@@ -808,7 +811,7 @@ const DetailRow = ({ label, value }) => (
   <div>
     <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">{label}</p>
     <p className="mt-0.5 text-sm font-medium text-gray-800">
-      {value != null && value !== '' ? String(value) : <span className="font-normal text-gray-300">—</span>}
+      {value != null && value !== '' ? (React.isValidElement(value) ? value : String(value)) : <span className="font-normal text-gray-300">—</span>}
     </p>
   </div>
 );

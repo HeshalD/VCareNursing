@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { StaffLink } from '../components/EntityLinks';
 import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, Mars, Venus, Trash2, CheckCircle2, ChevronDown, ShieldOff, ShieldCheck, X, Landmark, Eye, EyeOff } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -568,7 +569,7 @@ const StaffManagement = () => {
                       )}
                       <div>
                         <p className="font-medium text-blue-600 leading-tight flex items-center gap-1.5">
-                          {worker.full_name ?? '—'}
+                          <StaffLink id={worker.staff_profile_id}>{worker.full_name ?? '—'}</StaffLink>
                           {worker.show_on_public_site && (
                             <Eye className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" aria-label="Displayed on the public site" title="Displayed on the public site" />
                           )}

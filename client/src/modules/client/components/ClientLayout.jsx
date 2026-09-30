@@ -7,6 +7,7 @@ import {
   FileSpreadsheet, Receipt, ScrollText, Users
 } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
+import { withHonorific } from '../../../utils/clientName';
 import logoUrl from '../../../assets/Logo/VCareLogo.png';
 
 const NAV_ITEMS = [
@@ -51,8 +52,8 @@ const ClientLayout = () => {
   }, []);
 
   const getUserDisplayName = () => {
-    if (user?.full_name) return user.full_name;
-    if (user?.client_info?.name) return user.client_info.name;
+    if (user?.full_name) return withHonorific(user.honorific, user.full_name);
+    if (user?.client_info?.name) return withHonorific(user.client_info.honorific, user.client_info.name);
     if (user?.staff_info?.name) return user.staff_info.name;
     return user?.mobile_number || 'User';
   };

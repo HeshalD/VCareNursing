@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Loader2 } from 'lucide-react';
 import apiClient from '../../../api/api';
+import { withHonorific } from '../../../utils/clientName';
 
 const STATUS_META = {
   NEW_LEAD:        { dot: 'bg-purple-400',  text: 'text-purple-700' },
@@ -89,7 +90,7 @@ const ServiceRequestSwitcherSidebar = ({ activeRequestId, onNavigate }) => {
               >
                 <div className="flex items-center justify-between gap-2">
                   <p className={`truncate text-[13px] font-semibold ${active ? 'text-blue-700' : 'text-gray-800'}`}>
-                    {r.payer_name || 'Client'}
+                    {withHonorific(r.client_honorific || r.honorific, r.payer_name) || 'Client'}
                   </p>
                   <span className={`flex items-center gap-1 text-[10px] font-semibold ${meta.text}`}>
                     <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { XCircle, Loader2, Calendar, User, Clock, Search, RefreshCw, AlertTriangle, Plus, ChevronRight, Building2, Trash2, Lock, Mars, Venus } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
+import { ClientLink, PatientLink, StaffLink } from '../components/EntityLinks';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import AdminDirectBookingDrawer from './AdminDirectBookingDrawer';
@@ -101,7 +102,7 @@ const StaffList = ({ staff }) => {
       {staff.map((s) => (
         <div key={s.staff_profile_id} className="flex items-center gap-1.5">
           <GenderIcon gender={s.gender} />
-          <span className="text-slate-700">{s.full_name}</span>
+          <span className="text-slate-700"><StaffLink id={s.staff_profile_id}>{s.full_name}</StaffLink></span>
           {s.staff_code && (
             <span className="font-mono text-[11px] text-slate-400">{s.staff_code}</span>
           )}
@@ -429,7 +430,13 @@ const Bookings = () => {
                           {/* Booking code */}
                           <td className="px-4 py-3">
                             <p className="font-mono text-sm font-semibold text-slate-800">
-                              {b.booking_code || `#${b.booking_id}`}
+                              <Link
+                                to={`/admin/bookings/${b.booking_id}/detail`}
+                                onClick={(e) => e.stopPropagation()}
+                                className="hover:text-blue-600 hover:underline transition-colors"
+                              >
+                                {b.booking_code || `#${b.booking_id}`}
+                              </Link>
                             </p>
                             {b.is_expiring_soon && (
                               <span className="inline-flex items-center gap-1 mt-1 text-[11px] font-medium text-amber-600">
@@ -455,7 +462,7 @@ const Bookings = () => {
                               </div>
                               <div>
                                 <p className="font-medium text-slate-900 leading-tight">
-                                  {details?.client_name || details?.client_code || 'Unknown client'}
+                                  <ClientLink id={b.client_id}>{details?.client_name || details?.client_code || 'Unknown client'}</ClientLink>
                                 </p>
                                 {details?.client_address && (
                                   <p className="text-xs text-slate-400 truncate max-w-[160px]">{details.client_address}</p>
@@ -466,7 +473,7 @@ const Bookings = () => {
 
                           {/* Care profile */}
                           <td className="px-4 py-3">
-                            <p className="text-slate-700">{details?.patient_name || `#${b.patient_id}`}</p>
+                            <p className="text-slate-700"><PatientLink id={b.patient_id}>{details?.patient_name || `#${b.patient_id}`}</PatientLink></p>
                             {details?.patient_age && (
                               <p className="text-xs text-slate-400">Age {details.patient_age}</p>
                             )}
@@ -555,10 +562,10 @@ const Bookings = () => {
                         </div>
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-slate-900 truncate">
-                            {details?.client_name || details?.client_code || 'Unknown client'}
+                            <ClientLink id={b.client_id}>{details?.client_name || details?.client_code || 'Unknown client'}</ClientLink>
                           </p>
                           <p className="text-xs text-slate-500 truncate">
-                            {details?.patient_name || `Care profile #${b.patient_id}`}
+                            <PatientLink id={b.patient_id}>{details?.patient_name || `Care profile #${b.patient_id}`}</PatientLink>
                           </p>
                         </div>
                       </div>

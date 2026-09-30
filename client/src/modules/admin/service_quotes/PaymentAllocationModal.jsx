@@ -107,14 +107,16 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
   // Vendor-linked line items on the companion PRODUCT quote (if any) that
   // haven't been accepted yet — surfaced as part of this same Step 2
   // allocation screen instead of a separate gate, so recording the payment
-  // and deciding how to pay the vendor happen in one action. Without this,
-  // the accept-on-open fallback below would call acceptProductQuote with no
-  // vendor_payments, silently leaving every vendor bill unpaid with no admin
-  // decision — same prompt ProductsPage.jsx shows on its own "Accept &
+  // and deciding how to pay the vendor happen in one action. The product quote is
+  // accepted at submit time (never on open), with whatever pay-now/leave-unpaid
+  // choices were made here — same prompt ProductsPage.jsx shows on its own "Accept &
   // Invoice" button; this is the other place acceptProductQuote can fire from.
   const [productQuoteId, setProductQuoteId] = useState(null);
   const [vendorItems, setVendorItems] = useState([]);
   const [vendorDecisions, setVendorDecisions] = useState({});
+  // True while the linked product quote has not been accepted yet. It is accepted when the payment
+  // is submitted (never on open), so the admin can still choose to invoice items individually first.
+  const [productNeedsAccept, setProductNeedsAccept] = useState(false);
 
   // Every invoiceable line item across the SERVICE quote and its linked
   // PRODUCT quote (if any) — { line_item_id, quote_id, description, amount,
@@ -135,8 +137,10 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
   const loadLineItemsForInvoicing = async (serviceLineItems, pQuoteId) => {
     try {
       let productItems = [];
+      let productAccepted = false;
       if (pQuoteId) {
         const productDetail = await apiClient.getProductQuote(pQuoteId);
+        productAccepted = productDetail?.data?.status === 'ACCEPTED';
         productItems = (productDetail?.data?.line_items || []).map((li) => ({ ...li, quote_id: pQuoteId }));
       }
       const allItems = [
@@ -163,7 +167,13 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
           .map((inv) => [inv.line_item_id, inv])
       );
 
-      setLineItems(allItems.map((li) => ({ ...li, invoice: invoiceMap[li.line_item_id] || null })));
+      setLineItems(
+        allItems
+          // Once the product quote is accepted its items are already invoiced (by the quote's own
+          // invoice), so only items that already have an individual invoice stay listed.
+          .filter((li) => li.quote_id === quoteId || !productAccepted || invoiceMap[li.line_item_id])
+          .map((li) => ({ ...li, invoice: invoiceMap[li.line_item_id] || null }))
+      );
     } catch {
       setLineItems([]);
     }
@@ -177,6 +187,9 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
       const created = Array.isArray(res?.data) ? res.data[0] : null;
       if (created) {
         setLineItems((prev) => prev.map((li) => (li.line_item_id === lineItemId ? { ...li, invoice: created } : li)));
+      } else if ((res?.skipped_line_item_ids || []).includes(lineItemId)) {
+        setLineItems((prev) => prev.filter((li) => li.line_item_id !== lineItemId));
+        setError('That item is already invoiced on the quotation\'s product invoice, so no separate invoice was created.');
       }
     } catch (err) {
       setError(err.message || 'Failed to create invoice');
@@ -198,7 +211,13 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
       const res = await apiClient.createLineItemInvoices(quoteId, uninvoicedIds);
       const created = Array.isArray(res?.data) ? res.data : [];
       const createdMap = Object.fromEntries(created.map((inv) => [inv.line_item_id, inv]));
-      setLineItems((prev) => prev.map((li) => (createdMap[li.line_item_id] ? { ...li, invoice: createdMap[li.line_item_id] } : li)));
+      const skippedIds = new Set(res?.skipped_line_item_ids || []);
+      setLineItems((prev) => prev
+        .filter((li) => !skippedIds.has(li.line_item_id))
+        .map((li) => (createdMap[li.line_item_id] ? { ...li, invoice: createdMap[li.line_item_id] } : li)));
+      if (skippedIds.size > 0) {
+        setError('Some items are already invoiced on the quotation\'s product invoice, so no separate invoice was created for them.');
+      }
     } catch (err) {
       setError(err.message || 'Failed to create invoices');
     } finally {
@@ -269,40 +288,31 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
       // see the EST-1368/BED-003 incident) so the Products & Rentals
       // bucket doesn't silently disappear from this modal.
       if (invoices.length === 0 && productLineItems.length > 0) {
+        // Not accepted yet. Accepting is what creates the quote's payable invoices, so it is
+        // deferred to submit time (see handleSubmit) instead of happening as soon as this form
+        // opens. That leaves the admin the chance to invoice individual items first — an item
+        // invoiced here is then left out of the quote's own invoice rather than billed twice.
         const vItems = productLineItems.filter((li) => li.vendor_id);
-        if (vItems.length > 0) {
-          const initialDecisions = {};
-          for (const li of vItems) {
-            const defaultAmount = parseFloat(li.cost_price_snapshot ?? li.product_cost_price ?? 0) * parseFloat(li.quantity || 1);
-            initialDecisions[li.line_item_id] = {
-              pay_now: false,
-              amount: defaultAmount || 0,
-              payment_method: 'CASH',
-              bank_account_id: '',
-              cheque_number: '',
-              cheque_date: '',
-            };
-          }
-          setVendorItems(vItems);
-          setVendorDecisions(initialDecisions);
-          // Not accepted yet — nothing paid, so the full quoted total is due.
-          // acceptProductQuote runs at submit time instead (see handleSubmit).
-          setProductsRemaining(productsTotal);
-          setCombinedRemaining(regRemaining + svcOnlyRemaining + productsTotal);
-          setLoading(false);
-          return;
+        const initialDecisions = {};
+        for (const li of vItems) {
+          const defaultAmount = parseFloat(li.cost_price_snapshot ?? li.product_cost_price ?? 0) * parseFloat(li.quantity || 1);
+          initialDecisions[li.line_item_id] = {
+            pay_now: false,
+            amount: defaultAmount || 0,
+            payment_method: 'CASH',
+            bank_account_id: '',
+            cheque_number: '',
+            cheque_date: '',
+          };
         }
-
-        try {
-          await apiClient.acceptProductQuote(pQuoteId);
-          invRes = await apiClient.getProductInvoices({ quote_id: pQuoteId });
-          invoices = realInvoices(invRes);
-        } catch (acceptErr) {
-          // A 409 here just means it's already accepted under a race —
-          // anything else means invoices genuinely don't exist yet and
-          // productsTotal (from line items) is still the right due amount.
-          console.warn('acceptProductQuote fallback failed:', acceptErr.message);
-        }
+        setVendorItems(vItems);
+        setVendorDecisions(initialDecisions);
+        setProductNeedsAccept(true);
+        // Nothing paid or accepted yet — the full quoted total is due.
+        setProductsRemaining(productsTotal);
+        setCombinedRemaining(regRemaining + svcOnlyRemaining + productsTotal);
+        setLoading(false);
+        return;
       }
 
       // A fully-PAID invoice counts as fully paid even if it predates
@@ -334,6 +344,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
       setError('');
       setVendorItems([]);
       setVendorDecisions({});
+      setProductNeedsAccept(false);
       const [quoteRes, progressRes, banksRes] = await Promise.all([
         apiClient.getQuoteWithLineItems(quoteId),
         apiClient.getQuotePaymentProgress(quoteId),
@@ -526,7 +537,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
       // paymentTrackingController's check) — if vendor items were pending a
       // decision, accept it now, bundled into this same submit action, with
       // whatever pay-now/leave-unpaid choices the admin made above.
-      if (vendorItems.length > 0 && productQuoteId) {
+      if (productNeedsAccept && productQuoteId) {
         try {
           await apiClient.acceptProductQuote(productQuoteId, { vendor_payments: vendorDecisions });
         } catch (acceptErr) {
@@ -535,6 +546,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
           if (!/already been accepted/i.test(acceptErr.message || '')) throw acceptErr;
         }
         // Accepted now: a retry after a later failure must not try (and fail) to accept again.
+        setProductNeedsAccept(false);
         setVendorItems([]);
       }
 

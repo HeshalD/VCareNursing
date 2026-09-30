@@ -1,6 +1,7 @@
 // backend/controllers/staffLeaveController.js
 
 const { pool } = require('../config/db');
+const { userHasPermission } = require('../middleware/authMiddleware');
 const { logActivity } = require('../utils/activityLogger');
 const { sendStaffLeaveApproved, sendStaffLeaveRejected } = require('../utils/metaWhatsapp');
 const { sendStaffLeaveApprovedSms, sendStaffLeaveRejectedSms } = require('../utils/sms');
@@ -349,7 +350,7 @@ const getLeaveConflicts = async (req, res) => {
               bsa.service_end_date::text AS service_end_date,
               b.service_type, b.service_model,
               bsa.shift_slot_id, s.shift_number, s.label AS shift_label,
-              c.full_name AS client_name,
+              NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
               p.full_name AS patient_name
        FROM booking_staff_assignments bsa
        JOIN bookings b ON b.booking_id = bsa.booking_id
@@ -716,8 +717,7 @@ const extendLeave = async (req, res) => {
 const getStaffLeaveSummary = async (req, res) => {
   const { staffProfileId } = req.params;
   try {
-    const actorRole = extractActorRole(req.user.role);
-    if (!['SUPER_ADMIN', 'COORDINATOR'].includes(actorRole)) {
+    if (!(await userHasPermission(req.user, 'VIEW_STAFF_LEAVES'))) {
       const ownProfile = await pool.query(
         'SELECT staff_profile_id FROM staff_profiles WHERE user_id = $1',
         [req.user.user_id]

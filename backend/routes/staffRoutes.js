@@ -326,7 +326,6 @@ router.get(
 router.get(
   '/:staff_profile_id/attendance-calendar',
   protect,
-  restrictTo('SUPER_ADMIN', 'COORDINATOR', 'ACCOUNTS', 'STAFF', 'NURSE', 'CARETAKER', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'),
   staffController.getAttendanceCalendar
 );
 
@@ -553,7 +552,7 @@ router.get('/by-client/:client_profile_id', protect, async (req, res) => {
   
   try {
     const query = `
-      SELECT sp.staff_profile_id, sp.full_name, cp.full_name as client_name
+      SELECT sp.staff_profile_id, sp.full_name, NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name
       FROM staff_profiles sp
       JOIN users u ON sp.user_id = u.user_id
       JOIN client_profiles cp ON u.user_id = cp.user_id

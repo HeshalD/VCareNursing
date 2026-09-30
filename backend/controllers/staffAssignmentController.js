@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { userHasPermission } = require('../middleware/authMiddleware');
 const { sendSms } = require('../utils/sms');
 const { sendBookingConfirmed, sendStaffNewAssignment } = require('../utils/metaWhatsapp');
 const { logActivity } = require('../utils/activityLogger');
@@ -17,11 +18,8 @@ async function canAccessStaffRecord(req, staff_profile_id, permissionKey) {
   const actorRole = extractActorRole(req.user.role);
   if (actorRole === 'SUPER_ADMIN') return true;
 
-  const permRes = await db.query(
-    'SELECT 1 FROM staff_permissions WHERE user_id = $1 AND permission_key = $2',
-    [req.user.user_id, permissionKey]
-  );
-  if (permRes.rows.length > 0) return true;
+  // Includes permissions inherited from a custom role, not just direct grants.
+  if (await userHasPermission(req.user, permissionKey)) return true;
 
   const ownProfile = await db.query('SELECT staff_profile_id FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
   return ownProfile.rows.length > 0 && String(ownProfile.rows[0].staff_profile_id) === String(staff_profile_id);
@@ -73,6 +71,7 @@ exports.getAssignmentFormData = async (req, res) => {
         b.booking_id,
         b.request_id,
         b.client_id,
+        b.patient_id,
         b.service_model,
         b.service_type,
         b.daily_rate AS booking_daily_rate,
@@ -90,7 +89,7 @@ exports.getAssignmentFormData = async (req, res) => {
         q.qty_shifts,
         q.total_amount,
         COALESCE(cp.wallet_balance, 0) AS wallet_balance,
-        COALESCE(cp.full_name, sr.payer_name) AS client_name,
+        COALESCE(NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), ''), sr.payer_name) AS client_name,
         COALESCE(pp.full_name, sr.patient_name) AS patient_name,
         sr.payer_mobile,
         sr.location_address
@@ -213,6 +212,7 @@ exports.getAssignmentFormData = async (req, res) => {
         booking: {
           booking_id: booking.booking_id,
           client_id: booking.client_id,
+          patient_id: booking.patient_id,
           service_model: booking.service_model,
           booking_status: booking.booking_status,
           start_date: booking.start_date,
@@ -810,7 +810,7 @@ exports.getStaffAssignmentBookings = async (req, res) => {
         b.service_model,
         COALESCE(b.service_type, sr.service_type) as service_type,
         b.ot_rate,
-        cp.full_name as client_name,
+        NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
         uc.mobile_number as client_mobile,
         COALESCE(pp.full_name, sr.patient_name) as patient_name,
         pp.full_name as patient_full_name,

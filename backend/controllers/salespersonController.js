@@ -90,7 +90,7 @@ exports.getSalespersonBookings = async (req, res) => {
     const rowsRes = await db.query(
       `SELECT bsa.id, bsa.booking_id, b.booking_code, b.status AS booking_status,
               b.service_type, b.start_date, b.amount_paid,
-              cp.full_name AS client_name,
+              NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
               COALESCE(pp.full_name, sr.patient_name) AS patient_name,
               bsa.credited_amount, bsa.is_current, bsa.is_origin, bsa.action,
               bsa.switch_reason, bsa.assigned_at
@@ -284,7 +284,7 @@ exports.getSalespersonClients = async (req, res) => {
     }
 
     const rowsRes = await db.query(
-      `SELECT csa.id, csa.client_id, cp.full_name AS client_name, u.mobile_number,
+      `SELECT csa.id, csa.client_id, NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name, u.mobile_number,
               cp.reg_fee_status, cp.reg_fee_paid_at, cp.reg_fee_expires_at,
               csa.credited_amount, csa.is_current, csa.is_origin, csa.action,
               csa.switch_reason, csa.assigned_at

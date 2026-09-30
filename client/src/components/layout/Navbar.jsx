@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Menu, X, User, LogOut, Briefcase, Calendar, ChevronDown, Users, Wallet, Star, UserPlus, FileText, FileSpreadsheet, Receipt, ScrollText, HeartHandshake } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { withHonorific } from '../../utils/clientName';
 import logoUrl from '../../assets/Logo/VCareLogo.png';
 const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
@@ -44,11 +45,11 @@ const Navbar = () => {
   const getUserDisplayName = () => {
     // Use full_name from AuthContext (from JWT payload)
     if (user?.full_name) {
-      return user.full_name;
+      return withHonorific(user.honorific, user.full_name);
     }
     // Fallback to nested info objects for backward compatibility
     if (user?.client_info?.name) {
-      return user.client_info.name;
+      return withHonorific(user.client_info.honorific, user.client_info.name);
     }
     if (user?.staff_info?.name) {
       return user.staff_info.name;

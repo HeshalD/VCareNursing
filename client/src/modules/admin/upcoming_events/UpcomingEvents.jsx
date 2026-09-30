@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
+import { ClientLink, PatientLink } from '../components/EntityLinks';
 import apiClient from '../../../api/api';
 import {
   CalendarClock,
@@ -249,7 +250,7 @@ const UpcomingEvents = () => {
                     {event.source === 'PENDING_APPROVAL' && (
                       <>
                         <Detail label="Booking" value={<BookingLink event={event} navigate={navigate} />} />
-                        <Detail label="Client / Care Profile" value={`${event.client_name || '—'} · ${event.patient_name || '—'}`} />
+                        <Detail label="Client / Care Profile" value={<><ClientLink id={event.client_id}>{event.client_name || '—'}</ClientLink> · <PatientLink id={event.patient_id}>{event.patient_name || '—'}</PatientLink></>} />
                         <Detail
                           label="Requested End Date"
                           value={fmt(event.effective_date)}
@@ -282,7 +283,7 @@ const UpcomingEvents = () => {
                     {event.source === 'ATTENDANCE' && (
                       <>
                         <Detail label="Booking" value={<BookingLink event={event} navigate={navigate} />} />
-                        <Detail label="Client / Care Profile" value={`${event.client_name || '—'} · ${event.patient_name || '—'}`} />
+                        <Detail label="Client / Care Profile" value={<><ClientLink id={event.client_id}>{event.client_name || '—'}</ClientLink> · <PatientLink id={event.patient_id}>{event.patient_name || '—'}</PatientLink></>} />
                         <Detail label="Staff" value={event.current_staff_name} />
                         <Detail label="Date" value={fmt(event.effective_date)} tone="font-medium" />
                       </>
@@ -366,8 +367,8 @@ const UpcomingEvents = () => {
                         <BookingLink event={event} navigate={navigate} />
                       </td>
                       <td className="px-4 py-3">
-                        <p className="font-semibold text-slate-900 leading-tight">{event.client_name || '—'}</p>
-                        <p className="text-xs text-slate-400 mt-0.5">{event.patient_name || '—'}</p>
+                        <p className="font-semibold text-slate-900 leading-tight"><ClientLink id={event.client_id}>{event.client_name || '—'}</ClientLink></p>
+                        <p className="text-xs text-slate-400 mt-0.5"><PatientLink id={event.patient_id}>{event.patient_name || '—'}</PatientLink></p>
                       </td>
                       <td className="px-4 py-3 text-slate-700">
                         {event.incoming_staff_name ? (

@@ -33,7 +33,7 @@ router.post('/:leaveId/report-back', protect, requirePermission('STAFF_LEAVE_REP
 // Admins can view any staff member's leave summary; staff can only view their own (enforced in controller).
 // NOTE: shared with staff self-service — deliberately NOT gated by requirePermission,
 // since those roles have no staff_permissions row.
-router.get('/summary/:staffProfileId', protect, restrictTo('SUPER_ADMIN', 'COORDINATOR', 'STAFF', 'NURSE', 'CARETAKER', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'), getStaffLeaveSummary);
+router.get('/summary/:staffProfileId', protect, getStaffLeaveSummary);
 router.get('/:leaveId/conflicts', protect, requirePermission('VIEW_STAFF_LEAVES'), getLeaveConflicts);
 router.get('/:leaveId/candidates', protect, requirePermission('VIEW_STAFF_LEAVES'), getReplacementCandidates);
 router.post('/approve/:leaveId', protect, requirePermission('STAFF_LEAVE_APPROVE'), approveLeave);

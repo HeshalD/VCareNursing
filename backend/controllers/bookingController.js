@@ -1041,7 +1041,7 @@ exports.getByBookingID = async (req, res) => {
                 b.hospital_name,
                 c.client_profile_id,
                 c.client_code,
-                c.full_name as client_name,
+                NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
                 c.primary_address as client_address,
                 uc.mobile_number as client_mobile,
                 p.patient_id,
@@ -1139,7 +1139,7 @@ exports.getAdminBookingDetail = async (req, res) => {
             b.hospital_name,
             c.client_profile_id,
             c.client_code,
-            c.full_name as client_name,
+            NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
             c.primary_address as client_address,
             c.wallet_balance,
             uc.mobile_number as client_mobile,
@@ -1493,7 +1493,7 @@ exports.getBookingInvoiceBreakdown = async (req, res) => {
                 b.daily_rate,
                 b.amount_paid,
                 b.amount_quotated,
-                c.full_name as client_name,
+                NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
                 c.wallet_balance,
                 q.quote_id,
                 q.total_amount,
@@ -2856,9 +2856,10 @@ exports.getPendingTerminationRequests = async (req, res) => {
                 b.booking_code,
                 b.start_date,
                 b.service_type,
-                c.full_name as client_name,
+                NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
                 c.primary_address as location,
                 p.full_name as patient_name,
+                b.client_id, b.patient_id,
                 s.staff_profile_id,
                 s.full_name as staff_name,
                 s.staff_code,
@@ -2918,9 +2919,10 @@ exports.getTerminationHistory = async (req, res) => {
                 b.booking_code,
                 b.start_date,
                 b.service_type,
-                c.full_name as client_name,
+                NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
                 c.primary_address as location,
                 p.full_name as patient_name,
+                b.client_id, b.patient_id,
                 s.staff_profile_id,
                 s.full_name as staff_name,
                 s.staff_code,
@@ -3380,7 +3382,7 @@ exports.forceStopBooking = async (req, res) => {
 
                 const infoRes = await db.query(
                     `SELECT
-                        cp.full_name AS client_name, cu.mobile_number AS client_mobile,
+                        NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name, cu.mobile_number AS client_mobile,
                         sp.full_name AS staff_name, su.mobile_number AS staff_mobile,
                         sr.patient_name
                      FROM bookings b
@@ -3466,7 +3468,7 @@ exports.getAllBookings = async (req, res) => {
                 b.hospital_name,
                 c.client_profile_id,
                 c.client_code,
-                c.full_name as client_name,
+                NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
                 c.primary_address as client_address,
                 uc.mobile_number as client_mobile,
                 p.patient_id,
@@ -3900,7 +3902,7 @@ exports.swapStaff = async (req, res) => {
             `SELECT b.*,
                     sp.full_name as old_staff_name,
                     u.mobile_number as old_staff_mobile,
-                    cp.full_name as client_name,
+                    NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
                     uc.mobile_number as client_mobile,
                     p.full_name as patient_name
              FROM bookings b
@@ -4555,7 +4557,7 @@ exports.sendStaffProfileToClient = async (req, res) => {
     try {
         const bookingRes = await db.query(
             `SELECT b.booking_id,
-                    COALESCE(cp.full_name, sr.payer_name)      AS client_name,
+                    COALESCE(NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), ''), sr.payer_name) AS client_name,
                     COALESCE(uc.mobile_number, sr.payer_mobile) AS client_mobile,
                     COALESCE(p.full_name, sr.patient_name)     AS patient_name
              FROM bookings b
@@ -4677,7 +4679,7 @@ exports.getClientBookings = async (req, res) => {
                    sr.service_type,
                    sr.payer_name,
                    sr.payer_mobile,
-                   cp.full_name as client_name,
+                   NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
                    uc.mobile_number as client_mobile,
                    pp.full_name as patient_full_name,
                    pp.age as patient_age,
@@ -4712,7 +4714,7 @@ exports.getStaffBookings = async (req, res) => {
 
         const result = await db.query(`
             SELECT b.*,
-                   cp.full_name as client_name,
+                   NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
                    u.mobile_number as client_mobile,
                    pp.full_name as patient_name,
                    pp.age as patient_age,

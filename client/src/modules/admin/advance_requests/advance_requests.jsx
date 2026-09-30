@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
+import { StaffLink } from '../components/EntityLinks';
 import apiClient from '../../../api/api';
 import {
   User,
@@ -238,7 +239,7 @@ const AdvanceRequests = () => {
                             <User className="w-4 h-4 text-slate-400" />
                           </div>
                           <div>
-                            <p className="font-semibold text-slate-900 leading-tight">{request.full_name || '—'}</p>
+                            <p className="font-semibold text-slate-900 leading-tight"><StaffLink id={request.staff_profile_id}>{request.full_name || '—'}</StaffLink></p>
                             <p className="text-xs text-slate-400 font-mono">
                               {request.advance_code || (request.staff_code ? `#${request.staff_code}` : '—')}{request.gender ? ` · ${request.gender === 'MALE' ? 'Male' : request.gender === 'FEMALE' ? 'Female' : request.gender}` : ''}
                             </p>
@@ -380,7 +381,7 @@ const AdvanceRequests = () => {
                   <User className="w-4 h-4 text-slate-400" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-slate-900">{selectedRequest.full_name || '—'}</p>
+                  <p className="text-sm font-semibold text-slate-900"><StaffLink id={selectedRequest.staff_profile_id}>{selectedRequest.full_name || '—'}</StaffLink></p>
                   <p className="text-xs text-slate-400 mt-0.5 font-mono">
                     {selectedRequest.staff_code ? `#${selectedRequest.staff_code}` : 'No staff code assigned'}
                   </p>

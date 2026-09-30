@@ -8,6 +8,7 @@ import {
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
+import { withHonorific } from '../../../utils/clientName';
 import PresetManager from '../service_quotes/PresetManager';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
 
@@ -290,7 +291,7 @@ const ServiceRequests = () => {
 
                   {/* Request */}
                   <td className="px-4 py-3 align-top">
-                    <p className="font-semibold text-slate-900 leading-tight">{r.payer_name}</p>
+                    <p className="font-semibold text-slate-900 leading-tight">{withHonorific(r.client_honorific || r.honorific, r.payer_name)}</p>
                     <div className="flex items-center gap-1 mt-0.5 text-slate-500 text-xs">
                       <Phone className="w-3 h-3" />
                       <span>{formatMobileNumber(r.payer_mobile)}</span>

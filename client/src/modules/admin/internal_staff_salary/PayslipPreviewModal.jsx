@@ -1,5 +1,6 @@
 import React from 'react';
 import { X, FileText } from 'lucide-react';
+import { InternalStaffLink } from '../components/EntityLinks';
 
 const money = (value) =>
   `LKR ${parseFloat(value || 0).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -24,7 +25,7 @@ const PayslipPreviewModal = ({ preview, pdfUrl, onClose }) => {
           <div className="flex items-center justify-between mb-1">
             <div>
               <p className="text-xs text-slate-400 uppercase">Employee</p>
-              <p className="font-semibold text-slate-900">{preview.staff_name}</p>
+              <p className="font-semibold text-slate-900"><InternalStaffLink id={preview.staff_id}>{preview.staff_name}</InternalStaffLink></p>
             </div>
             <div className="text-right">
               <p className="text-xs text-slate-400 uppercase">Pay Period</p>

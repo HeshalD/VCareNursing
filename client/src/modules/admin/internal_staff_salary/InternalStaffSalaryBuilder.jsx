@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft, Loader2, Plus, X, Eye, CheckCircle2, Target, ChevronDown,
   Wallet, Receipt, ShieldCheck, Calendar,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
+import { ClientLink, InternalStaffLink } from '../components/EntityLinks';
 import apiClient from '../../../api/api';
 
 const EPF_EMPLOYEE_RATE = 0.08;
@@ -373,13 +374,11 @@ const InternalStaffSalaryBuilder = () => {
       <div className="@container min-w-0 space-y-4">
         {/* Top action bar */}
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <button
-            type="button"
-            onClick={() => navigate(`/admin/internal-staff/${sheet.staff_id}`)}
+          <Link to={`/admin/internal-staff/${sheet.staff_id}`} onClick={(e) => e.stopPropagation()}
             className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-[13px] font-medium text-gray-600 hover:bg-gray-50"
           >
             <ArrowLeft className="h-4 w-4" /> Back to Profile
-          </button>
+          </Link>
 
           <div className="relative" ref={actionsDropdownRef}>
             <button
@@ -392,13 +391,11 @@ const InternalStaffSalaryBuilder = () => {
 
             {actionsOpen && (
               <div className="absolute right-0 top-full z-30 mt-1 w-52 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
-                <button
-                  type="button"
-                  onClick={() => { setActionsOpen(false); navigate(`/admin/internal-staff/${sheet.staff_id}`); }}
+                <Link to={`/admin/internal-staff/${sheet.staff_id}`} onClick={() => setActionsOpen(false)}
                   className="w-full px-4 py-2 text-left text-[13px] text-gray-700 hover:bg-gray-50"
                 >
                   View Staff Profile
-                </button>
+                </Link>
                 {sheet.pdf_url && (
                   <a
                     href={sheet.pdf_url}
@@ -424,7 +421,7 @@ const InternalStaffSalaryBuilder = () => {
               </div>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="text-[15px] font-semibold text-gray-900 break-words @xl:text-[17px]">{sheet.staff_name}</h1>
+                  <h1 className="text-[15px] font-semibold text-gray-900 break-words @xl:text-[17px]"><InternalStaffLink id={sheet.staff_id}>{sheet.staff_name}</InternalStaffLink></h1>
                   <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${
                     isReadOnly ? 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200' : 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200'
                   }`}>
@@ -652,7 +649,7 @@ const InternalStaffSalaryBuilder = () => {
                         ) : attribution.registrations.map((r) => (
                           <div key={r.id} className="flex items-center justify-between gap-3 px-3 py-2">
                             <div className="min-w-0">
-                              <p className="text-xs font-medium text-gray-800 truncate">{r.client_name}</p>
+                              <p className="text-xs font-medium text-gray-800 truncate"><ClientLink id={r.client_id}>{r.client_name}</ClientLink></p>
                               <p className="text-[11px] text-gray-400">Reg. fee {money(r.credited_amount)}</p>
                             </div>
                             <CommissionInput
@@ -679,7 +676,7 @@ const InternalStaffSalaryBuilder = () => {
                           <p className="text-xs text-gray-400 p-3">None</p>
                         ) : attribution.bookings.map((b) => (
                           <div key={b.id} className="flex items-center justify-between px-3 py-2 text-xs">
-                            <span className="text-gray-700">{b.client_name} · {b.booking_code}</span>
+                            <span className="text-gray-700"><ClientLink id={b.client_id}>{b.client_name}</ClientLink> · {b.booking_code}</span>
                             <span className="font-medium text-gray-800">{money(b.credited_amount)}</span>
                           </div>
                         ))}
@@ -829,7 +826,7 @@ const InternalStaffSalaryBuilder = () => {
               <div className="flex items-center justify-between mb-1">
                 <div>
                   <p className="text-xs text-gray-400 uppercase">Employee</p>
-                  <p className="font-semibold text-gray-900">{preview.staff_name}</p>
+                  <p className="font-semibold text-gray-900"><InternalStaffLink id={preview.staff_id}>{preview.staff_name}</InternalStaffLink></p>
                 </div>
                 <div className="text-right">
                   <p className="text-xs text-gray-400 uppercase">Pay Period</p>

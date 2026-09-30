@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { InternalStaffLink } from '../components/EntityLinks';
 import { Plus, Pencil, Trash2, X, Loader2, ShieldCheck, Smartphone, Copy, Search, RefreshCw, KeySquare, Check } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -470,7 +471,7 @@ const InternalStaffPage = () => {
                 >
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2 min-w-[160px]">
-                      <span className="font-semibold text-slate-900">{member.full_name}</span>
+                      <span className="font-semibold text-slate-900"><InternalStaffLink id={member.id}>{member.full_name}</InternalStaffLink></span>
                       {member.user_id && (
                         <span title="Has login account" className="text-blue-500">
                           <ShieldCheck className="w-3.5 h-3.5" />

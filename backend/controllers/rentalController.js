@@ -232,7 +232,7 @@ exports.getRentalUnits = async (req, res) => {
       `SELECT ru.*, p.name as product_name,
               ra.rental_agreement_id, ra.billing_type as rental_billing_type,
               ra.end_date as rental_end_date, ra.next_invoice_date as rental_next_invoice_date,
-              cp.full_name as rented_to_client_name, wc.full_name as rented_to_walk_in_name
+              NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') as rented_to_client_name, wc.full_name as rented_to_walk_in_name
        FROM rental_units ru
        JOIN products p ON ru.product_id = p.product_id
        LEFT JOIN rental_agreements ra ON ra.unit_id = ru.unit_id AND ra.status = 'ACTIVE'
@@ -349,7 +349,7 @@ exports.listRentalAgreements = async (req, res) => {
 
     const result = await db.query(
       `SELECT ra.*, p.name as product_name, ru.unit_code,
-              cp.full_name as client_name, u.mobile_number as client_mobile,
+              NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name, u.mobile_number as client_mobile,
               wc.full_name as walk_in_name, wc.mobile_number as walk_in_mobile,
               d.deposit_id, d.status as deposit_status, d.amount as deposit_collected_amount
        FROM rental_agreements ra
@@ -376,7 +376,7 @@ exports.getRentalAgreement = async (req, res) => {
   try {
     const agreementResult = await db.query(
       `SELECT ra.*, p.name as product_name, ru.unit_code,
-              cp.full_name as client_name, u.mobile_number as client_mobile,
+              NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name, u.mobile_number as client_mobile,
               wc.full_name as walk_in_name, wc.mobile_number as walk_in_mobile,
               d.deposit_id, d.status as deposit_status, d.amount as deposit_collected_amount,
               d.held_at as deposit_held_at, d.refunded_at as deposit_refunded_at
@@ -487,7 +487,7 @@ exports.listDeposits = async (req, res) => {
               COALESCE(ra.walk_in_customer_id, d.walk_in_customer_id) as walk_in_customer_id,
               ra.status as agreement_status,
               p.name as product_name, ru.unit_code, q.estimate_number,
-              cp.full_name as client_name, u.mobile_number as client_mobile,
+              NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name, u.mobile_number as client_mobile,
               wc.full_name as walk_in_name, wc.mobile_number as walk_in_mobile
        FROM deposits d
        LEFT JOIN rental_agreements ra ON d.rental_agreement_id = ra.rental_agreement_id

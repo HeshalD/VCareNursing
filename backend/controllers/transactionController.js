@@ -39,7 +39,7 @@ const TRANSACTION_SELECT_COLUMNS = `
   t.client_id,
   t.staff_profile_id,
   t.booking_id,
-  cp.full_name          AS client_name,
+  NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
   sp.full_name          AS staff_name,
   pp.full_name          AS patient_name,
   b.service_type        AS booking_service_type,

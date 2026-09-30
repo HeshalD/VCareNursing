@@ -5,7 +5,7 @@ import {
   Upload, User, UserPlus, Users, Wallet, X, XCircle, Briefcase, History, Pause, Play, Building2,
   StickyNote, Plus, Trash2, Pencil, Check, ChevronDown, ChevronLeft, ChevronRight,
 } from 'lucide-react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams, Link } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
@@ -48,7 +48,7 @@ const addHoursToTime = (timeStr, hours) => {
   const totalMins = (h * 60 + m + Math.round((hours || 0) * 60)) % 1440;
   return `${String(Math.floor(totalMins / 60)).padStart(2, '0')}:${String(totalMins % 60).padStart(2, '0')}`;
 };
-const initials     = (name) => (name || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
+const initials     = (name) => (name || '?').trim().split(/\s+/).filter((w, i, a) => a.length < 2 || !/^(mr|mrs|ms|miss|dr|rev|prof|master)\.?$/i.test(w)).map(w => w[0]).join('').slice(0, 2).toUpperCase();
 // 'HH:MM' in + 'HH:MM' out -> hours worked, wrapping past midnight if out <= in (overnight shift).
 const computeWorkedHours = (inTime, outTime) => {
   if (!inTime || !outTime) return null;
@@ -2879,8 +2879,7 @@ const BookingDetailPageV2 = () => {
                 <RefreshCw style={{ width: 14, height: 14 }} /> Refresh
               </button>
               {!isTerminated && !isPaused && !normCurrentStaff && (
-                <button
-                  onClick={() => navigate(`/admin/bookings/${bookingId}/staff-assignment`)}
+                <button type="button" onClick={() => navigate(`/admin/bookings/${bookingId}/staff-assignment`)}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#2563eb', border: 'none', borderRadius: 8, padding: '8px 14px', fontFamily: 'inherit', fontSize: 13, fontWeight: 600, color: '#fff', cursor: 'pointer' }}
                 >
                   <UserPlus style={{ width: 14, height: 14 }} /> Assign Staff
@@ -2919,14 +2918,12 @@ const BookingDetailPageV2 = () => {
                 <div className="flex flex-wrap items-center gap-2 mb-1.5">
                   <h1 className="text-[17px] font-semibold text-gray-900">
                     {heroProfilePath ? (
-                      <button
-                        type="button"
-                        onClick={() => navigate(heroProfilePath)}
+                      <Link to={heroProfilePath} onClick={(e) => e.stopPropagation()}
                         title={patientDetails.patient_id ? 'Open care profile' : 'Open client profile'}
                         className={heroLinkCls}
                       >
                         {heroName}
-                      </button>
+                      </Link>
                     ) : heroName}
                     {bookingSummary.service_type ? ` · ${bookingSummary.service_type}` : ''}
                   </h1>
@@ -2965,14 +2962,12 @@ const BookingDetailPageV2 = () => {
                     <span className="flex items-center gap-1.5">
                       <User className="h-3.5 w-3.5" />
                       {clientProfilePath ? (
-                        <button
-                          type="button"
-                          onClick={() => navigate(clientProfilePath)}
+                        <Link to={clientProfilePath} onClick={(e) => e.stopPropagation()}
                           title="Open client profile"
                           className="hover:text-[#137A6B] hover:underline underline-offset-2 transition-colors"
                         >
                           {clientDetails.client_name}
-                        </button>
+                        </Link>
                       ) : clientDetails.client_name}
                     </span>
                   )}
@@ -3375,8 +3370,7 @@ const BookingDetailPageV2 = () => {
                       <Users style={{ width: 22, height: 22, color: '#C4BFB5' }} />
                       <p style={{ margin: 0, fontSize: 13, color: '#9A9488' }}>No staff currently assigned.</p>
                       {!isTerminated && (
-                        <button
-                          onClick={() => navigate(`/admin/bookings/${bookingId}/staff-assignment`)}
+                        <button type="button" onClick={() => navigate(`/admin/bookings/${bookingId}/staff-assignment`)}
                           style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#2563eb', border: 'none', borderRadius: 8, padding: '8px 14px', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', cursor: 'pointer' }}
                         >
                           <UserPlus style={{ width: 13, height: 13 }} /> Assign Staff
@@ -3727,8 +3721,7 @@ const BookingDetailPageV2 = () => {
                       <Users style={{ width: 22, height: 22, color: '#C4BFB5' }} />
                       <p style={{ margin: 0, fontSize: 13, color: '#9A9488' }}>No staff is currently assigned to this booking.</p>
                       {!isTerminated && (
-                        <button
-                          onClick={() => navigate(`/admin/bookings/${bookingId}/staff-assignment`)}
+                        <button type="button" onClick={() => navigate(`/admin/bookings/${bookingId}/staff-assignment`)}
                           style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#2563eb', border: 'none', borderRadius: 8, padding: '8px 14px', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: '#fff', cursor: 'pointer' }}
                         >
                           <UserPlus style={{ width: 13, height: 13 }} /> Assign Staff

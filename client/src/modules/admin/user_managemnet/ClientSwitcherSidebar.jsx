@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { Search, Loader2 } from 'lucide-react';
 import apiClient from '../../../api/api';
 import useDebouncedValue from '../../../hooks/useDebouncedValue';
@@ -75,10 +75,8 @@ const ClientSwitcherSidebar = ({ activeClientId, onNavigate }) => {
             {clients.map((c) => {
               const active = String(c.client_profile_id) === String(activeClientId);
               return (
-                <button
-                  key={c.client_profile_id}
-                  type="button"
-                  onClick={() => handleSelect(c.client_profile_id)}
+                <Link
+                  key={c.client_profile_id} to={`/admin/users/${c.client_profile_id}/detail`} onClick={() => onNavigate?.()}
                   className={`flex w-full items-center gap-2.5 border-l-2 px-3 py-2.5 text-left transition-colors ${
                     active ? 'border-blue-600 bg-blue-50' : 'border-transparent hover:bg-gray-50'
                   }`}
@@ -96,7 +94,7 @@ const ClientSwitcherSidebar = ({ activeClientId, onNavigate }) => {
                       {c.client_code || '—'}{c.mobile_number ? ` · ${formatMobileNumber(c.mobile_number)}` : ''}
                     </p>
                   </div>
-                </button>
+                </Link>
               );
             })}
             {pagination?.has_next && (

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ClientLink } from '../components/EntityLinks';
 import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, X, Trash2 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -468,7 +469,7 @@ const ClientManagement = () => {
                       )}
                       <div>
                         <p className="font-semibold text-slate-900 leading-tight">
-                          {client.honorific ? `${client.honorific} ` : ''}{client.full_name ?? '—'}
+                          <ClientLink id={client.client_profile_id}>{client.honorific ? `${client.honorific} ` : ''}{client.full_name ?? '—'}</ClientLink>
                         </p>
                         {client.client_code && (
                           <p className="text-xs text-slate-400 font-mono">{client.client_code}</p>

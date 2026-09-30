@@ -1559,6 +1559,50 @@ async function runMigration() {
     );
   }
 
+  // Duplicate-invoice guards. The application already avoids these cases; the database enforces
+  // them too so no code path (or manual script) can bill the same item twice.
+  //  1) An accepted PRODUCT quote is already billed item-by-item (its product invoice + rental
+  //     invoices), so an individual LINE_ITEM invoice for one of its items would bill it again.
+  //  2) A quote has at most one generic PRODUCT invoice.
+  try {
+    await db.query(`
+      CREATE OR REPLACE FUNCTION prevent_double_invoiced_line_item() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.category = 'LINE_ITEM' AND NEW.line_item_id IS NOT NULL THEN
+          IF EXISTS (
+            SELECT 1 FROM quotations q
+            WHERE q.quote_id = NEW.quote_id AND q.quote_type = 'PRODUCT' AND q.status = 'ACCEPTED'
+          ) THEN
+            RAISE EXCEPTION 'line_item_already_invoiced'
+              USING DETAIL = 'This item is already billed by its accepted product quote.';
+          END IF;
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql
+    `);
+    await db.query(`DROP TRIGGER IF EXISTS trg_prevent_double_invoiced_line_item ON invoices`);
+    await db.query(`
+      CREATE TRIGGER trg_prevent_double_invoiced_line_item
+      BEFORE INSERT ON invoices
+      FOR EACH ROW EXECUTE PROCEDURE prevent_double_invoiced_line_item()
+    `);
+  } catch (err) {
+    console.error('Could not create the duplicate line-item invoice guard trigger:', err.message);
+  }
+  try {
+    await db.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_one_product_invoice_per_quote
+      ON invoices(quote_id) WHERE category = 'PRODUCT' AND quote_id IS NOT NULL
+    `);
+  } catch (err) {
+    console.error(
+      'Could not create idx_invoices_one_product_invoice_per_quote — some quote already has more than one PRODUCT invoice. ' +
+      "Reconcile them (SELECT quote_id, COUNT(*) FROM invoices WHERE category = 'PRODUCT' GROUP BY quote_id HAVING COUNT(*) > 1), then restart to retry.",
+      err.message
+    );
+  }
+
   // A combined Invoice document for a SERVICE quote (and its linked PRODUCT
   // quote, if any — e.g. daily-rate charges + a rental + its deposit) — one
   // invoice covering everything the client was quoted, generated the first

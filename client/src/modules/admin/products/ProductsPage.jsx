@@ -9,6 +9,7 @@ import {
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
+import { withHonorific } from '../../../utils/clientName';
 import DateInput from '../../../components/common/DateInput';
 import ImageCropModal from '../../../components/common/ImageCropModal';
 import CitySelect from '../../../components/common/CitySelect';
@@ -1394,7 +1395,7 @@ function QuotesTab() {
   );
 
   const outstandingTotal = invoices.filter((i) => i.status !== 'PAID').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
-  const collectedTotal = invoices.filter((i) => i.status === 'PAID').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const collectedTotal = invoices.filter((i) => i.status === 'PAID' && !i.is_duplicate).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
 
   const recipientName = (q) => q.client_name || q.walk_in_name || '—';
 
@@ -2339,7 +2340,7 @@ function NewProductQuoteModal({ onClose, onCreated }) {
                             selected ? 'bg-blue-50 text-blue-700 font-medium' : 'bg-white text-slate-700 hover:bg-slate-50'
                           }`}
                         >
-                          {c.honorific ? `${c.honorific} ` : ''}{c.full_name || c.client_name} {c.mobile_number ? <span className="text-xs text-slate-400">· {formatMobileNumber(c.mobile_number)}</span> : ''}
+                          {withHonorific(c.honorific, c.full_name || c.client_name)} {c.mobile_number ? <span className="text-xs text-slate-400">· {formatMobileNumber(c.mobile_number)}</span> : ''}
                         </button>
                       );
                     })
@@ -3563,7 +3564,7 @@ function NewRentalAgreementModal({ rentalProducts, onClose, onCreated }) {
                 >
                   {filteredClients.map((c) => (
                     <option key={c.client_profile_id || c.client_id} value={c.client_profile_id || c.client_id}>
-                      {c.honorific ? `${c.honorific} ` : ''}{c.full_name || c.client_name} {c.mobile_number ? `· ${formatMobileNumber(c.mobile_number)}` : ''}
+                      {withHonorific(c.honorific, c.full_name || c.client_name)} {c.mobile_number ? `· ${formatMobileNumber(c.mobile_number)}` : ''}
                     </option>
                   ))}
                 </select>

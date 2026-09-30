@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import {
   Loader2, X, Receipt, Check, AlertCircle, Download, Send, Search, Pencil,
 } from 'lucide-react';
@@ -545,19 +545,15 @@ export default function AdminInvoicesPage() {
                             </td>
                             <td className="px-4 py-3">
                               {inv.client_name ? (
-                                <button
-                                  type="button"
-                                  onClick={() => navigate(`/admin/users/${inv.client_profile_id}/detail`)}
+                                <Link to={`/admin/users/${inv.client_profile_id}/detail`} onClick={(e) => e.stopPropagation()}
                                   className={linkCls}
                                 >
                                   {inv.client_name}
-                                </button>
+                                </Link>
                               ) : '—'}
                             </td>
                             <td className="px-4 py-3">
-                              <button
-                                type="button"
-                                onClick={() => navigate(`/admin/bookings/${inv.booking_id}/detail`)}
+                              <button type="button" onClick={() => navigate(`/admin/bookings/${inv.booking_id}/detail`)}
                                 className={linkCls}
                               >
                                 {inv.booking_code || inv.booking_id?.slice(0, 8)}
@@ -706,19 +702,15 @@ export default function AdminInvoicesPage() {
                           <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{formatDate(inv.service_date)}</td>
                           <td className="px-4 py-3">
                             {inv.client_name ? (
-                              <button
-                                type="button"
-                                onClick={() => navigate(`/admin/users/${inv.client_profile_id}/detail`)}
+                              <Link to={`/admin/users/${inv.client_profile_id}/detail`} onClick={(e) => e.stopPropagation()}
                                 className={linkCls}
                               >
                                 {inv.client_name}
-                              </button>
+                              </Link>
                             ) : '—'}
                           </td>
                           <td className="px-4 py-3">
-                            <button
-                              type="button"
-                              onClick={() => navigate(`/admin/bookings/${inv.booking_id}/detail`)}
+                            <button type="button" onClick={() => navigate(`/admin/bookings/${inv.booking_id}/detail`)}
                               className={linkCls}
                             >
                               {inv.booking_code || inv.booking_id?.slice(0, 8)}
@@ -857,27 +849,23 @@ export default function AdminInvoicesPage() {
                         return (
                           <tr key={row.client_profile_id} className="hover:bg-slate-50 transition-colors">
                             <td className="px-4 py-3">
-                              <button
-                                type="button"
-                                onClick={() => navigate(`/admin/users/${row.client_profile_id}/detail`)}
+                              <Link to={`/admin/users/${row.client_profile_id}/detail`} onClick={(e) => e.stopPropagation()}
                                 className={`${linkCls} text-left`}
                               >
                                 <span className="block font-medium">{regFeeDisplayName(row)}</span>
                                 {row.client_code && <span className="block text-xs text-slate-400 font-mono">{row.client_code}</span>}
-                              </button>
+                              </Link>
                               <div className="mt-0.5">
                                 <StatusDot status={row.reg_fee_status} config={MEMBERSHIP_STATUS_CONFIG} />
                               </div>
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               {row.mobile_number ? (
-                                <button
-                                  type="button"
-                                  onClick={() => navigate(`/admin/users/${row.client_profile_id}/detail`)}
+                                <Link to={`/admin/users/${row.client_profile_id}/detail`} onClick={(e) => e.stopPropagation()}
                                   className={linkCls}
                                 >
                                   {formatMobileNumber(row.mobile_number)}
-                                </button>
+                                </Link>
                               ) : '—'}
                             </td>
                             <td className="px-4 py-3 text-right font-medium text-slate-800 whitespace-nowrap">{formatMoney(row.total_paid)}</td>
@@ -896,9 +884,7 @@ export default function AdminInvoicesPage() {
                             <td className="px-4 py-3 text-right font-medium text-slate-800 whitespace-nowrap">{formatMoney(row.reg_fee_amount)}</td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               {row.salesperson_id ? (
-                                <button
-                                  type="button"
-                                  onClick={() => navigate(`/admin/salespersons/${row.salesperson_id}`)}
+                                <button type="button" onClick={() => navigate(`/admin/salespersons/${row.salesperson_id}`)}
                                   className={linkCls}
                                 >
                                   {row.salesperson_name}
@@ -1089,13 +1075,11 @@ export default function AdminInvoicesPage() {
                           <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{formatDate(inv.created_at)}</td>
                           <td className="px-4 py-3">
                             {inv.client_id ? (
-                              <button
-                                type="button"
-                                onClick={() => navigate(`/admin/users/${inv.client_id}/detail`)}
+                              <Link to={`/admin/users/${inv.client_id}/detail`} onClick={(e) => e.stopPropagation()}
                                 className={linkCls}
                               >
                                 {inv.client_name}
-                              </button>
+                              </Link>
                             ) : (
                               <>
                                 {inv.walk_in_name || '—'}
@@ -1181,9 +1165,7 @@ export default function AdminInvoicesPage() {
                           <td className="px-4 py-3 font-mono text-xs text-slate-500 whitespace-nowrap">{inv.invoice_code}</td>
                           <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{formatDate(inv.invoice_generated_at)}</td>
                           <td className="px-4 py-3 whitespace-nowrap">
-                            <button
-                              type="button"
-                              onClick={() => navigate(`/admin/quotations/${inv.quote_id}`)}
+                            <button type="button" onClick={() => navigate(`/admin/quotations/${inv.quote_id}`)}
                               className={linkCls}
                             >
                               {inv.estimate_number}
@@ -1281,13 +1263,11 @@ export default function AdminInvoicesPage() {
                           <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{formatDate(inv.invoiced_at)}</td>
                           <td className="px-4 py-3">
                             {inv.client_profile_id ? (
-                              <button
-                                type="button"
-                                onClick={() => navigate(`/admin/users/${inv.client_profile_id}/detail`)}
+                              <Link to={`/admin/users/${inv.client_profile_id}/detail`} onClick={(e) => e.stopPropagation()}
                                 className={linkCls}
                               >
                                 {inv.client_name || '—'}
-                              </button>
+                              </Link>
                             ) : (inv.client_name || '—')}
                           </td>
                           <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{OVERDUE_SOURCE_LABELS[inv.source_type] || inv.source_type}</td>

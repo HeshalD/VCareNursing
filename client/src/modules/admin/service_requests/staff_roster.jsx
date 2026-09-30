@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
@@ -853,12 +853,11 @@ const StaffRoster = () => {
               )}
 
               <div className="flex items-center justify-end gap-3 pt-2">
-                <button
-                  onClick={() => navigate(`/admin/staff/${selectedStaff.staff_profile_id}/detail`)}
+                <Link to={`/admin/staff/${selectedStaff.staff_profile_id}/detail`} onClick={(e) => e.stopPropagation()}
                   className="px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg"
                 >
                   Open full detail page
-                </button>
+                </Link>
                 <button
                   onClick={() => setSelectedStaff(null)}
                   className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg"

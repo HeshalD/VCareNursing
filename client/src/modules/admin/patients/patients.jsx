@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
+import { PatientLink } from '../components/EntityLinks';
 import {
   Users, Search, Plus, Pencil, Trash2, X, ChevronRight,
   User, Shield, AlertCircle, Loader2,
@@ -9,6 +10,7 @@ import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
+import { clientDisplayName } from '../../../utils/clientName';
 
 const fmt = (v) =>
   v ? new Date(v).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
@@ -90,13 +92,13 @@ const ProxyModeToggle = ({ active, onToggle }) => (
 
 const ClientCombobox = ({ clients, value, onChange, hasError }) => {
   const selected = clients.find((c) => String(c.client_profile_id) === String(value));
-  const [query, setQuery] = useState(selected ? selected.full_name : '');
+  const [query, setQuery] = useState(selected ? clientDisplayName(selected) : '');
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
 
   useEffect(() => {
     const match = clients.find((c) => String(c.client_profile_id) === String(value));
-    setQuery(match ? match.full_name : '');
+    setQuery(match ? clientDisplayName(match) : '');
   }, [value, clients]);
 
   useEffect(() => {
@@ -108,7 +110,7 @@ const ClientCombobox = ({ clients, value, onChange, hasError }) => {
   }, []);
 
   const filtered = clients.filter((c) =>
-    (c.full_name || '').toLowerCase().includes(query.trim().toLowerCase())
+    (clientDisplayName(c) || '').toLowerCase().includes(query.trim().toLowerCase())
   );
 
   return (
@@ -133,12 +135,12 @@ const ClientCombobox = ({ clients, value, onChange, hasError }) => {
               key={c.client_profile_id}
               onClick={() => {
                 onChange(c.client_profile_id);
-                setQuery(c.full_name);
+                setQuery(clientDisplayName(c));
                 setOpen(false);
               }}
               className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-blue-50 transition-colors"
             >
-              {c.full_name}
+              {clientDisplayName(c)}
             </button>
           ))}
         </div>
@@ -445,7 +447,7 @@ const ClientRow = ({ clientName, clientMobile, patients, proxyMode, selectMode, 
                         </td>
                       )}
                       <td className="px-4 py-2.5">
-                        <p className="font-medium text-slate-900 leading-tight">{p.full_name}</p>
+                        <p className="font-medium text-slate-900 leading-tight"><PatientLink id={p.patient_id}>{p.full_name}</PatientLink></p>
                         {p.patient_code && <p className="text-xs text-slate-400 font-mono">{p.patient_code}</p>}
                       </td>
                       <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">
@@ -462,9 +464,9 @@ const ClientRow = ({ clientName, clientMobile, patients, proxyMode, selectMode, 
                       <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">{fmt(p.created_at)}</td>
                       <td className="px-4 py-2.5">
                         <div className="flex items-center justify-end gap-0.5">
-                          <button onClick={() => onView(p)} title="View Profile" className={iconBtnCls}>
+                          <Link to={`/admin/patients/${p.patient_id}/detail`} onClick={(e) => e.stopPropagation()} title="View Profile" className={iconBtnCls}>
                             <ExternalLink className="w-3.5 h-3.5" />
-                          </button>
+                          </Link>
                           {proxyMode && (
                             <>
                               <button onClick={() => onEdit(p)} title="Edit" className={iconBtnCls}>

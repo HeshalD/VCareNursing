@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Star, Eye, EyeOff, Search, X, BookOpen, ChevronLeft, ChevronRight, Plus, Phone, Check, Loader2, User, UserCheck, Mars, Venus, Calendar, MapPin, Users, Wallet } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
+import { ClientLink, StaffLink } from '../components/EntityLinks';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 
@@ -642,7 +643,7 @@ const AllReviewsTab = () => {
                     className={`hover:bg-slate-50 transition-colors ${!r.is_visible ? 'opacity-60' : ''}`}
                   >
                     <td className="px-4 py-3 font-semibold text-slate-900 whitespace-nowrap">
-                      {r.client_name || '—'}
+                      <ClientLink id={r.client_profile_id}>{r.client_name || '—'}</ClientLink>
                       {r.submitted_by_admin && (
                         <span
                           title={`Added by ${r.submitted_by_name || 'an admin'} on behalf of the client`}
@@ -653,7 +654,7 @@ const AllReviewsTab = () => {
                       )}
                     </td>
                     <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
-                      {r.staff_name || '—'}
+                      <StaffLink id={r.staff_profile_id}>{r.staff_name || '—'}</StaffLink>
                     </td>
                     <td className="px-4 py-3">
                       {r.booking_id ? (

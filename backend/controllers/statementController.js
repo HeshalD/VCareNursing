@@ -154,7 +154,7 @@ exports.deleteStatement = async (req, res) => {
     const { statement_id } = req.params;
     try {
         const infoRes = await db.query(
-            `SELECT ss.client_id, ss.statement_source, cp.full_name AS client_name
+            `SELECT ss.client_id, ss.statement_source, NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name
              FROM saved_statements ss
              LEFT JOIN client_profiles cp ON cp.client_profile_id = ss.client_id
              WHERE ss.statement_id = $1`,
@@ -202,7 +202,7 @@ exports.getSavedStatements = async (req, res) => {
 
         const [rows, countRes] = await Promise.all([
             db.query(
-                `SELECT ss.*, cp.full_name AS client_name
+                `SELECT ss.*, NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name
                  FROM saved_statements ss
                  LEFT JOIN client_profiles cp ON cp.client_profile_id = ss.client_id
                  ${whereClause}
@@ -412,7 +412,7 @@ exports.resendStatementFromHistory = async (req, res) => {
 
     try {
         const stmtRes = await db.query(
-            `SELECT ss.*, cp.full_name AS client_name, u.mobile_number AS client_mobile
+            `SELECT ss.*, NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name, u.mobile_number AS client_mobile
              FROM saved_statements ss
              JOIN client_profiles cp ON cp.client_profile_id = ss.client_id
              JOIN users u ON u.user_id = cp.user_id

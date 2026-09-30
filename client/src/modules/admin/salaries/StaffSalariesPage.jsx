@@ -5,6 +5,7 @@ import {
   CreditCard, Calendar, TrendingUp, Eye, Download, FileSpreadsheet, FileText, ExternalLink
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { StaffLink } from '../components/EntityLinks';
 import * as XLSX from 'xlsx';
 import AdminLayout from '../components/AdminLayout';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
@@ -87,7 +88,7 @@ const BreakdownModal = ({ staff, onClose, onPay }) => {
         {/* Header */}
         <div className="p-6 border-b border-slate-200 flex items-start justify-between flex-shrink-0">
           <div>
-            <h2 className="text-lg font-bold text-slate-900">{staff.full_name}</h2>
+            <h2 className="text-lg font-bold text-slate-900"><StaffLink id={staff.staff_profile_id}>{staff.full_name}</StaffLink></h2>
             <p className="text-sm text-slate-500 mt-0.5">{staff.designation}</p>
           </div>
           <div className="flex items-center gap-3">
@@ -462,7 +463,7 @@ const BulkPayModal = ({ staffList, companyAccounts, onClose, onSuccess }) => {
                 <div key={r.staff_profile_id} className={`flex items-center gap-3 p-3 rounded-xl border ${r.status === 'success' ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100'}`}>
                   {r.status === 'success' ? <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" /> : <AlertCircle className="w-5 h-5 text-rose-600 flex-shrink-0" />}
                   <div>
-                    <p className="text-sm font-semibold text-slate-800">{r.full_name}</p>
+                    <p className="text-sm font-semibold text-slate-800"><StaffLink id={r.staff_profile_id}>{r.full_name}</StaffLink></p>
                     {r.status === 'error' && <p className="text-xs text-rose-600">{r.message}</p>}
                   </div>
                   <span className={`ml-auto text-xs font-bold px-2 py-0.5 rounded-full ${r.status === 'success' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
@@ -477,7 +478,7 @@ const BulkPayModal = ({ staffList, companyAccounts, onClose, onSuccess }) => {
                 <label className="text-sm font-semibold text-slate-700">Staff Members &amp; Amounts</label>
                 {staffList.map(s => (
                   <div key={s.staff_profile_id} className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-200">
-                    <span className="flex-1 text-sm font-medium text-slate-700">{s.full_name}</span>
+                    <span className="flex-1 text-sm font-medium text-slate-700"><StaffLink id={s.staff_profile_id}>{s.full_name}</StaffLink></span>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-slate-400">Outstanding: {fmt(s.current_earnings)}</span>
                       <input
@@ -1305,7 +1306,7 @@ const StaffSalariesPage = () => {
                         </button>
                       </td>
                       <td className="px-4 py-3">
-                        <p className="font-semibold text-slate-800">{s.full_name}{s.staff_code && <span className="ml-1.5 text-xs font-mono font-normal text-slate-400">{s.staff_code}</span>}</p>
+                        <p className="font-semibold text-slate-800"><StaffLink id={s.staff_profile_id}>{s.full_name}</StaffLink>{s.staff_code && <span className="ml-1.5 text-xs font-mono font-normal text-slate-400">{s.staff_code}</span>}</p>
                         <p className="text-xs text-slate-500">{s.designation}{s.gender ? ` · ${s.gender === 'MALE' ? 'Male' : s.gender === 'FEMALE' ? 'Female' : s.gender}` : ''} · {formatMobileNumber(s.mobile_number) || '—'}</p>
                       </td>
                       <td className="px-4 py-3 text-right">

@@ -1,5 +1,6 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, Link } from 'react-router-dom';
+import { PatientLink, StaffLink } from '../components/EntityLinks';
 import DateInput, { todayISO } from '../../../components/common/DateInput';
 import PhoneInput, { isValidPhoneNumber } from '../../../components/common/PhoneInput';
 import PhoneNumbersField from '../../../components/common/PhoneNumbersField';
@@ -54,6 +55,7 @@ const NOTE_TYPE_META = {
 };
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
+import { withHonorific } from '../../../utils/clientName';
 import { dotForAction, fmt as fmtActivityDate, ROLE_DOT as ROLE_DOT_MAP, ACTION_TYPE_OPTIONS as ACTIVITY_ACTION_TYPES } from '../activity_log/activityLogConstants';
 import { Tag as ActivityTag, DetailsTable as ActivityDetailsTable } from '../activity_log/activityLogComponents';
 import { RefundDepositModal, ForfeitDepositModal } from '../products/ProductsPage';
@@ -1089,7 +1091,7 @@ const ClientDetailPage = () => {
   // expression used to resolve display_name_source across quotes/invoices.
   const billedToName = clientProfile.display_name_source === 'COMPANY_NAME' && clientProfile.company_name
     ? clientProfile.company_name
-    : (clientProfile.full_name || '-');
+    : (withHonorific(clientProfile.honorific, clientProfile.full_name) || '-');
 
   const activeBookings = useMemo(() => recentActivity.bookings || [], [recentActivity.bookings]);
   const recentQuotes = useMemo(() => recentActivity.quotations || [], [recentActivity.quotations]);
@@ -1415,7 +1417,7 @@ const ClientDetailPage = () => {
                   <span className="font-semibold text-gray-900 text-sm">{booking.service_type || 'Booking'}</span>
                   <BookingStatusBadge status={booking.status} />
                   <span className="text-sm text-gray-500">{formatDate(booking.start_date)}</span>
-                  <span className="text-sm text-gray-500">{booking.current_staff_name || 'No staff assigned'}</span>
+                  <span className="text-sm text-gray-500"><StaffLink id={booking.assigned_staff_id}>{booking.current_staff_name || 'No staff assigned'}</StaffLink></span>
                   <span className="font-semibold text-gray-700 text-sm">{formatMoney(booking.amount_quotated || booking.total_amount || 0)}</span>
                   {booking.is_reviewed ? (
                     <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
@@ -1434,8 +1436,8 @@ const ClientDetailPage = () => {
                 <InfoRow label="Status" value={booking.status || '-'} />
                 <InfoRow label="Service Model" value={booking.service_model || '-'} />
                 <InfoRow label="Start Date" value={formatDate(booking.start_date)} />
-                <InfoRow label="Patient" value={booking.patient_name || '-'} />
-                <InfoRow label="Assigned Staff" value={booking.current_staff_name || 'Not assigned'} />
+                <InfoRow label="Patient" value={booking.patient_name ? <PatientLink id={booking.patient_id}>{booking.patient_name}</PatientLink> : '-'} />
+                <InfoRow label="Assigned Staff" value={booking.current_staff_name ? <StaffLink id={booking.assigned_staff_id}>{booking.current_staff_name}</StaffLink> : 'Not assigned'} />
                 <InfoRow label="Quoted Amount" value={formatMoney(booking.amount_quotated || booking.total_amount || 0)} />
                 <InfoRow label="Paid" value={formatMoney(booking.amount_paid || 0)} />
                 <div>
@@ -1454,26 +1456,20 @@ const ClientDetailPage = () => {
               </div>
               {booking.booking_id && (
                 <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-gray-100 pt-4">
-                  <button
-                    type="button"
-                    onClick={() => navigate(`/admin/bookings/${booking.booking_id}/detail`)}
+                  <button type="button" onClick={() => navigate(`/admin/bookings/${booking.booking_id}/detail`)}
                     className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
                   >
                     <ArrowRight className="h-3.5 w-3.5" /> View Booking
                   </button>
                   {showSwapStaff && (
-                    <button
-                      type="button"
-                      onClick={() => navigate(`/admin/bookings/${booking.booking_id}/detail?section=staff`)}
+                    <button type="button" onClick={() => navigate(`/admin/bookings/${booking.booking_id}/detail?section=staff`)}
                       className="inline-flex items-center gap-1.5 rounded bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-700"
                     >
                       <ArrowRight className="h-3.5 w-3.5" /> Swap Staff Member
                     </button>
                   )}
                   {!['TERMINATED', 'COMPLETED', 'CANCELLED'].includes((booking.status || '').toUpperCase()) && (
-                    <button
-                      type="button"
-                      onClick={() => navigate(`/admin/bookings/${booking.booking_id}/detail?section=actions`)}
+                    <button type="button" onClick={() => navigate(`/admin/bookings/${booking.booking_id}/detail?section=actions`)}
                       className="inline-flex items-center gap-1.5 rounded bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
                     >
                       <ArrowRight className="h-3.5 w-3.5" /> End Booking
@@ -1863,9 +1859,7 @@ const ClientDetailPage = () => {
                         <td className="px-4 py-3 font-medium text-gray-800 whitespace-nowrap">{formatDate(inv.service_date)}</td>
                         <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{inv.client_name || '-'}</td>
                         <td className="px-4 py-3">
-                          <button
-                            type="button"
-                            onClick={() => navigate(`/admin/bookings/${inv.booking_id}/detail`)}
+                          <button type="button" onClick={() => navigate(`/admin/bookings/${inv.booking_id}/detail`)}
                             className="text-blue-600 hover:underline font-medium"
                           >
                             {inv.booking_code || inv.booking_id?.slice(0, 8)}
@@ -2383,7 +2377,7 @@ const ClientDetailPage = () => {
                       <InfoRow label="Amount Paid" value={formatMoney(quote.total_paid)} />
                       <InfoRow label="Daily Rate" value={formatMoney(quote.daily_rate)} />
                       <InfoRow label="Days" value={quote.qty_days || '-'} />
-                      <InfoRow label="Patient" value={quote.patient_name || '-'} />
+                      <InfoRow label="Patient" value={quote.patient_name ? <PatientLink id={quote.patient_id}>{quote.patient_name}</PatientLink> : '-'} />
                       <InfoRow label="Service Type" value={quote.service_type || '-'} />
                       <InfoRow label="Estimate Date" value={formatDate(quote.estimate_date)} />
                       <InfoRow label="Created" value={formatDate(quote.created_at)} />
@@ -2789,7 +2783,7 @@ const ClientDetailPage = () => {
                   key={assignment.assignment_id || index}
                   summary={
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                      <span className="font-semibold text-gray-900 text-sm">{assignment.staff_name || 'Staff'}</span>
+                      <span className="font-semibold text-gray-900 text-sm"><StaffLink id={assignment.staff_profile_id}>{assignment.staff_name || 'Staff'}</StaffLink></span>
                       {assignment.designation && <span className="text-sm text-gray-500">{assignment.designation}</span>}
                       <StatusBadge status={assignment.status} />
                       <span className="text-sm text-gray-500">{formatMoney(assignment.daily_rate)}/day</span>
@@ -2800,9 +2794,9 @@ const ClientDetailPage = () => {
                   }
                 >
                   <div className="grid gap-4 @md:grid-cols-2 @3xl:grid-cols-3">
-                    <InfoRow label="Staff" value={assignment.staff_name || '-'} />
+                    <InfoRow label="Staff" value={assignment.staff_name ? <StaffLink id={assignment.staff_profile_id}>{assignment.staff_name}</StaffLink> : '-'} />
                     <InfoRow label="Designation" value={assignment.designation || '-'} />
-                    <InfoRow label="Patient" value={assignment.patient_name || '-'} />
+                    <InfoRow label="Patient" value={assignment.patient_name ? <PatientLink id={assignment.patient_id}>{assignment.patient_name}</PatientLink> : '-'} />
                     <InfoRow label="Status" value={assignment.status || '-'} />
                     <InfoRow label="Assigned On" value={formatDateTime(assignment.assigned_on)} />
                     <InfoRow label="Daily Rate" value={formatMoney(assignment.daily_rate)} />
@@ -2845,7 +2839,7 @@ const ClientDetailPage = () => {
                     key={review.review_id || index}
                     summary={
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                        <span className="font-semibold text-gray-900 text-sm">{review.staff_name || 'Review'}</span>
+                        <span className="font-semibold text-gray-900 text-sm"><StaffLink id={review.staff_profile_id}>{review.staff_name || 'Review'}</StaffLink></span>
                         <span className="flex items-center gap-1">
                           <Star className="h-3.5 w-3.5 fill-amber-400 stroke-amber-400" />
                           <span className="font-bold text-gray-900 text-sm">{review.rating}</span>
@@ -2857,7 +2851,7 @@ const ClientDetailPage = () => {
                     }
                   >
                     <div className="grid gap-4 @md:grid-cols-2 @3xl:grid-cols-3">
-                      <InfoRow label="Staff"   value={review.staff_name || '-'} />
+                      <InfoRow label="Staff"   value={review.staff_name ? <StaffLink id={review.staff_profile_id}>{review.staff_name}</StaffLink> : '-'} />
                       <InfoRow label="Rating"  value={review.rating || '-'} />
                       <InfoRow label="Visible" value={review.is_visible ? 'Yes' : 'No'} />
                       <div className="@md:col-span-2 @3xl:col-span-3">
@@ -2894,7 +2888,7 @@ const ClientDetailPage = () => {
                     key={patient.patient_id || index}
                     summary={
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                        <span className="font-semibold text-gray-900 text-sm">{patient.full_name || 'Care Profile'}</span>
+                        <span className="font-semibold text-gray-900 text-sm"><PatientLink id={patient.patient_id}>{patient.full_name || 'Care Profile'}</PatientLink></span>
                         {patient.age && <span className="text-sm text-gray-500">{patient.age} yrs</span>}
                         {patient.gender && <span className="text-sm text-gray-500">{patient.gender.charAt(0) + patient.gender.slice(1).toLowerCase()}</span>}
                         {patient.relationship_to_client && <span className="text-sm text-gray-400">{patient.relationship_to_client}</span>}
@@ -2912,7 +2906,7 @@ const ClientDetailPage = () => {
                     }
                   >
                     <div className="grid gap-4 @md:grid-cols-2 @3xl:grid-cols-3">
-                      <InfoRow label="Name"         value={patient.full_name} />
+                      <InfoRow label="Name"         value={patient.full_name ? <PatientLink id={patient.patient_id}>{patient.full_name}</PatientLink> : null} />
                       <InfoRow label="Age"          value={patient.age || '-'} />
                       <InfoRow label="Gender"       value={patient.gender ? patient.gender.charAt(0) + patient.gender.slice(1).toLowerCase() : '-'} />
                       <InfoRow label="Relationship" value={patient.relationship_to_client || '-'} />
@@ -3061,9 +3055,7 @@ const ClientDetailPage = () => {
                               {meta.label}
                             </span>
                             {note.booking_id ? (
-                              <button
-                                type="button"
-                                onClick={() => navigate(`/admin/bookings/${note.booking_id}/detail`)}
+                              <button type="button" onClick={() => navigate(`/admin/bookings/${note.booking_id}/detail`)}
                                 className="inline-flex items-center gap-1 rounded bg-violet-50 px-2 py-0.5 text-xs font-semibold text-violet-700 hover:bg-violet-100 ring-1 ring-inset ring-violet-200"
                               >
                                 <BookOpen className="h-3 w-3" />
@@ -4276,7 +4268,7 @@ const ClientDetailPage = () => {
 
   return (
     <AdminLayout
-      title={clientProfile.full_name || 'Client Details'}
+      title={withHonorific(clientProfile.honorific, clientProfile.full_name) || 'Client Details'}
       subtitle={`Client Code: ${clientProfile.client_code || clientProfile.client_profile_id || 'â€”'}`}
     >
       <div className="flex items-start gap-4">
@@ -4331,13 +4323,11 @@ const ClientDetailPage = () => {
               <ArrowLeft className="h-4 w-4" /> Back
             </button>
             {linkedStaffProfileId && (
-              <button
-                type="button"
-                onClick={() => navigate(`/admin/staff/${linkedStaffProfileId}/detail`)}
+              <Link to={`/admin/staff/${linkedStaffProfileId}/detail`}
                 className="inline-flex items-center gap-1.5 rounded border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-[13px] font-medium text-indigo-700 hover:bg-indigo-100"
               >
                 <ArrowLeftRight className="h-4 w-4" /> Switch to Staff View
-              </button>
+              </Link>
             )}
           </div>
 
@@ -4720,14 +4710,12 @@ const ExpandableRow = ({ summary, actions, children }) => {
   return (
     <div>
       <div className="flex w-full items-center gap-2 px-4 py-3.5 transition-colors hover:bg-gray-50 @xl:px-5">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left @xl:gap-4"
+        <div role="button" tabIndex={0} onClick={() => setOpen((v) => !v)} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setOpen((v) => !v); } }}
+          className="cursor-pointer flex min-w-0 flex-1 items-center gap-2 text-left @xl:gap-4"
         >
           <div className="min-w-0 flex-1">{summary}</div>
           <ChevronDown className={`h-4 w-4 shrink-0 text-gray-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
-        </button>
+        </div>
         {actions}
       </div>
       {open && (

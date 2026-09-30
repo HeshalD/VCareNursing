@@ -79,7 +79,7 @@ const getAllReceipts = async (req, res) => {
         const total = parseInt(countRes.rows[0].total, 10);
 
         const dataRes = await db.query(
-            `SELECT r.receipt_id, r.receipt_code, r.client_id, cp.full_name AS client_name,
+            `SELECT r.receipt_id, r.receipt_code, r.client_id, NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name,
                     cp.honorific, cp.client_code,
                     u.mobile_number, r.source_type, r.total_amount, r.payment_method,
                     r.payment_date, r.reference_number, r.line_items, r.pdf_url,
@@ -185,7 +185,7 @@ const getReceipt = async (req, res) => {
         }
 
         const result = await db.query(
-            `SELECT r.*, cp.full_name AS client_name
+            `SELECT r.*, NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name
              FROM payment_receipts r
              LEFT JOIN client_profiles cp ON cp.client_profile_id = r.client_id
              WHERE r.receipt_id = $1`,

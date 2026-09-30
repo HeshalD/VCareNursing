@@ -354,7 +354,7 @@ export default function RecordPaymentDrawer({ open, clientId, bookings, patients
             try {
               const invRes = await apiClient.getProductInvoices({ quote_id: productQuoteId });
               const invoices = Array.isArray(invRes?.data) ? invRes.data : [];
-              productPaid = invoices.filter(i => i.status === 'PAID').reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+              productPaid = invoices.filter(i => i.status === 'PAID' && !i.is_duplicate).reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
             } catch { /* non-critical */ }
           }
           const serviceTotal = parseFloat(progressRes?.total_amount ?? q.total_amount) || 0;

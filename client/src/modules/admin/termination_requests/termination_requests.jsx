@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import AdminLayout from '../components/AdminLayout';
+import { ClientLink, PatientLink, StaffLink } from '../components/EntityLinks';
 import apiClient from '../../../api/api';
 import DateInput from '../../../components/common/DateInput';
 import {
@@ -316,15 +317,15 @@ const TerminationRequests = () => {
                           </p>
                         </td>
                         <td className="px-4 py-3">
-                          <p className="font-semibold text-slate-900 leading-tight">{request.client_name}</p>
-                          <p className="text-xs text-slate-400 mt-0.5">{request.patient_name}</p>
+                          <p className="font-semibold text-slate-900 leading-tight"><ClientLink id={request.client_id}>{request.client_name}</ClientLink></p>
+                          <p className="text-xs text-slate-400 mt-0.5"><PatientLink id={request.patient_id}>{request.patient_name}</PatientLink></p>
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2.5">
                             <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0 ring-1 ring-slate-200">
                               <User className="w-4 h-4 text-slate-400" />
                             </div>
-                            <p className="text-slate-700">{request.staff_name || 'Not assigned'}</p>
+                            <p className="text-slate-700"><StaffLink id={request.staff_profile_id}>{request.staff_name || 'Not assigned'}</StaffLink></p>
                           </div>
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">
@@ -358,8 +359,8 @@ const TerminationRequests = () => {
 
                                 <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
                                   <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Client & Care Profile</p>
-                                  <Field label="Client Name" value={request.client_name} />
-                                  <Field label="Care Profile" value={request.patient_name} />
+                                  <Field label="Client Name" value={<ClientLink id={request.client_id}>{request.client_name}</ClientLink>} />
+                                  <Field label="Care Profile" value={<PatientLink id={request.patient_id}>{request.patient_name}</PatientLink>} />
                                   <div>
                                     <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Location</p>
                                     <div className="flex items-start gap-1.5">
@@ -376,7 +377,7 @@ const TerminationRequests = () => {
                                       <User className="w-4 h-4 text-slate-400" />
                                     </div>
                                     <div>
-                                      <p className="text-sm font-semibold text-slate-900">{request.staff_name || 'Not assigned'}</p>
+                                      <p className="text-sm font-semibold text-slate-900"><StaffLink id={request.staff_profile_id}>{request.staff_name || 'Not assigned'}</StaffLink></p>
                                       <p className="text-xs text-slate-400 font-mono">{request.staff_code || request.staff_profile_id || ''}{request.gender ? ` · ${request.gender === 'MALE' ? 'Male' : request.gender === 'FEMALE' ? 'Female' : request.gender}` : ''}</p>
                                     </div>
                                   </div>
@@ -499,11 +500,11 @@ const TerminationRequests = () => {
                               <p className="font-semibold font-mono text-slate-700">{r.booking_code || r.booking_id}</p>
                             </td>
                             <td className="px-4 py-3">
-                              <p className="font-semibold text-slate-900 leading-tight">{r.client_name}</p>
-                              <p className="text-xs text-slate-400 mt-0.5">{r.patient_name}</p>
+                              <p className="font-semibold text-slate-900 leading-tight"><ClientLink id={r.client_id}>{r.client_name}</ClientLink></p>
+                              <p className="text-xs text-slate-400 mt-0.5"><PatientLink id={r.patient_id}>{r.patient_name}</PatientLink></p>
                             </td>
                             <td className="px-4 py-3">
-                              <p className="text-slate-700">{r.staff_name || '—'}</p>
+                              <p className="text-slate-700"><StaffLink id={r.staff_profile_id}>{r.staff_name || '—'}</StaffLink></p>
                             </td>
                             <td className="px-4 py-3 whitespace-nowrap">
                               <UrgencyBadge urgency={r.urgency} />
@@ -533,8 +534,8 @@ const TerminationRequests = () => {
                                     </div>
                                     <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
                                       <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Client & Care Profile</p>
-                                      <Field label="Client" value={r.client_name} />
-                                      <Field label="Care Profile" value={r.patient_name} />
+                                      <Field label="Client" value={<ClientLink id={r.client_id}>{r.client_name}</ClientLink>} />
+                                      <Field label="Care Profile" value={<PatientLink id={r.patient_id}>{r.patient_name}</PatientLink>} />
                                       <div>
                                         <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Location</p>
                                         <div className="flex items-start gap-1.5">
@@ -589,7 +590,7 @@ const TerminationRequests = () => {
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
               <div>
                 <h2 className="text-sm font-semibold text-slate-900">Approve Termination</h2>
-                <p className="text-xs text-slate-400 mt-0.5">{modal.client_name} · {modal.booking_code || modal.booking_id}</p>
+                <p className="text-xs text-slate-400 mt-0.5"><ClientLink id={modal.client_id}>{modal.client_name}</ClientLink> · {modal.booking_code || modal.booking_id}</p>
               </div>
               <button onClick={closeModal} className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors">
                 <X className="w-4 h-4" />
@@ -756,7 +757,7 @@ const TerminationRequests = () => {
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
               <div>
                 <h2 className="text-sm font-semibold text-slate-900">Reject Termination Request</h2>
-                <p className="text-xs text-slate-400 mt-0.5">{rejectModal.client_name} · {rejectModal.booking_code || rejectModal.booking_id}</p>
+                <p className="text-xs text-slate-400 mt-0.5"><ClientLink id={rejectModal.client_id}>{rejectModal.client_name}</ClientLink> · {rejectModal.booking_code || rejectModal.booking_id}</p>
               </div>
               <button onClick={closeRejectModal} className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors">
                 <X className="w-4 h-4" />

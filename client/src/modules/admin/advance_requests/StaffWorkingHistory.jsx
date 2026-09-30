@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import AdminLayout from '../components/AdminLayout';
+import { ClientLink, PatientLink } from '../components/EntityLinks';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import {
@@ -327,11 +328,11 @@ export default function StaffWorkingHistory() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
             <div>
               <p className="text-xs text-emerald-700 mb-0.5">Client</p>
-              <p className="font-medium text-slate-900">{current_assignment.client_name || '—'}</p>
+              <p className="font-medium text-slate-900"><ClientLink id={current_assignment.client_id}>{current_assignment.client_name || '—'}</ClientLink></p>
             </div>
             <div>
               <p className="text-xs text-emerald-700 mb-0.5">Care Profile</p>
-              <p className="font-medium text-slate-900">{current_assignment.patient_name || '—'}</p>
+              <p className="font-medium text-slate-900"><PatientLink id={current_assignment.patient_id}>{current_assignment.patient_name || '—'}</PatientLink></p>
             </div>
             <div>
               <p className="text-xs text-emerald-700 mb-0.5">Since</p>
@@ -391,9 +392,9 @@ export default function StaffWorkingHistory() {
                   return (
                     <tr key={b.assignment_id} className="hover:bg-slate-50 transition-colors">
                       <td className="px-5 py-3.5">
-                        <p className="font-medium text-slate-900">{b.client_name || '—'}</p>
+                        <p className="font-medium text-slate-900"><ClientLink id={b.client_id}>{b.client_name || '—'}</ClientLink></p>
                         <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1">
-                          <Heart className="w-3 h-3" />{b.patient_name || '—'}
+                          <Heart className="w-3 h-3" /><PatientLink id={b.patient_id}>{b.patient_name || '—'}</PatientLink>
                         </p>
                       </td>
                       <td className="px-5 py-3.5">
@@ -475,7 +476,7 @@ export default function StaffWorkingHistory() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-medium text-slate-700">{review.client_name || 'Anonymous'}</p>
+                    <p className="text-xs font-medium text-slate-700"><ClientLink id={review.client_profile_id}>{review.client_name || 'Anonymous'}</ClientLink></p>
                     <p className="text-xs text-slate-400 shrink-0">{formatDate(review.created_at)}</p>
                   </div>
                   {review.review_text && (
