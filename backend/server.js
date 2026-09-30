@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
 const authRoutes = require('./routes/authRoutes');
 const clientRoutes = require('./routes/clientRoutes')
 const productRoutes = require('./routes/productRoutes')
@@ -114,6 +115,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+app.use(compression()); // gzip large JSON list responses
 app.use(express.json()); // Body parser
 
 // Request Logger

@@ -7,6 +7,11 @@ const pool = new Pool({
   database: process.env.DB_NAME,
   password: process.env.DB_PASSWORD,
   port: process.env.DB_PORT,
+  max: parseInt(process.env.DB_POOL_MAX, 10) || 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
+  // Kill runaway queries so one heavy request can't starve the pool
+  statement_timeout: parseInt(process.env.DB_STATEMENT_TIMEOUT_MS, 10) || 60000,
   ssl: process.env.DB_SSL === 'true' ? {
     rejectUnauthorized: false
   } : false

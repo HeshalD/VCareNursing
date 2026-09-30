@@ -1997,6 +1997,12 @@ async function runMigration() {
     ON transactions(category);
   `);
 
+  // Bookings list and per-booking balance lookups group/filter by booking_id
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_transactions_booking_id
+    ON transactions(booking_id);
+  `);
+
   await db.query(`
     CREATE INDEX IF NOT EXISTS idx_quote_preset_items_active
     ON quote_preset_items(is_active);
