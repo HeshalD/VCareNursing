@@ -13,6 +13,9 @@ import { useAuth } from '../../context/AuthContext';
 import elderlyCareBg from '../../assets/images/ElderlyCare.webp';
 import DateInput, { todayISO } from '../../components/common/DateInput';
 import PhoneInput from '../../components/common/PhoneInput';
+import { toCaregiverCard } from './components/caregiverCard';
+
+const STAFF_PAGE_SIZE = 9;
 
 // Selectable options for the Service Details step
 const SERVICE_TYPES = [
@@ -62,17 +65,20 @@ const ElderlyCareBookingPage = () => {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
   const [staffData, setStaffData] = useState([]);
-  const [filteredStaff, setFilteredStaff] = useState([]);
   const [selectedStaff, setSelectedStaff] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeFilter, setActiveFilter] = useState('ALL');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
-  const [shouldRefetchStaff, setShouldRefetchStaff] = useState(false);
   const [patients, setPatients] = useState([]);
   const [patientsLoading, setPatientsLoading] = useState(false);
   const [staffSearch, setStaffSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [staffPage, setStaffPage] = useState(1);
+  const [staffTotalPages, setStaffTotalPages] = useState(1);
+  const [staffTotalCount, setStaffTotalCount] = useState(0);
+  const staffRequestIdRef = useRef(0);
   const [selectedPatientId, setSelectedPatientId] = useState(null);
   const [ownClientProfile, setOwnClientProfile] = useState(null);
   const isPatientLocked = !!selectedPatientId;
@@ -249,113 +255,60 @@ const ElderlyCareBookingPage = () => {
 
   const totalSteps = 4;
 
+  // Search runs on the server (any caregiver can be found, not just the first page).
+  // Wait for a pause in typing, then jump back to page 1 with the new term.
   useEffect(() => {
-    console.log('Step 4 useEffect triggered:', { currentStep, staffDataLength: staffData.length, shouldRefetchStaff });
-    // Fetch staff data when we reach step 4 for the first time or need to refetch
-    if (currentStep === 4 && (staffData.length === 0 || shouldRefetchStaff)) {
-      console.log('Fetching staff data...');
-      fetchStaffData();
-      setShouldRefetchStaff(false);
-    }
-    if (currentStep === 4) {
-      console.log('Step 4 is active - should show caregiver selection');
-    }
-  }, [currentStep, shouldRefetchStaff]);
+    const timer = setTimeout(() => {
+      setDebouncedSearch(staffSearch.trim());
+      setStaffPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [staffSearch]);
 
   useEffect(() => {
-    filterStaff();
-  }, [staffData, activeFilter, staffSearch]);
+    if (currentStep !== 4) return;
+    fetchStaffData();
+  }, [currentStep, activeFilter, debouncedSearch, staffPage, formData.preferred_gender]);
 
   const fetchStaffData = async () => {
+    // Only the latest request may update the screen (typing fast fires several).
+    const requestId = ++staffRequestIdRef.current;
     try {
-      console.log('fetchStaffData called, genderPreference:', formData.preferred_gender);
       setLoading(true);
       setError(null);
 
-      // Get current gender preference from form state
+      const roleParam = activeFilter === 'ALL' ? 'NURSE,CARETAKER' : activeFilter;
+      const params = {
+        status: 'AVAILABLE',
+        limit: STAFF_PAGE_SIZE,
+        page: staffPage,
+        ...(debouncedSearch && { search: debouncedSearch })
+      };
       const genderPreference = formData.preferred_gender;
 
-      // Fetch staff based on gender preference
-      if (genderPreference && genderPreference !== 'ANY') {
-        console.log('Fetching staff by gender:', genderPreference);
-        const staffResponse = await apiClient.getStaffByGender(genderPreference, {
-          status: 'AVAILABLE',
-          limit: 20
-        });
+      const response = genderPreference && genderPreference !== 'ANY'
+        ? await apiClient.getStaffByGender(genderPreference, { ...params, role: roleParam })
+        : await apiClient.getStaffByRole(roleParam, params);
+      if (requestId !== staffRequestIdRef.current) return;
 
-        console.log('Gender API response:', staffResponse);
-
-        // Transform gender-filtered data
-        const staff = staffResponse.data || [];
-        const transformedStaff = staff.map(staff => ({
-          id: staff.staff_profile_id,
-          name: staff.full_name,
-          role: staff.role.includes('NURSE') ? 'Nurse' : 'Caretaker',
-          location: staff.home_address || 'Sri Lanka',
-          rating: staff.average_rating ? parseFloat(staff.average_rating).toFixed(1) : null,
-          reviews: staff.total_reviews || 0,
-          isVerified: staff.verification_status === 'VERIFIED',
-          image: staff.profile_picture_url || `https://i.pravatar.cc/300?u=${staff.staff_profile_id}`,
-          badges: Array.isArray(staff.qualifications) && staff.qualifications.length > 0
-            ? staff.qualifications.slice(0, 2)
-            : ['Experienced'],
-          staffType: staff.role.includes('NURSE') ? 'NURSE' : 'CARETAKER'
-        }));
-
-        console.log('Setting staff data:', transformedStaff);
-        setStaffData(transformedStaff);
-      } else {
-        console.log('Fetching all staff (no gender preference)');
-        // Fetch both NURSE and CARETAKER staff when no gender preference
-        const [nursesResponse, caretakersResponse] = await Promise.all([
-          apiClient.getStaffByRole('NURSE', { status: 'AVAILABLE', limit: 10 }),
-          apiClient.getStaffByRole('CARETAKER', { status: 'AVAILABLE', limit: 10 })
-        ]);
-
-        console.log('Nurses response:', nursesResponse);
-        console.log('Caretakers response:', caretakersResponse);
-
-        const nurses = nursesResponse.data || [];
-        const caretakers = caretakersResponse.data || [];
-
-        // Transform API data to match expected format
-        const transformedStaff = [...nurses, ...caretakers].map(staff => ({
-          id: staff.staff_profile_id,
-          name: staff.full_name,
-          role: staff.role.includes('NURSE') ? 'Nurse' : 'Caretaker',
-          location: staff.home_address || 'Sri Lanka',
-          rating: staff.average_rating ? parseFloat(staff.average_rating).toFixed(1) : null,
-          reviews: staff.total_reviews || 0,
-          isVerified: staff.verification_status === 'VERIFIED',
-          image: staff.profile_picture_url || `https://i.pravatar.cc/300?u=${staff.staff_profile_id}`,
-          badges: Array.isArray(staff.qualifications) && staff.qualifications.length > 0
-            ? staff.qualifications.slice(0, 2)
-            : ['Experienced'],
-          staffType: staff.role.includes('NURSE') ? 'NURSE' : 'CARETAKER'
-        }));
-
-        console.log('Setting staff data (all):', transformedStaff);
-        setStaffData(transformedStaff);
-      }
+      setStaffData((response.data || []).map(staff => {
+        const isNurse = staff.role.includes('NURSE');
+        return toCaregiverCard(staff, isNurse ? 'Nurse' : 'Caretaker', isNurse ? 'NURSE' : 'CARETAKER');
+      }));
+      setStaffTotalPages(response.pagination?.total_pages || 1);
+      setStaffTotalCount(response.pagination?.total_count || 0);
     } catch (err) {
+      if (requestId !== staffRequestIdRef.current) return;
       console.error('Error fetching staff data:', err);
       setError('Failed to load staff data. Please try again later.');
     } finally {
-      setLoading(false);
+      if (requestId === staffRequestIdRef.current) setLoading(false);
     }
-  };
-
-  const filterStaff = () => {
-    let result = activeFilter === 'ALL' ? staffData : staffData.filter(s => s.staffType === activeFilter);
-    if (staffSearch.trim()) {
-      const q = staffSearch.toLowerCase();
-      result = result.filter(s => s.name.toLowerCase().includes(q) || s.location.toLowerCase().includes(q));
-    }
-    setFilteredStaff(result);
   };
 
   const handleFilterChange = (filter) => {
     setActiveFilter(filter);
+    setStaffPage(1);
   };
 
   const handleStaffSelect = (staff) => {
@@ -752,10 +705,8 @@ const ElderlyCareBookingPage = () => {
                           value={formData.preferred_gender}
                           onChange={e => {
                             setFormData({ ...formData, preferred_gender: e.target.value });
-                            // Trigger refetch if we're already on step 4
-                            if (currentStep === 4) {
-                              setShouldRefetchStaff(true);
-                            }
+                            // A new preference means a new list, starting from page 1
+                            setStaffPage(1);
                           }}
                           onKeyDown={shouldHandleKeyDown() ? handleKeyDown : undefined}
                         >
@@ -889,7 +840,7 @@ const ElderlyCareBookingPage = () => {
                           type="text"
                           value={staffSearch}
                           onChange={e => setStaffSearch(e.target.value)}
-                          placeholder="Search by name or location..."
+                          placeholder="Search any caregiver by name or location..."
                           className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 placeholder:text-slate-400 focus:ring-2 focus:ring-amber-500 outline-none"
                         />
                       </div>
@@ -938,57 +889,126 @@ const ElderlyCareBookingPage = () => {
 
                     {/* Staff Selection */}
                     {!loading && !error && (
-                      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {filteredStaff.map((staff) => (
-                          <div
-                            key={staff.id}
-                            onClick={() => handleStaffSelect(staff)}
-                            className={`relative p-6 rounded-2xl border-2 cursor-pointer transition-all ${selectedStaff?.id === staff.id
-                                ? 'border-amber-500 bg-amber-50'
-                                : 'border-slate-200 hover:border-slate-300 bg-white'
-                              }`}
-                          >
-                            {selectedStaff?.id === staff.id && (
-                              <div className="absolute top-4 right-4 w-6 h-6 bg-amber-600 rounded-full flex items-center justify-center">
-                                <CheckCircle className="w-4 h-4 text-white" />
-                              </div>
-                            )}
+                      <>
+                        <p className="text-sm text-slate-500 mb-4">
+                          {staffTotalCount === 0
+                            ? 'No caregivers found'
+                            : `${staffTotalCount} caregiver${staffTotalCount === 1 ? '' : 's'} available`}
+                          {debouncedSearch && <> for &ldquo;{debouncedSearch}&rdquo;</>}
+                        </p>
 
-                            <div className="flex items-center gap-4 mb-4">
-                              <img
-                                src={staff.image}
-                                alt={staff.name}
-                                className="w-16 h-16 rounded-full object-cover"
-                              />
-                              <div>
-                                <h3 className="font-bold text-slate-900">{staff.name}</h3>
-                                <p className="text-sm text-slate-600">{staff.role}</p>
-                              </div>
-                            </div>
-
-                            <div className="space-y-2">
-                              <div className="flex items-center gap-2 text-sm text-slate-600">
-                                <Star className={`w-4 h-4 fill-current ${staff.rating ? 'text-amber-500' : 'text-slate-300'}`} />
-                                {staff.rating
-                                  ? <span>{staff.rating} <span className="text-slate-400">({staff.reviews} {staff.reviews === 1 ? 'review' : 'reviews'})</span></span>
-                                  : <span className="text-slate-400">No reviews yet</span>
-                                }
-                              </div>
-                              <div className="flex items-center gap-2 text-sm text-slate-600">
-                                <MapPin className="w-4 h-4" />
-                                <span>{staff.location}</span>
-                              </div>
-                            </div>
-
-                            {staff.isVerified && (
-                              <div className="flex items-center gap-1 mt-3">
-                                <ShieldCheck className="w-4 h-4 text-green-600" />
-                                <span className="text-xs text-green-600 font-medium">Verified</span>
-                              </div>
-                            )}
+                        {staffData.length === 0 ? (
+                          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 py-14 text-center">
+                            <p className="font-semibold text-slate-700">No caregivers match your search</p>
+                            <p className="text-sm text-slate-500 mt-1">Try a different name, or clear the search and filters.</p>
                           </div>
-                        ))}
-                      </div>
+                        ) : (
+                          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {staffData.map((staff) => (
+                              <div
+                                key={staff.id}
+                                onClick={() => handleStaffSelect(staff)}
+                                className={`relative p-6 rounded-2xl border-2 cursor-pointer transition-all ${selectedStaff?.id === staff.id
+                                    ? 'border-amber-500 bg-amber-50'
+                                    : 'border-slate-200 hover:border-slate-300 bg-white'
+                                  }`}
+                              >
+                                {selectedStaff?.id === staff.id && (
+                                  <div className="absolute top-4 right-4 w-6 h-6 bg-amber-600 rounded-full flex items-center justify-center">
+                                    <CheckCircle className="w-4 h-4 text-white" />
+                                  </div>
+                                )}
+
+                                <div className="flex items-center gap-4 mb-4">
+                                  {staff.image ? (
+                                    <img
+                                      src={staff.image}
+                                      alt={staff.name}
+                                      className="w-16 h-16 rounded-full object-cover flex-shrink-0"
+                                    />
+                                  ) : (
+                                    <div className="w-16 h-16 rounded-full bg-slate-100 flex-shrink-0" />
+                                  )}
+                                  <div className="min-w-0 pr-6">
+                                    <h3 className="font-bold text-slate-900 truncate">{staff.name}</h3>
+                                    <p className="text-sm text-slate-600">{staff.role}</p>
+                                  </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                  <div className="flex items-center gap-2 text-sm text-slate-600">
+                                    <Star className={`w-4 h-4 fill-current ${staff.rating ? 'text-amber-500' : 'text-slate-300'}`} />
+                                    {staff.rating
+                                      ? <span>{staff.rating} <span className="text-slate-400">({staff.reviews} {staff.reviews === 1 ? 'review' : 'reviews'})</span></span>
+                                      : <span className="text-slate-400">No reviews yet</span>
+                                    }
+                                  </div>
+                                  {staff.location && (
+                                    <div className="flex items-center gap-2 text-sm text-slate-600">
+                                      <MapPin className="w-4 h-4 flex-shrink-0" />
+                                      <span className="truncate">{staff.location}</span>
+                                    </div>
+                                  )}
+                                  {staff.experience && (
+                                    <div className="flex items-center gap-2 text-sm text-slate-600">
+                                      <Clock className="w-4 h-4 flex-shrink-0" />
+                                      <span>{staff.experience} experience</span>
+                                    </div>
+                                  )}
+                                  {staff.languages.length > 0 && (
+                                    <div className="flex items-center gap-2 text-sm text-slate-600">
+                                      <User className="w-4 h-4 flex-shrink-0" />
+                                      <span className="truncate">
+                                        {staff.languages.slice(0, 3).join(', ')}
+                                        {staff.languages.length > 3 && ` +${staff.languages.length - 3}`}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {staff.badges.length > 0 && (
+                                  <div className="flex flex-wrap gap-1.5 mt-3">
+                                    {staff.badges.map((badge, i) => (
+                                      <span key={i} className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-700 text-xs font-semibold truncate max-w-full">
+                                        {badge}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {staff.isVerified && (
+                                  <div className="flex items-center gap-1 mt-3">
+                                    <ShieldCheck className="w-4 h-4 text-green-600" />
+                                    <span className="text-xs text-green-600 font-medium">Verified</span>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {staffTotalPages > 1 && (
+                          <div className="flex items-center justify-center gap-4 mt-8">
+                            <button
+                              type="button"
+                              onClick={() => setStaffPage(p => Math.max(1, p - 1))}
+                              disabled={staffPage === 1}
+                              className="inline-flex items-center gap-1 px-4 py-2 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              <ChevronLeft className="w-4 h-4" /> Previous
+                            </button>
+                            <span className="text-sm text-slate-500">Page {staffPage} of {staffTotalPages}</span>
+                            <button
+                              type="button"
+                              onClick={() => setStaffPage(p => Math.min(staffTotalPages, p + 1))}
+                              disabled={staffPage >= staffTotalPages}
+                              className="inline-flex items-center gap-1 px-4 py-2 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              Next <ChevronRight className="w-4 h-4" />
+                            </button>
+                          </div>
+                        )}
+                      </>
                     )}
                   </motion.div>
                 )}

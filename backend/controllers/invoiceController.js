@@ -213,6 +213,30 @@ exports.createLineItemInvoices = async (req, res) => {
   }
 };
 
+// A LINE_ITEM invoice on a PRODUCT quote is normally the payable invoice for that item (an
+// admin chose to invoice it individually, so accepting the quote skips it — see
+// quoteController.acceptProductQuote). It is a leftover DUPLICATE when the item is also billed
+// elsewhere: a rental item always has its own rental-agreement invoice, and a non-rental item is
+// billed twice when the quote's product invoice already covers every non-rental item. Duplicates
+// only mirror what was paid on the real invoice and must never count towards balances or payments.
+// `a` is the SQL alias of the invoices row being tested.
+const lineItemDuplicateSql = (a) => `(
+  ${a}.line_item_id IS NOT NULL
+  AND EXISTS (SELECT 1 FROM quotations dq WHERE dq.quote_id = ${a}.quote_id AND dq.quote_type = 'PRODUCT')
+  AND (
+    EXISTS (SELECT 1 FROM quote_line_items dl WHERE dl.line_item_id = ${a}.line_item_id AND dl.rental_billing_type IS NOT NULL)
+    OR EXISTS (
+      SELECT 1 FROM invoices dg
+      WHERE dg.quote_id = ${a}.quote_id AND dg.category = 'PRODUCT'
+        AND dg.amount >= (
+          SELECT COALESCE(SUM(dn.amount), 0) FROM quote_line_items dn
+          WHERE dn.quote_id = ${a}.quote_id AND dn.rental_billing_type IS NULL AND dn.is_registration_fee = false
+        ) - 0.01
+    )
+  )
+)`;
+exports.lineItemDuplicateSql = lineItemDuplicateSql;
+
 // GET /api/product-invoices?category=PRODUCT&status=PENDING&client_id=...
 exports.listInvoices = async (req, res) => {
   const { category, status, client_id, walk_in_customer_id, quote_id } = req.query;
@@ -251,13 +275,32 @@ exports.listInvoices = async (req, res) => {
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
+    // A custom-charge (LINE_ITEM) invoice is settled through the quotation's payment
+    // allocation form, which records what went to each line item in
+    // quote_line_item_payments rather than in invoice_payments. Count both so the
+    // invoice shows what has really been paid. (Table check keeps this working before
+    // `npm run migrate` has created it.)
+    const allocTable = await db.query(`SELECT to_regclass('public.quote_line_item_payments') AS t`);
+    const allocPaidSql = allocTable.rows[0].t
+      ? `+ COALESCE((SELECT SUM(a.amount) FROM quote_line_item_payments a WHERE a.line_item_id = i.line_item_id), 0)`
+      : '';
+
     const result = await db.query(
-      `SELECT i.*, q.estimate_number,
+      `SELECT i.*, q.estimate_number, q.quote_type,
               CASE WHEN cp.display_name_source = 'COMPANY_NAME' AND NULLIF(cp.company_name, '') IS NOT NULL
                    THEN cp.company_name ELSE cp.full_name END as client_name,
               u.mobile_number as client_mobile,
               wc.full_name as walk_in_name, wc.mobile_number as walk_in_mobile,
-              COALESCE((SELECT SUM(ip.amount) FROM invoice_payments ip WHERE ip.invoice_id = i.invoice_id), 0) as amount_paid,
+              -- A per-line-item invoice is only a document: money is never recorded against it
+              -- directly, so what it shows as paid comes from where the money really went (see the
+              -- lateral join below). Everything else reads straight off invoice_payments.
+              CASE WHEN i.line_item_id IS NOT NULL THEN lip.paid
+                   ELSE COALESCE((SELECT SUM(ip.amount) FROM invoice_payments ip WHERE ip.invoice_id = i.invoice_id), 0)
+              END as amount_paid,
+              COALESCE(dup.is_dup, false) AS is_duplicate,
+              -- Placed after i.* on purpose: the effective status replaces the stored one.
+              CASE WHEN i.line_item_id IS NOT NULL AND i.status <> 'PAID' AND lip.paid >= i.amount - 0.01
+                   THEN 'PAID' ELSE i.status END AS status,
               -- What this invoice is actually for, so the list doesn't just show
               -- an amount with no context: the rental's product+unit, the single
               -- line item it was raised for, or (for a whole PRODUCT-quote
@@ -276,10 +319,44 @@ exports.listInvoices = async (req, res) => {
        LEFT JOIN products rp ON ra.product_id = rp.product_id
        LEFT JOIN rental_units ru ON ra.unit_id = ru.unit_id
        LEFT JOIN quote_line_items sli ON sli.line_item_id = i.line_item_id
+       LEFT JOIN LATERAL (SELECT ${lineItemDuplicateSql('i')} AS is_dup) dup ON true
+       LEFT JOIN LATERAL (
+         SELECT CASE
+           WHEN i.line_item_id IS NULL THEN NULL
+           -- Duplicate rental item invoice: covered by what was paid on its rental agreement's invoices.
+           WHEN dup.is_dup AND sli.rental_billing_type IS NOT NULL THEN
+             LEAST(i.amount, COALESCE((
+               SELECT SUM(GREATEST(
+                        COALESCE((SELECT SUM(ip.amount) FROM invoice_payments ip WHERE ip.invoice_id = ri.invoice_id), 0),
+                        CASE WHEN ri.status = 'PAID' THEN ri.amount ELSE 0 END))
+               FROM invoices ri
+               JOIN rental_agreements ra ON ra.rental_agreement_id = ri.rental_agreement_id
+               WHERE ra.quote_id = i.quote_id AND ra.product_id = sli.product_id AND ra.unit_id = sli.unit_id
+             ), 0))
+           -- Duplicate of a non-rental item: its share of what was paid on the quote's product invoice(s).
+           WHEN dup.is_dup THEN
+             i.amount * COALESCE((
+               SELECT LEAST(1, SUM(g.pay) / NULLIF(SUM(g.amount), 0))
+               FROM (
+                 SELECT gi.amount,
+                        GREATEST(
+                          COALESCE((SELECT SUM(ip.amount) FROM invoice_payments ip WHERE ip.invoice_id = gi.invoice_id), 0),
+                          CASE WHEN gi.status = 'PAID' THEN gi.amount ELSE 0 END) AS pay
+                 FROM invoices gi
+                 WHERE gi.quote_id = i.quote_id AND gi.category = 'PRODUCT'
+               ) g
+             ), 0)
+           -- Otherwise the invoice is its own ledger: payments applied to it, plus (for a custom
+           -- charge on a service quote) what the payment form allocated to that line item.
+           ELSE COALESCE((SELECT SUM(ip.amount) FROM invoice_payments ip WHERE ip.invoice_id = i.invoice_id), 0) ${allocPaidSql}
+         END AS paid
+       ) lip ON true
        LEFT JOIN LATERAL (
          SELECT STRING_AGG(qli.description, ', ' ORDER BY qli.sort_order) AS items_summary
          FROM quote_line_items qli
          WHERE qli.quote_id = i.quote_id AND qli.is_registration_fee = false
+           -- A product-quote's own invoice bills only the non-rental items; rentals have their own invoices.
+           AND (i.category <> 'PRODUCT' OR qli.rental_billing_type IS NULL)
        ) qli_agg ON i.rental_agreement_id IS NULL AND i.line_item_id IS NULL
        ${where}
        ORDER BY i.created_at DESC`,
@@ -424,6 +501,8 @@ async function ensureInvoicePdf(invoiceId) {
   invoice.pdf_url = pdfUrl;
   return invoice;
 }
+
+exports.ensureInvoicePdf = ensureInvoicePdf;
 
 // GET /api/product-invoices/:invoice_id/pdf — generate (if needed) and return the PDF URL
 exports.getInvoicePdf = async (req, res) => {

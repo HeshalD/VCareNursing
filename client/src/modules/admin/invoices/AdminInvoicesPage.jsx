@@ -8,6 +8,7 @@ import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import DateInput from '../../../components/common/DateInput';
 import useDebouncedValue from '../../../hooks/useDebouncedValue';
+import { CombinedPaymentBadge, CombinedStatusFilter, filterCombinedInvoices } from './CombinedInvoiceStatus';
 
 const money = new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 2 });
 const formatMoney = (v) => money.format(Number(v || 0));
@@ -135,7 +136,7 @@ const TAB_META = {
   },
   combined: {
     title: 'Combined Invoices',
-    subtitle: 'The merged service + product Invoice generated once a quotation is paid in full.',
+    subtitle: 'The merged service + product invoice for each quotation. It can be generated before payment is complete, so each row shows whether it is still pending.',
   },
   overdue: {
     title: 'Overdue Invoices',
@@ -159,6 +160,7 @@ export default function AdminInvoicesPage() {
   const [combinedInvoices, setCombinedInvoices] = useState([]);
   const [combinedLoading, setCombinedLoading] = useState(false);
   const [combinedError, setCombinedError] = useState('');
+  const [combinedFilter, setCombinedFilter] = useState('ALL'); // 'ALL' | 'UNPAID' | 'PAID'
   const [sendingInvoiceId, setSendingInvoiceId] = useState('');
   const [sentInvoiceId, setSentInvoiceId] = useState('');
 
@@ -1140,17 +1142,24 @@ export default function AdminInvoicesPage() {
               </div>
             )}
             <p className="text-xs text-slate-400">
-              The combined Invoice generated for a quotation (service charges plus any linked products/rentals) once it's paid in full.
+              The combined invoice for a quotation (service charges plus any linked products/rentals). It is created automatically once the quotation is paid in full, or earlier by hand from the Record Payment form — in which case it stays Pending until the balance is cleared.
             </p>
+            {!combinedLoading && combinedInvoices.length > 0 && (
+              <CombinedStatusFilter invoices={combinedInvoices} value={combinedFilter} onChange={setCombinedFilter} />
+            )}
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
               {combinedLoading ? (
                 <div className="flex items-center justify-center h-64">
                   <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
                 </div>
-              ) : combinedInvoices.length === 0 ? (
+              ) : filterCombinedInvoices(combinedInvoices, combinedFilter).length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-400">
                   <Receipt className="h-8 w-8" />
-                  <p className="text-sm font-medium">No quotation invoices generated yet</p>
+                  <p className="text-sm font-medium">
+                    {combinedInvoices.length === 0
+                      ? 'No quotation invoices generated yet'
+                      : combinedFilter === 'UNPAID' ? 'No combined invoices are waiting for payment' : 'No fully paid combined invoices yet'}
+                  </p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -1162,11 +1171,12 @@ export default function AdminInvoicesPage() {
                         <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Estimate #</th>
                         <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Payer</th>
                         <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Total</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Payment</th>
                         <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {combinedInvoices.map((inv) => (
+                      {filterCombinedInvoices(combinedInvoices, combinedFilter).map((inv) => (
                         <tr key={inv.quote_id} className="hover:bg-slate-50 transition-colors">
                           <td className="px-4 py-3 font-mono text-xs text-slate-500 whitespace-nowrap">{inv.invoice_code}</td>
                           <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{formatDate(inv.invoice_generated_at)}</td>
@@ -1184,6 +1194,14 @@ export default function AdminInvoicesPage() {
                             {inv.payer_mobile && <span className="block text-xs text-slate-400">{formatMobileNumber(inv.payer_mobile)}</span>}
                           </td>
                           <td className="px-4 py-3 text-right font-medium text-slate-800 whitespace-nowrap">{formatMoney(inv.total_amount)}</td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <CombinedPaymentBadge status={inv.payment_status} />
+                            {inv.payment_status !== 'PAID' && (
+                              <span className="mt-1 block text-[11px] text-slate-400">
+                                {formatMoney(inv.amount_paid)} paid · {formatMoney(inv.balance)} due
+                              </span>
+                            )}
+                          </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center justify-end gap-0.5">
                               <a href={inv.invoice_pdf_url} target="_blank" rel="noreferrer" title="Download invoice PDF" className={iconBtnCls}>

@@ -58,7 +58,7 @@ const LanguageMultiSelect = ({ value = [], onChange, className = '' }) => {
             }
           }}
           placeholder="Other language..."
-          className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-colors"
+          className="flex-1 px-3 py-2 text-sm bg-white text-slate-900 placeholder:text-slate-400 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-colors"
         />
         <button
           type="button"

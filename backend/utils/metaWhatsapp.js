@@ -394,8 +394,10 @@ const sendStaffAgreement = (mobileNumber, fullName, language = 'en') => {
 
 // Sent to a client suggesting a candidate staff member.
 // Body vars: {{1}} = client/payer name, {{2}} = patient name, {{3}} = candidate name, {{4}} = role/designation
-// NOTE: the live template's "View Profile" button is a STATIC URL — it takes no parameters,
-// so we send no button component (Meta renders the button from the approved template itself).
+// CTA button: "View Profile" — Visit Website (Dynamic URL). Meta rejects the send (#131008) unless
+// the button parameter is supplied.
+//   Dynamic suffix (button parameter): staff_profile_id
+//   The template's URL must be <site>/services/staff-profile/{{1}} (the public staff profile page).
 //
 // META TEMPLATE SPEC — vcare_candidate_profile (UTILITY, en)
 // Header: NONE
@@ -410,12 +412,15 @@ const sendStaffAgreement = (mobileNumber, fullName, language = 'en') => {
 //   Tap the button below to view their full profile.
 //
 //   Let us know if you'd like to proceed with this candidate or if you'd prefer to see other options.
-const sendCandidateProfile = (mobileNumber, payerName, patientName, staffName, designation) =>
+// Button: URL (dynamic) — "View Profile"
+const sendCandidateProfile = (mobileNumber, payerName, patientName, staffName, designation, staffProfileId) =>
   sendTemplate(
     formatNumber(mobileNumber),
     'vcare_candidate_profile',
     'en',
-    [payerName, patientName, staffName, designation || 'Care Professional']
+    [payerName, patientName, staffName, designation || 'Care Professional'],
+    null,
+    [{ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: String(staffProfileId) }] }]
   );
 
 // Sent to staff when their leave request is approved.

@@ -28,6 +28,7 @@ import { Link } from 'react-router-dom';
 import apiClient from '../../../api/api';
 import { useAuth } from '../../../context/AuthContext';
 import StaffSidebar from './StaffSidebar';
+import StaffCareTimeline from '../../admin/user_managemnet/StaffCareTimeline';
 
 const formatDate = (dateStr) => {
   if (!dateStr) return null;
@@ -43,6 +44,7 @@ const WorkerDashboardDemo = () => {
   const [completedCount, setCompletedCount] = useState(null);
   const [dataLoading, setDataLoading] = useState(true);
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [timeline, setTimeline] = useState({ assignments: [], attendance: [], reschedules: [], leaveDays: [], pendingResumptions: [] });
 
   useEffect(() => {
     const fetchData = async () => {
@@ -70,12 +72,31 @@ const WorkerDashboardDemo = () => {
         }
 
         // Step 2: parallel secondary fetches
-        const [walletRes, bookingRes] = await Promise.allSettled([
+        const [walletRes, bookingRes, calendarRes, leaveRes] = await Promise.allSettled([
           apiClient.getMyWallet(),
           staffProfile?.staff_profile_id
             ? apiClient.getStaffBookings(staffProfile.staff_profile_id)
             : Promise.resolve(null),
+          staffProfile?.staff_profile_id
+            ? apiClient.getStaffAttendanceCalendar(staffProfile.staff_profile_id)
+            : Promise.resolve(null),
+          staffProfile?.staff_profile_id
+            ? apiClient.getStaffLeaveSummary(staffProfile.staff_profile_id)
+            : Promise.resolve(null),
         ]);
+
+        // Read-only work & pay calendar; a failure here shouldn't break the rest of the dashboard.
+        if (calendarRes.status === 'rejected') console.error('Dashboard - Calendar fetch failed:', calendarRes.reason);
+        if (leaveRes.status === 'rejected') console.error('Dashboard - Leave summary fetch failed:', leaveRes.reason);
+        const cal = calendarRes.status === 'fulfilled' ? calendarRes.value?.data : null;
+        const leave = leaveRes.status === 'fulfilled' ? leaveRes.value?.data : null;
+        setTimeline({
+          assignments: cal?.assignments || [],
+          attendance: cal?.attendance || [],
+          reschedules: cal?.reschedules || [],
+          leaveDays: leave?.approved_leaves || [],
+          pendingResumptions: cal?.pending_resumptions || [],
+        });
 
         if (walletRes.status === 'fulfilled' && walletRes.value) {
           setWalletData(walletRes.value.data?.data || walletRes.value.data);
@@ -334,6 +355,17 @@ const WorkerDashboardDemo = () => {
               <StatCard key={stat.title} {...stat} />
             ))}
           </section>
+
+          {staffData?.staff_profile_id && (
+            <StaffCareTimeline
+              assignments={timeline.assignments}
+              attendanceRecords={timeline.attendance}
+              reschedules={timeline.reschedules}
+              leaveDays={timeline.leaveDays}
+              pendingResumptions={timeline.pendingResumptions}
+              interactive={false}
+            />
+          )}
 
           {Array.isArray(staffData?.youtube_links) && staffData.youtube_links.length > 0 && (
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

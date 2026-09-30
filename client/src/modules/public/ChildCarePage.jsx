@@ -12,10 +12,12 @@ import Footer from '../../components/layout/Footer';
 import babyImage from '../../assets/images/baby_care.webp';
 import FeaturedCaregivers from './components/FeaturedCaregivers';
 import apiClient from '../../api/api';
+import { toCaregiverCard } from './components/caregiverCard';
 
 const ChildCarePage = () => {
   const navigate = useNavigate();
   const [staffData, setStaffData] = useState([]);
+  const [availableCount, setAvailableCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -33,41 +35,11 @@ const ChildCarePage = () => {
       const nanniesResponse = await apiClient.getStaffByRole('NANNY', { status: 'AVAILABLE', limit: 20 });
       const nannies = nanniesResponse.data || [];
 
-      // Transform API data to match expected format
-      const transformedStaff = nannies.map(staff => {
-        // Calculate age from date_of_birth if available
-        let calculatedAge = 25; // Default fallback age
-        if (staff.date_of_birth) {
-          const birthDate = new Date(staff.date_of_birth);
-          const today = new Date();
-          let age = today.getFullYear() - birthDate.getFullYear();
-          const monthDiff = today.getMonth() - birthDate.getMonth();
-          if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
-            age--;
-          }
-          calculatedAge = age;
-        }
-
-        return {
-          id: staff.staff_profile_id,
-          name: staff.full_name,
-          age: calculatedAge,
-          role: 'Nanny',
-          experience: `${Math.floor(Math.random() * 15) + 2} Years`, // Placeholder
-          location: staff.home_address || 'Sri Lanka',
-          rating: (Math.random() * 1.5 + 3.5).toFixed(1), // Random rating 3.5-5.0
-          reviews: Math.floor(Math.random() * 150) + 10, // Random reviews
-          isVerified: staff.verification_status === 'VERIFIED',
-          price: `LKR ${Math.floor(Math.random() * 800) + 600}/hr`, // Placeholder pricing
-          image: staff.profile_picture_url || `https://i.pravatar.cc/300?u=${staff.staff_profile_id}`,
-          badges: Array.isArray(staff.qualifications) && staff.qualifications.length > 0
-            ? staff.qualifications.slice(0, 2)
-            : ['Experienced'],
-          staffType: 'NANNY'
-        };
-      });
+      // Transform API data to match expected format (real data only)
+      const transformedStaff = nannies.map(staff => toCaregiverCard(staff, 'Nanny', 'NANNY'));
 
       setStaffData(transformedStaff);
+      setAvailableCount(nanniesResponse.pagination?.total_count || 0);
     } catch (err) {
       console.error('Error fetching staff data:', err);
       setError('Failed to load staff data. Please try again later.');
@@ -112,46 +84,12 @@ const ChildCarePage = () => {
                     Find a Nanny <ArrowRight className="w-5 h-5" />
                   </Link>
 
-                  <div className="flex items-center gap-4 px-6 py-4 bg-white border border-slate-200 rounded-full shadow-sm">
-                    <div className="flex -space-x-3">
-                      <img src="https://i.pravatar.cc/100?u=5" alt="Nanny" className="w-8 h-8 rounded-full border-2 border-white" />
-                      <img src="https://i.pravatar.cc/100?u=6" alt="Nanny" className="w-8 h-8 rounded-full border-2 border-white" />
-                      <div className="w-8 h-8 rounded-full bg-slate-100 border-2 border-white flex items-center justify-center text-[10px] font-bold text-slate-600">
-                        +200
-                      </div>
+                  {availableCount > 0 && (
+                    <div className="flex items-center gap-3 px-6 py-4 bg-white border border-slate-200 rounded-full shadow-sm">
+                      <span className="text-lg font-bold text-slate-900">{availableCount}</span>
+                      <span className="text-sm font-medium text-slate-600">Available Nannies</span>
                     </div>
-                    <span className="text-sm font-medium text-slate-600">Active Nannies</span>
-                  </div>
-                </div>
-              </motion.div>
-            </div>
-
-            {/* Hero Image / Visual */}
-            <div className="order-1 lg:order-2 relative flex justify-center lg:justify-end">
-              <motion.div
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.8 }}
-                className="relative rounded-[40px] overflow-hidden shadow-2xl border-4 border-white aspect-[4/5] object-cover w-full max-w-md lg:max-w-full lg:h-[80vh] lg:w-auto"
-              >
-                <img
-                  src={babyImage}
-                  alt="Child Care"
-                  className="w-full h-full object-cover"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-900/40 to-transparent" />
-
-                {/* Floating Card */}
-                <div className="absolute bottom-6 left-6 right-6 bg-white/90 backdrop-blur-md p-6 rounded-3xl border border-white/50 shadow-lg">
-                  <div className="flex items-center gap-4 mb-3">
-                    <div className="w-12 h-12 bg-rose-100 rounded-full flex items-center justify-center text-rose-500">
-                      <Heart className="w-6 h-6 fill-current" />
-                    </div>
-                    <div>
-                      <div className="font-bold text-slate-900">Peace of Mind</div>
-                      <div className="text-xs text-slate-500">Safety First Policy</div>
-                    </div>
-                  </div>
+                  )}
                   <div className="flex gap-1">
                     {[1, 2, 3, 4, 5].map(i => <Star key={i} className="w-4 h-4 text-yellow-400 fill-current" />)}
                   </div>

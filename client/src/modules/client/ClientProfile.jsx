@@ -135,7 +135,7 @@ const ClientProfile = () => {
               </p>
             )}
             <p style={styles.identityMeta}>
-              Client #{profile?.client_profile_id}&nbsp;&nbsp;·&nbsp;&nbsp;
+              Client {profile?.client_code || `#${profile?.client_profile_id}`}&nbsp;&nbsp;·&nbsp;&nbsp;
               {(() => {
                 const s = profile?.reg_fee_status;
                 if (s === 'PAID') return <span style={styles.badgeGreen}>Registered</span>;
@@ -259,8 +259,7 @@ const ClientProfile = () => {
         <section style={styles.card}>
           <h2 style={styles.cardHeading}>Account Details</h2>
           <div style={styles.metaGrid}>
-            <MetaItem label="Client ID" value={`#${profile?.client_profile_id}`} mono />
-            <MetaItem label="User ID" value={`#${profile?.user_id}`} mono />
+            <MetaItem label="Client ID" value={profile?.client_code || `#${profile?.client_profile_id}`} mono />
             <MetaItem
               label="Account Created"
               value={profile?.created_at

@@ -117,9 +117,10 @@ const CitySelect = ({
         disabled={disabled}
         aria-haspopup="listbox"
         aria-expanded={open}
+        style={{ color: '#0f172a' }}
         className={`${className} flex items-center justify-between gap-2 text-left`}
       >
-        <span className={`truncate ${selected ? '' : 'text-slate-400'}`}>
+        <span className="truncate" style={{ color: selected ? '#0f172a' : '#64748b' }}>
           {selected ? `${selected.name}, ${selected.district}` : placeholder}
         </span>
         <span className="flex items-center gap-1 shrink-0">
@@ -165,6 +166,7 @@ const CitySelect = ({
               onChange={(e) => { setQuery(e.target.value); setHighlight(0); }}
               onKeyDown={onKeyDown}
               placeholder="Search city or district..."
+              style={{ color: '#0f172a', backgroundColor: '#ffffff' }}
               className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400"
             />
           </div>

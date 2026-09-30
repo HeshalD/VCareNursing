@@ -57,6 +57,92 @@ const getServiceTypeIcon = (serviceType) => {
   return icons[serviceType] || Activity;
 };
 
+// ─── Booking data table ───────────────────────────────────────────────────────
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}(T|$)/;
+const MONEY_KEY_RE = /(rate|amount|fee|total|paid|price|balance|salary|deposit)/i;
+const HIDDEN_KEY_RE = /(token|password|secret|doc_upload)/i;
+
+const FIELD_LABELS = {
+  booking_code: 'Booking Code',
+  service_type: 'Service Type',
+  service_model: 'Service Model',
+  start_date: 'Start Date',
+  end_date: 'End Date',
+  service_start_time: 'Start Time',
+  daily_rate: 'Daily Rate',
+  amount_quotated: 'Quoted Amount',
+  amount_paid: 'Amount Paid',
+  staff_name: 'Staff Name',
+  staff_code: 'Staff Code',
+  staff_mobile: 'Staff Mobile',
+  staff_email: 'Staff Email',
+};
+
+const humanizeKey = (key) =>
+  FIELD_LABELS[key] || key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+// Turns one raw field into something a client can read, or null if it should not be shown.
+const formatFieldValue = (key, value) => {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (typeof value === 'object') {
+    // Nested objects/lists are noise here; simple lists of text are fine.
+    if (Array.isArray(value) && value.length > 0 && value.every((v) => typeof v !== 'object')) return value.join(', ');
+    return null;
+  }
+  if (typeof value === 'number' || (typeof value === 'string' && /^-?\d+(\.\d+)?$/.test(value) && MONEY_KEY_RE.test(key))) {
+    const n = Number(value);
+    return MONEY_KEY_RE.test(key) ? `Rs ${n.toLocaleString('en-US', { maximumFractionDigits: 2 })}` : String(value);
+  }
+  const str = String(value);
+  if (UUID_RE.test(str)) return null;
+  if (/time$/i.test(key) && formatTime(str)) return formatTime(str);
+  if (ISO_DATE_RE.test(str)) {
+    const d = new Date(str);
+    if (Number.isNaN(d.getTime())) return str;
+    return /_at$/.test(key) && str.includes('T')
+      ? `${formatDate(d)}, ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+      : formatDate(str);
+  }
+  if (/^[A-Z][A-Z0-9_]+$/.test(str)) return str.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+  return str;
+};
+
+const buildBookingDataRows = (booking, details) => {
+  const merged = { ...(details || {}), ...(booking || {}) };
+  return Object.entries(merged)
+    .filter(([key]) => !HIDDEN_KEY_RE.test(key) && !(key === 'booking_id' && merged.booking_code))
+    .map(([key, value]) => ({ key, label: humanizeKey(key), value: formatFieldValue(key, value) }))
+    .filter((row) => row.value !== null);
+};
+
+const BookingDataTable = ({ booking, details }) => {
+  const rows = buildBookingDataRows(booking, details);
+  if (rows.length === 0) return <p style={{ fontSize: 13, color: '#64748b', margin: 0 }}>No further details available.</p>;
+  return (
+    <div style={s.dataTableWrap}>
+      <table style={s.dataTable}>
+        <thead>
+          <tr>
+            <th style={s.dataTh}>Detail</th>
+            <th style={s.dataTh}>Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={row.key} style={{ background: i % 2 ? '#f8fafc' : '#ffffff' }}>
+              <td style={s.dataLabelCell}>{row.label}</td>
+              <td style={s.dataValueCell}>{row.value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 const ClientBookings = () => {
@@ -381,7 +467,7 @@ const ClientBookings = () => {
                                 textDecorationColor: details?.staff_profile_id ? '#3b82f6' : 'transparent',
                                 textUnderlineOffset: '2px'
                               }}>
-                                {details?.staff_name || `Staff #${b.assigned_staff_id || 'Not assigned'}`}
+                                {details?.staff_name || details?.staff_code || 'Not assigned'}
                               </p>
                               {details?.staff_mobile && (
                                 <p style={{ margin: '2px 0 0', fontSize: 11, color: '#94a3b8' }}>{details.staff_mobile}</p>
@@ -501,12 +587,10 @@ const ClientBookings = () => {
                 })()}
               </div>
 
-              {/* Raw Data */}
+              {/* Everything we know about this booking, as a readable table */}
               <div style={s.infoBlock}>
-                <h3 style={s.infoBlockTitle}><Activity size={16} style={{ color: '#3b82f6' }} /> Complete Data</h3>
-                <pre style={s.codeBlock}>
-                  {JSON.stringify({ ...selectedBooking, details: bookingDetails[selectedBooking.booking_id] }, null, 2)}
-                </pre>
+                <h3 style={s.infoBlockTitle}><Activity size={16} style={{ color: '#3b82f6' }} /> Complete Details</h3>
+                <BookingDataTable booking={selectedBooking} details={bookingDetails[selectedBooking.booking_id]} />
               </div>
             </div>
           </div>
@@ -623,7 +707,7 @@ const ClientBookings = () => {
               <div>
                 <h2 style={{ fontSize: 18, fontWeight: 700, color: '#0f172a', margin: 0 }}>Request Termination</h2>
                 <p style={{ fontSize: 12, color: '#64748b', margin: '4px 0 0' }}>
-                  Booking ID: #{terminationBooking.booking_id || terminationBooking.id}
+                  Booking ID: {terminationBooking.booking_code || `#${terminationBooking.booking_id || terminationBooking.id}`}
                 </p>
               </div>
               <button onClick={() => setShowTerminationForm(false)} style={s.closeBtn}>
@@ -837,10 +921,23 @@ const s = {
   infoGrid: {
     display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px 28px',
   },
-  codeBlock: {
-    background: '#0f172a', color: '#22c55e', fontSize: 11,
-    fontFamily: "'DM Mono', monospace", padding: 16, borderRadius: 8,
-    overflowX: 'auto', lineHeight: 1.6, margin: 0,
+  dataTableWrap: {
+    maxHeight: 340, overflowY: 'auto', background: '#fff',
+    border: '1px solid #e2e8f0', borderRadius: 8,
+  },
+  dataTable: { width: '100%', borderCollapse: 'collapse', fontSize: 13 },
+  dataTh: {
+    position: 'sticky', top: 0, background: '#f1f5f9', textAlign: 'left',
+    padding: '9px 14px', fontSize: 11, fontWeight: 700, color: '#64748b',
+    textTransform: 'uppercase', letterSpacing: '0.06em', borderBottom: '1px solid #e2e8f0',
+  },
+  dataLabelCell: {
+    padding: '9px 14px', width: '38%', color: '#64748b', fontWeight: 500,
+    verticalAlign: 'top', borderBottom: '1px solid #f1f5f9',
+  },
+  dataValueCell: {
+    padding: '9px 14px', color: '#0f172a', fontWeight: 500,
+    wordBreak: 'break-word', borderBottom: '1px solid #f1f5f9',
   },
 
   alertWarning: {

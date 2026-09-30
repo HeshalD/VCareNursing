@@ -192,7 +192,8 @@ exports.registerGuest = async (req, res) => {
     }
     if (!terms_accepted) return res.status(400).json({ message: 'You must accept the Terms & Conditions.' });
     if (!full_name || !String(full_name).trim()) return res.status(400).json({ message: 'Full name is required.' });
-    if (!isEmail(email)) return res.status(400).json({ message: 'Valid email address is required.' });
+    const cleanEmail = typeof email === 'string' && email.trim() ? email.trim() : null;
+    if (cleanEmail && !isEmail(cleanEmail)) return res.status(400).json({ message: 'Enter a valid email address.' });
     if (!GENDERS.includes(gender)) return res.status(400).json({ message: 'Gender is required.' });
     if (!primary_address || !String(primary_address).trim()) return res.status(400).json({ message: 'Address is required.' });
 
@@ -230,7 +231,7 @@ exports.registerGuest = async (req, res) => {
       clientId: profile?.client_profile_id || null,
       name: String(full_name).trim(),
       mobile,
-      email: String(email).trim(),
+      email: cleanEmail,
       gender,
       clientType: finalClientType,
       companyName: finalClientType === 'CORPORATE_PROXY' ? String(company_name).trim() : null,

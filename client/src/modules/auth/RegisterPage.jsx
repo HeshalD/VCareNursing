@@ -60,10 +60,8 @@ const RegisterPage = () => {
         }
         break;
       case 'email':
-        if (!value.trim()) {
-          error = 'Email address is required';
-        } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
-          error = 'Valid email address is required';
+        if (value.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+          error = 'Enter a valid email address';
         }
         break;
       case 'phone':
@@ -200,7 +198,7 @@ const RegisterPage = () => {
       const response = await apiClient.registerClient({
         honorific: formData.honorific || undefined,
         full_name: formData.fullName,
-        email: formData.email,
+        email: formData.email.trim() || undefined,
         mobile_number: formData.phone,
         password: formData.password,
         client_type: formData.client_type,
@@ -429,7 +427,7 @@ const RegisterPage = () => {
 
               {/* Email Input */}
               <div className="space-y-1">
-                <label className="text-sm font-medium text-slate-700 block">Email Address</label>
+                <label className="text-sm font-medium text-slate-700 block">Email Address <span className="text-slate-400 font-normal">(optional)</span></label>
                 <div className="relative group">
                   <input
                     type="email"

@@ -120,7 +120,7 @@ const ClientReviews = () => {
         if (count > mostReviewedCount) {
           mostReviewedCount = count;
           const rev = allReviews.find(r => String(r.staff_profile_id) === String(staffId));
-          mostReviewedStaff = rev?.staff_name || `Staff #${staffId}`;
+          mostReviewedStaff = rev?.staff_name || rev?.staff_code || `Staff #${staffId}`;
         }
       });
 
@@ -377,7 +377,7 @@ const ClientReviews = () => {
                       </div>
                       <div>
                         <p style={{ fontSize: 14, fontWeight: 600, color: '#0f172a', margin: '0 0 2px' }}>
-                          {review.staff_name || `Staff #${review.staff_profile_id}`}
+                          {review.staff_name || review.staff_code || `Staff #${review.staff_profile_id}`}
                         </p>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#94a3b8' }}>
                           <Calendar size={12} />

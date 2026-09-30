@@ -5,13 +5,50 @@ const { createPaymentReceipt } = require('../services/receiptService');
 const { sendSms } = require('../utils/sms');
 const { getOrCreateClientProfileForQuotation, sendClientWelcomeCredentials } = require('../services/clientBootstrapService');
 const { ensureCombinedInvoice, ensureRegFeeInvoiceRecord } = require('./quoteController');
-const { applyInvoicePayment } = require('./invoiceController');
+const { applyInvoicePayment, lineItemDuplicateSql } = require('./invoiceController');
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const { computeRegFeeSplit, settleRegistrationFee } = require('../services/registrationFeeSplit');
 const { resolveBankAccountId } = require('../utils/pettyCash');
 const { creditClientWallet } = require('../services/walletService');
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// One-off charges on a SERVICE quote (custom charges, transport, etc.) get their own
+// allocation row: any CHARGE that is not the care rate, the registration fee or a discount.
+// `executor` is either db or a transaction client.
+async function getCustomChargeStatus(executor, quoteId) {
+  const baseSelect = (paidExpr) => `
+    SELECT li.line_item_id, li.description, li.amount, ${paidExpr} AS paid
+    FROM quote_line_items li
+    WHERE li.quote_id = $1
+      AND li.item_type = 'CHARGE'
+      AND li.is_registration_fee = false
+      AND COALESCE(li.item_subtype, '') NOT IN ('RATE_DAILY', 'RATE_SHIFT')
+    ORDER BY li.sort_order, li.created_at`;
+  let rows;
+  try {
+    rows = (await executor.query(
+      baseSelect('COALESCE((SELECT SUM(a.amount) FROM quote_line_item_payments a WHERE a.line_item_id = li.line_item_id), 0)'),
+      [quoteId]
+    )).rows;
+  } catch (err) {
+    // 42P01: quote_line_item_payments not created yet (npm run migrate). Treat as nothing
+    // tracked yet rather than breaking the whole payment screen.
+    if (err.code !== '42P01') throw err;
+    rows = (await executor.query(baseSelect('0'), [quoteId])).rows;
+  }
+  return rows.map((r) => {
+    const amount = parseFloat(r.amount) || 0;
+    const paid = parseFloat(r.paid) || 0;
+    return {
+      line_item_id: r.line_item_id,
+      description: r.description,
+      amount,
+      paid,
+      remaining: Math.max(Math.round((amount - paid) * 100) / 100, 0),
+    };
+  });
+}
 
 function extractActorRole(role) {
   const raw = Array.isArray(role) ? role[0] : role;
@@ -549,7 +586,12 @@ const recordAllocatedPayment = async (req, res) => {
     const regFeeAlloc = parseFloat(parsedAllocations.reg_fee) || 0;
     const serviceAlloc = parseFloat(parsedAllocations.service) || 0;
     const productsAlloc = parseFloat(parsedAllocations.products) || 0;
-    const totalAlloc = regFeeAlloc + serviceAlloc + productsAlloc;
+    // custom: { [line_item_id]: amount } — money assigned to specific custom charges
+    const customInput = parsedAllocations.custom && typeof parsedAllocations.custom === 'object' ? parsedAllocations.custom : {};
+    const customEntries = Object.entries(customInput)
+      .map(([lineItemId, raw]) => [lineItemId, parseFloat(raw) || 0]);
+    const customTotal = customEntries.reduce((sum, [, amt]) => sum + Math.max(amt, 0), 0);
+    const totalAlloc = regFeeAlloc + serviceAlloc + productsAlloc + customTotal;
 
     // A client can legitimately pay more than what's due on this quotation.
     // Whatever's left over after the three buckets above are maxed out isn't
@@ -577,7 +619,7 @@ const recordAllocatedPayment = async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'amount_received is required and must be greater than 0' });
     }
 
-    if (regFeeAlloc < 0 || serviceAlloc < 0 || productsAlloc < 0) {
+    if (regFeeAlloc < 0 || serviceAlloc < 0 || productsAlloc < 0 || customEntries.some(([, amt]) => amt < 0)) {
       await client.query('ROLLBACK');
       return res.status(400).json({ status: 'error', message: 'Allocations cannot be negative' });
     }
@@ -670,15 +712,40 @@ const recordAllocatedPayment = async (req, res) => {
     const serviceTotalRemaining = Math.max(parseFloat(quotation.total_amount) - total_paid_so_far, 0);
     const serviceOnlyRemaining = Math.max(serviceTotalRemaining - regFeeRemaining, 0);
 
+    // Custom charges are paid through their own rows, so the plain "service charges"
+    // row only covers what is left after them.
+    const customStatus = await getCustomChargeStatus(client, quote_id);
+    const customRemainingAll = customStatus.reduce((sum, c) => sum + c.remaining, 0);
+    const careRemaining = Math.max(serviceOnlyRemaining - customRemainingAll, 0);
+
+    const customAllocs = [];
+    for (const [lineItemId, amt] of customEntries) {
+      if (amt <= 0) continue;
+      const item = customStatus.find((c) => c.line_item_id === lineItemId);
+      if (!item) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ status: 'error', message: 'A custom charge in this payment does not belong to this quotation' });
+      }
+      if (amt > item.remaining + 0.01) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ status: 'error', message: `Allocation to "${item.description}" (${amt}) exceeds its remaining amount (${item.remaining})` });
+      }
+      customAllocs.push({ ...item, allocated: amt });
+    }
+
     if (regFeeAlloc > regFeeRemaining + 0.01) {
       await client.query('ROLLBACK');
       return res.status(400).json({ status: 'error', message: `Registration fee allocation (${regFeeAlloc}) exceeds remaining amount (${regFeeRemaining})` });
     }
-    if (serviceAlloc > serviceOnlyRemaining + 0.01) {
+    if (serviceAlloc > careRemaining + 0.01) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ status: 'error', message: `Service charges allocation (${serviceAlloc}) exceeds remaining amount (${serviceOnlyRemaining})` });
+      return res.status(400).json({ status: 'error', message: `Service charges allocation (${serviceAlloc}) exceeds remaining amount (${careRemaining})` });
     }
-    if (regFeeRemaining - regFeeAlloc > 0.01 && (serviceAlloc > 0 || productsAlloc > 0)) {
+    if (serviceAlloc + customTotal > serviceOnlyRemaining + 0.01) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ status: 'error', message: `Service and custom charge allocations (${serviceAlloc + customTotal}) exceed what is still due (${serviceOnlyRemaining})` });
+    }
+    if (regFeeRemaining - regFeeAlloc > 0.01 && (serviceAlloc > 0 || productsAlloc > 0 || customTotal > 0)) {
       await client.query('ROLLBACK');
       return res.status(400).json({ status: 'error', message: 'Registration fee must be fully covered before allocating this payment to other charges' });
     }
@@ -690,7 +757,15 @@ const recordAllocatedPayment = async (req, res) => {
     let productsRemaining = 0;
     if (quotation.product_quote_id) {
       const invRes = await client.query(
-        `SELECT * FROM invoices WHERE quote_id = $1 AND status != 'PAID' ORDER BY created_at ASC FOR UPDATE`,
+        // An item the admin invoiced individually is paid through that LINE_ITEM invoice (once the
+        // quote is accepted). A LINE_ITEM invoice that merely duplicates an item billed elsewhere
+        // is never a payment target.
+        `SELECT inv.* FROM invoices inv
+         WHERE inv.quote_id = $1 AND inv.status != 'PAID'
+           AND (inv.category <> 'LINE_ITEM'
+                OR (NOT ${lineItemDuplicateSql('inv')}
+                    AND (SELECT status FROM quotations WHERE quote_id = $1) = 'ACCEPTED'))
+         ORDER BY inv.created_at ASC FOR UPDATE OF inv`,
         [quotation.product_quote_id]
       );
       for (const inv of invRes.rows) {
@@ -715,7 +790,7 @@ const recordAllocatedPayment = async (req, res) => {
     let registrationFeeSettled = false;
 
     // ── Registration fee + service charges bucket ──────────────────────────
-    const svcAmount = regFeeAlloc + serviceAlloc;
+    const svcAmount = regFeeAlloc + serviceAlloc + customTotal;
     if (svcAmount > 0) {
       const paymentResult = await client.query(`
         INSERT INTO payment_tracking (
@@ -762,12 +837,23 @@ const recordAllocatedPayment = async (req, res) => {
         receiptLineItems.push({ label: 'Registration Fee', description: 'Payment toward registration fee', amount: regFeeAlloc });
       }
 
-      if (serviceAlloc > 0) {
+      // Record which custom charge each part of this payment was for.
+      for (const c of customAllocs) {
+        await client.query(
+          `INSERT INTO quote_line_item_payments (line_item_id, payment_id, amount) VALUES ($1, $2, $3)`,
+          [c.line_item_id, payment.payment_id, c.allocated]
+        );
+        receiptLineItems.push({ label: 'Custom Charge', description: c.description, amount: c.allocated });
+      }
+
+      // Custom-charge money follows the same route service charges always took
+      // (credited to the client's wallet); only the bookkeeping above is new.
+      if (serviceAlloc + customTotal > 0) {
         await creditClientWallet(client, {
           client_id,
           quote_id,
           earmark_booking_id: quotation.booking_id || null,
-          amount: serviceAlloc,
+          amount: serviceAlloc + customTotal,
           payment_method,
           bank_account_id: resolvedBankAccountId,
           cheque_number: cheque_number || null,
@@ -777,7 +863,9 @@ const recordAllocatedPayment = async (req, res) => {
           notes: notes || 'Service charges credited to wallet',
           verified_by,
         });
-        receiptLineItems.push({ label: 'Service Charges', description: 'Credited to client wallet — drawn down as service is delivered', amount: serviceAlloc });
+        if (serviceAlloc > 0) {
+          receiptLineItems.push({ label: 'Service Charges', description: 'Credited to client wallet — drawn down as service is delivered', amount: serviceAlloc });
+        }
       }
 
       const new_total = total_paid_so_far + svcAmount;
@@ -1497,6 +1585,7 @@ const getPaymentProgress = async (req, res) => {
       remaining_amount: remaining_amount,
       percent_paid: ((total_paid / total_amount) * 100).toFixed(2),
       payment_count: parseInt(paymentSummary.rows[0].payment_count),
+      custom_items: await getCustomChargeStatus(db, quote_id),
       can_assign_staff: can_assign_staff,
       recent_payments: payments
     });

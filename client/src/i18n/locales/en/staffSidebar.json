@@ -3,6 +3,9 @@
     "dashboard": "Dashboard",
     "earnings": "Earnings",
     "bookings": "Bookings",
+    "salarySheets": "Salary Sheets",
+    "careHistory": "Care Profile History",
+    "reviews": "Reviews",
     "myProfile": "My Profile",
     "requestChange": "Request Change",
     "requestLeave": "Request Leave"

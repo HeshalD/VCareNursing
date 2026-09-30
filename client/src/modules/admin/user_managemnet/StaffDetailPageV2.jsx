@@ -40,6 +40,7 @@ import {
   ScrollText,
   ShieldCheck,
   ShieldOff,
+  EyeOff,
   Star,
   StickyNote,
   Trash2,
@@ -630,6 +631,7 @@ const StaffDetailPageV2 = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [portalUpdating, setPortalUpdating] = useState(false);
+  const [publicUpdating, setPublicUpdating] = useState(false);
   const [availabilityUpdating, setAvailabilityUpdating] = useState(false);
   const [payoutSubmitting, setPayoutSubmitting] = useState(false);
   const [payoutSubmitError, setPayoutSubmitError] = useState('');
@@ -679,6 +681,7 @@ const StaffDetailPageV2 = () => {
   const activeStatus = String(profile.current_status || '').toLowerCase();
   const isActive = Boolean(profile.is_active);
   const portalDisabled = Boolean(profile.portal_access_disabled);
+  const showOnPublicSite = Boolean(profile.show_on_public_site);
   const currentAssignment = currentBooking || overviewCurrentBooking;
   const isPendingMigration = String(profile.onboarding_status || '').toUpperCase() === 'PENDING_MIGRATION';
   const missingMigrationFields = isPendingMigration
@@ -922,6 +925,18 @@ const StaffDetailPageV2 = () => {
       setError(e?.message || 'Failed to update staff dashboard access');
     } finally {
       setPortalUpdating(false);
+    }
+  };
+
+  const handleTogglePublicVisibility = async () => {
+    try {
+      setPublicUpdating(true);
+      await runAdminRequest(() => apiClient.setStaffPublicVisibility(staffProfileId, !showOnPublicSite));
+      await loadPage();
+    } catch (e) {
+      setError(e?.message || 'Failed to update public site visibility');
+    } finally {
+      setPublicUpdating(false);
     }
   };
 
@@ -1261,7 +1276,7 @@ const StaffDetailPageV2 = () => {
     return map[action] || { dot: 'bg-slate-400', cls: 'bg-slate-100 text-slate-600' };
   };
 
-  const renderChangeDiff = (requestType, requestedChanges) => {
+  const renderChangeDiff = (requestType, requestedChanges, request) => {
     if (!requestedChanges) return <p className="text-sm text-slate-400 m-0">No change data available.</p>;
     if (requestType === 'PROFILE_UPDATE' || requestType === 'BANK_ACCOUNT_EDIT') {
       return (
@@ -1292,7 +1307,12 @@ const StaffDetailPageV2 = () => {
     if (requestType === 'BANK_ACCOUNT_REMOVE') {
       return (
         <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-sm text-red-700">
-          Remove bank account ID: <span className="font-mono font-semibold">{requestedChanges.staff_bank_account_id}</span>
+          Remove bank account:{' '}
+          <span className="font-semibold">
+            {request?.target_bank_name
+              ? `${request.target_bank_name} ••••${request.target_bank_last4 || ''}`
+              : 'account no longer on file'}
+          </span>
         </div>
       );
     }
@@ -1460,6 +1480,29 @@ const StaffDetailPageV2 = () => {
               {portalDisabled ? 'Enable dashboard access' : 'Disable dashboard access'}
             </button>
 
+            <div className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border mt-3 ${showOnPublicSite ? 'bg-emerald-50 border-emerald-100' : 'bg-slate-50 border-slate-200'}`}>
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${showOnPublicSite ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+              <div>
+                <div className="text-sm font-semibold text-slate-900">{showOnPublicSite ? 'Shown on public site' : 'Hidden from public site'}</div>
+                <div className="text-xs text-slate-500 mt-0.5">
+                  {showOnPublicSite
+                    ? 'Appears on the landing page and the public staff directory.'
+                    : 'Not listed on the landing page or the public staff directory.'}
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleTogglePublicVisibility}
+              disabled={publicUpdating}
+              className={`mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-lg border text-sm font-semibold transition-colors disabled:opacity-60 ${showOnPublicSite ? 'border-slate-200 text-slate-600 hover:bg-slate-50' : 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'}`}
+            >
+              {publicUpdating
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : showOnPublicSite ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              {showOnPublicSite ? 'Hide from public site' : 'Show on public site'}
+            </button>
+
             <div className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border mt-3 ${activeStatus === 'unavailable' ? 'bg-slate-50 border-slate-200' : 'bg-emerald-50 border-emerald-100'}`}>
               <span className={`w-2 h-2 rounded-full flex-shrink-0 ${getSM(profile.current_status).dot}`} />
               <div className="flex-1 min-w-0">
@@ -1542,7 +1585,7 @@ const StaffDetailPageV2 = () => {
                   </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <Field label="Booking code" value={currentAssignment.booking_id} mono />
+                  <Field label="Booking code" value={currentAssignment.booking_code || currentAssignment.booking_id} mono />
                   <Field label="Client" value={currentAssignment.client_name} />
                   <Field label="Daily rate" value={formatMoney(currentAssignment.daily_rate || currentAssignment.booking_daily_rate)} />
                   <Field label="Status" value={currentAssignment.status} />
@@ -1639,7 +1682,7 @@ const StaffDetailPageV2 = () => {
           ) : currentAssignment ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <Field label="Assignment ID" value={currentAssignment.assignment_id} mono />
-              <Field label="Booking ID" value={currentAssignment.booking_id} mono />
+              <Field label="Booking ID" value={currentAssignment.booking_code || currentAssignment.booking_id} mono />
               <Field label="Client name" value={currentAssignment.client_name} />
               <Field label="Patient name" value={currentAssignment.patient_name} />
               <Field label="Service start" value={formatDate(currentAssignment.service_start_date || currentAssignment.start_date)} />
@@ -2417,7 +2460,7 @@ const StaffDetailPageV2 = () => {
                       {isExpanded && (
                         <div className="border-t border-slate-100 p-4 bg-white">
                           <div className="text-xs font-bold tracking-wide uppercase text-slate-400 mb-2.5">Requested changes</div>
-                          {renderChangeDiff(req.request_type, req.requested_changes)}
+                          {renderChangeDiff(req.request_type, req.requested_changes, req)}
 
                           <div className="text-xs font-bold tracking-wide uppercase text-slate-400 mt-4 mb-3">Audit trail</div>
                           {isLoadingLog ? (

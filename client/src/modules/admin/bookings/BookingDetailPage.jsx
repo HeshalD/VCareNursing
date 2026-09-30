@@ -1281,7 +1281,7 @@ const BookingDetailPage = () => {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <DetailRow label="Name"      value={clientDetails.client_name} />
-                <DetailRow label="Client ID" value={clientDetails.client_profile_id || bookingSummary.client_id || '-'} mono />
+                <DetailRow label="Client ID" value={clientDetails.client_code || clientDetails.client_profile_id || bookingSummary.client_id || '-'} mono />
                 <DetailRow label="Phone"     value={formatMobileNumber(clientDetails.client_mobile || clientDetails.mobile) || '-'} />
                 <DetailRow label="Email"     value={clientDetails.client_email  || clientDetails.email  || '-'} />
                 <div className="col-span-2">

@@ -538,7 +538,59 @@ const getMyCurrentEarningsBreakdown = async (req, res) => {
   }
 };
 
+// GET /api/staff-wallet/my-salary-sheets
+// Staff views the salary sheets (payout PDFs) generated for them. Company bank details are not exposed.
+const getMySalarySheets = async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT spt.staff_payment_id, spt.amount_paid, spt.payment_method, spt.reference_number,
+              spt.notes, spt.paid_at, spt.status, spt.salary_sheet_url,
+              sba.bank_name AS staff_bank_name
+       FROM staff_payments_tracking spt
+       JOIN staff_profiles sp ON sp.staff_profile_id = spt.staff_profile_id
+       LEFT JOIN staff_bank_accounts sba ON spt.staff_bank_account_id = sba.staff_bank_account_id
+       WHERE sp.user_id = $1 AND spt.salary_sheet_url IS NOT NULL
+       ORDER BY spt.paid_at DESC
+       LIMIT 200`,
+      [req.user.user_id]
+    );
+    res.json({ status: 'success', data: result.rows });
+  } catch (err) {
+    console.error('getMySalarySheets error:', err);
+    res.status(500).json({ status: 'error', message: 'Server error' });
+  }
+};
+
+// GET /api/staff-wallet/my-care-history
+// Staff views every care profile (patient) / booking they have been assigned to, newest first.
+const getMyCareHistory = async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT bsa.assignment_id, bsa.booking_id, bsa.service_start_date, bsa.service_end_date,
+              bsa.status AS assignment_status,
+              b.status AS booking_status, b.service_type, b.service_model,
+              p.patient_id, p.full_name AS patient_name, p.age AS patient_age, p.gender AS patient_gender,
+              c.full_name AS client_name
+       FROM booking_staff_assignments bsa
+       JOIN staff_profiles sp ON sp.staff_profile_id = bsa.staff_profile_id
+       LEFT JOIN bookings b ON b.booking_id = bsa.booking_id
+       LEFT JOIN patient_profiles p ON p.patient_id = b.patient_id
+       LEFT JOIN client_profiles c ON c.client_profile_id = b.client_id
+       WHERE sp.user_id = $1
+       ORDER BY bsa.service_start_date DESC NULLS LAST
+       LIMIT 500`,
+      [req.user.user_id]
+    );
+    res.json({ status: 'success', data: result.rows });
+  } catch (err) {
+    console.error('getMyCareHistory error:', err);
+    res.status(500).json({ status: 'error', message: 'Server error' });
+  }
+};
+
 module.exports = {
+  getMySalarySheets,
+  getMyCareHistory,
   getMyWallet,
   getMyAdvances,
   requestAdvance,

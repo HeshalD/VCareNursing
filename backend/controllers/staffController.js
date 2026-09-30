@@ -518,7 +518,7 @@ exports.getAdminStaffDetail = async (req, res) => {
         // on this booking — service_end_date stays NULL until the cron actually runs, so
         // without this the assignment looks open-ended even though it's due to wrap up.
         const currentAssignRes = await db.query(`
-            SELECT bsa.*, b.booking_id, b.status as booking_status, b.start_date, b.daily_rate as booking_daily_rate,
+            SELECT bsa.*, b.booking_id, b.booking_code, b.status as booking_status, b.start_date, b.daily_rate as booking_daily_rate,
                    c.full_name as client_name, p.full_name as patient_name,
                    pending_end.effective_date as pending_end_date, pending_end.action_type as pending_end_action_type
             FROM booking_staff_assignments bsa
@@ -733,7 +733,7 @@ exports.getCurrentBooking = async (req, res) => {
     try {
         const currentAssignRes = await db.query(`
             SELECT bsa.assignment_id, bsa.booking_id, bsa.assigned_on, bsa.service_start_date, bsa.service_end_date, bsa.daily_rate, bsa.amount_allocated, bsa.status,
-                         b.booking_id as booking_id, b.status as booking_status, b.start_date as booking_start_date, b.daily_rate as booking_daily_rate,
+                         b.booking_id as booking_id, b.booking_code, b.status as booking_status, b.start_date as booking_start_date, b.daily_rate as booking_daily_rate,
                          c.client_profile_id, c.full_name as client_name,
                          p.patient_id, p.full_name as patient_name,
                          pending_end.effective_date as pending_end_date, pending_end.action_type as pending_end_action_type
@@ -1458,6 +1458,54 @@ exports.setStaffPortalAccess = async (req, res) => {
     }
 };
 
+// Admin: show/hide one or many staff profiles on the public site (landing page + staff directory).
+// Body: { staff_profile_ids: [...], visible: boolean } (bulk) or { visible } with :staff_profile_id (single).
+exports.setStaffPublicVisibility = async (req, res) => {
+    const single = req.params.staff_profile_id;
+    const ids = Array.from(new Set((single ? [single] : req.body.staff_profile_ids) || []));
+    const { visible } = req.body;
+
+    if (typeof visible !== 'boolean' || ids.length === 0 || ids.length > 1000) {
+        return res.status(400).json({ status: 'error', message: 'Provide staff_profile_ids and a boolean "visible".' });
+    }
+
+    try {
+        const updateRes = await db.query(
+            `UPDATE staff_profiles SET show_on_public_site = $1
+             WHERE staff_profile_id = ANY($2::uuid[])
+             RETURNING staff_profile_id, full_name`,
+            [visible, ids]
+        );
+
+        try {
+            const actorNameRes = await db.query('SELECT full_name FROM staff_profiles WHERE user_id = $1', [req.user.user_id]);
+            const actorName = actorNameRes.rows[0]?.full_name || 'Admin';
+            const actorRole = Array.isArray(req.user?.role) ? req.user.role[0] : req.user?.role;
+            const cleanRole = typeof actorRole === 'string' ? actorRole.replace(/\{|\}/g, '').split(',')[0].trim() : String(actorRole);
+            await Promise.all(updateRes.rows.map(row => logActivity({
+                actorUserId: req.user.user_id,
+                actorName,
+                actorRole: cleanRole,
+                actionType: visible ? 'STAFF_PUBLIC_VISIBILITY_ENABLED' : 'STAFF_PUBLIC_VISIBILITY_DISABLED',
+                entityType: 'STAFF',
+                entityId: String(row.staff_profile_id),
+                details: { staff_name: row.full_name, bulk: ids.length > 1 },
+            })));
+        } catch (logErr) {
+            console.error('Activity log failed (setStaffPublicVisibility):', logErr.message);
+        }
+
+        return res.status(200).json({
+            status: 'success',
+            message: `${updateRes.rowCount} staff profile(s) ${visible ? 'now shown on' : 'hidden from'} the public site`,
+            data: { updated: updateRes.rowCount, requested: ids.length, visible }
+        });
+    } catch (error) {
+        console.error('setStaffPublicVisibility Error:', error);
+        return res.status(500).json({ status: 'error', message: 'Server error while updating public visibility' });
+    }
+};
+
 // Get all staff members with optional filtering
 exports.getAllStaff = async (req, res) => {
     try {
@@ -1592,7 +1640,7 @@ exports.getAllStaff = async (req, res) => {
                 sp.staff_code,
                 sp.onboarding_status,
                 sp.portal_access_disabled,
-                CAST(sp.average_rating AS FLOAT) as average_rating,
+                sp.show_on_public_site,
                 u.user_id,
                 u.email,
                 u.mobile_number,
@@ -1693,7 +1741,6 @@ exports.getAvailableStaff = async (req, res) => {
                 sp.police_report_url,
                 sp.created_at,
                 sp.advance_threshold_amount,
-                CAST(sp.average_rating AS FLOAT) as average_rating,
                 u.user_id,
                 u.email,
                 u.mobile_number,
@@ -2383,6 +2430,13 @@ exports.deleteStaffAdminNote = async (req, res) => {
     }
 };
 
+// Roles the public staff pickers may filter on (comma separated in the request).
+const PUBLIC_PICKER_ROLES = ['NURSE', 'CARETAKER', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'];
+const parsePickerRoles = (value) => String(value || '')
+    .split(',')
+    .map((r) => r.trim().toUpperCase())
+    .filter((r) => PUBLIC_PICKER_ROLES.includes(r));
+
 // Get staff members by their role
 exports.getStaffByRole = async (req, res) => {
     try {
@@ -2390,9 +2444,20 @@ exports.getStaffByRole = async (req, res) => {
         const { page = 1, limit = 10, status, verification_status } = req.query;
         
         // Build WHERE clause dynamically
-        let whereClause = ' AND u.role @> ARRAY[$1]::user_role_enum[]';
-        const queryParams = [role];
+        const roles = parsePickerRoles(role);
+        if (roles.length === 0) {
+            return res.status(400).json({ status: 'error', message: 'Invalid role' });
+        }
+        let whereClause = ' AND u.role && $1::user_role_enum[]';
+        const queryParams = [roles];
         let paramIndex = 2;
+
+        const search = String(req.query.search || '').trim();
+        if (search) {
+            queryParams.push(`%${search}%`);
+            whereClause += ` AND (sp.full_name ILIKE $${paramIndex} OR sp.home_address ILIKE $${paramIndex})`;
+            paramIndex++;
+        }
 
         if (status) {
             whereClause += ` AND sp.current_status = $${paramIndex}`;
@@ -2431,7 +2496,11 @@ exports.getStaffByRole = async (req, res) => {
                 sp.willing_to_live_in,
                 sp.date_of_birth,
                 sp.created_at,
+                sp.location,
+                sp.languages,
                 CAST(sp.average_rating AS FLOAT) as average_rating,
+                COALESCE(sp.total_reviews, 0) as total_reviews,
+                sp.experience_level,
                 u.user_id,
                 u.email,
                 u.mobile_number,
@@ -2492,6 +2561,20 @@ exports.getStaffByGender = async (req, res) => {
         const queryParams = [gender];
         let paramIndex = 2;
 
+        const genderRoles = parsePickerRoles(req.query.role);
+        if (genderRoles.length > 0) {
+            queryParams.push(genderRoles);
+            whereClause += ` AND u.role && $${paramIndex}::user_role_enum[]`;
+            paramIndex++;
+        }
+
+        const search = String(req.query.search || '').trim();
+        if (search) {
+            queryParams.push(`%${search}%`);
+            whereClause += ` AND (sp.full_name ILIKE $${paramIndex} OR sp.home_address ILIKE $${paramIndex})`;
+            paramIndex++;
+        }
+
         if (status) {
             whereClause += ` AND sp.current_status = $${paramIndex}`;
             queryParams.push(status);
@@ -2529,6 +2612,11 @@ exports.getStaffByGender = async (req, res) => {
                 sp.willing_to_live_in,
                 sp.date_of_birth,
                 sp.created_at,
+                sp.location,
+                sp.languages,
+                CAST(sp.average_rating AS FLOAT) as average_rating,
+                COALESCE(sp.total_reviews, 0) as total_reviews,
+                sp.experience_level,
                 u.user_id,
                 u.email,
                 u.mobile_number,
@@ -2588,6 +2676,13 @@ exports.getStaffWillingToLiveIn = async (req, res) => {
         const queryParams = [];
         let paramIndex = 1;
 
+        const search = String(req.query.search || '').trim();
+        if (search) {
+            queryParams.push(`%${search}%`);
+            whereClause += ` AND (sp.full_name ILIKE $${paramIndex} OR sp.home_address ILIKE $${paramIndex})`;
+            paramIndex++;
+        }
+
         if (status) {
             whereClause += ` AND sp.current_status = $${paramIndex}`;
             queryParams.push(status);
@@ -2631,6 +2726,11 @@ exports.getStaffWillingToLiveIn = async (req, res) => {
                 sp.willing_to_live_in,
                 sp.date_of_birth,
                 sp.created_at,
+                sp.location,
+                sp.languages,
+                CAST(sp.average_rating AS FLOAT) as average_rating,
+                COALESCE(sp.total_reviews, 0) as total_reviews,
+                sp.experience_level,
                 u.user_id,
                 u.email,
                 u.mobile_number,
@@ -3815,6 +3915,103 @@ exports.getCurrentEarningsBreakdown = async (req, res) => {
     }
 };
 
+// Public staff directory: server-side search, role/status filters and pagination.
+// Only exposes fields safe for public display (no contact details, NIC or documents).
+exports.getPublicStaffDirectory = async (req, res) => {
+    try {
+        const PUBLIC_ROLES = ['CARETAKER', 'NURSE', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'];
+        const { search = '', role = '', status = '', sort = 'rating' } = req.query;
+        const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 50);
+
+        const params = [PUBLIC_ROLES];
+        let where = `u.is_active = true
+            AND sp.portal_access_disabled = false
+            AND sp.show_on_public_site = true
+            AND u.role && $1::user_role_enum[]`;
+
+        if (PUBLIC_ROLES.includes(role)) {
+            params.push(role);
+            where += ` AND u.role @> ARRAY[$${params.length}]::user_role_enum[]`;
+        }
+
+        if (status) {
+            params.push(String(status).toLowerCase());
+            where += ` AND LOWER(REPLACE(sp.current_status, '_', ' ')) = $${params.length}`;
+        }
+
+        const trimmed = String(search).trim();
+        if (trimmed) {
+            // Mobile numbers are stored as E.164 (+94...); accept local 0-prefixed input too.
+            const digits = trimmed.replace(/\D/g, '');
+            let phoneVariant = null;
+            if (/^[0-9+\s-]+$/.test(trimmed) && digits.length >= 7) {
+                if (digits.startsWith('0')) phoneVariant = `94${digits.slice(1)}`;
+                else if (digits.startsWith('94')) phoneVariant = `0${digits.slice(2)}`;
+            }
+            params.push(`%${trimmed}%`);
+            const p = params.length;
+            let clause = `sp.full_name ILIKE $${p} OR sp.staff_code ILIKE $${p} OR u.mobile_number ILIKE $${p}`;
+            if (phoneVariant) {
+                params.push(`%${phoneVariant}%`);
+                clause += ` OR u.mobile_number ILIKE $${params.length}`;
+            }
+            where += ` AND (${clause})`;
+        }
+
+        const orderBy = sort === 'name'
+            ? 'sp.full_name ASC, sp.staff_profile_id'
+            : 'COALESCE(sp.average_rating, 0) DESC, COALESCE(sp.total_reviews, 0) DESC, sp.full_name ASC, sp.staff_profile_id';
+
+        const baseFrom = `FROM staff_profiles sp JOIN users u ON sp.user_id = u.user_id`;
+
+        const [countRes, dataRes, availableRes] = await Promise.all([
+            db.query(`SELECT COUNT(*) AS total ${baseFrom} WHERE ${where}`, params),
+            db.query(
+                `SELECT
+                    sp.staff_profile_id,
+                    sp.full_name,
+                    sp.staff_code,
+                    sp.designation,
+                    sp.location,
+                    sp.profile_picture_url,
+                    sp.current_status,
+                    CAST(sp.average_rating AS FLOAT) AS average_rating,
+                    COALESCE(sp.total_reviews, 0) AS total_reviews,
+                    u.role
+                 ${baseFrom}
+                 WHERE ${where}
+                 ORDER BY ${orderBy}
+                 LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+                [...params, limit, (page - 1) * limit]
+            ),
+            db.query(
+                `SELECT COUNT(*) AS total ${baseFrom}
+                 WHERE u.is_active = true AND sp.portal_access_disabled = false
+                   AND sp.show_on_public_site = true
+                   AND u.role && $1::user_role_enum[] AND LOWER(sp.current_status) = 'available'`,
+                [PUBLIC_ROLES]
+            ),
+        ]);
+
+        const totalCount = parseInt(countRes.rows[0].total, 10);
+        res.status(200).json({
+            status: 'success',
+            data: dataRes.rows,
+            available_count: parseInt(availableRes.rows[0].total, 10),
+            pagination: {
+                current_page: page,
+                per_page: limit,
+                total_count: totalCount,
+                total_pages: Math.ceil(totalCount / limit),
+            },
+        });
+    } catch (error) {
+        console.error('Get Public Staff Directory Error:', error);
+        res.status(500).json({ status: 'error', message: 'Server error while fetching staff directory' });
+    }
+};
+
 // Get top 5 staff members by highest average ratings
 exports.getTopRatedStaff = async (req, res) => {
     try {
@@ -3841,18 +4038,18 @@ exports.getTopRatedStaff = async (req, res) => {
                 sp.created_at,
                 sp.advance_threshold_amount,
                 CAST(sp.average_rating AS FLOAT) as average_rating,
+                COALESCE(sp.total_reviews, 0) as total_reviews,
                 u.user_id,
-                u.email,
-                u.mobile_number,
                 u.role,
-                u.is_active,
-                u.is_email_verified,
-                u.created_at as user_created_at
+                u.is_active
             FROM staff_profiles sp
             JOIN users u ON sp.user_id = u.user_id
-            WHERE sp.average_rating IS NOT NULL AND sp.average_rating > 0
-            ORDER BY sp.average_rating DESC
-            LIMIT 5
+            WHERE u.is_active = true
+              AND sp.portal_access_disabled = false
+              AND sp.show_on_public_site = true
+              AND u.role && ARRAY['CARETAKER','NURSE','NANNY','NURSING_ASSISTANT','PHYSIOTHERAPIST','COUNSELLOR']::user_role_enum[]
+            ORDER BY COALESCE(sp.average_rating, 0) DESC, COALESCE(sp.total_reviews, 0) DESC, sp.created_at DESC
+            LIMIT 24
         `;
 
         const result = await db.query(query);

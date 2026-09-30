@@ -74,6 +74,11 @@ import StaffProfile from './modules/public/StaffProfile';
 import ClientProfile from './modules/client/ClientProfile';
 import ClientServiceRequests from './modules/client/ClientServiceRequests';
 import ClientPatients from './modules/client/ClientPatients';
+import ClientQuotations from './modules/client/ClientQuotations';
+import ClientReceipts from './modules/client/ClientReceipts';
+import ClientInvoices from './modules/client/ClientInvoices';
+import ClientStatements from './modules/client/ClientStatements';
+import ClientCareTeam from './modules/client/ClientCareTeam';
 import ClientFinancial from './modules/client/ClientFinancial';
 import ClientReviews from './modules/client/ClientReviews';
 import ClientLayout from './modules/client/components/ClientLayout';
@@ -81,6 +86,9 @@ import WorkerBookings from './modules/public/service_team/WorkerBookings';
 import StaffMyProfile from './modules/public/service_team/StaffMyProfile';
 import StaffChangeRequestPage from './modules/public/service_team/StaffChangeRequestPage';
 import StaffLeaveRequestPage from './modules/public/service_team/StaffLeaveRequestPage';
+import StaffSalarySheetsPage from './modules/public/service_team/StaffSalarySheetsPage';
+import StaffReviewsPage from './modules/public/service_team/StaffReviewsPage';
+import StaffCareHistoryPage from './modules/public/service_team/StaffCareHistoryPage';
 import StaffPortalGuard from './modules/public/service_team/StaffPortalGuard';
 import StaffAccessRevokedPage from './modules/public/service_team/StaffAccessRevokedPage';
 import ChangeRequestsPage from './modules/admin/change_requests/ChangeRequestsPage';
@@ -169,12 +177,20 @@ function App() {
             <Route path="/services/my-profile" element={<StaffPortalGuard><StaffMyProfile /></StaffPortalGuard>} />
             <Route path="/services/change-request" element={<StaffPortalGuard><StaffChangeRequestPage /></StaffPortalGuard>} />
             <Route path="/services/leave-request" element={<StaffPortalGuard><StaffLeaveRequestPage /></StaffPortalGuard>} />
+            <Route path="/services/salary-sheets" element={<StaffPortalGuard><StaffSalarySheetsPage /></StaffPortalGuard>} />
+            <Route path="/services/reviews" element={<StaffPortalGuard><StaffReviewsPage /></StaffPortalGuard>} />
+            <Route path="/services/care-history" element={<StaffPortalGuard><StaffCareHistoryPage /></StaffPortalGuard>} />
             <Route element={<ClientLayout />}>
               <Route path="/client/profile" element={<ClientProfile />} />
               <Route path="/client/bookings" element={<ClientBookings />} />
               <Route path="/client/service-requests" element={<ClientServiceRequests />} />
               <Route path="/client/patients" element={<ClientPatients />} />
               <Route path="/client/financial" element={<ClientFinancial />} />
+              <Route path="/client/quotations" element={<ClientQuotations />} />
+              <Route path="/client/invoices" element={<ClientInvoices />} />
+              <Route path="/client/receipts" element={<ClientReceipts />} />
+              <Route path="/client/statements" element={<ClientStatements />} />
+              <Route path="/client/care-team" element={<ClientCareTeam />} />
               <Route path="/client/reviews" element={<ClientReviews />} />
               <Route path="/client/products" element={<ClientProducts />} />
             </Route>

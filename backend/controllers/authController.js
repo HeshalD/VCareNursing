@@ -29,8 +29,10 @@ exports.registerClient = async (req, res, next) => {
     if (!terms_accepted) {
       return res.status(400).json({ message: "You must accept the Terms & Conditions." });
     }
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return res.status(400).json({ message: "Valid email address is required." });
+    // Email is optional; validate only when provided.
+    const cleanEmail = typeof email === 'string' && email.trim() ? email.trim() : null;
+    if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      return res.status(400).json({ message: "Enter a valid email address." });
     }
     if (!isValidPhone(rawMobileNumber)) {
       return res.status(400).json({ message: "Enter a valid mobile number." });
@@ -89,7 +91,7 @@ exports.registerClient = async (req, res, next) => {
              city_id             = EXCLUDED.city_id,
              created_at          = NOW()`,
       [
-        mobile_number, hashedPassword, email, full_name,
+        mobile_number, hashedPassword, cleanEmail, full_name,
         client_type || 'INDIVIDUAL', gender, primary_address,
         company_name || null, honorific || null, resolvedDisplayNameSource, otp, expiresAt,
         city.city_id,
@@ -185,7 +187,7 @@ exports.verifyOtp = async (req, res) => {
 
     const newUser = await dbClient.query(
       `INSERT INTO users (mobile_number, password_hash, email, is_email_verified)
-       VALUES ($1, $2, $3, TRUE) RETURNING user_id`,
+       VALUES ($1, $2, $3, ($3::varchar IS NOT NULL)) RETURNING user_id`,
       [pending.mobile_number, pending.password_hash, pending.email]
     );
     const userId = newUser.rows[0].user_id;

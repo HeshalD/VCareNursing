@@ -185,6 +185,9 @@ router.get('/', staffController.getAllStaff);
 // Public: Get top 5 staff members by highest average ratings
 router.get('/top-rated', staffController.getTopRatedStaff);
 
+// Public: Paginated staff directory with search (name / mobile / staff code) and role filter
+router.get('/public-directory', staffController.getPublicStaffDirectory);
+
 // Admin: Batched schedule lookup (current + future bookings) for staff-picker UIs —
 // body: { ids: [uuid1, uuid2, ...] } — used to show scheduling conflicts before
 // assigning/swapping staff. POST (not GET+querystring) because the id list can run
@@ -346,6 +349,21 @@ router.patch(
   protect,
   requirePermission('STAFF_PORTAL_ACCESS'),
   staffController.setStaffPortalAccess
+);
+
+// Show/hide staff profiles on the public site (bulk, then single)
+router.post(
+  '/public-visibility/bulk',
+  protect,
+  requirePermission('STAFF_EDIT'),
+  staffController.setStaffPublicVisibility
+);
+
+router.patch(
+  '/:staff_profile_id/public-visibility',
+  protect,
+  requirePermission('STAFF_EDIT'),
+  staffController.setStaffPublicVisibility
 );
 
 // Soft deactivate/reactivate staff account

@@ -1,5 +1,5 @@
 const db = require('../config/db');
-const { logActivity } = require('../utils/activityLogger');
+const { logActivity, resolveActorName } = require('../utils/activityLogger');
 const { isValidNic, normalizeNic, NIC_FORMAT_MESSAGE } = require('../utils/nic');
 const { resolveCity } = require('../utils/cityHelper');
 
@@ -19,13 +19,31 @@ async function getStaffProfile(userId) {
   return result.rows[0] || null;
 }
 
+// Reviewer names live in different tables depending on who the admin is: field staff in
+// staff_profiles, internal staff (coordinators, accounts, sales...) in internal_staff.
 async function getReviewerName(userId) {
-  const result = await db.query(
-    'SELECT full_name FROM staff_profiles WHERE user_id = $1',
-    [userId]
-  );
-  return result.rows[0]?.full_name || 'Admin';
+  try {
+    return (await resolveActorName(userId)) || 'Admin';
+  } catch (err) {
+    console.error('getReviewerName lookup failed:', err.message);
+    return 'Admin';
+  }
 }
+
+// The activity log is an audit side-effect. If it fails after the real work has been
+// committed, that must never turn a successful action into a 500.
+async function safeLogActivity(payload) {
+  try {
+    await logActivity(payload);
+  } catch (err) {
+    console.error('logActivity failed (non-fatal):', err.message);
+  }
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Thrown when an approved change can no longer be applied (target row gone, value taken).
+class ChangeNotApplicableError extends Error {}
 
 function extractActorRole(role) {
   const raw = Array.isArray(role) ? role[0] : role;
@@ -196,7 +214,7 @@ exports.getMyChangeRequests = async (req, res) => {
 exports.getAllChangeRequests = async (req, res) => {
   const { status, staff_profile_id } = req.query;
   try {
-    const params = [];
+    const params = [req.user.user_id];
     const conditions = [];
 
     if (status) {
@@ -214,10 +232,17 @@ exports.getAllChangeRequests = async (req, res) => {
       `SELECT
          scr.*,
          sp.full_name AS staff_name,
-         u.mobile_number AS staff_mobile
+         u.mobile_number AS staff_mobile,
+         (scr.reviewer_user_id IS NOT NULL AND scr.reviewer_user_id = $1) AS is_mine,
+         COALESCE(rsp.full_name, rist.full_name, scr.reviewer_name) AS reviewer_name,
+         sba.bank_name AS target_bank_name,
+         RIGHT(sba.account_number, 4) AS target_bank_last4
        FROM staff_change_requests scr
        JOIN staff_profiles sp ON scr.staff_profile_id = sp.staff_profile_id
        JOIN users u ON sp.user_id = u.user_id
+       LEFT JOIN staff_profiles rsp ON rsp.user_id = scr.reviewer_user_id
+       LEFT JOIN internal_staff rist ON rist.user_id = scr.reviewer_user_id
+       LEFT JOIN staff_bank_accounts sba ON sba.staff_bank_account_id = scr.target_bank_account_id
        ${whereClause}
        ORDER BY scr.created_at DESC`,
       params
@@ -233,11 +258,18 @@ exports.getAllChangeRequests = async (req, res) => {
 
 exports.claimChangeRequest = async (req, res) => {
   const { id } = req.params;
+  if (!UUID_RE.test(id)) {
+    return res.status(404).json({ status: 'error', message: 'Change request not found' });
+  }
+
+  const reviewerName = await getReviewerName(req.user.user_id);
+  const client = await db.pool.connect();
+  let claimed;
   try {
-    const reviewerName = await getReviewerName(req.user.user_id);
+    await client.query('BEGIN');
 
     // Atomic: only succeeds if the request is still PENDING and unclaimed
-    const result = await db.query(
+    const result = await client.query(
       `UPDATE staff_change_requests
        SET status = 'UNDER_REVIEW',
            reviewer_user_id = $1,
@@ -251,6 +283,7 @@ exports.claimChangeRequest = async (req, res) => {
     );
 
     if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
       const existing = await db.query(
         'SELECT status, reviewer_name FROM staff_change_requests WHERE request_id = $1',
         [id]
@@ -259,37 +292,43 @@ exports.claimChangeRequest = async (req, res) => {
         return res.status(404).json({ status: 'error', message: 'Change request not found' });
       }
       const { status: curStatus, reviewer_name } = existing.rows[0];
+      const readable = String(curStatus).replace(/_/g, ' ').toLowerCase();
       return res.status(409).json({
         status: 'error',
-        message: `Request is already ${curStatus}${reviewer_name ? ` and is being reviewed by ${reviewer_name}` : ''}`
+        message: `This request is already ${readable}${reviewer_name ? ` and is being reviewed by ${reviewer_name}` : ''}.`
       });
     }
 
-    const claimed = result.rows[0];
+    claimed = result.rows[0];
 
-    await db.query(
+    // Written in the same transaction so a claim can never exist without its audit entry.
+    await client.query(
       `INSERT INTO staff_change_request_logs
          (request_id, staff_profile_id, action, performed_by_user_id, performed_by_name, changes_snapshot)
        VALUES ($1, $2, 'CLAIMED', $3, $4, $5)`,
-      [claimed.request_id, claimed.staff_profile_id, req.user.user_id, reviewerName, claimed.requested_changes]
+      [claimed.request_id, claimed.staff_profile_id, req.user.user_id, reviewerName, JSON.stringify(claimed.requested_changes)]
     );
 
-    await logActivity({
-      actorUserId: req.user.user_id,
-      actorName: reviewerName,
-      actorRole: extractActorRole(req.user.role),
-      actionType: 'CHANGE_REQUEST_CLAIMED',
-      entityType: 'STAFF_CHANGE_REQUEST',
-      entityId: claimed.request_id,
-      details: { request_type: claimed.request_type, staff_profile_id: claimed.staff_profile_id }
-    });
-
-    res.status(200).json({ status: 'success', data: claimed });
-
+    await client.query('COMMIT');
   } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
     console.error('claimChangeRequest Error:', error);
-    res.status(500).json({ status: 'error', message: 'Internal server error' });
+    return res.status(500).json({ status: 'error', message: 'Could not claim this request. Nothing was changed, please try again.' });
+  } finally {
+    client.release();
   }
+
+  await safeLogActivity({
+    actorUserId: req.user.user_id,
+    actorName: reviewerName,
+    actorRole: extractActorRole(req.user.role),
+    actionType: 'CHANGE_REQUEST_CLAIMED',
+    entityType: 'STAFF_CHANGE_REQUEST',
+    entityId: claimed.request_id,
+    details: { request_type: claimed.request_type, staff_profile_id: claimed.staff_profile_id }
+  });
+
+  res.status(200).json({ status: 'success', data: { ...claimed, is_mine: true } });
 };
 
 exports.resolveChangeRequest = async (req, res) => {
@@ -299,64 +338,90 @@ exports.resolveChangeRequest = async (req, res) => {
   if (!['APPROVE', 'REJECT'].includes(action)) {
     return res.status(400).json({ status: 'error', message: 'action must be APPROVE or REJECT' });
   }
+  if (!UUID_RE.test(id)) {
+    return res.status(404).json({ status: 'error', message: 'Change request not found' });
+  }
 
+  const client = await db.pool.connect();
+  let changeReq;
+  let newStatus;
   try {
-    const existing = await db.query(
-      'SELECT * FROM staff_change_requests WHERE request_id = $1',
+    await client.query('BEGIN');
+
+    // Lock the row so two resolves (double click, two tabs) can't both apply the change.
+    const existing = await client.query(
+      'SELECT * FROM staff_change_requests WHERE request_id = $1 FOR UPDATE',
       [id]
     );
     if (existing.rows.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ status: 'error', message: 'Change request not found' });
     }
-    const changeReq = existing.rows[0];
+    changeReq = existing.rows[0];
 
     if (changeReq.status !== 'UNDER_REVIEW') {
-      return res.status(409).json({ status: 'error', message: `Request is ${changeReq.status}, not UNDER_REVIEW` });
+      await client.query('ROLLBACK');
+      return res.status(409).json({ status: 'error', message: `This request is already ${String(changeReq.status).replace(/_/g, ' ').toLowerCase()}.` });
     }
     if (changeReq.reviewer_user_id !== req.user.user_id) {
+      await client.query('ROLLBACK');
       return res.status(403).json({ status: 'error', message: 'Only the reviewer who claimed this request can resolve it' });
     }
 
-    const newStatus = action === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+    newStatus = action === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+    // Older claims may have "Admin" stored; the person resolving is the reviewer, so use their real name.
+    changeReq.reviewer_name = await getReviewerName(req.user.user_id);
 
     if (action === 'APPROVE') {
-      await applyChanges(changeReq);
+      await applyChanges(client, changeReq);
     }
 
-    await db.query(
+    await client.query(
       `UPDATE staff_change_requests
        SET status = $1, review_notes = $2, reviewed_at = NOW(), updated_at = NOW()
        WHERE request_id = $3`,
       [newStatus, review_notes || null, id]
     );
 
-    await db.query(
+    await client.query(
       `INSERT INTO staff_change_request_logs
          (request_id, staff_profile_id, action, performed_by_user_id, performed_by_name, changes_snapshot, notes)
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [id, changeReq.staff_profile_id, newStatus, req.user.user_id, changeReq.reviewer_name, changeReq.requested_changes, review_notes || null]
+      [id, changeReq.staff_profile_id, newStatus, req.user.user_id, changeReq.reviewer_name || 'Admin', JSON.stringify(changeReq.requested_changes), review_notes || null]
     );
 
-    await logActivity({
-      actorUserId: req.user.user_id,
-      actorName: changeReq.reviewer_name,
-      actorRole: extractActorRole(req.user.role),
-      actionType: `CHANGE_REQUEST_${newStatus}`,
-      entityType: 'STAFF_CHANGE_REQUEST',
-      entityId: id,
-      details: { request_type: changeReq.request_type, staff_profile_id: changeReq.staff_profile_id, review_notes: review_notes || null }
-    });
-
-    res.status(200).json({ status: 'success', message: `Request ${newStatus.toLowerCase()}` });
-
+    await client.query('COMMIT');
   } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (error instanceof ChangeNotApplicableError) {
+      return res.status(409).json({ status: 'error', message: `${error.message} Nothing was changed. You can reject this request instead.` });
+    }
+    if (error.code === '23505') {
+      return res.status(409).json({ status: 'error', message: 'This change conflicts with existing data (for example an NIC or account number that is already in use). Nothing was changed. You can reject this request instead.' });
+    }
     console.error('resolveChangeRequest Error:', error);
-    res.status(500).json({ status: 'error', message: 'Internal server error' });
+    return res.status(500).json({ status: 'error', message: 'Could not resolve this request. Nothing was changed, please try again.' });
+  } finally {
+    client.release();
   }
+
+  await safeLogActivity({
+    actorUserId: req.user.user_id,
+    actorName: changeReq.reviewer_name,
+    actorRole: extractActorRole(req.user.role),
+    actionType: `CHANGE_REQUEST_${newStatus}`,
+    entityType: 'STAFF_CHANGE_REQUEST',
+    entityId: id,
+    details: { request_type: changeReq.request_type, staff_profile_id: changeReq.staff_profile_id, review_notes: review_notes || null }
+  });
+
+  res.status(200).json({ status: 'success', message: `Request ${newStatus.toLowerCase()}` });
 };
 
-async function applyChanges(changeReq) {
-  const changes = changeReq.requested_changes;
+// Runs inside the resolve transaction, so a failure here leaves the request UNDER_REVIEW
+// and nothing half-applied.
+async function applyChanges(client, changeReq) {
+  const changes = changeReq.requested_changes || {};
 
   if (changeReq.request_type === 'PROFILE_UPDATE') {
     const fields = Object.keys(changes).filter(f => ALLOWED_PROFILE_FIELDS.includes(f));
@@ -370,13 +435,13 @@ async function applyChanges(changeReq) {
       setClauses.push(`city_id = $${values.length}`);
     }
     values.push(changeReq.staff_profile_id);
-    await db.query(
+    await client.query(
       `UPDATE staff_profiles SET ${setClauses.join(', ')} WHERE staff_profile_id = $${values.length}`,
       values
     );
 
   } else if (changeReq.request_type === 'BANK_ACCOUNT_ADD') {
-    await db.query(
+    await client.query(
       `INSERT INTO staff_bank_accounts
          (staff_profile_id, account_holder_name, bank_name, branch_name, account_number, currency)
        VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -388,17 +453,24 @@ async function applyChanges(changeReq) {
     if (fields.length === 0) return;
     const setClauses = fields.map((f, i) => `${f} = $${i + 1}`);
     const values = fields.map(f => changes[f].new_value);
-    values.push(changeReq.target_bank_account_id);
-    await db.query(
-      `UPDATE staff_bank_accounts SET ${setClauses.join(', ')} WHERE staff_bank_account_id = $${values.length}`,
+    values.push(changeReq.target_bank_account_id, changeReq.staff_profile_id);
+    const result = await client.query(
+      `UPDATE staff_bank_accounts SET ${setClauses.join(', ')}
+       WHERE staff_bank_account_id = $${values.length - 1} AND staff_profile_id = $${values.length} AND is_active = true`,
       values
     );
+    if (result.rowCount === 0) {
+      throw new ChangeNotApplicableError('The bank account this request edits no longer exists or has been removed.');
+    }
 
   } else if (changeReq.request_type === 'BANK_ACCOUNT_REMOVE') {
-    await db.query(
-      'UPDATE staff_bank_accounts SET is_active = false WHERE staff_bank_account_id = $1',
-      [changeReq.target_bank_account_id]
+    const result = await client.query(
+      'UPDATE staff_bank_accounts SET is_active = false WHERE staff_bank_account_id = $1 AND staff_profile_id = $2 AND is_active = true',
+      [changeReq.target_bank_account_id, changeReq.staff_profile_id]
     );
+    if (result.rowCount === 0) {
+      throw new ChangeNotApplicableError('The bank account this request removes no longer exists or was already removed.');
+    }
   }
 }
 
@@ -406,7 +478,13 @@ exports.getChangeRequestLogs = async (req, res) => {
   const { id } = req.params;
   try {
     const result = await db.query(
-      `SELECT * FROM staff_change_request_logs WHERE request_id = $1 ORDER BY created_at ASC`,
+      `SELECT l.*,
+              COALESCE(psp.full_name, pist.full_name, l.performed_by_name) AS performed_by_name
+       FROM staff_change_request_logs l
+       LEFT JOIN staff_profiles psp ON psp.user_id = l.performed_by_user_id
+       LEFT JOIN internal_staff pist ON pist.user_id = l.performed_by_user_id
+       WHERE l.request_id = $1
+       ORDER BY l.created_at ASC`,
       [id]
     );
     res.status(200).json({ status: 'success', data: result.rows });

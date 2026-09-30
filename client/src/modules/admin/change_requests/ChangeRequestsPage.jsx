@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   ClipboardList, User, CheckCircle, X,
-  AlertCircle, History, Loader2, ChevronRight
+  AlertCircle, History, Loader2, ChevronRight, UserCheck, Check, Info
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -50,7 +50,7 @@ const SectionHeader = ({ title }) => (
 const primaryBtnCls = 'inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 
 // Renders the requested_changes JSONB in a human-readable way
-const DiffDisplay = ({ requestType, changes }) => {
+const DiffDisplay = ({ requestType, changes, request }) => {
   if (!changes) return <p className="text-sm text-slate-400">No changes data.</p>;
 
   if (requestType === 'PROFILE_UPDATE' || requestType === 'BANK_ACCOUNT_EDIT') {
@@ -98,13 +98,45 @@ const DiffDisplay = ({ requestType, changes }) => {
       <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 flex items-start gap-3">
         <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
         <p className="text-sm text-red-700">
-          Request to deactivate bank account ID: <span className="font-mono font-semibold">{changes.staff_bank_account_id}</span>
+          Request to deactivate bank account:{' '}
+          <span className="font-semibold">
+            {request?.target_bank_name
+              ? `${request.target_bank_name} ••••${request.target_bank_last4 || ''}`
+              : 'account no longer on file'}
+          </span>
         </p>
       </div>
     );
   }
 
   return <pre className="text-xs bg-slate-50 border border-slate-200 rounded-lg p-3 overflow-auto">{JSON.stringify(changes, null, 2)}</pre>;
+};
+
+// Three-step guide shown above the decision area: Submitted -> Claimed -> Decision.
+const ReviewSteps = ({ status }) => {
+  const resolved = status === 'APPROVED' || status === 'REJECTED';
+  const steps = [
+    { label: 'Submitted', done: true, active: false },
+    { label: 'Claimed', done: status !== 'PENDING', active: status === 'PENDING' },
+    { label: 'Decision', done: resolved, active: status === 'UNDER_REVIEW' },
+  ];
+  return (
+    <div className="flex items-center">
+      {steps.map((step, i) => (
+        <React.Fragment key={step.label}>
+          <div className="flex items-center gap-2">
+            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0 ${
+              step.done ? 'bg-emerald-500 text-white' : step.active ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-500'
+            }`}>
+              {step.done ? <Check className="w-3.5 h-3.5" /> : i + 1}
+            </span>
+            <span className={`text-xs font-medium ${step.active ? 'text-slate-900' : step.done ? 'text-slate-600' : 'text-slate-400'}`}>{step.label}</span>
+          </div>
+          {i < steps.length - 1 && <div className={`flex-1 h-px mx-3 ${steps[i + 1].done || steps[i + 1].active ? 'bg-emerald-300' : 'bg-slate-200'}`} />}
+        </React.Fragment>
+      ))}
+    </div>
+  );
 };
 
 const ChangeRequestsPage = () => {
@@ -153,18 +185,37 @@ const ChangeRequestsPage = () => {
 
   const closeDetail = () => { setSelectedRequest(null); setLogs([]); setActionError(null); };
 
+  const refreshLogs = async (requestId) => {
+    try {
+      const res = await apiClient.getChangeRequestLogs(requestId);
+      setLogs(res.data || []);
+    } catch {
+      /* the audit log is informational; leave the previous entries */
+    }
+  };
+
   const handleClaim = async () => {
+    const requestId = selectedRequest.request_id;
     setActionLoading(true);
     setActionError(null);
     try {
-      await apiClient.claimChangeRequest(selectedRequest.request_id);
-      await fetchRequests();
-      // Re-open with fresh data
-      const updated = requests.find(r => r.request_id === selectedRequest.request_id);
-      if (updated) openDetail(updated);
-      else closeDetail();
+      const res = await apiClient.claimChangeRequest(requestId);
+      // Keep the drawer open on the freshly claimed request so the decision form appears
+      // straight away (the list is filtered by status, so it can't be looked up there).
+      setSelectedRequest(prev => ({ ...prev, ...res.data, is_mine: true }));
+      setStatusFilter('UNDER_REVIEW');
+      refreshLogs(requestId);
     } catch (err) {
       setActionError(err.message || 'Failed to claim request.');
+      // Someone else may have claimed it first: pull the latest state into the drawer.
+      try {
+        const all = await apiClient.getAllChangeRequests({});
+        const latest = (all.data || []).find(r => r.request_id === requestId);
+        if (latest) setSelectedRequest(latest);
+        fetchRequests();
+      } catch {
+        /* keep the error message shown above */
+      }
     } finally {
       setActionLoading(false);
     }
@@ -185,7 +236,11 @@ const ChangeRequestsPage = () => {
   };
 
   const currentAdminId = adminUser?.id || adminUser?.user_id;
-  const isMyReview = selectedRequest?.reviewer_user_id === currentAdminId;
+  // The server tells us whether the logged-in user holds the claim (works for every kind of
+  // admin account); comparing ids is only a fallback.
+  const isMine = (r) => r?.is_mine ?? (!!currentAdminId && r?.reviewer_user_id === currentAdminId);
+  const isMyReview = isMine(selectedRequest);
+  const claimedAt = logs.find(l => l.action === 'CLAIMED')?.created_at;
 
   return (
     <AdminLayout
@@ -253,7 +308,11 @@ const ChangeRequestsPage = () => {
                     </td>
                     <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmt(req.created_at)}</td>
                     <td className="px-4 py-3 whitespace-nowrap"><StatusDot config={STATUS_CONFIG} status={req.status} /></td>
-                    <td className="px-4 py-3 text-slate-600">{req.reviewer_name || '—'}</td>
+                    <td className="px-4 py-3 text-slate-600">
+                      {req.reviewer_name
+                        ? <>{req.reviewer_name}{isMine(req) && <span className="ml-1.5 rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">You</span>}</>
+                        : '—'}
+                    </td>
                     <td className="px-4 py-3 text-right">
                       <ChevronRight className="w-4 h-4 text-slate-300 ml-auto" />
                     </td>
@@ -318,6 +377,12 @@ const ChangeRequestsPage = () => {
                     <span className="text-slate-500">Submitted</span>
                     <span className="text-slate-700">{fmt(selectedRequest.created_at)}</span>
                   </div>
+                  {selectedRequest.reviewer_name && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-slate-500">Reviewer</span>
+                      <span className="text-slate-800 font-medium">{selectedRequest.reviewer_name}{isMyReview ? ' (You)' : ''}</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -327,6 +392,7 @@ const ChangeRequestsPage = () => {
                 <DiffDisplay
                   requestType={selectedRequest.request_type}
                   changes={selectedRequest.requested_changes}
+                  request={selectedRequest}
                 />
               </div>
 
@@ -348,53 +414,103 @@ const ChangeRequestsPage = () => {
                 </div>
               )}
 
-              {selectedRequest.status === 'PENDING' && (
-                <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 flex items-center justify-between gap-4">
-                  <p className="text-sm text-blue-700">Claim this request to start the review. No one else will be able to review it once claimed.</p>
-                  <button onClick={handleClaim} disabled={actionLoading} className={`${primaryBtnCls} flex-shrink-0`}>
-                    {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardList className="w-4 h-4" />}
-                    Claim Review
-                  </button>
-                </div>
-              )}
-
-              {selectedRequest.status === 'UNDER_REVIEW' && !isMyReview && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 flex items-center gap-3">
-                  <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-                  <p className="text-sm text-amber-700">
-                    This request is currently being reviewed by <span className="font-semibold">{selectedRequest.reviewer_name}</span>.
-                  </p>
-                </div>
-              )}
-
-              {selectedRequest.status === 'UNDER_REVIEW' && isMyReview && (
-                <div>
-                  <SectionHeader title="Your Decision" />
-                  <textarea
-                    rows={3}
-                    value={reviewNotes}
-                    onChange={e => setReviewNotes(e.target.value)}
-                    placeholder="Add review notes (optional)…"
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm text-slate-900 placeholder-slate-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 resize-none bg-white"
-                  />
-                  <div className="flex gap-2 mt-3">
-                    <button
-                      onClick={() => handleResolve('REJECT')}
-                      disabled={actionLoading}
-                      className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <X className="w-4 h-4" />}
-                      Reject
-                    </button>
-                    <button
-                      onClick={() => handleResolve('APPROVE')}
-                      disabled={actionLoading}
-                      className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-                      Approve &amp; Apply
-                    </button>
+              {/* Review workflow */}
+              {['PENDING', 'UNDER_REVIEW'].includes(selectedRequest.status) && (
+                <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                  <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/60">
+                    <ReviewSteps status={selectedRequest.status} />
                   </div>
+
+                  {selectedRequest.status === 'PENDING' && (
+                    <div className="p-5 space-y-4">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">This request is waiting for a reviewer</p>
+                        <p className="text-sm text-slate-500 mt-1">
+                          Claim it to take ownership. Once claimed, only you can approve or reject it, so two people never work on the same request.
+                        </p>
+                      </div>
+                      <button onClick={handleClaim} disabled={actionLoading} className={`${primaryBtnCls} w-full justify-center py-2.5`}>
+                        {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserCheck className="w-4 h-4" />}
+                        Claim this request
+                      </button>
+                    </div>
+                  )}
+
+                  {selectedRequest.status === 'UNDER_REVIEW' && !isMyReview && (
+                    <div className="p-5 flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
+                        <UserCheck className="w-4 h-4 text-amber-700" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">
+                          Being reviewed by {selectedRequest.reviewer_name || 'another reviewer'}
+                        </p>
+                        <p className="text-sm text-slate-500 mt-0.5">
+                          Only they can approve or reject it. You can still read the requested changes above.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedRequest.status === 'UNDER_REVIEW' && isMyReview && (
+                    <div className="p-5 space-y-4">
+                      <div className="flex items-start gap-3">
+                        <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                          <UserCheck className="w-4 h-4 text-blue-700" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">You are reviewing this request</p>
+                          <p className="text-sm text-slate-500 mt-0.5">
+                            Check the requested changes above, then approve or reject.
+                            {claimedAt && <> Claimed {fmt(claimedAt)}.</>}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                          Review notes <span className="font-normal text-slate-400">(optional)</span>
+                        </label>
+                        <textarea
+                          rows={3}
+                          value={reviewNotes}
+                          onChange={e => setReviewNotes(e.target.value)}
+                          placeholder="Add a reason or comment. It is saved with the request."
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm text-slate-900 placeholder-slate-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 resize-none bg-white"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <button
+                          onClick={() => handleResolve('REJECT')}
+                          disabled={actionLoading}
+                          className="text-left rounded-lg border border-red-200 bg-white px-4 py-3 hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <span className="flex items-center gap-2 text-sm font-semibold text-red-600">
+                            {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <X className="w-4 h-4" />}
+                            Reject
+                          </span>
+                          <span className="block text-xs text-slate-500 mt-1">The profile stays exactly as it is.</span>
+                        </button>
+                        <button
+                          onClick={() => handleResolve('APPROVE')}
+                          disabled={actionLoading}
+                          className="text-left rounded-lg bg-emerald-600 px-4 py-3 hover:bg-emerald-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <span className="flex items-center gap-2 text-sm font-semibold text-white">
+                            {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                            Approve &amp; apply
+                          </span>
+                          <span className="block text-xs text-emerald-100 mt-1">The changes are applied immediately.</span>
+                        </button>
+                      </div>
+
+                      <p className="flex items-start gap-1.5 text-xs text-slate-400">
+                        <Info className="w-3.5 h-3.5 flex-shrink-0 mt-px" />
+                        This action is recorded in the audit log under your name.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 

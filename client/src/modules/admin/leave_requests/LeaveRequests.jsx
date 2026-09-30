@@ -135,7 +135,7 @@ const LeaveRequests = () => {
   const [candidateSearch, setCandidateSearch] = useState('');
   const [swapBusy, setSwapBusy] = useState(false);
   const [swapError, setSwapError] = useState('');
-  const [swappedBookings, setSwappedBookings] = useState({}); // booking_id -> replacement staff name
+  const [swappedBookings, setSwappedBookings] = useState({}); // assignment_id -> replacement staff name
 
   useEffect(() => {
     fetchLeaves();
@@ -406,12 +406,26 @@ const LeaveRequests = () => {
     try {
       setSwapBusy(true);
       setSwapError('');
-      await apiClient.swapBookingStaff(swapConflict.booking_id, {
-        new_staff_id: candidate.staff_profile_id,
-        swap_reason: `Replacement for ${reviewLeave.full_name} (approved leave ${fmt(reviewLeave.start_date)} – ${fmt(reviewLeave.end_date)})`,
-        new_staff_start_date: reviewLeave.start_date,
-      });
-      setSwappedBookings((prev) => ({ ...prev, [swapConflict.booking_id]: candidate.full_name }));
+      const reason = `Replacement for ${reviewLeave.full_name} (approved leave ${fmt(reviewLeave.start_date)} – ${fmt(reviewLeave.end_date)})`;
+      if (swapConflict.service_model === 'SHIFT_BASED') {
+        // Shift-based bookings have several concurrent staff, so the replacement takes over
+        // one specific shift slot rather than the whole booking.
+        if (!swapConflict.shift_slot_id) {
+          throw new Error('This shift-based assignment is not linked to a shift slot. Open the booking to reassign it there.');
+        }
+        await apiClient.reassignShiftSlotStaff(swapConflict.booking_id, swapConflict.shift_slot_id, {
+          new_staff_id: candidate.staff_profile_id,
+          effective_date: reviewLeave.start_date,
+          reason,
+        });
+      } else {
+        await apiClient.swapBookingStaff(swapConflict.booking_id, {
+          new_staff_id: candidate.staff_profile_id,
+          swap_reason: reason,
+          new_staff_start_date: reviewLeave.start_date,
+        });
+      }
+      setSwappedBookings((prev) => ({ ...prev, [swapConflict.assignment_id]: candidate.full_name }));
       closeSwap();
       // Refresh conflicts + candidate availability now that an assignment changed
       setCandidates([]);
@@ -830,12 +844,15 @@ const LeaveRequests = () => {
                         This staff member is assigned to {conflicts.length} booking{conflicts.length === 1 ? '' : 's'} in this range. Consider scheduling a replacement swap before approving.
                       </div>
                       {conflicts.map((c) => {
-                        const swappedTo = swappedBookings[c.booking_id];
+                        const swappedTo = swappedBookings[c.assignment_id];
                         return (
                           <div key={c.assignment_id} className="rounded-lg border border-slate-200 p-3 flex items-start justify-between gap-3">
                             <div className="min-w-0">
                               <p className="text-sm font-semibold text-slate-900">{c.client_name || '—'}</p>
-                              <p className="text-xs text-slate-400 mt-0.5">{c.patient_name || ''} · {c.service_type || ''}</p>
+                              <p className="text-xs text-slate-400 mt-0.5">
+                                {c.patient_name || ''} · {c.service_type || ''}
+                                {c.service_model === 'SHIFT_BASED' && (c.shift_label || c.shift_number) && ` · ${c.shift_label || `Shift ${c.shift_number}`}`}
+                              </p>
                               <p className="text-xs text-slate-400 mt-0.5">
                                 <CalendarDays className="w-3 h-3 inline mr-1" />
                                 {fmt(c.service_start_date)} → {c.service_end_date ? fmt(c.service_end_date) : 'Ongoing'}

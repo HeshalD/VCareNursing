@@ -1040,6 +1040,7 @@ exports.getByBookingID = async (req, res) => {
                 b.is_hospitalized,
                 b.hospital_name,
                 c.client_profile_id,
+                c.client_code,
                 c.full_name as client_name,
                 c.primary_address as client_address,
                 uc.mobile_number as client_mobile,
@@ -1049,6 +1050,7 @@ exports.getByBookingID = async (req, res) => {
                 p.relationship_to_client,
                 p.medical_condition,
                 s.staff_profile_id,
+                s.staff_code,
                 s.full_name as staff_name,
                 us.mobile_number as staff_mobile,
                 s.profile_picture_url,
@@ -3463,6 +3465,7 @@ exports.getAllBookings = async (req, res) => {
                 b.is_hospitalized,
                 b.hospital_name,
                 c.client_profile_id,
+                c.client_code,
                 c.full_name as client_name,
                 c.primary_address as client_address,
                 uc.mobile_number as client_mobile,
@@ -3472,6 +3475,7 @@ exports.getAllBookings = async (req, res) => {
                 p.relationship_to_client,
                 p.medical_condition,
                 s.staff_profile_id,
+                s.staff_code,
                 s.full_name as staff_name,
                 us.mobile_number as staff_mobile,
                 s.profile_picture_url,
@@ -4586,11 +4590,13 @@ exports.sendStaffProfileToClient = async (req, res) => {
                 booking.client_name || 'there',
                 booking.patient_name || 'your patient',
                 staff.full_name,
-                staff.designation
+                staff.designation,
+                staff.staff_profile_id
             );
         } catch (sendErr) {
             console.error('[sendStaffProfileToClient] WhatsApp send failed:', sendErr.message);
-            return res.status(502).json({ status: 'error', message: 'WhatsApp send failed — the "vcare_candidate_profile" template may not be approved yet.' });
+            const metaReason = sendErr.response?.data?.error?.error_data?.details || sendErr.response?.data?.error?.message;
+            return res.status(502).json({ status: 'error', message: `WhatsApp send failed${metaReason ? `: ${metaReason}` : ' — the "vcare_candidate_profile" template may not be approved yet.'}` });
         }
 
         try {

@@ -3,7 +3,8 @@ import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   User, Calendar, FileText, Stethoscope,
   MessageSquare, Wallet, LogOut, ChevronLeft,
-  ChevronRight, Menu, ChevronDown, Briefcase, Star, ShoppingBag
+  ChevronRight, Menu, ChevronDown, Briefcase, Star, ShoppingBag,
+  FileSpreadsheet, Receipt, ScrollText, Users
 } from 'lucide-react';
 import { useAuth } from '../../../context/AuthContext';
 import logoUrl from '../../../assets/Logo/VCareLogo.png';
@@ -14,6 +15,11 @@ const NAV_ITEMS = [
   { icon: FileText, label: 'Service Requests', path: '/client/service-requests' },
   { icon: Stethoscope, label: 'Care Profiles', path: '/client/patients' },
   { icon: Wallet, label: 'Financial', path: '/client/financial' },
+  { icon: FileSpreadsheet, label: 'Quotations', path: '/client/quotations' },
+  { icon: FileText, label: 'Invoices', path: '/client/invoices' },
+  { icon: Receipt, label: 'Receipts', path: '/client/receipts' },
+  { icon: ScrollText, label: 'Statements', path: '/client/statements' },
+  { icon: Users, label: 'Care Team Log', path: '/client/care-team' },
   { icon: MessageSquare, label: 'Reviews', path: '/client/reviews' },
   { icon: ShoppingBag, label: 'Products', path: '/client/products' },
 ];

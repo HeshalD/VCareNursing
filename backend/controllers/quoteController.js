@@ -829,7 +829,10 @@ exports.updateQuoteLineItems = async (req, res) => {
         await db.query(`
             UPDATE quotations
             SET sub_total = $1, total_amount = $1, terms_conditions = $2, updated_at = CURRENT_TIMESTAMP,
-                registration_fee = $3, daily_rate = $4, qty_days = $5, per_shift_rate = $6, qty_shifts = $7
+                registration_fee = $3, daily_rate = $4, qty_days = $5, per_shift_rate = $6, qty_shifts = $7,
+                invoice_code = CASE WHEN EXISTS (SELECT 1 FROM payment_tracking WHERE quote_id = $8 AND status = 'VERIFIED') THEN invoice_code ELSE NULL END,
+                invoice_pdf_url = CASE WHEN EXISTS (SELECT 1 FROM payment_tracking WHERE quote_id = $8 AND status = 'VERIFIED') THEN invoice_pdf_url ELSE NULL END,
+                invoice_generated_at = CASE WHEN EXISTS (SELECT 1 FROM payment_tracking WHERE quote_id = $8 AND status = 'VERIFIED') THEN invoice_generated_at ELSE NULL END
             WHERE quote_id = $8
         `, [sub_total, terms_conditions, registration_fee, daily_rate, qty_days, per_shift_rate, qty_shifts, quote_id]);
 
@@ -1320,7 +1323,10 @@ async function ensureRegFeeInvoiceRecord(serviceQuoteId, { clientId, registratio
     }
 }
 
-async function ensureCombinedInvoice(serviceQuoteId) {
+// `allowUnpaid`: an admin can build the invoice document before the quotation is fully
+// paid (the manual "Generate Combined Invoice" action). Automatic generation after each
+// payment keeps waiting for full payment.
+async function ensureCombinedInvoice(serviceQuoteId, { allowUnpaid = false } = {}) {
     const existing = await db.query(
         `SELECT q.invoice_code, q.invoice_pdf_url, q.total_amount,
                 s.payer_name, s.payer_mobile
@@ -1387,7 +1393,7 @@ async function ensureCombinedInvoice(serviceQuoteId) {
     );
     const totalPaid = parseFloat(paidResult.rows[0].total_paid) || 0;
     const totalDue = parseFloat(data.total_amount) || 0;
-    if (totalPaid < totalDue) return null;
+    if (!allowUnpaid && totalPaid < totalDue) return null;
 
     const productLink = await db.query(
         `SELECT quote_id FROM quotations WHERE linked_quote_id = $1 AND quote_type = 'PRODUCT'`,
@@ -1424,6 +1430,39 @@ async function ensureCombinedInvoice(serviceQuoteId) {
     };
 }
 exports.ensureCombinedInvoice = ensureCombinedInvoice;
+
+// Renders a quotation's PDF to a buffer without any of the side effects of
+// generatePdfOnly/generateAndSendPDF (no S3 upload, no service_request status
+// change) — used by the client portal to view/download a quote read-only.
+exports.renderQuotePdfBuffer = async (quote_id) => {
+    const typeRes = await db.query('SELECT quote_type FROM quotations WHERE quote_id = $1', [quote_id]);
+    if (typeRes.rows.length === 0) return null;
+    let data;
+    if (typeRes.rows[0].quote_type === 'PRODUCT') {
+        data = await buildProductQuotePdfData(quote_id);
+    } else {
+        const result = await db.query(
+            `SELECT q.*, s.payer_name, s.payer_mobile, s.patient_name, s.service_type,
+                COALESCE(json_agg(
+                    json_build_object(
+                        'line_item_id', li.line_item_id, 'item_type', li.item_type,
+                        'description', li.description, 'quantity', li.quantity,
+                        'unit_price', li.unit_price, 'amount', li.amount, 'sort_order', li.sort_order
+                    ) ORDER BY li.sort_order
+                ) FILTER (WHERE li.line_item_id IS NOT NULL), '[]') AS line_items
+             FROM quotations q
+             JOIN service_requests s ON q.request_id = s.request_id
+             LEFT JOIN quote_line_items li ON q.quote_id = li.quote_id
+             WHERE q.quote_id = $1
+             GROUP BY q.quote_id, s.payer_name, s.payer_mobile, s.patient_name, s.service_type`,
+            [quote_id]
+        );
+        data = result.rows[0];
+    }
+    if (!data) return null;
+    const buffer = await html_to_pdf.generatePdf({ content: estimateTemplate(data) }, { format: 'A4' });
+    return { buffer, estimate_number: data.estimate_number };
+};
 exports.ensureRegFeeInvoiceRecord = ensureRegFeeInvoiceRecord;
 
 // POST /api/quotes/:quote_id/generate-combined-invoice — manual "just build (or
@@ -1434,12 +1473,12 @@ exports.ensureRegFeeInvoiceRecord = ensureRegFeeInvoiceRecord;
 exports.generateCombinedInvoice = async (req, res) => {
     const { quote_id } = req.params;
     try {
-        const invoice = await ensureCombinedInvoice(quote_id);
+        const invoice = await ensureCombinedInvoice(quote_id, { allowUnpaid: true });
         if (!invoice) {
             return res.status(200).json({
                 status: 'success',
                 generated: false,
-                message: 'Quotation is not fully paid yet — combined invoice not generated.',
+                message: 'Combined invoice could not be generated for this quotation.',
             });
         }
         res.status(200).json({ status: 'success', generated: true, data: invoice });
@@ -1451,7 +1490,8 @@ exports.generateCombinedInvoice = async (req, res) => {
 
 // GET /api/quotes/invoices/list — every SERVICE quote that has had a
 // combined Invoice generated (see ensureCombinedInvoice), for the admin
-// "Combined Invoices" view. Recomputes each row's total the same way the
+// "Combined Invoices" view. Each row carries amount_paid / balance / payment_status
+// (PAID | PARTIAL | PENDING) because the invoice can be generated before full payment. Recomputes each row's total the same way the
 // cached branch of ensureCombinedInvoice does, so a linked PRODUCT quote's
 // items are reflected even though quotations.total_amount itself only ever
 // holds the SERVICE quote's own amount.
@@ -1488,7 +1528,27 @@ exports.listCombinedInvoices = async (req, res) => {
                 await mergeProductQuoteIntoData(stub, productLink.rows[0].quote_id).catch(() => {});
                 total_amount = parseFloat(stub.total_amount) || total_amount;
             }
-            return { ...row, total_amount };
+
+            // A combined invoice can now exist before the quotation is fully paid, so
+            // report how much has actually been received: the service quote's verified
+            // payments plus payments applied to the linked product quote's invoices.
+            const servicePaidRes = await db.query(
+                `SELECT COALESCE(SUM(amount_received), 0) AS paid FROM payment_tracking WHERE quote_id = $1 AND status = 'VERIFIED'`,
+                [row.quote_id]
+            );
+            let amount_paid = parseFloat(servicePaidRes.rows[0].paid) || 0;
+            if (productLink.rows.length > 0) {
+                const productPaidRes = await db.query(
+                    `SELECT COALESCE(SUM(ip.amount), 0) AS paid
+                     FROM invoice_payments ip JOIN invoices i ON ip.invoice_id = i.invoice_id
+                     WHERE i.quote_id = $1`,
+                    [productLink.rows[0].quote_id]
+                );
+                amount_paid += parseFloat(productPaidRes.rows[0].paid) || 0;
+            }
+            const balance = Math.max(Math.round((total_amount - amount_paid) * 100) / 100, 0);
+            const payment_status = balance <= 0.01 ? 'PAID' : amount_paid > 0.01 ? 'PARTIAL' : 'PENDING';
+            return { ...row, total_amount, amount_paid, balance, payment_status };
         }));
 
         res.status(200).json({ status: 'success', data: rows });
@@ -1631,8 +1691,11 @@ exports.acceptProductQuote = async (req, res) => {
         }
         const quote = quoteResult.rows[0];
 
+        // A LINE_ITEM invoice is a standalone document an admin can raise for a single line
+        // item at any time (see invoiceController.generateLineItemInvoice). It does not mean the
+        // quote was accepted, so it must not block acceptance.
         const alreadyAccepted = await pgClient.query(
-            `SELECT 1 FROM invoices WHERE quote_id = $1
+            `SELECT 1 FROM invoices WHERE quote_id = $1 AND category <> 'LINE_ITEM'
              UNION ALL SELECT 1 FROM rental_agreements WHERE quote_id = $1 LIMIT 1`,
             [quote_id]
         );
@@ -1678,8 +1741,18 @@ exports.acceptProductQuote = async (req, res) => {
             if (vendor_bill) createdVendorBills.push(vendor_bill);
         }
 
+        // An item the admin already invoiced individually (a LINE_ITEM invoice) is billed by that
+        // invoice; billing it again in the quote's product invoice would double-invoice it.
+        const documentedRes = await pgClient.query(
+            `SELECT line_item_id FROM invoices WHERE quote_id = $1 AND category = 'LINE_ITEM' AND line_item_id IS NOT NULL`,
+            [quote_id]
+        );
+        const documentedItemIds = new Set(documentedRes.rows.map((r) => r.line_item_id));
+
         let genericInvoice = null;
-        const otherItemsTotal = otherItems.reduce((sum, li) => sum + parseFloat(li.amount), 0);
+        const otherItemsTotal = otherItems
+            .filter((li) => !documentedItemIds.has(li.line_item_id))
+            .reduce((sum, li) => sum + parseFloat(li.amount), 0);
         if (otherItemsTotal > 0) {
             const invoiceResult = await pgClient.query(
                 `INSERT INTO invoices (category, client_id, walk_in_customer_id, quote_id, amount, created_by)

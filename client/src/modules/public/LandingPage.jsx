@@ -280,7 +280,16 @@ const BrowseStaffSection = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const filters = ['All', 'Baby care', 'Elderly care', 'Home Nursing'];
+  const filters = [
+    { label: 'All', role: null },
+    { label: 'Caretaker', role: 'CARETAKER' },
+    { label: 'Nursing Assistant', role: 'NURSING_ASSISTANT' },
+    { label: 'Professional Nurse', role: 'NURSE' },
+    { label: 'Physiotherapist', role: 'PHYSIOTHERAPIST' },
+    { label: 'Nanny', role: 'NANNY' },
+    { label: 'Counsellor', role: 'COUNSELLOR' },
+  ];
+  const roleLabels = Object.fromEntries(filters.filter(f => f.role).map(f => [f.role, f.label]));
   const avatarColors = ['bg-blue-100 text-blue-800', 'bg-green-100 text-green-800', 'bg-purple-100 text-purple-800', 'bg-amber-100 text-amber-800'];
 
   // Fetch staff data with ratings
@@ -320,12 +329,8 @@ const BrowseStaffSection = () => {
           throw new Error('Invalid API response structure');
         }
 
-        // Sort by average rating and limit to top 8 for landing page
-        const topRatedStaff = staffData.data
-          .sort((a, b) => (b.average_rating || 0) - (a.average_rating || 0))
-          .slice(0, 8);
-
-        setStaff(topRatedStaff);
+        // Already ordered by rating on the server; filtering + top-8 cap happens per filter
+        setStaff(staffData.data);
       } catch (err) {
         console.error('Error fetching staff:', err);
         setError('Failed to load staff profiles');
@@ -337,23 +342,8 @@ const BrowseStaffSection = () => {
     fetchStaff();
   }, []);
 
-  const filtered = activeFilter === 'All' ? staff : staff.filter(s => {
-    // Map filter options to specific role types
-    const roleMap = {
-      'Baby care': ['NANNY'],
-      'Elderly care': ['CAREGIVER'],
-      'Home Nursing': ['NURSE']
-    };
-
-    const targetRole = roleMap[activeFilter];
-
-    // Check if role array contains the target role
-    const roleMatch = s.role && Array.isArray(s.role)
-      ? s.role.includes(targetRole)
-      : s.role === targetRole;
-
-    return roleMatch;
-  });
+  const activeRole = filters.find(f => f.label === activeFilter)?.role;
+  const filtered = (activeRole ? staff.filter(s => normalizeRoles(s.role).includes(activeRole)) : staff).slice(0, 8);
 
   return (
     <section className="py-24 bg-slate-50">
@@ -380,14 +370,14 @@ const BrowseStaffSection = () => {
         <div className="flex gap-3 flex-wrap mb-8">
           {filters.map(f => (
             <button
-              key={f}
-              onClick={() => setActiveFilter(f)}
-              className={`px-5 py-2 rounded-full text-sm font-medium border transition-colors ${activeFilter === f
+              key={f.label}
+              onClick={() => setActiveFilter(f.label)}
+              className={`px-5 py-2 rounded-full text-sm font-medium border transition-colors ${activeFilter === f.label
                 ? 'bg-blue-600 text-white border-blue-600'
                 : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
                 }`}
             >
-              {f}
+              {f.label}
             </button>
           ))}
         </div>
@@ -450,7 +440,7 @@ const BrowseStaffSection = () => {
                   )}
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-slate-900 text-sm truncate">{member.full_name || 'Unknown'}</p>
-                    <p className="text-xs text-slate-500 truncate">{member.designation || member.role || 'Staff Member'}</p>
+                    <p className="text-xs text-slate-500 truncate">{member.designation || normalizeRoles(member.role).map(r => roleLabels[r]).filter(Boolean)[0] || 'Staff Member'}</p>
                   </div>
                 </div>
 

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Menu, X, User, LogOut, Briefcase, Calendar, ChevronDown, Users, Wallet, Star, UserPlus } from 'lucide-react';
+import { Menu, X, User, LogOut, Briefcase, Calendar, ChevronDown, Users, Wallet, Star, UserPlus, FileText, FileSpreadsheet, Receipt, ScrollText, HeartHandshake } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import logoUrl from '../../assets/Logo/VCareLogo.png';
 const Navbar = () => {
@@ -171,6 +171,23 @@ const Navbar = () => {
                           <Wallet className="w-4 h-4 text-slate-400" />
                           Financial
                         </Link>
+                        {[
+                          { to: '/client/quotations', label: 'Quotations', icon: FileText },
+                          { to: '/client/invoices', label: 'Invoices', icon: FileSpreadsheet },
+                          { to: '/client/receipts', label: 'Receipts', icon: Receipt },
+                          { to: '/client/statements', label: 'Statements', icon: ScrollText },
+                          { to: '/client/care-team', label: 'Care Team', icon: HeartHandshake },
+                        ].map(({ to, label, icon: Icon }) => (
+                          <Link
+                            key={to}
+                            to={to}
+                            className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                            onClick={() => setIsDropdownOpen(false)}
+                          >
+                            <Icon className="w-4 h-4 text-slate-400" />
+                            {label}
+                          </Link>
+                        ))}
                         <Link
                           to="/client/reviews"
                           className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
@@ -319,6 +336,23 @@ const Navbar = () => {
                             <Wallet className="w-4 h-4 text-slate-400" />
                             Financial
                           </Link>
+                          {[
+                            { to: '/client/quotations', label: 'Quotations', icon: FileText },
+                            { to: '/client/invoices', label: 'Invoices', icon: FileSpreadsheet },
+                            { to: '/client/receipts', label: 'Receipts', icon: Receipt },
+                            { to: '/client/statements', label: 'Statements', icon: ScrollText },
+                            { to: '/client/care-team', label: 'Care Team', icon: HeartHandshake },
+                          ].map(({ to, label, icon: Icon }) => (
+                            <Link
+                              key={to}
+                              to={to}
+                              className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                              onClick={() => { setIsDropdownOpen(false); setIsOpen(false); }}
+                            >
+                              <Icon className="w-4 h-4 text-slate-400" />
+                              {label}
+                            </Link>
+                          ))}
                           <Link
                             to="/client/reviews"
                             className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors"

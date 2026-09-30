@@ -613,6 +613,7 @@ exports.getReviewsByClientId = async (req, res) => {
     const result = await db.pool.query(
       `SELECT sr.*,
               sp.full_name as staff_name,
+              sp.staff_code,
               b.service_type as booking_service_type,
               b.status as booking_status,
               b.start_date as booking_start_date

@@ -11,12 +11,16 @@ const {
   updateAdvanceThreshold,
   getPendingAdvances,
   getMyCurrentEarningsBreakdown,
+  getMySalarySheets,
+  getMyCareHistory,
 } = require('../controllers/staffWalletController');
 
 // Staff routes
 router.get('/my-wallet', protect, restrictTo('STAFF', 'NURSE', 'CARETAKER', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'), getMyWallet);
 router.get('/my-advances', protect, restrictTo('STAFF', 'NURSE', 'CARETAKER', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'), getMyAdvances);
 router.get('/my-earnings-breakdown', protect, restrictTo('STAFF', 'NURSE', 'CARETAKER', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'), getMyCurrentEarningsBreakdown);
+router.get('/my-salary-sheets', protect, restrictTo('STAFF', 'NURSE', 'CARETAKER', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'), getMySalarySheets);
+router.get('/my-care-history', protect, restrictTo('STAFF', 'NURSE', 'CARETAKER', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'), getMyCareHistory);
 router.post('/request-advance', protect, restrictTo('STAFF', 'NURSE', 'CARETAKER', 'NANNY', 'NURSING_ASSISTANT', 'PHYSIOTHERAPIST', 'COUNSELLOR'), requestAdvance);
 
 // Admin routes

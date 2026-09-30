@@ -66,6 +66,7 @@ import AddCareProfileDrawer from './AddCareProfileDrawer';
 import { AddRequestDrawer as AddServiceRequestDrawer } from '../service_requests/proxy_service_request';
 import ClientSwitcherSidebar from './ClientSwitcherSidebar';
 import CitySelect from '../../../components/common/CitySelect';
+import { CombinedPaymentBadge, CombinedStatusFilter, filterCombinedInvoices } from '../invoices/CombinedInvoiceStatus';
 
 const money = new Intl.NumberFormat('en-LK', {
   style: 'currency',
@@ -252,11 +253,13 @@ const ClientDetailPage = () => {
   const [overdueInvoicesLoading, setOverdueInvoicesLoading] = useState(false);
 
   const [combinedInvoices, setCombinedInvoices] = useState([]);
+  const [combinedFilter, setCombinedFilter] = useState('ALL'); // 'ALL' | 'UNPAID' | 'PAID'
   const [combinedInvoicesLoading, setCombinedInvoicesLoading] = useState(false);
 
   const [productQuotes, setProductQuotes] = useState([]);
   const [productQuotesLoading, setProductQuotesLoading] = useState(false);
   const [productInvoices, setProductInvoices] = useState([]);
+  const [lineItemInvoices, setLineItemInvoices] = useState([]); // invoices raised for individual (custom) quote line items
   const [productInvoicesLoading, setProductInvoicesLoading] = useState(false);
   const [rentedItems, setRentedItems] = useState([]);
   const [rentedItemsLoading, setRentedItemsLoading] = useState(false);
@@ -621,7 +624,13 @@ const ClientDetailPage = () => {
     try {
       setProductInvoicesLoading(true);
       const res = await apiClient.getProductInvoices({ client_id: clientId });
-      setProductInvoices(Array.isArray(res?.data) ? res.data : []);
+      const all = Array.isArray(res?.data) ? res.data : [];
+      // Invoices raised for individual line items of a SERVICE quotation (custom charges,
+      // extras) live in their own tab. Line items of a product quote (e.g. a deposit) stay
+      // with the product invoices.
+      const isCustomLineItemInvoice = (inv) => inv.category === 'LINE_ITEM' && inv.quote_type !== 'PRODUCT';
+      setProductInvoices(all.filter((inv) => !isCustomLineItemInvoice(inv)));
+      setLineItemInvoices(all.filter(isCustomLineItemInvoice));
     } catch {
       // non-fatal
     } finally {
@@ -1421,7 +1430,7 @@ const ClientDetailPage = () => {
               }
             >
               <div className="grid gap-4 @md:grid-cols-2 @3xl:grid-cols-3">
-                <InfoRow label="Booking ID" value={booking.booking_id} />
+                <InfoRow label="Booking ID" value={booking.booking_code || booking.booking_id} />
                 <InfoRow label="Status" value={booking.status || '-'} />
                 <InfoRow label="Service Model" value={booking.service_model || '-'} />
                 <InfoRow label="Start Date" value={formatDate(booking.start_date)} />
@@ -1635,6 +1644,7 @@ const ClientDetailPage = () => {
           { id: 'REG_FEE',   label: 'Registration Fee', count: regFeeInvoices.length },
           { id: 'DAILY',     label: 'Daily Invoices',    count: clientInvoices.length },
           { id: 'PRODUCT',   label: 'Product Invoices',  count: productInvoices.length },
+          { id: 'LINE_ITEM', label: 'Custom Line Items', count: lineItemInvoices.length },
           { id: 'COMBINED',  label: 'Combined Invoices', count: combinedInvoices.length },
           { id: 'OVERDUE',   label: 'Overdue',           count: overdueInvoices.filter((inv) => inv.status === 'OVERDUE').length },
         ];
@@ -1941,7 +1951,17 @@ const ClientDetailPage = () => {
                         const busy = invoiceActionBusyId === inv.invoice_id;
                         return (
                         <tr key={inv.invoice_id} className="hover:bg-gray-50 transition-colors">
-                          <td className="px-4 py-3 font-mono text-xs text-gray-600 whitespace-nowrap">{inv.invoice_code}</td>
+                          <td className="px-4 py-3 font-mono text-xs text-gray-600 whitespace-nowrap">
+                            {inv.invoice_code}
+                            {inv.is_duplicate && (
+                              <span
+                                title="This item is also billed on another invoice for the same quotation. It only mirrors that invoice's payment status."
+                                className="ml-1.5 rounded bg-gray-100 px-1.5 py-0.5 font-sans text-[10px] font-semibold text-gray-500"
+                              >
+                                Duplicate
+                              </span>
+                            )}
+                          </td>
                           <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{inv.client_name || inv.walk_in_name || '-'}</td>
                           <td className="px-4 py-3 text-gray-700 max-w-xs truncate" title={inv.item_summary || ''}>{inv.item_summary || '—'}</td>
                           <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{inv.category}</td>
@@ -1986,12 +2006,96 @@ const ClientDetailPage = () => {
             </div>
             )}
 
+            {/* Custom line item invoices */}
+            {invoiceTypeView === 'LINE_ITEM' && (
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">Custom Line Item Invoices</h3>
+              <p className="mb-3 text-[11px] text-gray-400">
+                Invoices raised for individual quotation line items (custom charges, extras) from the Record Payment form. They are kept apart from product and rental invoices.
+              </p>
+              {productInvoicesLoading ? (
+                <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading line item invoices…
+                </div>
+              ) : lineItemInvoices.length === 0 ? (
+                <EmptyState title="No custom line item invoices found" />
+              ) : (
+                <div className="overflow-x-auto rounded-md border border-gray-200">
+                  <table className="min-w-full divide-y divide-gray-100 text-sm">
+                    <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                      <tr>
+                        <th className="px-4 py-3 text-left">Invoice Code</th>
+                        <th className="px-4 py-3 text-left">Billed To</th>
+                        <th className="px-4 py-3 text-left">Line Item</th>
+                        <th className="px-4 py-3 text-left">Quotation</th>
+                        <th className="px-4 py-3 text-left">Payment</th>
+                        <th className="px-4 py-3 text-right">Amount</th>
+                        <th className="px-4 py-3 text-left">Created</th>
+                        <th className="px-4 py-3 text-left">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 bg-white">
+                      {lineItemInvoices.map((inv) => {
+                        const busy = invoiceActionBusyId === inv.invoice_id;
+                        const amount = Number(inv.amount || 0);
+                        const paid = Number(inv.amount_paid || 0);
+                        const balance = Math.max(amount - paid, 0);
+                        const paymentStatus = inv.status === 'PAID' || balance <= 0.01 ? 'PAID' : paid > 0.01 ? 'PARTIAL' : 'PENDING';
+                        return (
+                        <tr key={inv.invoice_id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-4 py-3 font-mono text-xs text-gray-600 whitespace-nowrap">{inv.invoice_code}</td>
+                          <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{inv.client_name || inv.walk_in_name || '-'}</td>
+                          <td className="px-4 py-3 text-gray-700 max-w-xs truncate" title={inv.item_summary || ''}>{inv.item_summary || '—'}</td>
+                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{inv.estimate_number || '—'}</td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <CombinedPaymentBadge status={paymentStatus} />
+                            {paymentStatus !== 'PAID' && (
+                              <span className="mt-1 block text-[11px] text-gray-400">
+                                {formatMoney(paid)} paid · {formatMoney(balance)} due
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(inv.amount)}</td>
+                          <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{formatDate(inv.created_at)}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => handleDownloadProductInvoice(inv)}
+                                title="Download invoice PDF"
+                                className="inline-flex items-center gap-1.5 rounded border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => handleResendProductInvoice(inv)}
+                                title="Resend invoice via WhatsApp"
+                                className="inline-flex items-center gap-1.5 rounded bg-green-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5" />}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <p className="mt-2 text-[11px] text-gray-400">Payments against a custom charge are recorded from the quotation's Record Payment form.</p>
+            </div>
+            )}
+
             {/* Combined Invoices */}
             {invoiceTypeView === 'COMBINED' && (
             <div>
               <h3 className="text-sm font-semibold text-gray-700 mb-3">Combined Invoices</h3>
               <p className="mb-3 text-[11px] text-gray-400">
-                Auto-generated the first time a payment is recorded against a service quotation (registration fee + shift/daily charges, plus any linked product quote).
+                The merged invoice for a service quotation (registration fee + shift/daily charges, plus any linked product quote). It is created automatically once the quotation is paid in full, or earlier by hand from the Record Payment form, in which case it stays Pending until the balance is cleared.
               </p>
               {combinedInvoicesLoading ? (
                 <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
@@ -2000,6 +2104,13 @@ const ClientDetailPage = () => {
               ) : combinedInvoices.length === 0 ? (
                 <EmptyState title="No combined invoices generated yet" />
               ) : (
+                <>
+                <div className="mb-3">
+                  <CombinedStatusFilter invoices={combinedInvoices} value={combinedFilter} onChange={setCombinedFilter} />
+                </div>
+                {filterCombinedInvoices(combinedInvoices, combinedFilter).length === 0 ? (
+                <EmptyState title={combinedFilter === 'UNPAID' ? 'No combined invoices are waiting for payment' : 'No fully paid combined invoices yet'} />
+                ) : (
                 <div className="overflow-x-auto rounded-md border border-gray-200">
                   <table className="min-w-full divide-y divide-gray-100 text-sm">
                     <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
@@ -2009,11 +2120,12 @@ const ClientDetailPage = () => {
                         <th className="px-4 py-3 text-left">Billed To</th>
                         <th className="px-4 py-3 text-left">Quotation</th>
                         <th className="px-4 py-3 text-right">Amount</th>
+                        <th className="px-4 py-3 text-left">Payment</th>
                         <th className="px-4 py-3 text-left">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 bg-white">
-                      {combinedInvoices.map((inv) => {
+                      {filterCombinedInvoices(combinedInvoices, combinedFilter).map((inv) => {
                         const busy = invoiceActionBusyId === inv.quote_id;
                         return (
                         <tr key={inv.quote_id} className="hover:bg-gray-50 transition-colors">
@@ -2022,6 +2134,14 @@ const ClientDetailPage = () => {
                           <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{inv.billed_to_name || inv.payer_name || '-'}</td>
                           <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{inv.estimate_number || '—'}</td>
                           <td className="px-4 py-3 text-right font-semibold text-gray-800 whitespace-nowrap">{formatMoney(inv.total_amount)}</td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <CombinedPaymentBadge status={inv.payment_status} />
+                            {inv.payment_status !== 'PAID' && (
+                              <span className="mt-1 block text-[11px] text-gray-400">
+                                {formatMoney(inv.amount_paid)} paid · {formatMoney(inv.balance)} due
+                              </span>
+                            )}
+                          </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1.5">
                               <a
@@ -2050,6 +2170,8 @@ const ClientDetailPage = () => {
                     </tbody>
                   </table>
                 </div>
+                )}
+                </>
               )}
             </div>
             )}
@@ -2441,7 +2563,17 @@ const ClientDetailPage = () => {
                         const busy = invoiceActionBusyId === inv.invoice_id;
                         return (
                         <tr key={inv.invoice_id} className="hover:bg-gray-50 transition-colors">
-                          <td className="px-4 py-3 font-mono text-xs text-gray-600 whitespace-nowrap">{inv.invoice_code}</td>
+                          <td className="px-4 py-3 font-mono text-xs text-gray-600 whitespace-nowrap">
+                            {inv.invoice_code}
+                            {inv.is_duplicate && (
+                              <span
+                                title="This item is also billed on another invoice for the same quotation. It only mirrors that invoice's payment status."
+                                className="ml-1.5 rounded bg-gray-100 px-1.5 py-0.5 font-sans text-[10px] font-semibold text-gray-500"
+                              >
+                                Duplicate
+                              </span>
+                            )}
+                          </td>
                           <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{inv.client_name || inv.walk_in_name || '-'}</td>
                           <td className="px-4 py-3 text-gray-700 max-w-xs truncate" title={inv.item_summary || ''}>{inv.item_summary || '—'}</td>
                           <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{inv.category}</td>
@@ -3913,7 +4045,6 @@ const ClientDetailPage = () => {
                 ) : (
                   <div className="grid gap-4 @md:grid-cols-2 @4xl:grid-cols-4">
                     <InfoRow label="Client Code" value={clientProfile.client_code || clientProfile.client_profile_id} />
-                    <InfoRow label="User ID"     value={clientProfile.user_id} />
                     <InfoRow label="Full Name"   value={clientProfile.full_name || '-'} />
                     <InfoRow label="Email"       value={clientProfile.email || '-'} />
                     <InfoRow label="Phone"       value={formatMobileNumber(clientProfile.mobile_number) || '-'} />

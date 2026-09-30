@@ -659,6 +659,35 @@ class ApiClient {
     });
   }
 
+  // ── Client portal documents (quotations, receipts, invoices, statements, care team log) ──
+  async getClientPortalList(kind) {
+    return this.request(`/client-portal/${kind}`);
+  }
+
+  // Resolves a client-portal PDF endpoint to { blob, url, filename }. Endpoints
+  // either stream the PDF directly (quotations, statements) or return a stored
+  // pdf_url (receipts, invoices); for the latter we try to pull the file into a
+  // blob so "download" saves it instead of navigating away.
+  async fetchClientPortalPdf(path, fallbackName = 'document.pdf') {
+    const response = await fetch(`${this.baseURL}/client-portal${path}`, {
+      headers: { ...(this.token && { Authorization: `Bearer ${this.token}` }) },
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.message || 'Could not load the document');
+    }
+    if ((response.headers.get('content-type') || '').includes('application/pdf')) {
+      return { blob: await response.blob(), filename: fallbackName };
+    }
+    const data = await response.json();
+    const filename = data.filename || fallbackName;
+    try {
+      const file = await fetch(data.pdf_url);
+      if (file.ok) return { blob: await file.blob(), filename };
+    } catch { /* CORS or network — fall back to the raw URL */ }
+    return { url: data.pdf_url, filename };
+  }
+
   // ── Bulk data migration (spreadsheet import) ──
   async downloadImportTemplate() {
     const url = `${this.baseURL}/bulk-import/template`;
@@ -1447,6 +1476,20 @@ class ApiClient {
     });
   }
 
+  async setStaffPublicVisibility(staffProfileId, visible) {
+    return this.request(`/staff/${staffProfileId}/public-visibility`, {
+      method: 'PATCH',
+      body: JSON.stringify({ visible }),
+    });
+  }
+
+  async bulkSetStaffPublicVisibility(staffProfileIds, visible) {
+    return this.request('/staff/public-visibility/bulk', {
+      method: 'POST',
+      body: JSON.stringify({ staff_profile_ids: staffProfileIds, visible }),
+    });
+  }
+
   // Booking endpoints
   async createBooking(bookingData) {
     return this.request('/bookings', {
@@ -2054,6 +2097,18 @@ class ApiClient {
 
   async getMyWallet() {
     return this.request('/staff-wallet/my-wallet');
+  }
+
+  async getMySalarySheets() {
+    return this.request('/staff-wallet/my-salary-sheets');
+  }
+
+  async getMyCareHistory() {
+    return this.request('/staff-wallet/my-care-history');
+  }
+
+  async getReviewsForStaff(staffProfileId, page = 1, limit = 10) {
+    return this.request(`/staff-reviews/staff/${staffProfileId}?page=${page}&limit=${limit}`);
   }
 
   async requestAdvance(advanceData) {

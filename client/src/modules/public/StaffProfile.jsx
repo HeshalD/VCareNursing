@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { ArrowLeft, MapPin, Clock, Star, Shield, Award, ChevronRight, Calendar, Heart, CheckCircle, Quote, Sparkles, BadgeCheck } from "lucide-react";
+import { ArrowLeft, MapPin, Clock, Star, Shield, Award, ChevronRight, Calendar, CheckCircle, Quote, Sparkles, BadgeCheck } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import Navbar from "../../components/layout/Navbar";
 import { formatPhoneNumberIntl } from 'react-phone-number-input';
@@ -533,9 +533,6 @@ export default function StaffProfile() {
                 className="w-full py-3.5 rounded-xl text-[15px] font-bold flex items-center justify-center gap-2 transition-colors text-white bg-blue-600 hover:bg-blue-700"
               >
                 <Calendar size={17} /> Book Now
-              </button>
-              <button className="w-full mt-2.5 py-3 bg-white text-slate-600 border border-slate-200 rounded-xl text-sm font-medium flex items-center justify-center gap-2 hover:bg-slate-50 transition-colors">
-                <Heart size={14} /> Save Profile
               </button>
             </motion.div>
 

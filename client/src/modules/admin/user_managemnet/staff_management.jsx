@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, Mars, Venus, Trash2, CheckCircle2, ChevronDown, ShieldOff, ShieldCheck, X, Landmark } from 'lucide-react';
+import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, Mars, Venus, Trash2, CheckCircle2, ChevronDown, ShieldOff, ShieldCheck, X, Landmark, Eye, EyeOff } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
@@ -109,6 +109,9 @@ const StaffManagement = () => {
   const [portalConfirm, setPortalConfirm] = useState(null); // 'disable' | 'enable' | null
   const [portalLoading, setPortalLoading] = useState(false);
   const [portalError, setPortalError] = useState(null);
+  const [publicConfirm, setPublicConfirm] = useState(null); // 'show' | 'hide' | null
+  const [publicLoading, setPublicLoading] = useState(false);
+  const [publicError, setPublicError] = useState(null);
 
   // Close the Actions dropdown on outside click / Escape.
   useEffect(() => {
@@ -289,6 +292,21 @@ const StaffManagement = () => {
     }
   };
 
+  const handlePublicVisibilityConfirmed = async () => {
+    setPublicLoading(true);
+    setPublicError(null);
+    try {
+      await apiClient.bulkSetStaffPublicVisibility(Array.from(selectedIds), publicConfirm === 'show');
+      setSelectedIds(new Set());
+      setPublicConfirm(null);
+      await fetchWorkers();
+    } catch (err) {
+      setPublicError(err.message || 'Failed to update public visibility for the selected staff.');
+    } finally {
+      setPublicLoading(false);
+    }
+  };
+
   const runAction = (fn) => { setActionsOpen(false); fn(); };
 
   const pendingMigrationCount = counts.pending_migration || 0;
@@ -351,6 +369,14 @@ const StaffManagement = () => {
                   <button role="menuitem" onClick={() => runAction(() => { setPortalError(null); setPortalConfirm('enable'); })}
                     className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-700 text-left">
                     <ShieldCheck className="w-4 h-4 text-blue-500" /> Enable Dashboard Access
+                  </button>
+                  <button role="menuitem" onClick={() => runAction(() => { setPublicError(null); setPublicConfirm('show'); })}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-700 text-left">
+                    <Eye className="w-4 h-4 text-blue-500" /> Show on Public Site
+                  </button>
+                  <button role="menuitem" onClick={() => runAction(() => { setPublicError(null); setPublicConfirm('hide'); })}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-700 text-left">
+                    <EyeOff className="w-4 h-4 text-slate-500" /> Hide from Public Site
                   </button>
                   <div className="my-1 border-t border-slate-100" />
                   <button role="menuitem" onClick={() => runAction(openDeleteConfirm)}
@@ -541,7 +567,12 @@ const StaffManagement = () => {
                         </div>
                       )}
                       <div>
-                        <p className="font-medium text-blue-600 leading-tight">{worker.full_name ?? '—'}</p>
+                        <p className="font-medium text-blue-600 leading-tight flex items-center gap-1.5">
+                          {worker.full_name ?? '—'}
+                          {worker.show_on_public_site && (
+                            <Eye className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" aria-label="Displayed on the public site" title="Displayed on the public site" />
+                          )}
+                        </p>
                         {worker.staff_code && (
                           <p className="text-xs text-slate-400 font-mono">{worker.staff_code}</p>
                         )}
@@ -662,6 +693,36 @@ const StaffManagement = () => {
               <button type="button" onClick={handlePortalAccessConfirmed} disabled={portalLoading}
                 className={`flex-1 px-4 py-2 text-white rounded-md text-sm font-medium disabled:opacity-50 ${portalConfirm === 'disable' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
                 {portalLoading ? 'Saving…' : portalConfirm === 'disable' ? 'Disable access' : 'Enable access'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Public Visibility Confirmation Modal */}
+      {publicConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/30" onClick={() => !publicLoading && setPublicConfirm(null)} />
+          <div className="relative w-full max-w-sm bg-white rounded-lg shadow-2xl p-5">
+            <h2 className="text-sm font-semibold text-slate-900 mb-1.5">
+              {publicConfirm === 'show' ? 'Show' : 'Hide'} {selectedIds.size} staff member{selectedIds.size !== 1 ? 's' : ''} {publicConfirm === 'show' ? 'on' : 'from'} the public site?
+            </h2>
+            <p className="text-xs text-slate-500 mb-4">
+              {publicConfirm === 'show'
+                ? 'Their profile will appear on the landing page and the public staff directory, where visitors can view it and book them.'
+                : 'Their profile will no longer appear on the landing page or the public staff directory.'}
+            </p>
+            {publicError && (
+              <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 text-red-700 text-xs rounded-md">{publicError}</div>
+            )}
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => setPublicConfirm(null)} disabled={publicLoading}
+                className="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-md text-sm font-medium hover:bg-slate-50 disabled:opacity-50">
+                Cancel
+              </button>
+              <button type="button" onClick={handlePublicVisibilityConfirmed} disabled={publicLoading}
+                className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-medium disabled:opacity-50">
+                {publicLoading ? 'Saving…' : publicConfirm === 'show' ? 'Show on site' : 'Hide from site'}
               </button>
             </div>
           </div>

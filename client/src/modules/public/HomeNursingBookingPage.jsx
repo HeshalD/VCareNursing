@@ -257,9 +257,23 @@ const HomeNursingBookingPage = () => {
 
   useEffect(() => {
     filterStaff();
-  }, [staffData, activeFilter, staffSearch]);
+  }, [staffData, activeFilter]);
 
-  const fetchStaffData = async () => {
+  // Search runs on the server so any staff member can be found, not just the first page.
+  const lastFetchedSearchRef = useRef('');
+  const staffRequestIdRef = useRef(0);
+  useEffect(() => {
+    if (currentStep !== 4) return;
+    const timer = setTimeout(() => {
+      if (staffSearch.trim() !== lastFetchedSearchRef.current) fetchStaffData(staffSearch.trim());
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [staffSearch]);
+
+  const fetchStaffData = async (searchOverride) => {
+    const search = typeof searchOverride === 'string' ? searchOverride : staffSearch.trim();
+    lastFetchedSearchRef.current = search;
+    const requestId = ++staffRequestIdRef.current;
     try {
       console.log('fetchStaffData called, genderPreference:', formData.preferred_gender);
       setLoading(true);
@@ -273,8 +287,10 @@ const HomeNursingBookingPage = () => {
         console.log('Fetching staff by gender:', genderPreference);
         const staffResponse = await apiClient.getStaffByGender(genderPreference, {
           status: 'AVAILABLE',
-          limit: 20
+          limit: 20,
+          ...(search && { search })
         });
+        if (requestId !== staffRequestIdRef.current) return;
 
         console.log('Gender API response:', staffResponse);
 
@@ -290,7 +306,7 @@ const HomeNursingBookingPage = () => {
             rating: staff.average_rating ? parseFloat(staff.average_rating).toFixed(1) : null,
             reviews: staff.total_reviews || 0,
             isVerified: staff.verification_status === 'VERIFIED',
-            image: staff.profile_picture_url || `https://i.pravatar.cc/300?u=${staff.staff_profile_id}`,
+            image: staff.profile_picture_url || null,
             badges: Array.isArray(staff.qualifications) && staff.qualifications.length > 0
               ? staff.qualifications.slice(0, 2)
               : ['Experienced'],
@@ -303,9 +319,10 @@ const HomeNursingBookingPage = () => {
         console.log('Fetching all willing staff (no gender preference)');
         // Fetch both NURSE and CARETAKER staff who are willing to live in
         const [nursesResponse, caretakersResponse] = await Promise.all([
-          apiClient.getStaffWillingToLiveIn({ role: 'NURSE', status: 'AVAILABLE', limit: 10 }),
-          apiClient.getStaffWillingToLiveIn({ role: 'CARETAKER', status: 'AVAILABLE', limit: 10 })
+          apiClient.getStaffWillingToLiveIn({ role: 'NURSE', status: 'AVAILABLE', limit: 10, ...(search && { search }) }),
+          apiClient.getStaffWillingToLiveIn({ role: 'CARETAKER', status: 'AVAILABLE', limit: 10, ...(search && { search }) })
         ]);
+        if (requestId !== staffRequestIdRef.current) return;
 
         console.log('Nurses response:', nursesResponse);
         console.log('Caretakers response:', caretakersResponse);
@@ -322,7 +339,7 @@ const HomeNursingBookingPage = () => {
           rating: staff.average_rating ? parseFloat(staff.average_rating).toFixed(1) : null,
           reviews: staff.total_reviews || 0,
           isVerified: staff.verification_status === 'VERIFIED',
-          image: staff.profile_picture_url || `https://i.pravatar.cc/300?u=${staff.staff_profile_id}`,
+          image: staff.profile_picture_url || null,
           badges: Array.isArray(staff.qualifications) && staff.qualifications.length > 0
             ? staff.qualifications.slice(0, 2)
             : ['Experienced'],
@@ -336,17 +353,12 @@ const HomeNursingBookingPage = () => {
       console.error('Error fetching staff data:', err);
       setError('Failed to load staff data. Please try again later.');
     } finally {
-      setLoading(false);
+      if (requestId === staffRequestIdRef.current) setLoading(false);
     }
   };
 
   const filterStaff = () => {
-    let result = activeFilter === 'ALL' ? staffData : staffData.filter(s => s.staffType === activeFilter);
-    if (staffSearch.trim()) {
-      const q = staffSearch.toLowerCase();
-      result = result.filter(s => s.name.toLowerCase().includes(q) || s.location.toLowerCase().includes(q));
-    }
-    setFilteredStaff(result);
+    setFilteredStaff(activeFilter === 'ALL' ? staffData : staffData.filter(s => s.staffType === activeFilter));
   };
 
   const handleFilterChange = (filter) => {
@@ -921,11 +933,15 @@ const HomeNursingBookingPage = () => {
                             )}
 
                             <div className="flex items-center gap-4 mb-4">
-                              <img
-                                src={staff.image}
-                                alt={staff.name}
-                                className="w-16 h-16 rounded-full object-cover"
-                              />
+                              {staff.image ? (
+                                <img
+                                  src={staff.image}
+                                  alt={staff.name}
+                                  className="w-16 h-16 rounded-full object-cover"
+                                />
+                              ) : (
+                                <div className="w-16 h-16 rounded-full bg-slate-100 flex-shrink-0" />
+                              )}
                               <div>
                                 <h3 className="font-bold text-white">{staff.name}</h3>
                                 <p className="text-sm text-slate-400">{staff.role}</p>

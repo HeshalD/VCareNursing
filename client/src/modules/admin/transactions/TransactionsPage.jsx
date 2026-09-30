@@ -509,9 +509,6 @@ const TransactionsPage = () => {
                                 <div>
                                   <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Transaction Code</p>
                                   <p className="text-slate-900 font-mono font-semibold mt-0.5">{tx.transaction_code || tx.transaction_id}</p>
-                                  {tx.transaction_code && (
-                                    <p className="text-slate-400 font-mono text-xs mt-0.5 break-all">{tx.transaction_id}</p>
-                                  )}
                                 </div>
                                 <div>
                                   <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Recorded At</p>

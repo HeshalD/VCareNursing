@@ -559,7 +559,7 @@ const QuotationDetailsPage = () => {
                   </div>
                 ) : (
                   <p className="text-xs text-slate-400">
-                    Not invoiced yet — the combined invoice is generated automatically once the service or a linked product portion is paid in full.
+                    Not invoiced yet — the combined invoice is generated automatically once the quotation is paid in full, or you can generate it earlier from the Record Payment form.
                   </p>
                 )}
               </div>

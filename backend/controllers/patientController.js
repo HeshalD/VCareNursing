@@ -119,6 +119,7 @@ exports.getAllPatients = async (req, res) => {
                 `SELECT
                     p.*,
                     c.full_name       AS client_name,
+                    c.client_code,
                     c.primary_address AS client_address,
                     u.mobile_number   AS client_mobile
                  FROM patient_profiles p
@@ -408,7 +409,10 @@ exports.getPatientsByClient = async (req, res) => {
     const { client_id } = req.params;
     try {
         const result = await db.query(
-            'SELECT * FROM patient_profiles WHERE client_id = $1 ORDER BY created_at DESC', 
+            `SELECT p.*, c.client_code
+             FROM patient_profiles p
+             LEFT JOIN client_profiles c ON p.client_id = c.client_profile_id
+             WHERE p.client_id = $1 ORDER BY p.created_at DESC`,
             [client_id]
         );
         res.status(200).json({ status: 'success', data: result.rows });

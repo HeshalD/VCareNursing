@@ -4,8 +4,28 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import Navbar from "../../components/layout/Navbar";
 
-const SPECIALTIES = ["All", "Hospital", "Baby Care", "Home Nursing", "Elderly Care"];
-const STATUSES    = ["All", "Available", "On Shift", "Off Duty"];
+const PAGE_SIZE = 20;
+
+// Same roles a staff account can hold (see WorkerRegistrationPage APPLIED_ROLES)
+const ROLE_FILTERS = [
+  { label: "All", role: "" },
+  { label: "Caretaker", role: "CARETAKER" },
+  { label: "Nursing Assistant", role: "NURSING_ASSISTANT" },
+  { label: "Professional Nurse", role: "NURSE" },
+  { label: "Physiotherapist", role: "PHYSIOTHERAPIST" },
+  { label: "Nanny", role: "NANNY" },
+  { label: "Counsellor", role: "COUNSELLOR" },
+];
+const SPECIALTIES = ROLE_FILTERS.map(r => r.label);
+const ROLE_LABELS = Object.fromEntries(ROLE_FILTERS.filter(r => r.role).map(r => [r.role, r.label]));
+
+// Handles '{NURSE,NANNY}', ['NURSE'], 'NURSE'
+const normalizeRoles = (role) => {
+  const list = Array.isArray(role) ? role : typeof role === "string" ? role.replace(/[{}]/g, "").split(",") : [];
+  return list.map(r => r.trim()).filter(Boolean);
+};
+
+const STATUSES   = ["All", "Available", "On Shift", "Off Duty"];
 
 const statusStyle = {
   "Available": { dot: "#22c55e", bg: "#f0fdf4", text: "#166534" },
@@ -22,11 +42,14 @@ export default function StaffDirectory() {
   const [sortOpen,    setSortOpen]    = useState(false);
   const [filterOpen,  setFilterOpen]  = useState(false);
   const [staff,       setStaff]       = useState([]);
-  const [availableStaff, setAvailableStaff] = useState([]);
+  const [availableCount, setAvailableCount] = useState(0);
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [page,        setPage]        = useState(1);
+  const [pagination,  setPagination]  = useState({ total_count: 0, total_pages: 1 });
   const [loading,     setLoading]     = useState(true);
   const [error,       setError]       = useState(null);
 
-  const sortLabels = { rating: "Top Rated", shifts: "Most Shifts", name: "Name A-Z" };
+  const sortLabels = { rating: "Top Rated", name: "Name A-Z" };
 
   // ─── Sub-components ──────────────────────────────────────────────────────────
   function StaffCard({ member, index }) {
@@ -115,8 +138,13 @@ export default function StaffDirectory() {
             {member.full_name || 'Unknown'}
           </p>
           <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>
-            {member.designation || (member.role && Array.isArray(member.role) ? member.role.join(', ') : member.role) || 'Staff Member'}
+            {member.designation || normalizeRoles(member.role).map(r => ROLE_LABELS[r]).filter(Boolean).join(', ') || 'Staff Member'}
           </p>
+          {member.staff_code && (
+            <p style={{ margin: "3px 0 0", fontSize: 11, color: "#94a3b8" }}>
+              {member.staff_code}
+            </p>
+          )}
         </div>
 
         {/* Meta */}
@@ -180,119 +208,83 @@ export default function StaffDirectory() {
     );
   }
 
-  // Fetch staff data
+  // Debounce the search box so we don't hit the API on every keystroke
   useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(query.trim()), 350);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  // Any filter/search/sort change goes back to the first page
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedQuery, specialty, status, sortBy]);
+
+  // Fetch one page of staff from the server (search + filters run server-side)
+  useEffect(() => {
+    let cancelled = false;
+
     const fetchData = async () => {
       try {
         setLoading(true);
-        
-        console.log('Fetching staff data from multiple endpoints');
-        // Fetch all staff and available staff in parallel
-        const [staffResponse, availableResponse] = await Promise.all([
-          fetch('/api/staff'),
-          fetch('/api/staff/available-staff')
-        ]);
-        
-        console.log('Staff response status:', staffResponse.status, staffResponse.statusText);
-        console.log('Available staff response status:', availableResponse.status, availableResponse.statusText);
-        
-        if (!staffResponse.ok) {
-          const errorText = await staffResponse.text();
-          console.error('Staff API error response:', errorText.substring(0, 500));
-          throw new Error(`Failed to fetch staff: ${staffResponse.status}`);
+        setError(null);
+
+        const params = new URLSearchParams({ page, limit: PAGE_SIZE, sort: sortBy });
+        const role = ROLE_FILTERS.find(r => r.label === specialty)?.role;
+        if (role) params.set("role", role);
+        if (status !== "All") params.set("status", status);
+        if (debouncedQuery) params.set("search", debouncedQuery);
+
+        const response = await fetch(`/api/staff/public-directory?${params}`);
+        const contentType = response.headers.get("content-type") || "";
+
+        if (!response.ok || !contentType.includes("application/json")) {
+          throw new Error(`Failed to fetch staff: ${response.status}`);
         }
-        if (!availableResponse.ok) {
-          const errorText = await availableResponse.text();
-          console.error('Available staff API error response:', errorText.substring(0, 500));
-          throw new Error(`Failed to fetch available staff: ${availableResponse.status}`);
-        }
-        
-        // Check content-type before parsing JSON
-        const staffContentType = staffResponse.headers.get('content-type');
-        const availableContentType = availableResponse.headers.get('content-type');
-        
-        if (!staffContentType || !staffContentType.includes('application/json')) {
-          const text = await staffResponse.text();
-          console.error('Staff API non-JSON response:', text.substring(0, 500));
-          
-          if (text.includes('<!doctype') || text.includes('<html')) {
-            console.error('Staff API returned HTML error page - check backend deployment');
-            setStaff([]);
-            setAvailableStaff([]);
-            setError('Service temporarily unavailable');
-            return;
-          }
-          
-          throw new Error('Staff API returned non-JSON response');
-        }
-        
-        if (!availableContentType || !availableContentType.includes('application/json')) {
-          const text = await availableResponse.text();
-          console.error('Available staff API non-JSON response:', text.substring(0, 500));
-          
-          if (text.includes('<!doctype') || text.includes('<html')) {
-            console.error('Available staff API returned HTML error page - check backend deployment');
-            setStaff([]);
-            setAvailableStaff([]);
-            setError('Service temporarily unavailable');
-            return;
-          }
-          
-          throw new Error('Available staff API returned non-JSON response');
-        }
-        
-        const staffData = await staffResponse.json();
-        const availableData = await availableResponse.json();
-        
-        console.log('Staff data received:', staffData);
-        console.log('Available staff data received:', availableData);
-        
-        setStaff(staffData.data || []);
-        setAvailableStaff(availableData.data || []);
+
+        const result = await response.json();
+        if (cancelled) return;
+
+        setStaff(result.data || []);
+        setAvailableCount(result.available_count || 0);
+        setPagination(result.pagination || { total_count: 0, total_pages: 1 });
       } catch (err) {
-        console.error('Error fetching data:', err);
-        setError('Failed to load staff data');
+        if (cancelled) return;
+        console.error("Error fetching staff:", err);
+        setStaff([]);
+        setError("Failed to load staff data");
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     fetchData();
-  }, []);
-
-  const filtered = useMemo(() => {
-    return staff
-      .filter(s => {
-        const q = query.toLowerCase();
-        const matchQ = !q || 
-          s.full_name?.toLowerCase().includes(q) || 
-          (s.role && Array.isArray(s.role) ? s.role.some(r => r.toLowerCase().includes(q)) : s.role?.toLowerCase().includes(q)) ||
-          s.location?.toLowerCase().includes(q);
-        
-        // Map specialty filter to role
-        const specialtyRoleMap = {
-          "Baby Care": "NANNY",
-          "Elderly Care": "CAREGIVER", 
-          "Home Nursing": "NURSE",
-          "Hospital": "NURSE"
-        };
-        const targetRole = specialtyRoleMap[specialty];
-        const matchS = specialty === "All" || (s.role && Array.isArray(s.role) ? s.role.includes(targetRole) : s.role === targetRole);
-        
-        const matchSt = status === "All" || s.current_status?.toLowerCase().replace('_', ' ') === status.toLowerCase();
-        return matchQ && matchS && matchSt;
-      })
-      .sort((a, b) => {
-        if (sortBy === "name")   return (a.full_name || '').localeCompare(b.full_name || '');
-        if (sortBy === "shifts") return (b.total_bookings || 0) - (a.total_bookings || 0);
-        return (b.average_rating || 0) - (a.average_rating || 0);
-      });
-  }, [staff, query, specialty, status, sortBy]);
+    return () => { cancelled = true; };
+  }, [page, debouncedQuery, specialty, status, sortBy]);
 
   const activeFilters = [
     specialty !== "All" && specialty,
     status    !== "All" && status,
   ].filter(Boolean);
+
+  // Compact page list: 1 … 4 5 6 … 12
+  const pageNumbers = useMemo(() => {
+    const total = pagination.total_pages;
+    const nums = [];
+    for (let n = 1; n <= total; n++) {
+      if (n === 1 || n === total || Math.abs(n - page) <= 1) nums.push(n);
+      else if (nums[nums.length - 1] !== "…") nums.push("…");
+    }
+    return nums;
+  }, [page, pagination.total_pages]);
+
+  const pageBtnStyle = (active, disabled) => ({
+    minWidth: 38, padding: "8px 14px", borderRadius: 10, fontSize: 13, fontWeight: 500,
+    border: active ? "1px solid #2563eb" : "1px solid #e2e8f0",
+    background: active ? "#2563eb" : "#fff",
+    color: active ? "#fff" : "#334155",
+    opacity: disabled ? 0.45 : 1,
+    cursor: disabled ? "not-allowed" : "pointer",
+  });
 
   return (
     <div style={{
@@ -328,7 +320,7 @@ export default function StaffDirectory() {
               display: "flex", alignItems: "center", gap: 6,
             }}>
               <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#22c55e", display: "inline-block" }} />
-              {availableStaff.length} available now
+              {availableCount} available now
             </div>
           </div>
         </div>
@@ -349,7 +341,7 @@ export default function StaffDirectory() {
             Our Care Team
           </h1>
           <p style={{ color: "#64748b", fontSize: 16, margin: 0 }}>
-            {filtered.length} verified professionals · book instantly
+            {pagination.total_count} verified professionals · book instantly
           </p>
         </div>
 
@@ -362,7 +354,7 @@ export default function StaffDirectory() {
             <input
               value={query}
               onChange={e => setQuery(e.target.value)}
-              placeholder="Search by name, role, or location…"
+              placeholder="Search by name, mobile number, or EMP code…"
               style={{
                 width: "100%",
                 padding: "11px 14px 11px 40px",
@@ -465,7 +457,7 @@ export default function StaffDirectory() {
             display: "flex", gap: "2.5rem", flexWrap: "wrap",
           }}>
             <div>
-              <p style={{ fontSize: 12, fontWeight: 600, color: "#94a3b8", letterSpacing: "0.08em", textTransform: "uppercase", margin: "0 0 10px" }}>Specialty</p>
+              <p style={{ fontSize: 12, fontWeight: 600, color: "#94a3b8", letterSpacing: "0.08em", textTransform: "uppercase", margin: "0 0 10px" }}>Role</p>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {SPECIALTIES.map(s => (
                   <button key={s} onClick={() => setSpecialty(s)} style={{
@@ -569,13 +561,13 @@ export default function StaffDirectory() {
         ) : (
           <>
             {/* Grid */}
-            {filtered.length > 0 ? (
+            {staff.length > 0 ? (
               <div style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
                 gap: 20,
               }}>
-                {filtered.slice(0, 12).map((member, i) => (
+                {staff.map((member, i) => (
                   <StaffCard key={member.staff_profile_id} member={member} index={i} />
                 ))}
               </div>
@@ -590,10 +582,39 @@ export default function StaffDirectory() {
               </div>
             )}
 
-            {filtered.length > 12 && (
-              <p style={{ textAlign: "center", color: "#94a3b8", fontSize: 14, marginTop: "1.5rem" }}>
-                Showing 12 of {filtered.length} results
-              </p>
+            {pagination.total_pages > 1 && (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, marginTop: "2rem" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "center" }}>
+                  <button
+                    disabled={page <= 1}
+                    onClick={() => { setPage(p => p - 1); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                    style={pageBtnStyle(false, page <= 1)}
+                  >
+                    Previous
+                  </button>
+                  {pageNumbers.map((n, i) => n === "…" ? (
+                    <span key={`gap-${i}`} style={{ padding: "0 4px", color: "#94a3b8" }}>…</span>
+                  ) : (
+                    <button
+                      key={n}
+                      onClick={() => { setPage(n); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                      style={pageBtnStyle(n === page, false)}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                  <button
+                    disabled={page >= pagination.total_pages}
+                    onClick={() => { setPage(p => p + 1); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                    style={pageBtnStyle(false, page >= pagination.total_pages)}
+                  >
+                    Next
+                  </button>
+                </div>
+                <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>
+                  Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, pagination.total_count)} of {pagination.total_count} staff
+                </p>
+              </div>
             )}
           </>
         )}

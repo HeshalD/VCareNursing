@@ -347,11 +347,13 @@ const getLeaveConflicts = async (req, res) => {
       `SELECT bsa.assignment_id, bsa.booking_id, bsa.status,
               bsa.service_start_date::text AS service_start_date,
               bsa.service_end_date::text AS service_end_date,
-              b.service_type,
+              b.service_type, b.service_model,
+              bsa.shift_slot_id, s.shift_number, s.label AS shift_label,
               c.full_name AS client_name,
               p.full_name AS patient_name
        FROM booking_staff_assignments bsa
        JOIN bookings b ON b.booking_id = bsa.booking_id
+       LEFT JOIN booking_shift_slots s ON s.shift_slot_id = bsa.shift_slot_id
        LEFT JOIN client_profiles c ON b.client_id = c.client_profile_id
        LEFT JOIN patient_profiles p ON b.patient_id = p.patient_id
        WHERE bsa.staff_profile_id = $1

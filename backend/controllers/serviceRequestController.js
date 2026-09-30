@@ -851,14 +851,14 @@ exports.sendCandidateProfile = async (req, res) => {
             return res.status(409).json({ status: 'error', message: `${staff.full_name}'s profile has already been sent to this client for this request.` });
         }
 
-        // The live template carries a static "View Profile" button (configured on the Meta template),
-        // so we send no per-candidate link — just the body details.
+        // The template's "View Profile" button is a dynamic URL: it needs the candidate's profile id.
         await sendCandidateProfile(
             sr.payer_mobile,
             sr.payer_name || 'there',
             sr.patient_name || 'your patient',
             staff.full_name,
-            staff.designation
+            staff.designation,
+            staff.staff_profile_id
         );
 
         // Record the send only after WhatsApp succeeds.

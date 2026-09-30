@@ -148,6 +148,8 @@ const buildStatementPayload = async (client_id, start_date, end_date) => {
     };
 };
 
+exports.buildStatementPayload = buildStatementPayload;
+
 exports.deleteStatement = async (req, res) => {
     const { statement_id } = req.params;
     try {

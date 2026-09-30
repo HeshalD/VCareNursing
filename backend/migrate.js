@@ -1376,6 +1376,24 @@ async function runMigration() {
     );
   `);
 
+  // Which part of a quotation payment was allocated to a specific one-off line item
+  // (custom charge, transport fee...). The money itself is still one payment_tracking
+  // row, so every quote-level total is unchanged; this only records how much of each
+  // custom charge has been covered so the next payment knows what is still owed.
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS quote_line_item_payments (
+      allocation_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      line_item_id UUID NOT NULL REFERENCES quote_line_items(line_item_id) ON DELETE CASCADE,
+      payment_id UUID NOT NULL REFERENCES payment_tracking(payment_id) ON DELETE CASCADE,
+      amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  await db.query(`
+    CREATE INDEX IF NOT EXISTS idx_quote_line_item_payments_line_item
+    ON quote_line_item_payments(line_item_id)
+  `);
+
   // =========================================================
   // PRODUCTS / RENTALS / WALK-IN CUSTOMERS (Phase 1)
   // Catalog of sellable/rentable items, independent of any booking.
@@ -3245,6 +3263,11 @@ async function runMigration() {
   // without deactivating the whole user account (which would also block a
   // dual-role client login and hide them from bookings).
   await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS portal_access_disabled BOOLEAN NOT NULL DEFAULT false`);
+
+  // Admin opt-in for showing a staff profile on the public site (landing page
+  // "Meet our staff" + /services/view-staff). Off by default: nobody is public
+  // until an admin explicitly selects them.
+  await db.query(`ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS show_on_public_site BOOLEAN NOT NULL DEFAULT false`);
 
   // =========================================================
   // PER-BOOKING WALLET EARMARKING

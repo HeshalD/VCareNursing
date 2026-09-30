@@ -31,20 +31,6 @@ const GenderBadge = ({ gender }) => {
   );
 };
 
-const RegBadge = ({ paid }) => (
-  <span style={{
-    display: 'inline-block',
-    background: paid ? '#f0fdf4' : '#fffbeb',
-    color: paid ? '#166534' : '#166534',
-    border: `1px solid ${paid ? '#bbf7d0' : '#bbf7d0'}`,
-    borderRadius: 4, padding: '1px 8px',
-    fontSize: 10, fontWeight: 700,
-    letterSpacing: '0.06em', textTransform: 'uppercase',
-  }}>
-    {paid ? 'Registered' : 'Registered'}
-  </span>
-);
-
 const RELATIONSHIP_OPTIONS = [
   'Parent', 'Child', 'Sibling', 'Spouse / Partner',
   'Guardian', 'Caregiver', 'Friend', 'Neighbor', 'Other',
@@ -119,7 +105,6 @@ const PatientCard = ({ patient, onDelete, expanded, onToggle }) => {
         {/* Footer */}
         <div style={s.cardFooter}>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <RegBadge paid={patient.is_registration_fee_paid} />
             {patient.gender && <GenderBadge gender={patient.gender} />}
           </div>
           <button onClick={onToggle} style={s.detailToggle}>
@@ -133,46 +118,20 @@ const PatientCard = ({ patient, onDelete, expanded, onToggle }) => {
       {expanded && (
         <div style={s.expandedCard}>
           <div style={s.expandedBody}>
-            <DetailSection title="Care Profile Details" icon={<User size={11} />}>
-              <MetaPair label="Profile ID" value={`#${patient.patient_id}`} mono />
-              <MetaPair label="Full Name"  value={patient.full_name} />
-              <MetaPair label="Age"        value={`${patient.age} years`} />
-              <MetaPair label="Gender"     value={GENDER_BADGE[patient.gender]?.label} />
+            <div style={s.metaGrid}>
+              <MetaPair label="Profile ID" value={patient.patient_code || `#${patient.patient_id}`} mono />
+              <MetaPair label="Added" value={patient.created_at ? new Date(patient.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'} />
+              <MetaPair label="Age" value={`${patient.age} years`} />
+              <MetaPair label="Gender" value={GENDER_BADGE[patient.gender]?.label} />
               <MetaPair label="Relationship" value={patient.relationship_to_client} />
-            </DetailSection>
-
-            <DetailSection title="Medical" icon={<FileText size={11} />}>
-              <MetaPair label="Condition"      value={patient.medical_condition} />
-              <MetaPair label="Special Remarks" value={patient.special_remarks || 'None'} />
-              <MetaPair label="Registration"
-                value={patient.is_registration_fee_paid ? 'Paid' : 'Pending'}
-                valueStyle={{ color: patient.is_registration_fee_paid ? '#16a34a' : '#92400e', fontWeight: 600 }}
-              />
-            </DetailSection>
-
-            <DetailSection title="Contact" icon={<Phone size={11} />}>
-              <MetaPair label="Address"         value={patient.residential_address} />
-              <MetaPair label="Emergency Name"  value={patient.emergency_contact_name} />
-              <MetaPair label="Emergency Phone" value={patient.emergency_contact_number} />
-            </DetailSection>
-
-            <DetailSection title="System" icon={<Clock size={11} />}>
-              <MetaPair label="Client ID" value={`#${patient.client_id}`} mono />
-              <MetaPair label="Created"
-                value={patient.created_at ? new Date(patient.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}
-              />
-              <MetaPair label="Updated"
-                value={patient.updated_at ? new Date(patient.updated_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}
-              />
-            </DetailSection>
-
-            {patient.client_name && (
-              <DetailSection title="Client Info" icon={<Shield size={11} />}>
-                <MetaPair label="Client Name"    value={patient.client_name} />
-                <MetaPair label="Client Address" value={patient.client_address || '—'} />
-                <MetaPair label="Client Mobile"  value={patient.client_mobile || '—'} />
-              </DetailSection>
-            )}
+              <MetaPair label="Medical Condition" value={patient.medical_condition} />
+              <MetaPair label="Address" value={patient.residential_address} />
+              <MetaPair label="Emergency Contacts" value={(() => {
+                const names = (patient.emergency_contact_name || '').split(' | ');
+                const nums = (patient.emergency_contact_number || '').split(' | ');
+                return names.filter(Boolean).map(n => `${n}: ${nums[names.indexOf(n)] || '—'}`).join(', ');
+              })()} />
+            </div>
           </div>
         </div>
       )}
@@ -205,8 +164,10 @@ const MetaPair = ({ label, value, mono, valueStyle }) => (
 
 // ─── PatientFormModal ─────────────────────────────────────────────────────────
 
-const PatientFormModal = ({ formData, onChange, onSubmit, onClose, saving, clientAddress }) => {
+const PatientFormModal = ({ formData, onChange, onSubmit, onClose, saving, clientAddress, clientContact }) => {
   const [sameAsClientAddress, setSameAsClientAddress] = useState(false);
+  const isClientContact = c => c.name === clientContact?.name && c.number === clientContact?.number;
+  const clientIsContact = formData.emergency_contacts.some(isClientContact);
 
   const field = (label, key, opts = {}) => (
     <div style={s.fieldWrap}>
@@ -343,6 +304,27 @@ const PatientFormModal = ({ formData, onChange, onSubmit, onClose, saving, clien
                 </div>
               ))}
             </div>
+            {clientContact?.name && clientContact?.number && (
+              <label style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#64748b' }}>
+                <input
+                  type="checkbox"
+                  checked={clientIsContact}
+                  onChange={e => {
+                    const list = formData.emergency_contacts;
+                    if (e.target.checked) {
+                      const emptyIdx = list.findIndex(c => !c.name.trim() && !c.number.trim());
+                      onChange('emergency_contacts', emptyIdx >= 0
+                        ? list.map((c, i) => i === emptyIdx ? { ...clientContact } : c)
+                        : [...list, { ...clientContact }]);
+                    } else {
+                      const rest = list.filter(c => !isClientContact(c));
+                      onChange('emergency_contacts', rest.length ? rest : [{ name: '', number: '' }]);
+                    }
+                  }}
+                />
+                Add me as an emergency contact
+              </label>
+            )}
           </div>
         </div>
 
@@ -584,16 +566,6 @@ const ClientPatients = () => {
             <span style={s.statPillValue}>{patients.length}</span>
             <span style={s.statPillLabel}>Total Profiles</span>
           </div>
-          <div style={s.statPill}>
-            <CheckCircle size={14} style={{ color: '#16a34a' }} />
-            <span style={s.statPillValue}>{patients.filter(p => p.is_registration_fee_paid).length}</span>
-            <span style={s.statPillLabel}>Registered</span>
-          </div>
-          <div style={s.statPill}>
-            <AlertCircle size={14} style={{ color: '#f59e0b' }} />
-            <span style={s.statPillValue}>{patients.filter(p => !p.is_registration_fee_paid).length}</span>
-            <span style={s.statPillLabel}>Fee Pending</span>
-          </div>
 
           {/* Search */}
           <div style={s.searchWrap}>
@@ -652,6 +624,7 @@ const ClientPatients = () => {
           onClose={() => { setShowAddModal(false); setFormData(FORM_EMPTY); }}
           saving={saving}
           clientAddress={clientProfile?.primary_address}
+          clientContact={{ name: clientProfile?.full_name || '', number: clientProfile?.mobile_number || '' }}
         />
       )}
       {showDeleteModal && (

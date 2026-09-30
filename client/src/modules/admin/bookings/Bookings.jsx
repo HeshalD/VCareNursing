@@ -455,7 +455,7 @@ const Bookings = () => {
                               </div>
                               <div>
                                 <p className="font-medium text-slate-900 leading-tight">
-                                  {details?.client_name || `Client #${b.client_id}`}
+                                  {details?.client_name || details?.client_code || 'Unknown client'}
                                 </p>
                                 {details?.client_address && (
                                   <p className="text-xs text-slate-400 truncate max-w-[160px]">{details.client_address}</p>
@@ -555,7 +555,7 @@ const Bookings = () => {
                         </div>
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-slate-900 truncate">
-                            {details?.client_name || `Client #${b.client_id}`}
+                            {details?.client_name || details?.client_code || 'Unknown client'}
                           </p>
                           <p className="text-xs text-slate-500 truncate">
                             {details?.patient_name || `Care profile #${b.patient_id}`}

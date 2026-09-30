@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Check, X, Eye, FileText,
   AlertCircle, ShieldCheck, Loader2,
-  BadgeCheck, StickyNote, Building2, Plus, Trash2, Pencil, Camera, Send, Upload, Save
+  BadgeCheck, StickyNote, Building2, Plus, Trash2, Pencil, Camera, Send, Upload, Save, Lock
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import apiClient from '../../../api/api';
@@ -119,6 +119,10 @@ const WorkerVerificationDetailsPage = () => {
   const [processingAction, setProcessingAction] = useState(false);
   const [actionError, setActionError] = useState('');
 
+  // Wizard step: approval gates the two later steps, which can be done in either order.
+  const [activeStep, setActiveStep] = useState('approval');
+  const stepInitRef = useRef(false);
+
   const [sendingAgreement, setSendingAgreement] = useState(false);
   const [agreementLanguage, setAgreementLanguage] = useState('');
 
@@ -225,6 +229,10 @@ const WorkerVerificationDetailsPage = () => {
       const data = await apiClient.getApplication(applicationId);
       apiClient.setToken(original);
       setApplication(data);
+      if (!stepInitRef.current) {
+        stepInitRef.current = true;
+        if (data.status === 'ACCEPTED') setActiveStep('documents');
+      }
       if (data.doc_request_sent_at) setDocRequestSentAt(data.doc_request_sent_at);
       if (data.status === 'ACCEPTED' && data.staff_profile_id) {
         fetchBankAccounts(data.staff_profile_id);
@@ -429,6 +437,7 @@ const WorkerVerificationDetailsPage = () => {
       apiClient.setToken(original);
       setApproveModal({ isOpen: false, staffId: '', adminRemarks: '', recruiterId: '' });
       await fetchApplication();
+      setActiveStep('documents');
     } catch (err) {
       setActionError(err.message || 'Error approving application');
     } finally {
@@ -488,6 +497,24 @@ const WorkerVerificationDetailsPage = () => {
 
   const roles = parseRoles(application.applied_roles);
   const isPending = application.status === 'PENDING';
+  const isAccepted = application.status === 'ACCEPTED';
+  const docsComplete = !!(application.grama_niladhari_url && application.police_report_url);
+  const docsPartial = !docsComplete && !!(application.grama_niladhari_url || application.police_report_url);
+  const bankComplete = bankAccounts.length > 0;
+  const steps = [
+    {
+      id: 'approval', label: 'Approval', locked: false, done: isAccepted,
+      hint: isAccepted ? 'Approved' : application.status === 'REJECTED' ? 'Rejected' : 'Pending review',
+    },
+    {
+      id: 'documents', label: 'Document Upload', locked: !isAccepted, done: docsComplete,
+      hint: !isAccepted ? 'Locked until approved' : docsComplete ? 'Complete' : docsPartial ? 'Partially uploaded' : 'Not started',
+    },
+    {
+      id: 'bank', label: 'Bank Account', locked: !isAccepted || !application.staff_profile_id, done: bankComplete,
+      hint: !isAccepted ? 'Locked until approved' : bankComplete ? `${bankAccounts.length} added` : 'Not started',
+    },
+  ];
 
   return (
     <AdminLayout
@@ -549,6 +576,37 @@ const WorkerVerificationDetailsPage = () => {
           <AlertCircle className="w-4 h-4 flex-shrink-0" /> {actionError}
         </div>
       )}
+
+      {/* Steps: Approval first; Document Upload and Bank Account unlock after approval, in any order */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+        {steps.map((step, i) => {
+          const isActive = activeStep === step.id;
+          const rejected = step.id === 'approval' && application.status === 'REJECTED';
+          return (
+            <button key={step.id} type="button" disabled={step.locked}
+              onClick={() => setActiveStep(step.id)}
+              title={step.locked ? 'Approve the application first' : undefined}
+              className={`flex items-center gap-3 p-3.5 rounded-lg border text-left transition-all ${
+                isActive ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-200'
+                  : step.locked ? 'border-slate-200 bg-slate-50 cursor-not-allowed opacity-70'
+                  : 'border-slate-200 bg-white hover:border-blue-300'
+              }`}>
+              <span className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-sm font-semibold ${
+                rejected ? 'bg-red-100 text-red-600'
+                  : step.done ? 'bg-emerald-500 text-white'
+                  : step.locked ? 'bg-slate-200 text-slate-400'
+                  : 'bg-blue-600 text-white'
+              }`}>
+                {rejected ? <X className="w-4 h-4" /> : step.done ? <Check className="w-4 h-4" /> : step.locked ? <Lock className="w-3.5 h-3.5" /> : i + 1}
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold text-slate-800">{step.label}</span>
+                <span className={`block text-xs ${rejected ? 'text-red-600' : step.done ? 'text-emerald-700' : 'text-slate-500'}`}>{step.hint}</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
         {/* ── LEFT COLUMN ── */}
@@ -613,6 +671,12 @@ const WorkerVerificationDetailsPage = () => {
                         ? <span className="text-xs font-medium text-amber-700">Partial</span>
                         : <span className="text-xs text-slate-400">Pending</span>}
                   </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-slate-500">Bank Account</span>
+                    {bankComplete
+                      ? <span className="text-xs font-medium text-emerald-700 flex items-center gap-1"><Check className="w-3 h-3" /> Added</span>
+                      : <span className="text-xs text-slate-400">Pending</span>}
+                  </div>
                 </>
               )}
             </div>
@@ -630,6 +694,7 @@ const WorkerVerificationDetailsPage = () => {
         {/* ── RIGHT COLUMN ── */}
         <div className="xl:col-span-2 space-y-4">
 
+          {activeStep === 'approval' && (<>
           {/* Contact & Personal */}
           <div className="bg-white border border-slate-200 rounded-lg">
             <SectionHeader title="Contact & Personal Details" />
@@ -830,6 +895,9 @@ const WorkerVerificationDetailsPage = () => {
             </div>
           )}
 
+          </>)}
+
+          {activeStep === 'documents' && isAccepted && (<>
           {/* Contractor Agreement */}
           {application.status === 'ACCEPTED' && (
             <div className="bg-white border border-slate-200 rounded-lg">
@@ -916,6 +984,9 @@ const WorkerVerificationDetailsPage = () => {
             </div>
           )}
 
+          </>)}
+
+          {activeStep === 'bank' && isAccepted && (<>
           {/* Bank Accounts */}
           {application.status === 'ACCEPTED' && application.staff_profile_id && (
             <div className="bg-white border border-slate-200 rounded-lg">
@@ -963,6 +1034,7 @@ const WorkerVerificationDetailsPage = () => {
               </div>
             </div>
           )}
+          </>)}
         </div>
       </div>
 

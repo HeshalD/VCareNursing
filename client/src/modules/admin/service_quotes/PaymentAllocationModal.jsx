@@ -41,6 +41,15 @@ const getRegFeeInfo = (servicePaid, lineItems) => {
   };
 };
 
+// Custom charges (one-off CHARGE lines that aren't the care rate or registration fee) each
+// get their own allocation row, keyed `custom:<line_item_id>` in the allocations state.
+const CUSTOM_PREFIX = 'custom:';
+const customBucketMeta = (item) => ({
+  label: item.description,
+  hint: 'Custom charge',
+  accent: 'text-emerald-700',
+});
+
 const BUCKET_META = {
   reg_fee: { label: 'Registration Fee', hint: 'Must be settled first', accent: 'text-violet-700' },
   service: { label: 'Service Charges', hint: 'Remaining care/service charges', accent: 'text-blue-700' },
@@ -69,6 +78,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
   const [regFeeInfo, setRegFeeInfo] = useState(null);
   const [serviceOnlyRemaining, setServiceOnlyRemaining] = useState(0);
   const [productsRemaining, setProductsRemaining] = useState(0);
+  const [customItems, setCustomItems] = useState([]); // [{ line_item_id, description, amount, paid, remaining }]
   const [combinedRemaining, setCombinedRemaining] = useState(0);
 
   const [bankAccounts, setBankAccounts] = useState([]);
@@ -133,6 +143,9 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
         ...(serviceLineItems || []).map((li) => ({ ...li, quote_id: quoteId })),
         ...productItems,
       ].filter((li) => li.item_type !== 'DISCOUNT'
+        // Rentals get their own rental-agreement invoice when the product quote is accepted, so a
+        // manual invoice would just duplicate it.
+        && !li.rental_billing_type
         // Care-rate/shift-rate lines are invoiced strictly through the booking's
         // own day-by-day invoice-decision flow, never here.
         && li.item_subtype !== 'RATE_DAILY'
@@ -203,7 +216,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
       if (res?.generated) {
         setCombinedInvoiceResult(res.data);
       } else {
-        setError(res?.message || 'Quotation is not fully paid yet — combined invoice not generated.');
+        setError(res?.message || 'Combined invoice could not be generated.');
       }
     } catch (err) {
       setError(err.message || 'Failed to generate combined invoice');
@@ -240,8 +253,14 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
       const productLineItems = productDetail?.data?.line_items || [];
       const productsTotal = productLineItemsTotal(productLineItems);
 
+      // Standalone per-line-item invoices (category LINE_ITEM) are documents only — they say
+      // nothing about whether the quote was accepted or how much has been paid.
+      const realInvoices = (res) => (Array.isArray(res?.data) ? res.data : []).filter((i) => i.category !== 'LINE_ITEM');
+      // Invoices that actually carry money for this quote: everything except leftover duplicate
+      // line-item invoices (an individually-invoiced item IS its own ledger once accepted).
+      const ledgerInvoices = (res) => (Array.isArray(res?.data) ? res.data : []).filter((i) => !i.is_duplicate);
       let invRes = await apiClient.getProductInvoices({ quote_id: pQuoteId });
-      let invoices = Array.isArray(invRes?.data) ? invRes.data : [];
+      let invoices = realInvoices(invRes);
 
       // A linked PRODUCT quote only gets its own `invoices` row(s) once
       // someone explicitly accepts it — accept it here (via
@@ -277,7 +296,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
         try {
           await apiClient.acceptProductQuote(pQuoteId);
           invRes = await apiClient.getProductInvoices({ quote_id: pQuoteId });
-          invoices = Array.isArray(invRes?.data) ? invRes.data : [];
+          invoices = realInvoices(invRes);
         } catch (acceptErr) {
           // A 409 here just means it's already accepted under a race —
           // anything else means invoices genuinely don't exist yet and
@@ -289,7 +308,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
       // A fully-PAID invoice counts as fully paid even if it predates
       // the invoice_payments ledger (no rows there yet for it) —
       // amount_paid alone would understate it in that case.
-      const productsPaid = invoices.reduce(
+      const productsPaid = ledgerInvoices(invRes).reduce(
         (s, i) => s + (i.status === 'PAID' ? (parseFloat(i.amount) || 0) : (parseFloat(i.amount_paid) || 0)),
         0
       );
@@ -326,11 +345,23 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
       setPayerMobile(quote?.payer_mobile || '');
       setClientId(quote?.request_client_id || null);
       setBankAccounts(banksRes?.data || []);
+      // A combined invoice generated earlier shows its number straight away, the same
+      // way line item invoices do, instead of offering to generate it again.
+      setCombinedInvoiceResult(
+        quote?.invoice_code && quote?.invoice_pdf_url
+          ? { invoice_code: quote.invoice_code, invoice_pdf_url: quote.invoice_pdf_url }
+          : null
+      );
 
       const serviceRemaining = Math.max(parseFloat(progressRes?.remaining_amount ?? quote?.total_amount ?? 0), 0);
       const regInfo = getRegFeeInfo(progressRes?.total_paid, quote?.line_items);
       setRegFeeInfo(regInfo);
-      const svcOnly = Math.max(serviceRemaining - (regInfo?.remaining || 0), 0);
+      const customList = Array.isArray(progressRes?.custom_items) ? progressRes.custom_items : [];
+      setCustomItems(customList);
+      const customRemainingTotal = customList.reduce((sum, c) => sum + (parseFloat(c.remaining) || 0), 0);
+      const serviceAndCustomRemaining = Math.max(serviceRemaining - (regInfo?.remaining || 0), 0);
+      // The Service Charges row covers what is left after the custom charges, which have their own rows.
+      const svcOnly = Math.max(serviceAndCustomRemaining - customRemainingTotal, 0);
       setServiceOnlyRemaining(svcOnly);
 
       // The linked PRODUCT quote (rentals/purchases/deposits added via the
@@ -344,12 +375,12 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
       loadLineItemsForInvoicing(quote?.line_items, pQuoteId);
       if (!pQuoteId) {
         setProductsRemaining(0);
-        setCombinedRemaining((regInfo?.remaining || 0) + svcOnly);
+        setCombinedRemaining((regInfo?.remaining || 0) + svcOnly + customRemainingTotal);
         setLoading(false);
         return;
       }
 
-      await resolveProductBucket(pQuoteId, regInfo?.remaining || 0, svcOnly);
+      await resolveProductBucket(pQuoteId, regInfo?.remaining || 0, svcOnly + customRemainingTotal);
     } catch (err) {
       setError(err.message || 'Failed to load payment details');
       setLoading(false);
@@ -363,20 +394,26 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
   const regFeeRemaining = regFeeInfo?.remaining || 0;
   const buckets = useMemo(() => {
     const list = [];
-    if (regFeeInfo && regFeeRemaining > 0) list.push({ key: 'reg_fee', due: regFeeRemaining });
-    if (serviceOnlyRemaining > 0) list.push({ key: 'service', due: serviceOnlyRemaining });
-    if (productsRemaining > 0) list.push({ key: 'products', due: productsRemaining });
+    if (regFeeInfo && regFeeRemaining > 0) list.push({ key: 'reg_fee', due: regFeeRemaining, label: BUCKET_META.reg_fee.label });
+    for (const c of customItems) {
+      if (c.remaining > 0.01) list.push({ key: `${CUSTOM_PREFIX}${c.line_item_id}`, due: c.remaining, label: c.description });
+    }
+    if (serviceOnlyRemaining > 0) list.push({ key: 'service', due: serviceOnlyRemaining, label: BUCKET_META.service.label });
+    if (productsRemaining > 0) list.push({ key: 'products', due: productsRemaining, label: BUCKET_META.products.label });
     return list;
-  }, [regFeeInfo, regFeeRemaining, serviceOnlyRemaining, productsRemaining]);
+  }, [regFeeInfo, regFeeRemaining, customItems, serviceOnlyRemaining, productsRemaining]);
 
   // Reg fee must be fully covered by this payment's own allocation before
   // the other buckets can take anything — mirrors the backend's own check.
   const regFeeAllocated = parseFloat(allocations.reg_fee) || 0;
   const regFeeGateOpen = regFeeRemaining <= 0.01 || regFeeAllocated >= regFeeRemaining - 0.01;
 
-  const allocatedTotal = ['reg_fee', 'service', 'products'].reduce(
-    (s, k) => s + (parseFloat(allocations[k]) || 0), 0
+  const allocatedTotal = Object.values(allocations).reduce(
+    (s, v) => s + (parseFloat(v) || 0), 0
   );
+  const customAllocatedTotal = Object.entries(allocations)
+    .filter(([k]) => k.startsWith(CUSTOM_PREFIX))
+    .reduce((s, [, v]) => s + (parseFloat(v) || 0), 0);
   const parsedAmount = parseFloat(amountReceived) || 0;
   const unallocated = Math.round((parsedAmount - allocatedTotal) * 100) / 100;
 
@@ -403,6 +440,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
   const prefillAllocations = (amount) => {
     let remaining = amount;
     const next = { reg_fee: '', service: '', products: '' };
+    for (const c of customItems) next[`${CUSTOM_PREFIX}${c.line_item_id}`] = '';
     for (const bucket of buckets) {
       if (remaining <= 0.005) break;
       const take = Math.min(remaining, bucket.due);
@@ -437,10 +475,10 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
   const validateStep2 = () => {
     for (const bucket of buckets) {
       const val = parseFloat(allocations[bucket.key]) || 0;
-      if (val > bucket.due + 0.01) return `${BUCKET_META[bucket.key].label} allocation exceeds its due amount`;
+      if (val > bucket.due + 0.01) return `${bucket.label} allocation exceeds its due amount`;
       if (val < 0) return 'Allocations cannot be negative';
     }
-    if (!regFeeGateOpen && ((parseFloat(allocations.service) || 0) > 0 || (parseFloat(allocations.products) || 0) > 0)) {
+    if (!regFeeGateOpen && ((parseFloat(allocations.service) || 0) > 0 || (parseFloat(allocations.products) || 0) > 0 || customAllocatedTotal > 0)) {
       return 'Registration fee must be fully allocated before allocating to other charges';
     }
     if (unallocated < -0.01) return 'Allocated amount exceeds the payment amount';
@@ -489,7 +527,15 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
       // decision, accept it now, bundled into this same submit action, with
       // whatever pay-now/leave-unpaid choices the admin made above.
       if (vendorItems.length > 0 && productQuoteId) {
-        await apiClient.acceptProductQuote(productQuoteId, { vendor_payments: vendorDecisions });
+        try {
+          await apiClient.acceptProductQuote(productQuoteId, { vendor_payments: vendorDecisions });
+        } catch (acceptErr) {
+          // Already accepted (e.g. an earlier attempt got this far before failing further
+          // down) — nothing left to do here, carry on and record the payment.
+          if (!/already been accepted/i.test(acceptErr.message || '')) throw acceptErr;
+        }
+        // Accepted now: a retry after a later failure must not try (and fail) to accept again.
+        setVendorItems([]);
       }
 
       const payload = {
@@ -498,6 +544,11 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
           reg_fee: parseFloat(allocations.reg_fee) || 0,
           service: parseFloat(allocations.service) || 0,
           products: parseFloat(allocations.products) || 0,
+          custom: Object.fromEntries(
+            Object.entries(allocations)
+              .filter(([k, v]) => k.startsWith(CUSTOM_PREFIX) && (parseFloat(v) || 0) > 0)
+              .map(([k, v]) => [k.slice(CUSTOM_PREFIX.length), parseFloat(v)])
+          ),
         },
         overflow: unallocated > 0.01
           ? (overflowChoice === 'BOOKING_PAYOFF'
@@ -681,6 +732,21 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                             onChange={(v) => handleAllocationChange('reg_fee', v)}
                           />
                         )}
+                        {customItems.filter((c) => c.remaining > 0.01).map((c) => {
+                          const key = `${CUSTOM_PREFIX}${c.line_item_id}`;
+                          return (
+                            <BucketRow
+                              key={key}
+                              meta={customBucketMeta(c)}
+                              icon={Receipt}
+                              due={c.remaining}
+                              settled={false}
+                              value={allocations[key] ?? ''}
+                              disabled={!regFeeGateOpen}
+                              onChange={(v) => handleAllocationChange(key, v)}
+                            />
+                          );
+                        })}
                         {serviceOnlyRemaining > 0 && (
                           <BucketRow
                             meta={BUCKET_META.service}
@@ -730,7 +796,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                       )}
                     </div>
                     <p className="mb-2 text-[11px] text-slate-500">
-                      Generate a standalone invoice for any item below — separate from the combined invoice and independent of the allocation above. Care-rate/shift-rate charges are invoiced only through the booking itself and never appear here.
+                      Optional. Raise an individual invoice for an item below only if you want one — otherwise it is simply included in the combined invoice. An item you invoice here is not invoiced a second time. Care-rate/shift-rate charges are invoiced through the booking, and rentals get their own invoice when the product quote is accepted, so neither appears here.
                     </p>
                     <div className="divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200">
                       {lineItems.map((li) => (
@@ -772,7 +838,7 @@ const PaymentAllocationModal = ({ quoteId, onClose, onRecorded }) => {
                 <div>
                   <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Combined Invoice</p>
                   <p className="mb-2 text-[11px] text-slate-500">
-                    Builds the single merged Service + Products invoice PDF for this quote. Only generates once the quotation is fully paid — calling it again just returns the same PDF.
+                    Builds the single merged Service + Products invoice PDF for this quote. It can be generated at any time, even before payment is complete — once generated, the same invoice number and PDF are reused.
                   </p>
                   {combinedInvoiceResult ? (
                     <a

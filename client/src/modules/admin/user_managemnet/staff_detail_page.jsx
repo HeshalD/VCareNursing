@@ -571,7 +571,7 @@ const StaffDetailPage = () => {
         <Card title="Current Booking Snapshot" subtitle="Live assignment returned from the current-booking route">
           {currentAssignment ? (
             <div className="grid gap-4 sm:grid-cols-2">
-              <InfoRow label="Booking ID" value={currentAssignment.booking_id || '-'} mono />
+              <InfoRow label="Booking ID" value={currentAssignment.booking_code || currentAssignment.booking_id || '-'} mono />
               <InfoRow label="Assignment Status" value={currentAssignment.status || '-'} />
               <InfoRow label="Service Type" value={currentAssignment.service_type || currentAssignment.booking_status || '-'} />
               <InfoRow label="Client" value={currentAssignment.client_name || '-'} />
@@ -701,7 +701,7 @@ const StaffDetailPage = () => {
         ) : currentAssignment ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <InfoRow label="Assignment ID" value={currentAssignment.assignment_id || '-'} mono />
-            <InfoRow label="Booking ID" value={currentAssignment.booking_id || '-'} mono />
+            <InfoRow label="Booking ID" value={currentAssignment.booking_code || currentAssignment.booking_id || '-'} mono />
             <InfoRow label="Client Name" value={currentAssignment.client_name || '-'} />
             <InfoRow label="Patient Name" value={currentAssignment.patient_name || '-'} />
             <InfoRow label="Service Start" value={formatDate(currentAssignment.service_start_date || currentAssignment.start_date)} />
@@ -1175,7 +1175,7 @@ const StaffDetailPage = () => {
     return map[action] || { dot: 'bg-slate-400', badge: 'bg-slate-100 text-slate-700' };
   };
 
-  const renderChangeDiff = (requestType, requestedChanges) => {
+  const renderChangeDiff = (requestType, requestedChanges, request) => {
     if (!requestedChanges) return <p className="text-sm text-slate-500">No change data available.</p>;
 
     if (requestType === 'PROFILE_UPDATE' || requestType === 'BANK_ACCOUNT_EDIT') {
@@ -1209,7 +1209,12 @@ const StaffDetailPage = () => {
     if (requestType === 'BANK_ACCOUNT_REMOVE') {
       return (
         <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          Remove bank account ID: <span className="font-mono font-semibold">{requestedChanges.staff_bank_account_id}</span>
+          Remove bank account:{' '}
+          <span className="font-semibold">
+            {request?.target_bank_name
+              ? `${request.target_bank_name} ••••${request.target_bank_last4 || ''}`
+              : 'account no longer on file'}
+          </span>
         </div>
       );
     }
@@ -1258,7 +1263,7 @@ const StaffDetailPage = () => {
                           <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${statusTone(req.status)}`}>
                             {req.status?.replace(/_/g, ' ')}
                           </span>
-                          <span className="font-mono text-xs text-slate-400">#{String(req.request_id || '').slice(-8)}</span>
+                          <span className="font-mono text-xs text-slate-400">{req.change_request_code || `#${String(req.request_id || '').slice(-8)}`}</span>
                         </div>
                         <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-600">
                           <span>Submitted: {formatDateTime(req.created_at)}</span>
@@ -1284,7 +1289,7 @@ const StaffDetailPage = () => {
                       <div className="space-y-5 border-t border-slate-200 bg-slate-50/60 px-4 py-4">
                         <div>
                           <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Requested Changes</p>
-                          {renderChangeDiff(req.request_type, req.requested_changes)}
+                          {renderChangeDiff(req.request_type, req.requested_changes, req)}
                         </div>
 
                         <div>

@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   LayoutDashboard, User, DollarSign, LogOut, Briefcase, Calendar, FilePen, CalendarOff,
-  Menu, X
+  FileText, Star, History, Menu, X
 } from 'lucide-react';
 import logoUrl from '../../../assets/Logo/VCareLogo.png';
 import { useAuth } from '../../../context/AuthContext';
@@ -12,7 +12,10 @@ import { useAuth } from '../../../context/AuthContext';
 const NAV_ITEMS = [
   { icon: LayoutDashboard, labelKey: 'nav.dashboard', to: '/services/provider-dashboard' },
   { icon: DollarSign, labelKey: 'nav.earnings', to: '/services/earnings' },
+  { icon: FileText, labelKey: 'nav.salarySheets', to: '/services/salary-sheets' },
   { icon: Calendar, labelKey: 'nav.bookings', to: '/services/bookings' },
+  { icon: History, labelKey: 'nav.careHistory', to: '/services/care-history' },
+  { icon: Star, labelKey: 'nav.reviews', to: '/services/reviews' },
   { icon: User, labelKey: 'nav.myProfile', to: '/services/my-profile' },
   { icon: FilePen, labelKey: 'nav.requestChange', to: '/services/change-request' },
   { icon: CalendarOff, labelKey: 'nav.requestLeave', to: '/services/leave-request' },
