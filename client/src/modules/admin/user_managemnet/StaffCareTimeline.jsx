@@ -41,8 +41,15 @@ const moneyFmt = (n) => `Rs ${Math.round(Number(n || 0)).toLocaleString('en-US')
 //                        the resume date read as available/off, and from the resume date onward this staff reads
 //                        as assigned back to that booking (open-ended unless scheduled_end_date caps it), even
 //                        though the real booking_staff_assignments row doesn't exist yet.
-const StaffCareTimeline = ({ assignments: rawAssignments = [], attendanceRecords = [], reschedules = [], leaveDays = [], pendingResumptions = [], interactive = true }) => {
+const StaffCareTimeline = ({ assignments: rawAssignments = [], attendanceRecords = [], reschedules = [], leaveDays = [], pendingResumptions = [], interactive = true, onDeleteSalaries }) => {
   const [monthOffset, setMonthOffset] = useState(0);
+  // Select mode (only when the parent passes onDeleteSalaries): clicking a day with a
+  // paid shift toggles it instead of opening the booking, then "Delete salaries" hands
+  // the picked ISO dates to the parent.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedDates, setSelectedDates] = useState([]);
+  const toggleSelectedDate = (iso) => setSelectedDates((prev) => (prev.includes(iso) ? prev.filter((d) => d !== iso) : [...prev, iso]));
+  const exitSelectMode = () => { setSelectMode(false); setSelectedDates([]); };
   const [hoveredKey, setHoveredKey] = useState(null);
   const navigate = useNavigate();
 
@@ -289,6 +296,17 @@ const StaffCareTimeline = ({ assignments: rawAssignments = [], attendanceRecords
           <p className="text-sm text-[#6F6A60] mt-1">Each block is one calendar day; multiple shifts on the same day stack as separate bars. Colour shows the booking.</p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
+          {onDeleteSalaries && (
+            <button
+              onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+              className="px-2.5 h-8 rounded-lg border text-xs font-semibold transition"
+              style={selectMode
+                ? { background: '#FEE2E2', borderColor: '#FCA5A5', color: '#991B1B' }
+                : { background: '#fff', borderColor: '#E7E1D6', color: '#5A554B' }}
+            >
+              {selectMode ? 'Cancel selection' : 'Select dates'}
+            </button>
+          )}
           {monthOffset !== 0 && (
             <button
               onClick={() => setMonthOffset(0)}
@@ -313,6 +331,28 @@ const StaffCareTimeline = ({ assignments: rawAssignments = [], attendanceRecords
           </div>
         </div>
       </div>
+
+      {selectMode && (
+        <div className="flex items-center justify-between gap-3 flex-wrap bg-rose-50 border border-rose-200 rounded-xl px-4 py-2.5 mb-4">
+          <span className="text-sm text-rose-800">
+            {selectedDates.length === 0
+              ? 'Click days with paid salary to select them (works across months).'
+              : `${selectedDates.length} day${selectedDates.length === 1 ? '' : 's'} selected`}
+          </span>
+          <div className="flex items-center gap-2">
+            {selectedDates.length > 0 && (
+              <button onClick={() => setSelectedDates([])} className="text-xs font-semibold text-rose-700 hover:underline">Clear</button>
+            )}
+            <button
+              disabled={selectedDates.length === 0}
+              onClick={() => { onDeleteSalaries(selectedDates); exitSelectMode(); }}
+              className="px-3 h-8 rounded-lg bg-rose-600 text-white text-xs font-semibold hover:bg-rose-500 disabled:opacity-50 transition"
+            >
+              Delete salaries
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Month summary ── */}
       <div className="bg-[#FBF9F4] border border-[#EFEAE0] rounded-xl px-4 py-3 mb-5">
@@ -374,7 +414,11 @@ const StaffCareTimeline = ({ assignments: rawAssignments = [], attendanceRecords
 
                 const isHovered = hoveredKey === cell.dateISO;
                 const shifts = cell.shifts || [];
-                const isClickable = interactive && cell.isWork && shifts.some((s) => s.assignment?.booking_id && s.kind !== 'MOVED');
+                const hasPaid = shifts.some((s) => s.status === 'paid');
+                const isSelected = selectedDates.includes(cell.dateISO);
+                const isClickable = selectMode
+                  ? hasPaid
+                  : interactive && cell.isWork && shifts.some((s) => s.assignment?.booking_id && s.kind !== 'MOVED');
 
                 return (
                   <div
@@ -384,7 +428,8 @@ const StaffCareTimeline = ({ assignments: rawAssignments = [], attendanceRecords
                       aspectRatio: '1/1',
                       background: cell.isLeave ? '#F3ECF7' : cell.isWork ? cell.color.tint : '#FCFBF8',
                       border: cell.isToday ? '1.5px solid #137A6B' : cell.isLeave ? '1px solid #DCC8E3' : cell.isWork ? `1px solid ${cell.color.border}` : '1px dashed #DBD5CA',
-                      boxShadow: cell.isToday ? '0 0 0 3px rgba(19,122,107,.13)' : isHovered ? '0 12px 26px rgba(40,33,22,.18)' : 'none',
+                      boxShadow: isSelected ? '0 0 0 3px rgba(225,29,72,.55)' : cell.isToday ? '0 0 0 3px rgba(19,122,107,.13)' : isHovered ? '0 12px 26px rgba(40,33,22,.18)' : 'none',
+                      opacity: selectMode && !hasPaid && !cell.blank ? 0.45 : 1,
                       transform: isHovered ? 'translateY(-3px)' : 'none',
                       transition: 'transform .15s ease, box-shadow .15s ease',
                       zIndex: isHovered ? 30 : 'auto',
@@ -392,6 +437,7 @@ const StaffCareTimeline = ({ assignments: rawAssignments = [], attendanceRecords
                     onMouseEnter={() => setHoveredKey(cell.dateISO)}
                     onMouseLeave={() => setHoveredKey(null)}
                     onClick={isClickable ? () => {
+                      if (selectMode) { toggleSelectedDate(cell.dateISO); return; }
                       const target = shifts.find((s) => s.kind !== 'MOVED');
                       if (target) navigate(`/admin/bookings/${target.assignment.booking_id}/detail`);
                     } : undefined}

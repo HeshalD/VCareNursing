@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const staffAppController = require('../controllers/staffAppController');
 const staffController = require('../controllers/staffController');
+const dailyAttendanceController = require('../controllers/dailyAttendanceController');
 const staffDocUploadController = require('../controllers/staffDocUploadController');
 const { uploadApplicationFiles } = require('../middleware/uploadMiddleware');
 const { protect, restrictTo, requirePermission, userHasPermission } = require('../middleware/authMiddleware');
@@ -436,6 +437,21 @@ router.get(
   protect,
   requirePermission('VIEW_USER_MANAGEMENT'),
   staffController.getEarningsTransactions
+);
+
+// Admin: preview / delete already-credited daily salaries for a date range
+router.get(
+  '/:staff_profile_id/salary-days',
+  protect,
+  requirePermission('ATTENDANCE_REVOKE'),
+  dailyAttendanceController.listStaffPaidSalaryDays
+);
+
+router.post(
+  '/:staff_profile_id/salary-days/revoke',
+  protect,
+  requirePermission('ATTENDANCE_REVOKE'),
+  dailyAttendanceController.revokeStaffSalaryRange
 );
 
 // Earnings breakdown pages

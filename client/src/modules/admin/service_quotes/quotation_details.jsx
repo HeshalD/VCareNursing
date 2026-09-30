@@ -476,9 +476,9 @@ const QuotationDetailsPage = () => {
                     <span className="text-xs">{quote.estimate_number}</span>
                   </div>
                   {quote.request_client_id ? (
-                    <Link to={`/admin/users/${quote.request_client_id}/detail`} onClick={(e) => e.stopPropagation()}
+                    <Link to={`/admin/users/${quote.request_client_id}/detail`}
                       title="View client profile"
-                      className="mt-1 text-left text-lg font-semibold text-slate-900 hover:text-blue-600 hover:underline transition-colors"
+                      className="mt-1 block w-fit text-left text-lg font-semibold text-slate-900 hover:text-blue-600 hover:underline transition-colors"
                     >
                       {withHonorific(quote.client_honorific, quote.payer_name)}
                     </Link>

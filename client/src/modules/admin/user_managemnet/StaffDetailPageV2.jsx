@@ -585,7 +585,7 @@ const EditAvatarField = ({ selectedFile, currentUrl, onChange, fullName }) => {
 
 // ── main component ────────────────────────────────────────────────────────────
 const StaffDetailPageV2 = () => {
-  const { adminToken, isLoading: authLoading } = useAdminAuth();
+  const { adminToken, isLoading: authLoading, hasPermission } = useAdminAuth();
   const navigate = useNavigate();
   const { staffProfileId } = useParams();
   const [searchParams] = useSearchParams();
@@ -663,6 +663,8 @@ const StaffDetailPageV2 = () => {
   const [switchRecruiterId, setSwitchRecruiterId] = useState('');
   const [recruiterActionLoading, setRecruiterActionLoading] = useState(false);
   const [recruiterError, setRecruiterError] = useState('');
+  const emptySalaryDelete = { isOpen: false, dates: [], from: '', to: '', reason: '', password: '', days: [], total: 0, previewLoading: false, previewed: false, submitting: false, error: '' };
+  const [salaryDelete, setSalaryDelete] = useState(emptySalaryDelete);
 
   const profile = detail?.profile || {};
   const overviewEarnings = detail?.earnings || {};
@@ -960,7 +962,61 @@ const StaffDetailPageV2 = () => {
     try { setRefreshing(true); await loadPage(); } finally { setRefreshing(false); }
   };
 
-  const handlePayoutFieldChange = (field) => (e) => {
+  const openSalaryDelete = () => setSalaryDelete({ ...emptySalaryDelete, isOpen: true });
+  const closeSalaryDelete = () => setSalaryDelete(p => (p.submitting ? p : { ...p, isOpen: false }));
+
+  // Opened from the care timeline with hand-picked dates: preview immediately.
+  const openSalaryDeleteForDates = async (dates) => {
+    const sorted = [...dates].sort();
+    setSalaryDelete({ ...emptySalaryDelete, isOpen: true, dates: sorted, previewLoading: true });
+    try {
+      const res = await runAdminRequest(() => apiClient.getStaffPaidSalaryDays(staffProfileId, { dates: sorted }));
+      setSalaryDelete(p => ({ ...p, previewLoading: false, previewed: true, days: safeArray(res?.data?.days), total: Number(res?.data?.total_amount || 0) }));
+    } catch (err) {
+      setSalaryDelete(p => ({ ...p, previewLoading: false, error: err?.message || 'Failed to load paid days' }));
+    }
+  };
+
+  // Hand-picked dates win; otherwise single day = leave "To" blank (falls back to "From").
+  const salaryDeleteRange = (sd) => (sd.dates.length ? { dates: sd.dates } : { from: sd.from, to: sd.to || sd.from });
+
+  const setSalaryDeleteField = (field) => (e) => {
+    const value = e.target.value;
+    setSalaryDelete(p => {
+      const next = { ...p, [field]: value, error: '' };
+      if (field === 'from' || field === 'to') Object.assign(next, { days: [], total: 0, previewed: false });
+      return next;
+    });
+  };
+
+  const previewSalaryDelete = async () => {
+    const selection = salaryDeleteRange(salaryDelete);
+    if (!selection.dates && !selection.from) { setSalaryDelete(p => ({ ...p, error: 'Select a date (or a from/to range) first.' })); return; }
+    if (selection.to < selection.from) { setSalaryDelete(p => ({ ...p, error: '"To" date cannot be before "From" date.' })); return; }
+    setSalaryDelete(p => ({ ...p, previewLoading: true, error: '' }));
+    try {
+      const res = await runAdminRequest(() => apiClient.getStaffPaidSalaryDays(staffProfileId, selection));
+      setSalaryDelete(p => ({ ...p, previewLoading: false, previewed: true, days: safeArray(res?.data?.days), total: Number(res?.data?.total_amount || 0) }));
+    } catch (err) {
+      setSalaryDelete(p => ({ ...p, previewLoading: false, error: err?.message || 'Failed to load paid days' }));
+    }
+  };
+
+  const submitSalaryDelete = async () => {
+    const selection = salaryDeleteRange(salaryDelete);
+    setSalaryDelete(p => ({ ...p, submitting: true, error: '' }));
+    try {
+      await runAdminRequest(() => apiClient.revokeStaffSalaryRange(staffProfileId, {
+        ...selection, reason: salaryDelete.reason.trim(), password: salaryDelete.password,
+      }));
+      setSalaryDelete(emptySalaryDelete);
+      await loadPage();
+    } catch (err) {
+      setSalaryDelete(p => ({ ...p, submitting: false, error: err?.message || 'Failed to delete salaries' }));
+    }
+  };
+
+  const handlePayoutFieldChange =(field) => (e) => {
     setPayoutForm(c => ({ ...c, [field]: e.target.value }));
     setPayoutSubmitError('');
     setPayoutSubmitSuccess('');
@@ -1327,6 +1383,7 @@ const StaffDetailPageV2 = () => {
       reschedules={attendanceCalendar.reschedules}
       leaveDays={leaveSummary.approved_leaves}
       pendingResumptions={attendanceCalendar.pendingResumptions}
+      onDeleteSalaries={hasPermission('ATTENDANCE_REVOKE') ? openSalaryDeleteForDates : undefined}
     />
   );
 
@@ -1632,7 +1689,18 @@ const StaffDetailPageV2 = () => {
       </div>
 
       <Card>
-        <CardHead title="Earnings transactions" />
+        <CardHead
+          title="Earnings transactions"
+          action={hasPermission('ATTENDANCE_REVOKE') && (
+            <button
+              type="button"
+              onClick={openSalaryDelete}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 transition-colors"
+            >
+              <Trash2 className="h-3.5 w-3.5" /> Delete daily salaries
+            </button>
+          )}
+        />
         <CardBody className="p-0">
           {sectionErrors.earningsTransactions ? (
             <div className="p-5"><Empty title="Failed to load earnings transactions" subtitle={sectionErrors.earningsTransactions} /></div>
@@ -2599,6 +2667,108 @@ const StaffDetailPageV2 = () => {
     );
   };
 
+  // ── delete daily salaries modal ────────────────────────────────────────────
+  const renderSalaryDeleteModal = () => {
+    if (!salaryDelete.isOpen) return null;
+    const sd = salaryDelete;
+    const canConfirm = sd.previewed && sd.days.length > 0 && sd.reason.trim() && sd.password && !sd.submitting;
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+          <div className="flex items-start gap-3 mb-4">
+            <div className="p-2 bg-rose-100 rounded-xl"><Trash2 className="h-5 w-5 text-rose-600" /></div>
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">Delete daily salaries</h3>
+              <p className="text-sm text-slate-500">
+                Reverses salaries already credited to {profile.full_name || 'this staff member'} for the selected day(s). Client invoices are not affected.
+              </p>
+            </div>
+          </div>
+          {sd.error && (
+            <div className="mb-4 bg-rose-50 border border-rose-200 text-rose-700 px-3 py-2 rounded-xl text-sm flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 flex-shrink-0" /> {sd.error}
+            </div>
+          )}
+          {sd.dates.length > 0 ? (
+            <div className="mb-4 text-xs text-slate-500">
+              Selected on the timeline: <span className="font-semibold text-slate-700">{sd.dates.map(d => formatDate(`${d}T00:00:00`)).join(', ')}</span>
+              {sd.previewLoading && <Loader2 className="inline h-3.5 w-3.5 animate-spin ml-2" />}
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">From <span className="text-rose-500">*</span></label>
+                  <DateInput value={sd.from} onChange={setSalaryDeleteField('from')} className={inputCls} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">To <span className="text-slate-400">(blank = single day)</span></label>
+                  <DateInput value={sd.to} onChange={setSalaryDeleteField('to')} className={inputCls} />
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={previewSalaryDelete}
+                disabled={!sd.from || sd.previewLoading}
+                className="mb-4 inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-60"
+              >
+                {sd.previewLoading && <Loader2 className="h-4 w-4 animate-spin" />} Find paid days
+              </button>
+            </>
+          )}
+
+          {sd.previewed && (
+            sd.days.length === 0 ? (
+              <div className="mb-4 rounded-xl bg-slate-50 border border-slate-200 px-3 py-3 text-sm text-slate-500">No paid salary days in this range.</div>
+            ) : (
+              <div className="mb-4 rounded-xl border border-slate-200 overflow-hidden">
+                <div className="max-h-48 overflow-y-auto divide-y divide-slate-100">
+                  {sd.days.map((d) => (
+                    <div key={d.attendance_id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                      <div>
+                        <div className="font-semibold text-slate-800">{formatDate(`${d.service_date}T00:00:00`)}</div>
+                        <div className="text-xs text-slate-400">Booking #{d.booking_id}{d.client_name ? ` · ${d.client_name}` : ''}</div>
+                      </div>
+                      <div className="font-bold text-rose-600">{formatMoney(d.salary_amount)}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">
+                  <span>{sd.days.length} day{sd.days.length === 1 ? '' : 's'} will be reversed</span>
+                  <span>{formatMoney(sd.total)}</span>
+                </div>
+              </div>
+            )
+          )}
+
+          {sd.previewed && sd.days.length > 0 && (
+            <div className="space-y-3 mb-5">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Reason <span className="text-rose-500">*</span></label>
+                <input value={sd.reason} onChange={setSalaryDeleteField('reason')} placeholder="e.g. Staff did not attend" className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Your password <span className="text-rose-500">*</span></label>
+                <input type="password" autoComplete="current-password" value={sd.password} onChange={setSalaryDeleteField('password')} className={inputCls} />
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-3">
+            <button type="button" onClick={closeSalaryDelete}
+              className="flex-1 rounded-xl border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-200 transition-all">
+              Cancel
+            </button>
+            <button type="button" onClick={submitSalaryDelete} disabled={!canConfirm}
+              className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-500 transition-all disabled:opacity-50">
+              {sd.submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Delete salaries
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // ── bank modal ─────────────────────────────────────────────────────────────
   const renderBankModal = () => !bankModal.isOpen ? null : (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -3062,6 +3232,7 @@ const StaffDetailPageV2 = () => {
 
       <div className="min-w-0 flex-1">
       {renderBankModal()}
+      {renderSalaryDeleteModal()}
       {renderEditProfileModal()}
 
       {/* HEADER ROW */}

@@ -1284,6 +1284,19 @@ class ApiClient {
     return this.request(url);
   }
 
+  // selection is { dates: ['YYYY-MM-DD', ...] } or { from, to }
+  async getStaffPaidSalaryDays(staffProfileId, { dates, from, to }) {
+    const qs = dates?.length ? `dates=${dates.join(',')}` : `from=${from}&to=${to}`;
+    return this.request(`/staff/${staffProfileId}/salary-days?${qs}`);
+  }
+
+  async revokeStaffSalaryRange(staffProfileId, { dates, from, to, reason, password }) {
+    return this.request(`/staff/${staffProfileId}/salary-days/revoke`, {
+      method: 'POST',
+      body: JSON.stringify({ dates, from, to, reason, password }),
+    });
+  }
+
   async getStaffPayoutsSummary(staffProfileId) {
     return this.request(`/staff/${staffProfileId}/payouts/summary`);
   }

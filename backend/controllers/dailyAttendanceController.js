@@ -1240,6 +1240,163 @@ exports.revokeDays = async (req, res) => {
     }
 };
 
+// ─── Staff-scoped salary deletion (date / date-range) ─────────────────────────
+// Lets an admin on the staff detail page undo already-credited daily salaries for
+// one staff member across a date range, on any booking. Staff side ONLY — client
+// invoices are untouched (use revokeDays for the both-sides reversal). Reuses
+// reverseStaffSalary, so the original CREDIT rows stay as the audit trail.
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+// Accepts either an explicit list of dates (non-contiguous picks from the staff
+// care timeline) or a from/to range. Returns the SQL predicate + params to append
+// after the staff_profile_id ($1) param, or null if the input is invalid.
+const parseSalaryDayFilter = ({ dates, from, to }) => {
+    if (Array.isArray(dates) && dates.length > 0) {
+        if (dates.length > 366 || !dates.every(d => ISO_DATE.test(d || ''))) return null;
+        const unique = [...new Set(dates)].sort();
+        return { clause: 'service_date = ANY($2::date[])', params: [unique], label: unique };
+    }
+    if (!ISO_DATE.test(from || '') || !ISO_DATE.test(to || '') || from > to) return null;
+    return { clause: 'service_date BETWEEN $2 AND $3', params: [from, to], label: { from, to } };
+};
+
+/**
+ * @route   GET /api/staff/:staff_profile_id/salary-days?from=YYYY-MM-DD&to=YYYY-MM-DD
+ * @desc    Lists PAID daily salary rows for a staff member in the range (preview
+ *          for the delete-salary modal).
+ */
+exports.listStaffPaidSalaryDays = async (req, res) => {
+    const { staff_profile_id } = req.params;
+    const filter = parseSalaryDayFilter({
+        dates: req.query.dates ? String(req.query.dates).split(',') : null,
+        from: req.query.from,
+        to: req.query.to,
+    });
+    if (!filter) {
+        return res.status(400).json({ status: 'error', message: 'Valid dates, or from/to (YYYY-MM-DD, from <= to), are required' });
+    }
+    try {
+        const result = await db.query(
+            `SELECT sda.attendance_id, sda.service_date::text AS service_date, sda.booking_id,
+                    sda.salary_amount, sda.shift_slot_id,
+                    NULLIF(CONCAT_WS(' ', NULLIF(cp.honorific, ''), cp.full_name), '') AS client_name
+             FROM staff_daily_attendance sda
+             JOIN bookings b ON b.booking_id = sda.booking_id
+             LEFT JOIN client_profiles cp ON cp.client_profile_id = b.client_id
+             WHERE sda.staff_profile_id = $1
+               AND sda.salary_status = 'PAID'
+               AND sda.${filter.clause}
+             ORDER BY sda.service_date, sda.booking_id`,
+            [staff_profile_id, ...filter.params]
+        );
+        const total = result.rows.reduce((s, r) => s + Number(r.salary_amount || 0), 0);
+        res.json({ status: 'success', data: { days: result.rows, total_amount: total } });
+    } catch (error) {
+        console.error('List staff paid salary days error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to load paid salary days' });
+    }
+};
+
+/**
+ * @route   POST /api/staff/:staff_profile_id/salary-days/revoke
+ * @desc    Reverses every PAID daily salary for the staff member in [from, to].
+ *          Password-gated (re-enter own login password), reason required.
+ * @body    from, to (YYYY-MM-DD), reason, password
+ */
+exports.revokeStaffSalaryRange = async (req, res) => {
+    const { staff_profile_id } = req.params;
+    const { dates, from, to, reason, password } = req.body;
+
+    const filter = parseSalaryDayFilter({ dates, from, to });
+    if (!filter) {
+        return res.status(400).json({ status: 'error', message: 'Valid dates, or from/to (YYYY-MM-DD, from <= to), are required' });
+    }
+    if (!reason || !reason.trim()) {
+        return res.status(400).json({ status: 'error', message: 'A reason is required' });
+    }
+    if (!password) {
+        return res.status(400).json({ status: 'error', message: 'Password confirmation is required' });
+    }
+
+    try {
+        const userRes = await db.query('SELECT password_hash FROM users WHERE user_id = $1', [req.user.user_id]);
+        if (userRes.rows.length === 0) {
+            return res.status(401).json({ status: 'error', message: 'Could not verify your account' });
+        }
+        if (!(await bcrypt.compare(password, userRes.rows[0].password_hash))) {
+            return res.status(401).json({ status: 'error', message: 'Incorrect password' });
+        }
+    } catch (error) {
+        console.error('Staff salary revoke password verification error:', error);
+        return res.status(500).json({ status: 'error', message: 'Failed to verify password' });
+    }
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const rows = await client.query(
+            `SELECT attendance_id, booking_id, service_date::text AS service_date, salary_amount
+             FROM staff_daily_attendance
+             WHERE staff_profile_id = $1 AND salary_status = 'PAID'
+               AND ${filter.clause}
+             ORDER BY service_date
+             FOR UPDATE`,
+            [staff_profile_id, ...filter.params]
+        );
+
+        if (rows.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ status: 'error', message: 'No paid salary days found in the selected range' });
+        }
+
+        const decidedByName = await getDeciderName(req.user?.user_id);
+        let totalReversed = 0;
+
+        for (const att of rows.rows) {
+            const reversalTransactionId = await reverseStaffSalary(client, {
+                staff_profile_id,
+                booking_id: att.booking_id,
+                amount: att.salary_amount,
+                notes: `Reversal of ${att.service_date} salary — ${reason}`
+            });
+            await client.query(
+                `UPDATE staff_daily_attendance
+                 SET salary_status = 'REVOKED',
+                     reversal_transaction_id = $1,
+                     revoked_at = NOW(),
+                     revoked_by_user_id = $2,
+                     revoked_by_name = $3,
+                     revoke_reason = $4,
+                     updated_at = NOW()
+                 WHERE attendance_id = $5`,
+                [reversalTransactionId, req.user?.user_id || null, decidedByName, reason, att.attendance_id]
+            );
+            totalReversed += Number(att.salary_amount || 0);
+        }
+
+        await client.query('COMMIT');
+
+        logActivity({
+            actorUserId: req.user?.user_id,
+            actorRole: req.user?.role,
+            actionType: 'STAFF_SALARY_REVOKED',
+            entityType: 'STAFF',
+            entityId: String(staff_profile_id),
+            details: { selection: filter.label, reason, days_reversed: rows.rows.length, total_amount: totalReversed, service_dates: rows.rows.map(r => r.service_date) },
+        }).catch(err => console.error('Activity log failed:', err));
+
+        res.json({ status: 'success', data: { days_reversed: rows.rows.length, total_amount: totalReversed } });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Revoke staff salary range error:', error);
+        res.status(500).json({ status: 'error', message: 'Failed to delete salaries for the selected range' });
+    } finally {
+        client.release();
+    }
+};
+
 // ─── Amount corrections ───────────────────────────────────────────────────────
 // Restating a wrong figure on an already-decided day. Distinct from revokeDays
 // above: a revoke cancels the day and hands the money back under a settlement
