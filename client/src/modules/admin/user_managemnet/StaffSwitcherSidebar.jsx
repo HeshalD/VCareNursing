@@ -91,7 +91,7 @@ const StaffSwitcherSidebar = ({ activeStaffId, onNavigate }) => {
                       {s.full_name || 'Unnamed'}
                     </p>
                     <p className="truncate text-[11px] text-gray-400">
-                      {s.staff_code || '—'}{s.gender ? ` · ${s.gender === 'MALE' ? 'Male' : s.gender === 'FEMALE' ? 'Female' : s.gender}` : ''}{s.mobile_number ? ` · ${formatMobileNumber(s.mobile_number)}` : ''}
+                      <span className="font-bold text-xs text-black">{s.staff_code || '—'}</span>{s.gender ? ` · ${s.gender === 'MALE' ? 'Male' : s.gender === 'FEMALE' ? 'Female' : s.gender}` : ''}{s.mobile_number ? ` · ${formatMobileNumber(s.mobile_number)}` : ''}
                     </p>
                   </div>
                 </Link>

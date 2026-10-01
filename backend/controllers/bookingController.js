@@ -3483,6 +3483,8 @@ exports.getAllBookings = async (req, res) => {
                 s.profile_picture_url,
                 us.email as staff_email,
                 coord.full_name as coordinator_name,
+                sp.salesperson_id AS current_salesperson_id,
+                sp.full_name AS salesperson_name,
                 CASE
                     WHEN b.status = 'ACTIVE' AND b.daily_rate > 0 THEN
                         ROUND(
@@ -3505,6 +3507,12 @@ exports.getAllBookings = async (req, res) => {
             LEFT JOIN staff_profiles s ON b.assigned_staff_id = s.staff_profile_id
             LEFT JOIN users us ON s.user_id = us.user_id
             LEFT JOIN internal_staff coord ON coord.id = b.coordinator_staff_id
+            LEFT JOIN (
+                SELECT bsa.booking_id, bsa.salesperson_id, ist.full_name
+                FROM booking_salesperson_assignments bsa
+                JOIN internal_staff ist ON ist.id = bsa.salesperson_id
+                WHERE bsa.is_current = true
+            ) sp ON sp.booking_id = b.booking_id
             LEFT JOIN (
                 SELECT
                     booking_id,

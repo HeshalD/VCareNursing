@@ -333,7 +333,7 @@ const PayablesAging = () => {
                           <td className="px-6 py-3 text-slate-600 whitespace-nowrap">{formatDate(item.reference_date)}</td>
                           <td className="px-6 py-3 text-slate-600 whitespace-nowrap">{formatDate(item.reference_date)}</td>
                           <td className="px-6 py-3">
-                            <span className="font-medium text-blue-700 hover:underline cursor-default">{item.reference}</span>
+                            <span className="font-bold text-black hover:underline cursor-default">{item.reference}</span>
                           </td>
                           <td className="px-6 py-3 text-slate-600">{item.type}</td>
                           <td className="px-6 py-3">

@@ -242,7 +242,7 @@ const AddReviewModal = ({ onClose, onCreated }) => {
             {selectedStaff && (
               <StepCrumb
                 label="Staff"
-                value={`${selectedStaff.full_name}${selectedStaff.staff_code ? ` · ${selectedStaff.staff_code}` : ''}`}
+                value={<>{selectedStaff.full_name}{selectedStaff.staff_code ? <> · <strong className="font-bold text-black">{selectedStaff.staff_code}</strong></> : ''}</>}
                 active={step === STEP_STAFF || step === STEP_DETAILS}
                 onChange={goToStaffStep}
               />
@@ -372,7 +372,7 @@ const AddReviewModal = ({ onClose, onCreated }) => {
 
                         <DetailRow icon={Users}>
                           {b.assigned_staff_name
-                            ? <>{b.assigned_staff_name}{b.assigned_staff_code ? ` (${b.assigned_staff_code})` : ''}</>
+                            ? <>{b.assigned_staff_name}{b.assigned_staff_code ? <> (<strong className="font-bold text-black">{b.assigned_staff_code}</strong>)</> : ''}</>
                             : 'No lead staff assigned'}
                           {Number(b.staff_count) > 0 && (
                             <span className="text-slate-400"> · {b.staff_count} staff on booking</span>
@@ -424,7 +424,7 @@ const AddReviewModal = ({ onClose, onCreated }) => {
                           <GenderBadge gender={s.gender} />
                         </div>
                         <p className="text-xs text-slate-500 truncate">
-                          {s.staff_code && <span className="font-medium text-slate-600">{s.staff_code}</span>}
+                          {s.staff_code && <span className="font-bold text-sm text-black">{s.staff_code}</span>}
                           {s.staff_code && ' · '}
                           {s.designation || 'Staff'}
                         </p>

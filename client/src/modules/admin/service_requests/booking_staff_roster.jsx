@@ -579,7 +579,7 @@ const BookingStaffRosterPage = () => {
                               </div>
                               {(member.staff_code || member.gender) && (
                                 <p className="text-xs text-gray-400 font-mono">
-                                  {member.staff_code}{member.staff_code && member.gender ? ' · ' : ''}{member.gender ? (member.gender === 'MALE' ? 'Male' : member.gender === 'FEMALE' ? 'Female' : member.gender) : ''}
+                                  <span className="font-bold text-sm text-black">{member.staff_code}</span>{member.staff_code && member.gender ? ' · ' : ''}{member.gender ? (member.gender === 'MALE' ? 'Male' : member.gender === 'FEMALE' ? 'Female' : member.gender) : ''}
                                 </p>
                               )}
                               <p className="text-xs text-gray-500">{member.designation || 'Staff Member'}</p>

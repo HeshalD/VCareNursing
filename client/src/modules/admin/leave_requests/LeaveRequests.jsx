@@ -576,7 +576,7 @@ const LeaveRequests = () => {
                       <tr key={leave.leave_id} className="hover:bg-slate-50 transition-colors">
                         <td className="px-4 py-3">
                           <p className="font-semibold text-slate-900 leading-tight"><StaffLink id={leave.staff_profile_id}>{leave.full_name || '—'}</StaffLink></p>
-                          <p className="text-xs text-slate-400 mt-0.5 font-mono"><StaffLink id={leave.staff_profile_id}>{leave.staff_code || ''}</StaffLink>{leave.gender ?` · ${leave.gender === 'MALE' ? 'Male' : leave.gender === 'FEMALE' ? 'Female' : leave.gender}` : ''}</p>
+                          <p className="text-xs text-slate-400 mt-0.5 font-mono"><StaffLink id={leave.staff_profile_id}><strong className="font-bold text-sm text-black">{leave.staff_code || ''}</strong></StaffLink>{leave.gender ?` · ${leave.gender === 'MALE' ? 'Male' : leave.gender === 'FEMALE' ? 'Female' : leave.gender}` : ''}</p>
                         </td>
                         <td className="px-4 py-3 text-slate-700 whitespace-nowrap">
                           {fmt(leave.start_date)} <span className="text-slate-400">→</span> {fmt(leave.end_date)}
@@ -644,7 +644,7 @@ const LeaveRequests = () => {
                     <tr key={s.leave_id} className="hover:bg-slate-50 transition-colors">
                       <td className="px-4 py-3">
                         <p className="font-semibold text-slate-900 leading-tight"><StaffLink id={s.staff_profile_id}>{s.full_name}</StaffLink></p>
-                        <p className="text-xs text-slate-400 mt-0.5 font-mono"><StaffLink id={s.staff_profile_id}>{s.staff_code || ''}</StaffLink>{s.designation ? ` · ${s.designation}` : ''}</p>
+                        <p className="text-xs text-slate-400 mt-0.5 font-mono"><StaffLink id={s.staff_profile_id}><strong className="font-bold text-sm text-black">{s.staff_code || ''}</strong></StaffLink>{s.designation ? ` · ${s.designation}` : ''}</p>
                       </td>
                       <td className="px-4 py-3 text-slate-700 whitespace-nowrap">
                         {fmt(s.start_date)} <span className="text-slate-400">→</span> {fmt(s.end_date)}
@@ -711,7 +711,7 @@ const LeaveRequests = () => {
                         <tr key={leave.leave_id} className="hover:bg-slate-50 transition-colors">
                           <td className="px-4 py-3">
                             <p className="font-semibold text-slate-900 leading-tight"><StaffLink id={leave.staff_profile_id}>{leave.full_name || '—'}</StaffLink></p>
-                            <p className="text-xs text-slate-400 mt-0.5 font-mono"><StaffLink id={leave.staff_profile_id}>{leave.staff_code || ''}</StaffLink>{leave.designation ? ` · ${leave.designation}` : ''}</p>
+                            <p className="text-xs text-slate-400 mt-0.5 font-mono"><StaffLink id={leave.staff_profile_id}><strong className="font-bold text-sm text-black">{leave.staff_code || ''}</strong></StaffLink>{leave.designation ? ` · ${leave.designation}` : ''}</p>
                           </td>
                           <td className="px-4 py-3 text-slate-700 whitespace-nowrap">
                             {fmt(leave.start_date)} <span className="text-slate-400">→</span> {fmt(leave.end_date)}
@@ -933,7 +933,7 @@ const LeaveRequests = () => {
                           <div className="min-w-0">
                             <p className="text-sm font-semibold text-slate-900 truncate">{s.full_name}</p>
                             <p className="text-xs text-slate-400 mt-0.5">
-                              {s.designation || '—'}{s.staff_code ? ` · ${s.staff_code}` : ''}{s.gender ? ` · ${s.gender === 'MALE' ? 'Male' : s.gender === 'FEMALE' ? 'Female' : s.gender}` : ''}
+                              {s.designation || '—'}{s.staff_code ? <> · <strong className="font-bold text-sm text-black">{s.staff_code}</strong></> : ''}{s.gender ? ` · ${s.gender === 'MALE' ? 'Male' : s.gender === 'FEMALE' ? 'Female' : s.gender}` : ''}
                             </p>
                             {s.unavailable && (
                               <p className="text-xs text-amber-600 mt-0.5 flex items-center gap-1">
@@ -1155,7 +1155,7 @@ const LeaveRequests = () => {
                             className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 transition-colors"
                           >
                             <p className="font-medium text-slate-900">{s.full_name}</p>
-                            <p className="text-xs text-slate-400">{s.staff_code || ''}{s.designation ? ` · ${s.designation}` : ''}</p>
+                            <p className="text-xs text-slate-400"><strong className="font-bold text-sm text-black">{s.staff_code || ''}</strong>{s.designation ? ` · ${s.designation}` : ''}</p>
                           </button>
                         ))
                       )}

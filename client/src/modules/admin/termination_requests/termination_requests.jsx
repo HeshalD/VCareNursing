@@ -378,7 +378,7 @@ const TerminationRequests = () => {
                                     </div>
                                     <div>
                                       <p className="text-sm font-semibold text-slate-900"><StaffLink id={request.staff_profile_id}>{request.staff_name || 'Not assigned'}</StaffLink></p>
-                                      <p className="text-xs text-slate-400 font-mono">{request.staff_code || request.staff_profile_id || ''}{request.gender ? ` · ${request.gender === 'MALE' ? 'Male' : request.gender === 'FEMALE' ? 'Female' : request.gender}` : ''}</p>
+                                      <p className="text-xs text-slate-400 font-mono"><strong className="font-bold text-sm text-black">{request.staff_code || request.staff_profile_id || ''}</strong>{request.gender ? ` · ${request.gender === 'MALE' ? 'Male' : request.gender === 'FEMALE' ? 'Female' : request.gender}` : ''}</p>
                                     </div>
                                   </div>
                                   <div>

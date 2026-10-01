@@ -30,7 +30,7 @@ const PILL = {
   overdue:  { bg: 'rgba(194,72,60,.24)',  color: '#C2483C', label: 'Overdue' },
   upcoming: { bg: 'rgba(213,207,196,.5)', color: '#8A8478', label: 'Upcoming' },
 };
-const META_COLOR = { PENDING: '#C98A2E', PAID: '#2F8A5B', INVOICED: '#2F8A5B', SKIPPED: '#B4AEA3', REVOKED: '#8A8478', DRAFT: '#3F77B5' };
+const META_COLOR = { PENDING: '#C98A2E', PAID: '#2F8A5B', INVOICED: '#2F8A5B', SKIPPED: '#B4AEA3', REVOKED: '#8A8478', DRAFT: '#3F77B5', AWAITING_PAY: '#3F77B5' };
 
 // Event type config — colour dot + tooltip icon + label
 const EVENT_CFG = {
@@ -56,6 +56,7 @@ const metaLabel = (meta, doneWord) => {
   if (!meta) return '';
   if (meta.status === 'DRAFT') return 'Draft — not confirmed';
   if (meta.status === 'PENDING') return 'Action needed';
+  if (meta.status === 'AWAITING_PAY') return 'Day confirmed — pay settled at end';
   if (meta.status === 'SKIPPED') return 'Skipped';
   if (meta.status === 'REVOKED') return 'Revoked';
   return `${doneWord} Rs ${Number(meta.amount || 0).toLocaleString('en-US')}`;
@@ -108,6 +109,7 @@ const CareTimeline = ({
   attendanceRecords = [],
   dailyInvoiceRecords = [],
   draftDates = new Set(), // Set<dateISO> — days with a cached-but-unconfirmed booking_day_drafts row
+  confirmedDates = new Set(), // Set<dateISO> — days the admin has already confirmed via the Day modal
   reschedules = [],      // [{ reschedule_id, shift_slot_id, original_date, new_date, new_start_time, assignment_id, makeup_staff_name, shift_number, shift_label }]
   manualSalaryDay = false,
   manualInvoiceDay = false,
@@ -635,7 +637,11 @@ const CareTimeline = ({
       const anyPending = salaryRecs.some((r) => r.salary_status === 'PENDING');
       const anyPaid    = salaryRecs.some((r) => r.salary_status === 'PAID');
       const anyRevoked = salaryRecs.some((r) => r.salary_status === 'REVOKED');
-      const status = anyPending ? 'PENDING' : anyPaid ? 'PAID' : anyRevoked ? 'REVOKED' : 'SKIPPED';
+      // A LIVE_IN first/last day is confirmed with its salary deliberately left
+      // PENDING (settled when the assignment ends) — once the day itself has been
+      // confirmed, that isn't something the admin still has to act on today.
+      const awaitingPay = anyPending && confirmedDates.has(dateISO) && !draftDates.has(dateISO);
+      const status = awaitingPay ? 'AWAITING_PAY' : anyPending ? 'PENDING' : anyPaid ? 'PAID' : anyRevoked ? 'REVOKED' : 'SKIPPED';
       const decidedBy = [...new Set(salaryRecs.filter((r) => r.decided_by_name).map((r) => r.decided_by_name))].join(', ') || null;
       const amount = salaryRecs.reduce((sum, r) => sum + (r.salary_status === 'PAID' ? Number(r.salary_amount || 0) : 0), 0);
       salary = { status, decidedBy, amount };
@@ -903,7 +909,7 @@ const CareTimeline = ({
       calRows: rows,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clampedMonthIdx, bookingMonths, start, displayDays, plannedDays, paidDays, servedDays, nurseColorMap, attendanceByDate, invoiceByDate, draftDates, manualSalaryDay, manualInvoiceDay, shiftSlots, eventsByDate, staffAssignments, reschedules, movedOrigins, assignmentByIdForReschedule, naturalEndDayNum, partialLastDay, pauseWindows, hospitalizedRanges]);
+  }, [clampedMonthIdx, bookingMonths, start, displayDays, plannedDays, paidDays, servedDays, nurseColorMap, attendanceByDate, invoiceByDate, draftDates, confirmedDates, manualSalaryDay, manualInvoiceDay, shiftSlots, eventsByDate, staffAssignments, reschedules, movedOrigins, assignmentByIdForReschedule, naturalEndDayNum, partialLastDay, pauseWindows, hospitalizedRanges]);
 
   const activeCell = useMemo(() => {
     if (hoveredDay == null) return null;
@@ -1380,7 +1386,7 @@ const CareTimeline = ({
                                 />
                                 <span className="text-xs font-semibold text-[#F2EFE8] truncate">{nurse.name}</span>
                                 {nurse.staffCode && (
-                                  <span className="text-[10px] text-[#A8A299] flex-shrink-0">{nurse.staffCode}</span>
+                                  <span className="text-xs font-bold text-[#F2EFE8] flex-shrink-0">{nurse.staffCode}</span>
                                 )}
                                 {nurse.kind === 'MOVED' && (
                                   <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(180,174,163,.24)', color: '#CFC9BE' }}>Moved</span>
@@ -1948,7 +1954,7 @@ const CareTimeline = ({
                       />
                       <span className="text-sm font-semibold text-[#3A362F] truncate">{nurse.name}</span>
                       {nurse.staffCode && (
-                        <span className="text-xs text-[#9A9488] flex-shrink-0">{nurse.staffCode}</span>
+                        <span className="text-sm font-bold text-black flex-shrink-0">{nurse.staffCode}</span>
                       )}
                       {nurse.kind === 'MOVED' && (
                         <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(180,174,163,.16)', color: '#8A8478' }}>Moved</span>
@@ -2087,6 +2093,9 @@ const CareTimeline = ({
               </span>
               <span className="flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full inline-block" style={{ background: META_COLOR.DRAFT }} /> Draft
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full inline-block" style={{ background: META_COLOR.AWAITING_PAY }} /> Confirmed, pay at end
               </span>
             </div>
           </>

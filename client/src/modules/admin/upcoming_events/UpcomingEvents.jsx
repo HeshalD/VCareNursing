@@ -264,7 +264,7 @@ const UpcomingEvents = () => {
 
                     {event.source === 'PENDING_LEAVE' && (
                       <>
-                        <Detail label="Staff" value={`${event.current_staff_name || '—'}${event.staff_code ? ` (${event.staff_code})` : ''}`} />
+                        <Detail label="Staff" value={<>{event.current_staff_name || '—'}{event.staff_code ? <> (<strong className="font-bold text-sm text-black">{event.staff_code}</strong>)</> : ''}</>} />
                         <Detail label="Leave Period" value={`${fmt(event.start_date)} → ${fmt(event.end_date)}`} tone="font-medium" />
                         <Detail label="Reason" value={event.reason} />
                         <Detail label="Requested On" value={fmt(event.created_at)} />
@@ -273,7 +273,7 @@ const UpcomingEvents = () => {
 
                     {event.source === 'EXPIRING_LEAVE' && (
                       <>
-                        <Detail label="Staff" value={`${event.current_staff_name || '—'}${event.staff_code ? ` (${event.staff_code})` : ''}`} />
+                        <Detail label="Staff" value={<>{event.current_staff_name || '—'}{event.staff_code ? <> (<strong className="font-bold text-sm text-black">{event.staff_code}</strong>)</> : ''}</>} />
                         <Detail label="Leave Period" value={`${fmt(event.start_date)} → ${fmt(event.end_date)}`} />
                         <Detail label="Was Due Back" value={fmt(event.end_date)} tone="text-red-600 font-medium" />
                         <Detail label="Reason" value={event.reason} />

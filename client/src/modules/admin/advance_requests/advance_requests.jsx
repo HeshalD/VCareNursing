@@ -241,7 +241,7 @@ const AdvanceRequests = () => {
                           <div>
                             <p className="font-semibold text-slate-900 leading-tight"><StaffLink id={request.staff_profile_id}>{request.full_name || '—'}</StaffLink></p>
                             <p className="text-xs text-slate-400 font-mono">
-                              {request.advance_code || (request.staff_code ? `#${request.staff_code}` : '—')}{request.gender ? ` · ${request.gender === 'MALE' ? 'Male' : request.gender === 'FEMALE' ? 'Female' : request.gender}` : ''}
+                              {request.advance_code || (request.staff_code ? <strong className="font-bold text-sm text-black">#{request.staff_code}</strong> : '—')}{request.gender ? ` · ${request.gender === 'MALE' ? 'Male' : request.gender === 'FEMALE' ? 'Female' : request.gender}` : ''}
                             </p>
                           </div>
                         </div>
@@ -383,7 +383,7 @@ const AdvanceRequests = () => {
                 <div>
                   <p className="text-sm font-semibold text-slate-900"><StaffLink id={selectedRequest.staff_profile_id}>{selectedRequest.full_name || '—'}</StaffLink></p>
                   <p className="text-xs text-slate-400 mt-0.5 font-mono">
-                    {selectedRequest.staff_code ? `#${selectedRequest.staff_code}` : 'No staff code assigned'}
+                    {selectedRequest.staff_code ? <strong className="font-bold text-sm text-black">#{selectedRequest.staff_code}</strong> : 'No staff code assigned'}
                   </p>
                 </div>
                 <div className="ml-auto">

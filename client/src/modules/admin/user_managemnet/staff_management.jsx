@@ -575,7 +575,7 @@ const StaffManagement = () => {
                           )}
                         </p>
                         {worker.staff_code && (
-                          <p className="text-xs text-slate-400 font-mono">{worker.staff_code}</p>
+                          <p className="text-sm text-black font-mono font-bold">{worker.staff_code}</p>
                         )}
                         {worker.portal_access_disabled && (
                           <span className="inline-flex items-center gap-1 mt-0.5 mr-1 text-[10px] font-semibold text-red-700 bg-red-50 border border-red-100 px-1.5 py-0.5 rounded">

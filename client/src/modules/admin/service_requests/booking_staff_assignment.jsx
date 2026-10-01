@@ -1165,7 +1165,7 @@ const StaffPicker = ({ staff, value, onChange, compact = false }) => {
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-2">
                         {s.staff_code && (
-                          <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-[11px] font-mono font-medium text-gray-500">
+                          <span className="shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-xs font-mono font-bold text-black">
                             <HighlightMatch text={s.staff_code} query={q} />
                           </span>
                         )}

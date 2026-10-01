@@ -587,7 +587,7 @@ const ProxyUserManagement = () => {
                       <div>
                         <p className="font-semibold text-slate-900 leading-tight">{worker.name}</p>
                         {worker.staff_code && (
-                          <p className="text-xs text-slate-400 font-mono">{worker.staff_code}</p>
+                          <p className="text-sm text-black font-mono font-bold">{worker.staff_code}</p>
                         )}
                       </div>
                     </div>

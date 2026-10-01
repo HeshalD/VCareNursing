@@ -675,7 +675,7 @@ const StaffRoster = () => {
                         </div>
                         <div>
                           <div className="font-medium text-slate-900">{staffMember.full_name}</div>
-                          <div className="text-sm text-slate-500">{staffMember.staff_code || `ID: ${staffMember.staff_profile_id}`}</div>
+                          <div className="text-[15px] text-black font-bold">{staffMember.staff_code || `ID: ${staffMember.staff_profile_id}`}</div>
                         </div>
                       </div>
                     </td>
@@ -1025,7 +1025,7 @@ const StaffRoster = () => {
                                   )}
                                 </div>
                                 <div>
-                                  <div className="font-medium text-slate-900">{staffMember.full_name}{staffMember.staff_code ? ` (${staffMember.staff_code})` : ''}</div>
+                                  <div className="font-medium text-slate-900">{staffMember.full_name}{staffMember.staff_code ? <> (<strong className="font-bold">{staffMember.staff_code}</strong>)</> : ''}</div>
                                   <div className="text-sm text-slate-600">{formatMobileNumber(staffMember.mobile_number)}{staffMember.gender ? ` · ${staffMember.gender === 'MALE' ? 'Male' : staffMember.gender === 'FEMALE' ? 'Female' : staffMember.gender}` : ''}</div>
                                   <div className="text-sm text-slate-500">{staffMember.email}</div>
                                   <div className="flex items-center gap-2 mt-1">

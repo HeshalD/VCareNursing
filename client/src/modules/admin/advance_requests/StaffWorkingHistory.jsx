@@ -181,7 +181,7 @@ export default function StaffWorkingHistory() {
             <div className="flex flex-wrap items-center gap-2 mb-1">
               <h2 className="text-xl font-bold text-slate-900">{profile.full_name}</h2>
               {profile.staff_code && (
-                <span className="text-xs font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
+                <span className="text-sm font-mono font-bold bg-slate-100 text-black px-2 py-0.5 rounded">
                   #{profile.staff_code}
                 </span>
               )}

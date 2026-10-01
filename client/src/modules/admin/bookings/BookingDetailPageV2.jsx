@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, AlertTriangle, ArrowLeft, CalendarDays, CheckCircle, Download, DollarSign,
   LayoutGrid, Loader2, Menu, MessageCircle, Phone, RefreshCw, Repeat2, Search, SendHorizontal, ShieldCheck,
@@ -173,7 +173,7 @@ const StaffLink = ({ id, children, className, style, title }) => {
 const StaffProfileDetails = ({ staff }) => {
   const age = ageFromDob(staff.date_of_birth);
   const fields = [
-    ['Staff ID',      staff.staff_code || null],
+    ['Staff ID',      staff.staff_code ? <strong className="font-bold text-xs text-black">{staff.staff_code}</strong> : null],
     ['Designation',   staff.designation || null],
     ['Phone',         staff.mobile_number ? formatMobileNumber(staff.mobile_number) : null],
     ['Email',         staff.email || null],
@@ -625,6 +625,10 @@ const BookingDetailPageV2 = () => {
   const [draftInvoiceDecisions, setDraftInvoiceDecisions] = useState({}); // key ('day' | shift_slot_id) -> { approve, amount, shift_slot_id, reschedule_id }
   const [draftWaives, setDraftWaives] = useState({}); // shift_slot_id -> { assignment_id, reschedule_id }
   const [confirmDayBusy, setConfirmDayBusy] = useState(false);
+  // Bumped on every openDayModal/closeDayModal — lets a slow getDayDraft response
+  // tell it's stale (admin already closed it or opened another day) and bail.
+  const dayModalRequestRef = useRef(0);
+  const draftSaveChainRef = useRef(Promise.resolve()); // serializes persistDraftWith PUTs
   const [draftDates, setDraftDates] = useState(() => new Set()); // service_date strings on this booking with an unconfirmed draft (CareTimeline badge)
   const [invoicingModeSaving, setInvoicingModeSaving] = useState(false);
   const [hospitalizationSaving, setHospitalizationSaving] = useState(false);
@@ -1304,6 +1308,18 @@ const BookingDetailPageV2 = () => {
     }
   };
 
+  // Dates the admin has already confirmed through the Day modal (DAY_CONFIRMED is
+  // logged by confirmDayDraft). A confirmed LIVE_IN first/last day still has a
+  // PENDING attendance row (pay is settled when the assignment ends), so the
+  // row's status alone can't tell "confirmed" apart from "never confirmed".
+  const confirmedDates = useMemo(() => {
+    const set = new Set();
+    attendanceHistory.forEach(h => {
+      if (h.action_type === 'DAY_CONFIRMED' && h.details?.service_date) set.add(String(h.details.service_date).slice(0, 10));
+    });
+    return set;
+  }, [attendanceHistory]);
+
   // Shift-slot occurrences moved away from their original date via the Reschedule
   // modal — the standing assignment is open-ended, so without this it would still
   // show up in the attendance form on the date it no longer runs on.
@@ -1376,7 +1392,10 @@ const BookingDetailPageV2 = () => {
         // time already logged — don't let a record short-circuit that flow.
         const { onlyStart, onlyEnd, sameDay } = liveInBoundary(a, dateISO);
         const isSwapOutgoingOpenCandidate = isLiveIn && !a.shift_slot_id && !a.service_end_date && !onlyStart && !onlyEnd && !sameDay;
-        if (existingRecord.salary_status === 'PENDING' && existingRecord.in_time && existingRecord.out_time && !isSwapOutgoingOpenCandidate) {
+        // Skip when the day was already confirmed: a LIVE_IN boundary day stays PENDING
+        // after confirm (pay settled at assignment end), and re-seeding it would
+        // resurrect the "Review & Confirm Day" form for a day that's already done.
+        if (existingRecord.salary_status === 'PENDING' && existingRecord.in_time && existingRecord.out_time && !isSwapOutgoingOpenCandidate && !confirmedDates.has(dateISO)) {
           timeSavedFromRecords[a.assignment_id] = {
             service_date: dateISO, in_time: existingRecord.in_time, out_time: existingRecord.out_time,
             hours_served: (new Date(existingRecord.out_time) - new Date(existingRecord.in_time)) / (1000 * 60 * 60),
@@ -1411,12 +1430,16 @@ const BookingDetailPageV2 = () => {
     setDraftInvoiceDecisions({});
     setDraftWaives({});
     setDayModal({ dateISO, dayNum, assignments });
+    const requestId = ++dayModalRequestRef.current;
 
     // Rehydrate any cached-but-unconfirmed draft for this day (backend-persisted —
     // survives refresh/navigation, see dailyDraftController.js).
     try {
       apiClient.setToken(adminToken);
       const res = await apiClient.getDayDraft(bookingId, dateISO);
+      // Another day was opened (or this one closed) while the fetch was in flight —
+      // applying this payload now would paint the wrong day's draft into the modal.
+      if (requestId !== dayModalRequestRef.current) return;
       const payload = res?.data?.payload;
       if (!payload) return; // no in-session draft — the pre-seeded record-backed times above stand
 
@@ -1442,8 +1465,10 @@ const BookingDetailPageV2 = () => {
       });
       const invoiceDecisions = {};
       (payload.invoices || []).forEach(entry => {
-        const key = entry.shift_slot_id || 'day';
-        invoiceDecisions[key] = { approve: entry.approve, amount: entry.amount, shift_slot_id: entry.shift_slot_id || null, reschedule_id: entry.reschedule_id || null };
+        // Same key scheme as decideInvoice — a mid-swap day's per-staff invoices are
+        // keyed by assignment_id, and must keep it or they collapse into one whole-day decision.
+        const key = entry.assignment_id || entry.shift_slot_id || 'day';
+        invoiceDecisions[key] = { approve: entry.approve, amount: entry.amount, shift_slot_id: entry.shift_slot_id || null, assignment_id: entry.assignment_id || null, reschedule_id: entry.reschedule_id || null };
       });
       // A record-seeded time entry is superseded by any explicit draft decision
       // for the same assignment (absent/present/exception), not just another TIME entry.
@@ -1461,6 +1486,7 @@ const BookingDetailPageV2 = () => {
     }
   };
   const closeDayModal = () => {
+    dayModalRequestRef.current++;
     setDayModal(null); setDayModalError(''); setAttendanceInputs({}); setInvoiceAmountInput(''); setInvoiceAmountInputsBySlot({});
     setEditingAttendanceIds(new Set()); setDayModalStep('edit');
     setDraftTimeSaved({}); setDraftAbsent({}); setDraftPresent({}); setDraftException({}); setExceptionForm(null);
@@ -1486,6 +1512,19 @@ const BookingDetailPageV2 = () => {
   // caller passes the just-computed next value rather than relying on stale state).
   const persistDraftWith = (overrides = {}) => {
     if (!dayModal) return;
+    const payload = buildDraftPayload(overrides);
+    const dateISO = dayModal.dateISO;
+    apiClient.setToken(adminToken);
+    // Chained, not fired in parallel — parallel PUTs can land out of order and leave
+    // an older payload as the saved draft (or recreate the draft after Confirm Day
+    // deleted it). confirmDayDraft awaits this chain before confirming.
+    draftSaveChainRef.current = draftSaveChainRef.current
+      .then(() => apiClient.upsertDayDraft(bookingId, { service_date: dateISO, payload }))
+      .then(() => setDraftDates(prev => new Set(prev).add(dateISO)))
+      .catch(err => setDayModalError(err?.message || 'Failed to save draft'));
+  };
+
+  const buildDraftPayload = (overrides = {}) => {
     const timeSaved = overrides.timeSaved ?? draftTimeSaved;
     const absent = overrides.absent ?? draftAbsent;
     const present = overrides.present ?? draftPresent;
@@ -1527,10 +1566,7 @@ const BookingDetailPageV2 = () => {
       action: 'DECIDE', approve: dec.approve, amount: dec.approve ? dec.amount : undefined,
     }));
 
-    apiClient.setToken(adminToken);
-    apiClient.upsertDayDraft(bookingId, { service_date: dayModal.dateISO, payload: { staff, invoices } })
-      .then(() => setDraftDates(prev => new Set(prev).add(dayModal.dateISO)))
-      .catch(err => setDayModalError(err?.message || 'Failed to save draft'));
+    return { staff, invoices };
   };
 
   // LIVE_IN staff stay with the patient continuously until the booking ends (or they're
@@ -1601,7 +1637,10 @@ const BookingDetailPageV2 = () => {
   // to persist until Save is pressed again.
   const editAttendanceTimes = (assignment) => {
     const assignmentId = assignment.assignment_id;
-    const saved = draftTimeSaved[assignmentId];
+    // Falls back to the real attendance row for a day that was already confirmed
+    // (no draft entry exists for it any more).
+    const saved = draftTimeSaved[assignmentId]
+      || attendanceRecords.find(r => r.assignment_id === assignmentId && r.service_date?.slice(0, 10) === dayModal.dateISO);
     const toLocalHM = (ts) => ts ? new Date(ts).toTimeString().slice(0, 5) : '';
     setAttendanceInputs(p => ({
       ...p,
@@ -1701,6 +1740,10 @@ const BookingDetailPageV2 = () => {
   const decideSalary = (assignmentId, approve, defaultAmount) => {
     const overrideAmt = salaryAmountInputs[assignmentId];
     const amount = approve ? parseFloat(overrideAmt !== undefined && overrideAmt !== '' ? overrideAmt : defaultAmount) : null;
+    // A blank field with no daily_rate on the assignment parses to NaN — it would
+    // serialize as null and the preview would total it as Rs.0.
+    if (approve && !(amount > 0)) { setDayModalError('Enter a salary amount greater than 0'); return; }
+    setDayModalError('');
     const nextSalary = { ...draftSalaryDecisions, [assignmentId]: { approve, amount } };
     setDraftSalaryDecisions(nextSalary);
     persistDraftWith({ salaryDecisions: nextSalary });
@@ -1726,6 +1769,9 @@ const BookingDetailPageV2 = () => {
     const amount = approve
       ? parseFloat(assignmentId ? invoiceAmountInputsByAssignment[assignmentId] : shiftSlotId ? invoiceAmountInputsBySlot[shiftSlotId] : invoiceAmountInput)
       : null;
+    // Untouched/blank amount fields parse to NaN — see decideSalary.
+    if (approve && !(amount > 0)) { setDayModalError('Enter an invoice amount greater than 0'); return; }
+    setDayModalError('');
     const nextInvoiceDecisions = {
       ...draftInvoiceDecisions,
       [key]: { approve, amount, shift_slot_id: shiftSlotId || null, assignment_id: assignmentId || null, reschedule_id: slotAssignment?.reschedule_id || null },
@@ -1806,9 +1852,11 @@ const BookingDetailPageV2 = () => {
     if (!window.confirm('Discard everything entered for this day? This cannot be undone.')) return;
     try {
       apiClient.setToken(adminToken);
+      await draftSaveChainRef.current; // a still-queued save would recreate the draft right after the delete
       await apiClient.discardDayDraft(bookingId, dayModal.dateISO);
       setDraftDates(prev => { const next = new Set(prev); next.delete(dayModal.dateISO); return next; });
-      setDraftTimeSaved({}); setDraftAbsent({}); setDraftSalaryDecisions({}); setDraftInvoiceDecisions({}); setDraftWaives({});
+      setDraftTimeSaved({}); setDraftAbsent({}); setDraftPresent({}); setDraftException({}); setExceptionForm(null);
+      setDraftSalaryDecisions({}); setDraftInvoiceDecisions({}); setDraftWaives({});
       setAttendanceInputs({}); setEditingAttendanceIds(new Set());
       setDayModalStep('edit');
     } catch (err) { setDayModalError(err?.message || 'Failed to discard draft'); }
@@ -1820,6 +1868,12 @@ const BookingDetailPageV2 = () => {
     try {
       setConfirmDayBusy(true); setDayModalError('');
       apiClient.setToken(adminToken);
+      // Re-save exactly what the preview is showing before confirming. Draft saves
+      // are fire-and-forget, so an earlier PUT can land after a later one and leave
+      // the server with stale decisions; and record-seeded rows (openDayModal) only
+      // live in local state, so without this the server may have no draft at all.
+      await draftSaveChainRef.current;
+      await apiClient.upsertDayDraft(bookingId, { service_date: dayModal.dateISO, payload: buildDraftPayload() });
       await apiClient.confirmDayDraft(bookingId, dayModal.dateISO);
       setDraftDates(prev => { const next = new Set(prev); next.delete(dayModal.dateISO); return next; });
       await Promise.all([fetchDailyRecords(), fetchDetail()]);
@@ -3281,6 +3335,7 @@ const BookingDetailPageV2 = () => {
                     attendanceRecords={attendanceRecords}
                     dailyInvoiceRecords={dailyInvoiceRecords}
                     draftDates={draftDates}
+                    confirmedDates={confirmedDates}
                     reschedules={shiftReschedules}
                     manualSalaryDay={manualSalaryDay}
                     manualInvoiceDay={manualInvoiceDay}
@@ -3365,7 +3420,7 @@ const BookingDetailPageV2 = () => {
                         </div>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 13 }}>
-                        <Field label="Staff ID"   value={<StaffLink id={normCurrentStaff.profileId}>{normCurrentStaff.id}</StaffLink>}     mono />
+                        <Field label="Staff ID"   value={<StaffLink id={normCurrentStaff.profileId}><strong style={{ fontWeight: 700 }}>{normCurrentStaff.id}</strong></StaffLink>}     mono />
                         <Field label="Phone"       value={formatMobileNumber(normCurrentStaff.mobile)} />
                         <Field label="Email"       value={normCurrentStaff.email}  />
                         {activeStaffRow && (
@@ -3667,7 +3722,7 @@ const BookingDetailPageV2 = () => {
                                   <div style={{ fontSize: 12.5, color: '#6F6A60' }}>
                                     <StaffLink id={slot.assignment.staff_profile_id}>
                                       {slot.assignment.staff_name}
-                                      {slot.assignment.staff_code && <span style={{ marginLeft: 5, fontSize: 11, color: '#A39D91', fontFamily: "'JetBrains Mono',monospace" }}>{slot.assignment.staff_code}</span>}
+                                      {slot.assignment.staff_code && <span style={{ marginLeft: 5, fontSize: 13, fontWeight: 700, color: '#000', fontFamily: "'JetBrains Mono',monospace" }}>{slot.assignment.staff_code}</span>}
                                     </StaffLink>
                                     {' '}· {formatMoney(slot.assignment.daily_rate)}/shift
                                   </div>
@@ -3715,13 +3770,13 @@ const BookingDetailPageV2 = () => {
                         <div>
                           <div style={{ fontSize: 15, fontWeight: 700, color: '#2A2722', display: 'flex', alignItems: 'center', gap: 7 }}>
                             <StaffLink id={normCurrentStaff.profileId}>{normCurrentStaff.name}</StaffLink>
-                            <StaffLink id={normCurrentStaff.profileId}><span style={{ fontSize: 11, fontWeight: 600, color: '#A39D91', fontFamily: "'JetBrains Mono',monospace" }}>{normCurrentStaff.id}</span></StaffLink>
+                            <StaffLink id={normCurrentStaff.profileId}><span style={{ fontSize: 13, fontWeight: 700, color: '#000', fontFamily: "'JetBrains Mono',monospace" }}>{normCurrentStaff.id}</span></StaffLink>
                           </div>
                           <div style={{ fontSize: 12.5, color: '#6F6A60', marginTop: 2 }}>{normCurrentStaff.designation}</div>
                         </div>
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 13 }}>
-                        <Field label="Staff ID"   value={<StaffLink id={normCurrentStaff.profileId}>{normCurrentStaff.id}</StaffLink>}     mono />
+                        <Field label="Staff ID"   value={<StaffLink id={normCurrentStaff.profileId}><strong style={{ fontWeight: 700 }}>{normCurrentStaff.id}</strong></StaffLink>}     mono />
                         <Field label="Phone"       value={formatMobileNumber(normCurrentStaff.mobile)} />
                         <Field label="Email"       value={normCurrentStaff.email}  />
                         {activeStaffRow && (
@@ -3969,7 +4024,7 @@ const BookingDetailPageV2 = () => {
                           <StaffLink id={a.staff_profile_id}>
                             <div style={{ fontSize: 13.5, fontWeight: 700, color: '#2A2722' }}>{a.full_name || a.staff_name || '-'}</div>
                             {(a.shift_label || a.shift_number) && <div style={{ fontSize: 12, color: '#A39D91', marginTop: 2 }}>{a.shift_label || `Shift ${a.shift_number}`}</div>}
-                            {a.staff_code && <div style={{ fontSize: 11, color: '#C4BFB5', marginTop: 2, fontFamily: "'JetBrains Mono',monospace" }}>{a.staff_code}</div>}
+                            {a.staff_code && <div style={{ fontSize: 13, fontWeight: 700, color: '#000', marginTop: 2, fontFamily: "'JetBrains Mono',monospace" }}>{a.staff_code}</div>}
                           </StaffLink>
                         </div>
                         <EditableRate
@@ -5107,7 +5162,7 @@ const BookingDetailPageV2 = () => {
                                 <p className="text-sm font-semibold text-slate-900 truncate">
                                   <StaffLink id={s.staff_profile_id}>
                                     {s.full_name}
-                                    {s.staff_code && <span className="ml-2 text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{s.staff_code}</span>}
+                                    {s.staff_code && <span className="ml-2 text-xs font-bold text-black bg-slate-100 px-1.5 py-0.5 rounded">{s.staff_code}</span>}
                                   </StaffLink>
                                 </p>
                                 {(s.designation || s.gender) && <p className="text-xs text-slate-500">{s.designation}{s.designation && s.gender ? ' · ' : ''}{s.gender ? (s.gender === 'MALE' ? 'Male' : s.gender === 'FEMALE' ? 'Female' : s.gender) : ''}</p>}
@@ -5827,6 +5882,7 @@ const BookingDetailPageV2 = () => {
         const thCls = 'px-3 py-2 text-left text-[10.5px] font-semibold uppercase tracking-wider text-gray-400';
         const tdCls = 'px-3 py-3 text-sm text-gray-700 align-middle';
         const hasDraftContent = Object.keys(draftTimeSaved).length > 0 || Object.keys(draftAbsent).length > 0
+          || Object.keys(draftPresent).length > 0 || Object.keys(draftException).length > 0
           || Object.keys(draftInvoiceDecisions).length > 0 || Object.keys(draftWaives).length > 0;
 
         return (
@@ -5863,10 +5919,16 @@ const BookingDetailPageV2 = () => {
                   const staffProfileId = a.staff_profile_id;
                   if (draftWaives[a.shift_slot_id]) return { assignmentId: a.assignment_id, staffName, staffProfileId, kind: 'WAIVED' };
                   if (draftAbsent[a.assignment_id]) return { assignmentId: a.assignment_id, staffName, staffProfileId, kind: 'ABSENT' };
+                  const exception = draftException[a.assignment_id];
+                  if (exception) return { assignmentId: a.assignment_id, staffName, staffProfileId, kind: 'EXCEPTION', exception };
+                  const decision = draftSalaryDecisions[a.assignment_id];
+                  if (draftPresent[a.assignment_id]) return { assignmentId: a.assignment_id, staffName, staffProfileId, kind: 'PRESENT', decision };
                   const saved = draftTimeSaved[a.assignment_id];
                   if (saved) {
-                    const decision = draftSalaryDecisions[a.assignment_id];
-                    return { assignmentId: a.assignment_id, staffName, staffProfileId, kind: 'TIME', saved, decision };
+                    // LIVE_IN first/last day — pay is settled when the assignment ends,
+                    // so "not yet decided" (and Rs.0 in the total) is expected, not missing.
+                    const payAtEnd = liveInBoundary(a, dayModal.dateISO).isBoundary;
+                    return { assignmentId: a.assignment_id, staffName, staffProfileId, kind: 'TIME', saved, decision, payAtEnd };
                   }
                   return null;
                 }).filter(Boolean);
@@ -5883,7 +5945,7 @@ const BookingDetailPageV2 = () => {
                 });
                 const waivedSlotIds = Object.keys(draftWaives);
 
-                const totalSalary = staffPreviewRows.reduce((sum, r) => sum + (r.kind === 'TIME' && r.decision?.approve ? Number(r.decision.amount || 0) : 0), 0);
+                const totalSalary = staffPreviewRows.reduce((sum, r) => sum + ((r.kind === 'TIME' || r.kind === 'PRESENT') && r.decision?.approve ? Number(r.decision.amount || 0) : 0), 0);
                 const totalInvoice = invoicePreviewRows.reduce((sum, r) => sum + (r.dec.approve ? Number(r.dec.amount || 0) : 0), 0);
                 const nothingToConfirm = staffPreviewRows.length === 0 && invoicePreviewRows.length === 0 && waivedSlotIds.length === 0;
 
@@ -5902,12 +5964,13 @@ const BookingDetailPageV2 = () => {
                                   <StaffLink id={r.staffProfileId}><span className="font-medium text-gray-900">{r.staffName}</span></StaffLink>
                                   {r.kind === 'WAIVED' && <span className="text-xs text-amber-700">Waived — no pay</span>}
                                   {r.kind === 'ABSENT' && <span className="text-xs text-red-700">Absent — no pay</span>}
-                                  {r.kind === 'TIME' && (
+                                  {r.kind === 'EXCEPTION' && <span className="text-xs text-orange-700">{EXCEPTION_LABELS[r.exception.attendance_status]} — no pay</span>}
+                                  {(r.kind === 'TIME' || r.kind === 'PRESENT') && (
                                     <span className="text-xs text-gray-600">
-                                      {formatHoursMins(r.saved.hours_served)} served —{' '}
+                                      {r.kind === 'TIME' ? `${formatHoursMins(r.saved.hours_served)} served` : 'Present'} —{' '}
                                       {r.decision
                                         ? (r.decision.approve ? `Rs.${Number(r.decision.amount).toLocaleString()} salary` : 'salary skipped')
-                                        : 'salary not yet decided'}
+                                        : r.payAtEnd ? 'pay settled when this assignment ends' : 'salary not yet decided'}
                                     </span>
                                   )}
                                 </div>
@@ -5948,6 +6011,17 @@ const BookingDetailPageV2 = () => {
                           <span className="text-gray-500">Total client charge</span>
                           <span className="font-semibold text-gray-900">Rs.{totalInvoice.toLocaleString()}</span>
                         </div>
+                        {/* The totals above only cover what THIS confirm will apply — a day
+                            already invoiced (earlier confirm, or the LIVE_IN nightly cron)
+                            would otherwise read as a Rs.0 charge. */}
+                        {(() => {
+                          const alreadyInvoiced = dateInvoiceRecords
+                            .filter(r => r.status === 'INVOICED')
+                            .reduce((sum, r) => sum + Number(r.amount || 0), 0);
+                          return alreadyInvoiced > 0 ? (
+                            <p className="text-xs text-gray-400 -mt-2">Already invoiced for this day: Rs.{alreadyInvoiced.toLocaleString()} (not charged again)</p>
+                          ) : null;
+                        })()}
                       </>
                     )}
                   </div>
@@ -6078,7 +6152,7 @@ const BookingDetailPageV2 = () => {
                                     <td className={tdCls}>
                                       <StaffLink id={a.staff_profile_id}>
                                         <span className="font-medium text-gray-900">{staffName}</span>
-                                        {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                        {a.staff_code && <span className="ml-1.5 text-xs text-black font-mono font-bold">{a.staff_code}</span>}
                                       </StaffLink>
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
@@ -6130,7 +6204,7 @@ const BookingDetailPageV2 = () => {
                                     <td className={tdCls}>
                                       <StaffLink id={a.staff_profile_id}>
                                         <span className="font-medium text-gray-900">{staffName}</span>
-                                        {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                        {a.staff_code && <span className="ml-1.5 text-xs text-black font-mono font-bold">{a.staff_code}</span>}
                                       </StaffLink>
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
@@ -6158,7 +6232,7 @@ const BookingDetailPageV2 = () => {
                                     <td className={tdCls}>
                                       <StaffLink id={a.staff_profile_id}>
                                         <span className="font-medium text-gray-900">{staffName}</span>
-                                        {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                        {a.staff_code && <span className="ml-1.5 text-xs text-black font-mono font-bold">{a.staff_code}</span>}
                                       </StaffLink>
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
@@ -6193,7 +6267,7 @@ const BookingDetailPageV2 = () => {
                                     <td className={tdCls}>
                                       <StaffLink id={a.staff_profile_id}>
                                         <span className="font-medium text-gray-900">{staffName}</span>
-                                        {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                        {a.staff_code && <span className="ml-1.5 text-xs text-black font-mono font-bold">{a.staff_code}</span>}
                                       </StaffLink>
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
@@ -6226,7 +6300,7 @@ const BookingDetailPageV2 = () => {
                                     <td className={tdCls}>
                                       <StaffLink id={a.staff_profile_id}>
                                         <span className="font-medium text-gray-900">{staffName}</span>
-                                        {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                        {a.staff_code && <span className="ml-1.5 text-xs text-black font-mono font-bold">{a.staff_code}</span>}
                                       </StaffLink>
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
@@ -6274,7 +6348,7 @@ const BookingDetailPageV2 = () => {
                                     <td className={tdCls}>
                                       <StaffLink id={a.staff_profile_id}>
                                         <span className="font-medium text-gray-900">{staffName}</span>
-                                        {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                        {a.staff_code && <span className="ml-1.5 text-xs text-black font-mono font-bold">{a.staff_code}</span>}
                                       </StaffLink>
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
@@ -6321,6 +6395,39 @@ const BookingDetailPageV2 = () => {
                                 );
                               }
 
+                              // CONFIRMED, PAY PENDING — a LIVE_IN first/last day that was already
+                              // confirmed. Its attendance row stays PENDING by design (pay is settled
+                              // when the assignment ends), so show it as logged/done instead of
+                              // dropping back to the editable entry form below.
+                              if (record && record.salary_status === 'PENDING' && record.in_time && record.out_time
+                                  && liveInIsBoundary && !isEditing && confirmedDates.has(dayModal.dateISO)) {
+                                const loggedHours = (new Date(record.out_time) - new Date(record.in_time)) / (1000 * 60 * 60);
+                                return (
+                                  <tr key={a.assignment_id} style={rowBorder}>
+                                    <td className={tdCls}>
+                                      <StaffLink id={a.staff_profile_id}>
+                                        <span className="font-medium text-gray-900">{staffName}</span>
+                                        {a.staff_code && <span className="ml-1.5 text-xs text-black font-mono font-bold">{a.staff_code}</span>}
+                                      </StaffLink>
+                                    </td>
+                                    {assignedCell}
+                                    <td className={tdCls + ' text-gray-500 text-xs'}>{record.service_date?.slice(0, 10)}</td>
+                                    <td className={tdCls + ' tabular-nums'}>{fmtTime(record.in_time)}</td>
+                                    <td className={tdCls + ' tabular-nums'}>{fmtTime(record.out_time)}</td>
+                                    <td className={tdCls}><HoursBadge served={loggedHours} assigned={assignedHours} /></td>
+                                    <td className={tdCls}>
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-blue-50 text-blue-700">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                                          Confirmed · pay settled when this assignment ends
+                                        </span>
+                                        <button onClick={() => editAttendanceTimes(a)} title="Correct the logged in/out time" className="px-2.5 py-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition">Edit Time</button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              }
+
                               const onlyStart = liveInOnlyStart, onlyEnd = liveInOnlyEnd;
                               const livePreviewHours = onlyEnd
                                 ? computeWorkedHours('00:00', inputs.out_time)
@@ -6334,7 +6441,7 @@ const BookingDetailPageV2 = () => {
                                     <td className={tdCls}>
                                       <StaffLink id={a.staff_profile_id}>
                                         <span className="font-medium text-gray-900">{staffName}</span>
-                                        {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                        {a.staff_code && <span className="ml-1.5 text-xs text-black font-mono font-bold">{a.staff_code}</span>}
                                       </StaffLink>
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
@@ -6371,7 +6478,7 @@ const BookingDetailPageV2 = () => {
                                     <td className={tdCls}>
                                       <StaffLink id={a.staff_profile_id}>
                                         <span className="font-medium text-gray-900">{staffName}</span>
-                                        {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                        {a.staff_code && <span className="ml-1.5 text-xs text-black font-mono font-bold">{a.staff_code}</span>}
                                       </StaffLink>
                                     </td>
                                     {assignedCell}
@@ -6405,7 +6512,7 @@ const BookingDetailPageV2 = () => {
                                     <td className={tdCls}>
                                       <StaffLink id={a.staff_profile_id}>
                                         <span className="font-medium text-gray-900">{staffName}</span>
-                                        {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                        {a.staff_code && <span className="ml-1.5 text-xs text-black font-mono font-bold">{a.staff_code}</span>}
                                       </StaffLink>
                                       {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                     </td>
@@ -6429,7 +6536,7 @@ const BookingDetailPageV2 = () => {
                                   <td className={tdCls}>
                                     <StaffLink id={a.staff_profile_id}>
                                       <span className="font-medium text-gray-900">{staffName}</span>
-                                      {a.staff_code && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{a.staff_code}</span>}
+                                      {a.staff_code && <span className="ml-1.5 text-xs text-black font-mono font-bold">{a.staff_code}</span>}
                                     </StaffLink>
                                     {shiftLabel && <span className="ml-2 text-[10px] font-semibold bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{shiftLabel}</span>}
                                   </td>

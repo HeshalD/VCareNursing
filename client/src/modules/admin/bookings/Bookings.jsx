@@ -104,7 +104,7 @@ const StaffList = ({ staff }) => {
           <GenderIcon gender={s.gender} />
           <span className="text-slate-700"><StaffLink id={s.staff_profile_id}>{s.full_name}</StaffLink></span>
           {s.staff_code && (
-            <span className="font-mono text-[11px] text-slate-400">{s.staff_code}</span>
+            <span className="font-mono font-bold text-xs text-black">{s.staff_code}</span>
           )}
         </div>
       ))}
@@ -123,6 +123,7 @@ const Bookings = () => {
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [hospitalizedOnly, setHospitalizedOnly] = useState(false);
+  const [salespersonFilter, setSalespersonFilter] = useState('ALL');
   const [showDirectBooking, setShowDirectBooking] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deletePassword, setDeletePassword] = useState('');
@@ -236,6 +237,9 @@ const Bookings = () => {
 
       if (hospitalizedOnly && !b.is_hospitalized) return false;
 
+      if (salespersonFilter === 'ASSIGNED' && !b.current_salesperson_id) return false;
+      if (salespersonFilter === 'UNASSIGNED' && b.current_salesperson_id) return false;
+
       if (!q) return true;
       const bookingCode = (b.booking_code || String(b.booking_id)).toLowerCase();
       const clientName = (details?.client_name || b.client_name || `client ${b.client_id}`).toLowerCase();
@@ -245,7 +249,12 @@ const Bookings = () => {
       );
       return bookingCode.includes(q) || clientName.includes(q) || patientName.includes(q) || staffMatch;
     });
-  }, [bookings, bookingDetails, searchQuery, statusFilter, typeFilter, hospitalizedOnly]);
+  }, [bookings, bookingDetails, searchQuery, statusFilter, typeFilter, hospitalizedOnly, salespersonFilter]);
+
+  const salespersonCounts = useMemo(() => {
+    const assigned = bookings.filter((b) => b.current_salesperson_id).length;
+    return { ALL: bookings.length, ASSIGNED: assigned, UNASSIGNED: bookings.length - assigned };
+  }, [bookings]);
 
   const statusCounts = useMemo(() => {
     const counts = { ALL: bookings.length, EXPIRING_SOON: 0, PENDING: 0, ACTIVE: 0 };
@@ -372,6 +381,27 @@ const Bookings = () => {
               ))}
             </div>
 
+            <div className="flex items-center gap-0.5 bg-slate-100 rounded-lg p-1 w-fit flex-wrap">
+              {[
+                { key: 'ALL', label: 'All Salespersons' },
+                { key: 'ASSIGNED', label: 'Salesperson Assigned' },
+                { key: 'UNASSIGNED', label: 'No Salesperson' },
+              ].map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setSalespersonFilter(key)}
+                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all whitespace-nowrap ${
+                    salespersonFilter === key
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  {label}
+                  <span className="ml-1.5 tabular-nums text-slate-400">{salespersonCounts[key]}</span>
+                </button>
+              ))}
+            </div>
+
             <button
               onClick={() => setHospitalizedOnly((v) => !v)}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap border transition-all ${
@@ -412,6 +442,7 @@ const Bookings = () => {
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Care Profile</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Staff</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Coordinator</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Salesperson</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Type</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Start Date</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
@@ -488,6 +519,15 @@ const Bookings = () => {
                           <td className="px-4 py-3">
                             {b.coordinator_name ? (
                               <span className="text-slate-700">{b.coordinator_name}</span>
+                            ) : (
+                              <span className="text-xs text-slate-400">Unassigned</span>
+                            )}
+                          </td>
+
+                          {/* Salesperson */}
+                          <td className="px-4 py-3">
+                            {b.salesperson_name ? (
+                              <span className="text-slate-700">{b.salesperson_name}</span>
                             ) : (
                               <span className="text-xs text-slate-400">Unassigned</span>
                             )}
@@ -585,6 +625,9 @@ const Bookings = () => {
                       {b.coordinator_name && (
                         <p className="text-xs text-slate-500">Coordinator: <span className="text-slate-700">{b.coordinator_name}</span></p>
                       )}
+                      <p className="text-xs text-slate-500">
+                        Salesperson: <span className="text-slate-700">{b.salesperson_name || 'Unassigned'}</span>
+                      </p>
                       {b.is_expiring_soon && (
                         <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-600">
                           <AlertTriangle className="w-3 h-3" />

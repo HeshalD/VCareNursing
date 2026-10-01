@@ -1306,7 +1306,7 @@ const StaffSalariesPage = () => {
                         </button>
                       </td>
                       <td className="px-4 py-3">
-                        <p className="font-semibold text-slate-800"><StaffLink id={s.staff_profile_id}>{s.full_name}</StaffLink>{s.staff_code && <span className="ml-1.5 text-xs font-mono font-normal text-slate-400">{s.staff_code}</span>}</p>
+                        <p className="font-semibold text-slate-800"><StaffLink id={s.staff_profile_id}>{s.full_name}</StaffLink>{s.staff_code && <span className="ml-1.5 text-sm font-mono font-bold text-black">{s.staff_code}</span>}</p>
                         <p className="text-xs text-slate-500">{s.designation}{s.gender ? ` · ${s.gender === 'MALE' ? 'Male' : s.gender === 'FEMALE' ? 'Female' : s.gender}` : ''} · {formatMobileNumber(s.mobile_number) || '—'}</p>
                       </td>
                       <td className="px-4 py-3 text-right">

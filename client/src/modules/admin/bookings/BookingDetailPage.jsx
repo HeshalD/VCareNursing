@@ -1141,7 +1141,7 @@ const BookingDetailPage = () => {
                     </div>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                    <DetailRow label="Staff ID"  value={normalizedCurrentStaff.id}     mono />
+                    <DetailRow label="Staff ID"  value={<strong className="font-bold">{normalizedCurrentStaff.id}</strong>}     mono />
                     <DetailRow label="Phone"      value={formatMobileNumber(normalizedCurrentStaff.mobile)} />
                     <DetailRow label="Email"      value={normalizedCurrentStaff.email}  />
                     <DetailRow label="Daily rate" value={formatMoney(dailyRate)} />
@@ -1853,7 +1853,7 @@ const BookingDetailPage = () => {
                             <div className="min-w-0">
                               <p className="text-sm font-semibold text-slate-900 truncate">
                                 {s.full_name}
-                                {s.staff_code && <span className="ml-2 text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{s.staff_code}</span>}
+                                {s.staff_code && <span className="ml-2 text-xs font-bold text-black bg-slate-100 px-1.5 py-0.5 rounded">{s.staff_code}</span>}
                               </p>
                               {(s.designation || s.gender) && <p className="text-xs text-slate-500">{s.designation}{s.designation && s.gender ? ' · ' : ''}{s.gender ? (s.gender === 'MALE' ? 'Male' : s.gender === 'FEMALE' ? 'Female' : s.gender) : ''}</p>}
                               {s.mobile_number && (
