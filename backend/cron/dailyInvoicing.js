@@ -32,7 +32,7 @@ const getActiveBookingBalances = async (client) => {
        AND ((b.daily_rate IS NOT NULL AND b.daily_rate > 0) OR (b.shift_rate IS NOT NULL AND b.shift_rate > 0))
      GROUP BY
         b.booking_id, b.client_id, b.daily_rate, b.shift_rate, b.service_model,
-        cp.full_name, uc.mobile_number`
+        cp.honorific, cp.full_name, uc.mobile_number`
   );
 };
 
