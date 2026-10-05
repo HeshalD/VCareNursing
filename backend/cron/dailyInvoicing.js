@@ -86,7 +86,7 @@ const startDailyInvoicing = () => {
       // Step 1 — Flag any overdue bookings first
       const overdueCount = await flagOverdueBookings(client);
       if (overdueCount > 0) {
-        console.log(`⚠️  ${overdueCount} booking(s) flagged as OVERDUE and skipped from invoicing.`);
+        console.log(`⚠️  ${overdueCount} booking(s) flagged as OVERDUE (still invoiced and paid like any other booking).`);
       }
 
       // Step 1.5 — Execute due scheduled assignment starts / staff swaps BEFORE billing,
@@ -96,7 +96,9 @@ const startDailyInvoicing = () => {
         console.log(`✅ Scheduled actions (pre-billing): ${preScheduled.executed} executed, ${preScheduled.failed} failed.`);
       }
 
-      // Step 2 — Fetch active and overdue bookings, then their active staff assignments
+      // Step 2 — Fetch active and overdue bookings, then their active staff assignments.
+      // OVERDUE is deliberately NOT skipped: the client is still being served, so staff
+      // keep earning and the client keeps being invoiced exactly as for an ACTIVE booking.
       const activeBookingsRes = await client.query(
         `SELECT booking_id, client_id, service_model, daily_rate, ot_rate, scheduled_end_time, actual_end_time, invoicing_mode
          FROM bookings
@@ -140,7 +142,9 @@ const startDailyInvoicing = () => {
         , [activeBookingIds]
       );
 
-      const activeAssignments = activeAssignmentsRes.rows;
+      // An ACTIVE assignment dated in the future hasn't started serving yet — don't pay
+      // or invoice for it (service_start_date is cast to text, so ISO strings compare correctly).
+      const activeAssignments = activeAssignmentsRes.rows.filter(a => !a.service_start_date || a.service_start_date <= today);
 
       if (activeAssignments.length === 0) {
         console.log('No active staff assignments to process today.');
@@ -247,6 +251,10 @@ const startDailyInvoicing = () => {
             continue;
           }
 
+          // Savepoint per staff member: a failure here must roll back only this item, not
+          // abort the shared transaction (which would turn the final COMMIT into a
+          // silent ROLLBACK for every staff member already logged as paid).
+          await client.query('SAVEPOINT cron_item');
           const salaryAmount = parseFloat(assignment.daily_rate);
           const salaryTransactionId = await creditStaffSalary(client, {
             staff_profile_id: assignment.staff_profile_id,
@@ -266,9 +274,11 @@ const startDailyInvoicing = () => {
             [assignment.booking_id, assignment.assignment_id, assignment.staff_profile_id, today, salaryAmount, salaryTransactionId]
           );
 
+          await client.query('RELEASE SAVEPOINT cron_item');
           staffEarningsCount++;
           console.log(`✅ Staff Earnings: ${assignment.staff_name} earned Rs.${assignment.daily_rate} for ${today}`);
         } catch (staffError) {
+          await client.query('ROLLBACK TO SAVEPOINT cron_item').catch(() => {});
           console.error(`❌ Failed to process earnings for staff ${assignment.staff_profile_id}:`, staffError);
         }
       }
@@ -303,6 +313,19 @@ const startDailyInvoicing = () => {
         }
 
         try {
+          // Already invoiced/decided for today (cron re-run, or admin acted early) —
+          // createServiceInvoice below isn't idempotent, only the audit insert is.
+          const alreadyInvoiced = await client.query(
+            `SELECT 1 FROM booking_daily_invoices
+             WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id IS NULL AND assignment_id IS NULL`,
+            [bookingId, today]
+          );
+          if (alreadyInvoiced.rows.length > 0) {
+            console.log(`⏭️  Client Invoice: booking ${bookingId} already has an invoice record for ${today} — not invoicing again`);
+            continue;
+          }
+
+          await client.query('SAVEPOINT cron_item');
           const { amount, notes } = getBillingCharge(bookingData);
           const staffCount = activeAssignments.filter(a => a.booking_id === bookingId).length;
           const transactionId = await createServiceInvoice(client, {
@@ -326,13 +349,15 @@ const startDailyInvoicing = () => {
             `INSERT INTO booking_daily_invoices (
               booking_id, service_date, entry_mode, status, amount, transaction_id, decided_by_name, decided_at
             ) VALUES ($1, $2, 'AUTO', 'INVOICED', $3, $4, 'SYSTEM (auto — LIVE_IN)', NOW())
-            ON CONFLICT (booking_id, service_date) WHERE shift_slot_id IS NULL DO NOTHING`,
+            ON CONFLICT (booking_id, service_date) WHERE shift_slot_id IS NULL AND assignment_id IS NULL DO NOTHING`,
             [bookingId, today, amount, transactionId]
           );
 
+          await client.query('RELEASE SAVEPOINT cron_item');
           clientInvoiceCount++;
           console.log(`✅ Client Invoice: ${bookingData.client_name} charged Rs.${amount} for ${today}`);
         } catch (invoiceError) {
+          await client.query('ROLLBACK TO SAVEPOINT cron_item').catch(() => {});
           console.error(`❌ Failed to invoice booking ${bookingId}:`, invoiceError);
         }
       }
@@ -361,14 +386,17 @@ const startDailyInvoicing = () => {
         if (!isManualType) continue;
 
         try {
+          await client.query('SAVEPOINT cron_item');
           await client.query(
             `INSERT INTO booking_daily_invoices (booking_id, service_date, entry_mode, status, amount)
              VALUES ($1, $2, 'MANUAL', 'PENDING', $3)
-             ON CONFLICT (booking_id, service_date) WHERE shift_slot_id IS NULL DO NOTHING`,
+             ON CONFLICT (booking_id, service_date) WHERE shift_slot_id IS NULL AND assignment_id IS NULL DO NOTHING`,
             [bookingId, today, bookingData.total_daily_rate || bookingData.daily_rate]
           );
+          await client.query('RELEASE SAVEPOINT cron_item');
           pendingSeededCount++;
         } catch (seedErr) {
+          await client.query('ROLLBACK TO SAVEPOINT cron_item').catch(() => {});
           console.error(`❌ Pending seed failed (VISITING/LIVE_IN MANUAL) booking ${bookingId}:`, seedErr);
         }
       }

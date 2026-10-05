@@ -2259,8 +2259,10 @@ const BookingDetailPageV2 = () => {
         : Number(decision.amount);
       return {
         service_date: d.dateISO,
-        in_time: `${d.dateISO}T${d.inTime}`,
-        out_time: `${d.dateISO}T${d.outTime}`,
+        // Sent as real instants (not bare local strings): the server runs in UTC, so a
+        // zoneless "…T21:00" would be read as 21:00 UTC = 02:30 next day in Colombo.
+        in_time: d.inTime ? new Date(`${d.dateISO}T${d.inTime}`).toISOString() : undefined,
+        out_time: new Date(`${d.dateISO}T${d.outTime}`).toISOString(),
         approve: Boolean(decision.approve),
         amount: decision.approve ? amount : undefined,
       };
@@ -2276,7 +2278,7 @@ const BookingDetailPageV2 = () => {
         await apiClient.settleAssignmentBoundaryPay(bookingId, row.id, { settlement_days });
       } else {
         await apiClient.closeStaffAssignment(bookingId, row.id, {
-          out_time: `${closeAssignmentDate}T${closeAssignmentTime}`,
+          out_time: new Date(`${closeAssignmentDate}T${closeAssignmentTime}`).toISOString(),
           settlement_days,
         });
       }
