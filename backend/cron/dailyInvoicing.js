@@ -129,6 +129,7 @@ const startDailyInvoicing = () => {
           b.actual_end_time,
           b.invoicing_mode,
           q.daily_rate as quote_daily_rate,
+          b.daily_rate as booking_daily_rate,
           sp.full_name as staff_name,
           NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name
          FROM booking_staff_assignments bsa
@@ -213,7 +214,9 @@ const startDailyInvoicing = () => {
             client_name: assignment.client_name,
             service_model: assignment.service_model,
             invoicing_mode: assignment.invoicing_mode,
-            daily_rate: parseFloat(assignment.quote_daily_rate || assignment.daily_rate),
+            // Client billing rate: bookings.daily_rate (what the Rates tab edits), then the quote.
+            // assignment.daily_rate is the STAFF pay rate and must never be billed to the client.
+            daily_rate: parseFloat(assignment.booking_daily_rate || assignment.quote_daily_rate),
             ot_rate: assignment.ot_rate,
             scheduled_end_time: assignment.scheduled_end_time,
             actual_end_time: assignment.actual_end_time,
@@ -391,7 +394,7 @@ const startDailyInvoicing = () => {
             `INSERT INTO booking_daily_invoices (booking_id, service_date, entry_mode, status, amount)
              VALUES ($1, $2, 'MANUAL', 'PENDING', $3)
              ON CONFLICT (booking_id, service_date) WHERE shift_slot_id IS NULL AND assignment_id IS NULL DO NOTHING`,
-            [bookingId, today, bookingData.total_daily_rate || bookingData.daily_rate]
+            [bookingId, today, bookingData.daily_rate]
           );
           await client.query('RELEASE SAVEPOINT cron_item');
           pendingSeededCount++;
