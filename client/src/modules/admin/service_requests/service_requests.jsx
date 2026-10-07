@@ -6,6 +6,7 @@ import {
   ChevronRight, Wallet, UserPlus, CalendarCheck, UserCog, User,
 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
+import FilterableTh from '../components/FilterableTh';
 import apiClient from '../../../api/api';
 import { formatMobileNumber } from '../../../utils/phoneFormat';
 import { withHonorific } from '../../../utils/clientName';
@@ -61,6 +62,7 @@ const BookingStatusBadge = ({ status }) => {
 };
 
 const PRIORITY_TYPE = 'PRIORITY_MEMBERSHIP';
+const UNASSIGNED = '__UNASSIGNED__';
 
 const EnteredViaBadge = ({ value }) => {
   const isProxy = value === 'PROXY';
@@ -123,6 +125,9 @@ const ServiceRequests = () => {
   const [search, setSearch]                   = useState('');
   const [activeTab, setActiveTab]             = useState('All');
   const [priorityOnly, setPriorityOnly]       = useState(false);
+  const [serviceFilter, setServiceFilter]     = useState('ALL');
+  const [coordinatorFilter, setCoordinatorFilter] = useState('ALL');
+  const [enteredViaFilter, setEnteredViaFilter]   = useState('ALL');
   const [showPresetManager, setShowPresetManager] = useState(false);
 
   useEffect(() => { fetchRequests(); }, []);
@@ -154,8 +159,37 @@ const ServiceRequests = () => {
     const textMatch = !q || [r.payer_name, r.patient_name, r.payer_mobile, r.service_type, r.service_request_code]
       .some(v => v?.toLowerCase().includes(q));
     const typeMatch = !priorityOnly || r.service_type === PRIORITY_TYPE;
-    return statusMatch && textMatch && typeMatch;
+    const serviceMatch = serviceFilter === 'ALL' || r.service_type === serviceFilter;
+    const coordinatorMatch = coordinatorFilter === 'ALL'
+      || (coordinatorFilter === UNASSIGNED ? !r.coordinator_name : r.coordinator_name === coordinatorFilter);
+    const viaMatch = enteredViaFilter === 'ALL' || (r.entered_via === 'PROXY' ? 'PROXY' : 'CLIENT') === enteredViaFilter;
+    return statusMatch && textMatch && typeMatch && serviceMatch && coordinatorMatch && viaMatch;
   });
+
+  const serviceOptions = [
+    { key: 'ALL', label: 'All Services', count: requests.length },
+    ...[...new Set(requests.map(r => r.service_type).filter(Boolean))].sort().map(s => ({
+      key: s,
+      label: s === PRIORITY_TYPE ? 'Priority Membership' : s,
+      count: requests.filter(r => r.service_type === s).length,
+    })),
+  ];
+
+  const coordinatorOptions = [
+    { key: 'ALL', label: 'All Coordinators', count: requests.length },
+    ...[...new Set(requests.map(r => r.coordinator_name).filter(Boolean))].sort().map(n => ({
+      key: n,
+      label: n,
+      count: requests.filter(r => r.coordinator_name === n).length,
+    })),
+    { key: UNASSIGNED, label: 'Unassigned', count: requests.filter(r => !r.coordinator_name).length },
+  ];
+
+  const enteredViaOptions = [
+    { key: 'ALL', label: 'All', count: requests.length },
+    { key: 'CLIENT', label: 'Client', count: requests.filter(r => r.entered_via !== 'PROXY').length },
+    { key: 'PROXY', label: 'Proxy', count: requests.filter(r => r.entered_via === 'PROXY').length },
+  ];
 
   const priorityCount = requests.filter(r => r.service_type === PRIORITY_TYPE).length;
 
@@ -267,12 +301,17 @@ const ServiceRequests = () => {
               <tr className="border-b border-slate-200 bg-slate-50">
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Request</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Care Profile</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Service</th>
+                <FilterableTh label="Service" className="text-left px-4 py-3 text-xs"
+                  value={serviceFilter} onChange={setServiceFilter} options={serviceOptions} />
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Location</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Start Date</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Coordinator</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Entered Via</th>
+                <FilterableTh label="Status" className="text-left px-4 py-3 text-xs"
+                  value={activeTab} onChange={setActiveTab}
+                  options={STATUS_TABS.map(tab => ({ key: tab, label: tab, count: counts[tab] }))} />
+                <FilterableTh label="Coordinator" className="text-left px-4 py-3 text-xs"
+                  value={coordinatorFilter} onChange={setCoordinatorFilter} options={coordinatorOptions} />
+                <FilterableTh label="Entered Via" className="text-left px-4 py-3 text-xs"
+                  value={enteredViaFilter} onChange={setEnteredViaFilter} options={enteredViaOptions} />
                 <th className="px-4 py-3" />
               </tr>
             </thead>

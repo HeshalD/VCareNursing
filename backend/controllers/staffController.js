@@ -1503,7 +1503,12 @@ exports.setStaffPublicVisibility = async (req, res) => {
 exports.getAllStaff = async (req, res) => {
     try {
         // Optional query parameters for filtering
-        const { status, verification_status, role, search = '', pending_migration = '', portal_access = '', page = 1, limit = 10 } = req.query;
+        const { status, verification_status, role, search = '', pending_migration = '', portal_access = '', sort_earnings = '', page = 1, limit = 10 } = req.query;
+
+        // Opt-in sort by current earnings (highest first); default is newest first.
+        const orderBy = sort_earnings === 'desc'
+            ? 'sp.current_earnings DESC NULLS LAST, sp.created_at DESC'
+            : 'sp.created_at DESC';
 
         // Build WHERE clause dynamically
         let whereClause = '';
@@ -1658,7 +1663,7 @@ exports.getAllStaff = async (req, res) => {
                 LIMIT 1
             ) active_assign ON true
             WHERE 1=1 ${whereClause}
-            ORDER BY sp.created_at DESC
+            ORDER BY ${orderBy}
             LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
         `;
 

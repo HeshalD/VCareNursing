@@ -35,42 +35,73 @@ async function getClientUserAccount(clientId) {
   return result.rows[0] || null;
 }
 
-// Single source of truth for a client's Total Invoiced / Total Paid / Balance Due.
-// Invoiced = ledger debits + every registration-fee (overdue_invoices) invoice ever
-// raised, paid or not; paid = ledger credits. Balance is clamped at 0 so a surplus
-// of payments never shows up as money owed.
+// Single source of truth for a client's Payments Made / Total Invoiced / Overdue.
+//  - Payments Made = real money the client handed over (cash, transfer, cheque, ...). Wallet
+//    draws (payment_method WALLET) only move already-received money around, and refunds /
+//    forfeitures are not payments, so none of those count.
+//  - Total Invoiced = every ledger debit that is a charge (refund pay-outs are not charges)
+//    + every registration-fee (overdue_invoices) invoice ever raised, paid or not.
+//  - Overdue = what is invoiced but not yet settled, worked out booking by booking (so a
+//    settled or refunded booking can't hide another one's debt) + unresolved
+//    overdue_invoices rows. Never negative.
+const NON_PAYMENT_CREDIT_CATEGORIES = ['WALLET_REFUND', 'SETTLEMENT_FORFEITURE', 'STAFF_SALARY'];
+const NON_CHARGE_DEBIT_CATEGORIES = ['WALLET_DEBIT', 'CLIENT_REFUND', 'DEPOSIT_REFUND'];
+
 async function getClientFinancialTotals(clientId) {
-  const [txResult, oiResult] = await Promise.all([
+  const [txResult, oiResult, overduePayments] = await Promise.all([
     db.query(
       `SELECT
-         COALESCE(SUM(CASE WHEN transaction_type = 'CREDIT' THEN amount ELSE 0 END), 0) as total_paid,
-         COALESCE(SUM(CASE WHEN transaction_type = 'DEBIT' THEN amount ELSE 0 END), 0) as total_invoiced
+         COALESCE(SUM(amount) FILTER (
+           WHERE transaction_type = 'CREDIT'
+             AND payment_method IS DISTINCT FROM 'WALLET'
+             AND category::text <> ALL($2::text[])
+         ), 0) as total_paid,
+         COALESCE(SUM(amount) FILTER (
+           WHERE transaction_type = 'DEBIT'
+             AND category::text <> ALL($3::text[])
+         ), 0) as total_invoiced
        FROM transactions
        WHERE client_id = $1`,
-      [clientId]
+      [clientId, NON_PAYMENT_CREDIT_CATEGORIES, NON_CHARGE_DEBIT_CATEGORIES]
     ),
     db.query(
       `SELECT COALESCE(SUM(amount), 0) as all_time_invoiced,
+              COALESCE(SUM(amount) FILTER (WHERE status = 'OVERDUE'), 0) as open_overdue,
               COUNT(*) FILTER (WHERE status = 'OVERDUE')::int as overdue_count
        FROM overdue_invoices
        WHERE client_id = $1`,
       [clientId]
-    )
+    ),
+    queryBookingOverdueRows(clientId)
   ]);
 
   const totalPaid = parseFloat(txResult.rows[0]?.total_paid || 0);
   const totalInvoiced = parseFloat(txResult.rows[0]?.total_invoiced || 0) + parseFloat(oiResult.rows[0]?.all_time_invoiced || 0);
+  const balanceDue = overduePayments.reduce((sum, row) => sum + row.balance_due, 0)
+    + parseFloat(oiResult.rows[0]?.open_overdue || 0);
   return {
     totalPaid,
     totalInvoiced,
-    balanceDue: Math.max(totalInvoiced - totalPaid, 0),
+    balanceDue: Math.max(balanceDue, 0),
+    overduePayments,
     overdueInvoiceCount: oiResult.rows[0]?.overdue_count || 0
   };
 }
 
 async function getClientOverdueBreakdown(clientId) {
-  const { balanceDue, overdueInvoiceCount } = await getClientFinancialTotals(clientId);
+  const { balanceDue, overduePayments, overdueInvoiceCount } = await getClientFinancialTotals(clientId);
 
+  const totalOverdue = balanceDue;
+  const overdueCount = overduePayments.filter((payment) => payment.is_overdue).length + overdueInvoiceCount;
+
+  return {
+    overduePayments,
+    totalOverdue,
+    overdueCount
+  };
+}
+
+async function queryBookingOverdueRows(clientId) {
   // Overdue = what has actually been invoiced (ledger DEBITs) for a booking minus what
   // has actually been settled against it (ledger CREDITs, excl. STAFF_SALARY, which
   // includes wallet/refund credits). Comparing against the whole quotation total would
@@ -109,7 +140,7 @@ async function getClientOverdueBreakdown(clientId) {
     [clientId]
   );
 
-  const overduePayments = result.rows.map((row) => ({
+  return result.rows.map((row) => ({
     ...row,
     transaction_id: row.booking_id,
     invoice_amount: parseFloat(row.invoice_amount || 0),
@@ -120,15 +151,6 @@ async function getClientOverdueBreakdown(clientId) {
       : 0,
     is_fully_paid: false
   }));
-
-  const totalOverdue = balanceDue;
-  const overdueCount = overduePayments.filter((payment) => payment.is_overdue).length + overdueInvoiceCount;
-
-  return {
-    overduePayments,
-    totalOverdue,
-    overdueCount
-  };
 }
 
 // 0. Get Client Profile by User ID
@@ -709,9 +731,10 @@ exports.getAdminClientDetail = async (req, res) => {
     // just daily-attendance debits — fold in the overdue-invoices ledger's all-time
     // total (registration fees for now) so it goes up the moment one is sent,
     // whether or not it's ever paid.
-    const combinedTotalInvoiced = parseFloat(dailyInvoiceSummary?.total_invoiced || 0) + parseFloat(overdueInvoicesSummary?.all_time_invoiced || 0);
-    const combinedTotalPaid = parseFloat(clientPaymentsSummary?.total_paid || 0);
-    const combinedBalanceDue = Math.max(combinedTotalInvoiced - combinedTotalPaid, 0);
+    const financialTotals = await getClientFinancialTotals(client_id);
+    const combinedTotalInvoiced = financialTotals.totalInvoiced;
+    const combinedTotalPaid = financialTotals.totalPaid;
+    const combinedBalanceDue = financialTotals.balanceDue;
 
     res.status(200).json({
       status: 'success',

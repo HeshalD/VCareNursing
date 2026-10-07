@@ -33,7 +33,7 @@ if (!datesArg || !/^\d{4}-\d{2}-\d{2}(,\d{4}-\d{2}-\d{2})*$/.test(datesArg)) {
 }
 const DATES = datesArg.split(',').sort();
 
-const report = { salary: [], invoice: [], pending: [], review: [], errors: [] };
+const report = { salary: [], invoice: [], pending: [], review: [], completed_owed: [], errors: [] };
 
 // The real cron ran at 23:58 UTC the evening before the business date it processes.
 const runTimestamp = (dateISO) => {
@@ -75,17 +75,15 @@ const processDate = async (client, today) => {
   const ts = runTimestamp(today);
   console.log(`\n=== ${today} (backdating to ${ts}) ===`);
 
-  const bookingsRes = await client.query(
-    `SELECT booking_id, status FROM bookings WHERE status IN ('ACTIVE', 'OVERDUE') AND service_model = 'LIVE_IN'`
-  );
-  const liveBookingIds = bookingsRes.rows.map(r => r.booking_id);
-
-  // Same selection as the cron (plus the assignment must have started by this date).
+  // Every LIVE_IN assignment that was covering this date: still open (booking ACTIVE/OVERDUE),
+  // or since ended (COMPLETED) on/after this date. Ended ones matter because their middle days
+  // were never paid/billed either — the cron crashed before they were closed out.
   const asgRes = await client.query(
     `SELECT
        bsa.assignment_id, bsa.booking_id, bsa.staff_profile_id, bsa.daily_rate,
-       bsa.service_start_date::text AS service_start_date, bsa.service_end_date,
+       bsa.service_start_date::text AS service_start_date, bsa.service_end_date::text AS service_end_date,
        b.client_id, b.service_model, b.ot_rate, b.scheduled_end_time, b.actual_end_time, b.invoicing_mode,
+       b.status AS booking_status,
        q.daily_rate AS quote_daily_rate, b.daily_rate AS booking_daily_rate,
        sp.full_name AS staff_name, sp.staff_code,
        NULLIF(CONCAT_WS(' ', NULLIF(c.honorific, ''), c.full_name), '') AS client_name,
@@ -96,35 +94,18 @@ const processDate = async (client, today) => {
      LEFT JOIN quotations q ON sr.active_quote_id = q.quote_id
      JOIN staff_profiles sp ON bsa.staff_profile_id = sp.staff_profile_id
      JOIN client_profiles c ON b.client_id = c.client_profile_id
-     WHERE bsa.status = 'ACTIVE'
-       AND bsa.service_start_date <= $2::date
-       AND bsa.booking_id = ANY($1::uuid[])
+     WHERE b.service_model = 'LIVE_IN'
+       AND bsa.status IN ('ACTIVE', 'COMPLETED')
+       AND bsa.service_start_date <= $1::date
+       AND (bsa.service_end_date IS NULL OR bsa.service_end_date >= $1::date)
+       AND (bsa.service_end_date IS NOT NULL OR b.status IN ('ACTIVE', 'OVERDUE'))
      ORDER BY b.created_at DESC, bsa.assigned_on`,
-    [liveBookingIds, today]
+    [today]
   );
   const assignments = asgRes.rows;
 
   const countByBooking = new Map();
   for (const a of assignments) countByBooking.set(a.booking_id, (countByBooking.get(a.booking_id) || 0) + 1);
-
-  // ── REVIEW: LIVE_IN coverage the script will not touch ──────────────────────
-  const reviewRes = await client.query(
-    `SELECT b.booking_code, b.status AS booking_status, bsa.status AS asg_status, sp.staff_code,
-            bsa.service_start_date::text AS s, bsa.service_end_date::text AS e
-     FROM booking_staff_assignments bsa
-     JOIN bookings b USING (booking_id)
-     JOIN staff_profiles sp ON sp.staff_profile_id = bsa.staff_profile_id
-     WHERE b.service_model = 'LIVE_IN'
-       AND bsa.service_start_date < $1::date
-       AND (bsa.service_end_date IS NULL OR bsa.service_end_date >= $1::date)
-       AND NOT (bsa.status = 'ACTIVE' AND b.status IN ('ACTIVE', 'OVERDUE'))
-       AND NOT EXISTS (SELECT 1 FROM staff_daily_attendance s
-                       WHERE s.assignment_id = bsa.assignment_id AND s.service_date = $1::date AND s.shift_slot_id IS NULL)`,
-    [today]
-  );
-  for (const r of reviewRes.rows) {
-    report.review.push({ date: today, booking: r.booking_code, staff: r.staff_code, why: `assignment ${r.asg_status} (${r.s}→${r.e || 'open'}), booking ${r.booking_status}` });
-  }
 
   // Bookings with a pause covering this date are not billed — report, don't touch.
   const pausedRes = await client.query(
@@ -139,7 +120,17 @@ const processDate = async (client, today) => {
     if (pausedIds.has(a.booking_id)) continue;
     const isFirstDay = a.service_start_date === today;
     const isConcurrent = (countByBooking.get(a.booking_id) || 0) > 1;
+    const isEndDay = a.service_end_date === today;
     if (isFirstDay || isConcurrent) continue;
+    if (isEndDay) {
+      // Closing day of an ended assignment: partial day, an admin decides it (in/out times).
+      const has = await client.query(
+        `SELECT 1 FROM staff_daily_attendance WHERE assignment_id = $1 AND service_date = $2::date AND shift_slot_id IS NULL`,
+        [a.assignment_id, today]
+      );
+      if (has.rows.length === 0) report.review.push({ date: today, booking: a.booking_code, staff: a.staff_code, why: 'last day of ended assignment has no attendance decision — admin to settle' });
+      continue;
+    }
 
     const exists = await client.query(
       `SELECT 1 FROM staff_daily_attendance
@@ -182,10 +173,12 @@ const processDate = async (client, today) => {
         booking_id: a.booking_id, booking_code: a.booking_code, client_id: a.client_id, client_name: a.client_name,
         service_model: a.service_model, invoicing_mode: a.invoicing_mode,
         daily_rate: parseFloat(a.booking_daily_rate || a.quote_daily_rate), ot_rate: a.ot_rate,
-        scheduled_end_time: a.scheduled_end_time, actual_end_time: a.actual_end_time, total_daily_rate: 0
+        scheduled_end_time: a.scheduled_end_time, actual_end_time: a.actual_end_time, total_daily_rate: 0,
+        booking_status: a.booking_status, anyContinuesPastToday: false
       });
     }
     bookingMap.get(a.booking_id).total_daily_rate += parseFloat(a.daily_rate);
+    if (!a.service_end_date || a.service_end_date > today) bookingMap.get(a.booking_id).anyContinuesPastToday = true;
   }
   const startingToday = new Set(assignments.filter(a => a.service_start_date === today).map(a => a.booking_id));
 
@@ -194,10 +187,22 @@ const processDate = async (client, today) => {
 
     const exists = await client.query(
       `SELECT 1 FROM booking_daily_invoices
-       WHERE booking_id = $1 AND service_date = $2::date AND shift_slot_id IS NULL AND assignment_id IS NULL`,
+       WHERE booking_id = $1 AND service_date = $2::date AND shift_slot_id IS NULL`,
       [bookingId, today]
     );
     if (exists.rows.length > 0) continue;
+
+    // Last day the booking has any staff on it: boundary day, the admin invoices it.
+    if (!b.anyContinuesPastToday) {
+      report.review.push({ date: today, booking: b.booking_code, staff: '-', why: 'last service day has no invoice decision — admin to settle' });
+      continue;
+    }
+    // Booking already COMPLETED/settled: do NOT auto-invoice (the client may already have been
+    // settled/refunded without these days). List what is owed for a human to decide.
+    if (b.booking_status === 'COMPLETED') {
+      report.completed_owed.push({ date: today, booking: b.booking_code, client: b.client_name, amount: b.daily_rate });
+      continue;
+    }
 
     const isAuto = b.invoicing_mode !== 'MANUAL' && !startingToday.has(bookingId);
 
@@ -274,7 +279,7 @@ const processDate = async (client, today) => {
       console.log(`${d}: salaries ${s.length} (Rs.${sum(s, 'amount')}) | invoices ${i.length} (Rs.${sum(i, 'amount')}, wallet-drawn Rs.${sum(i, 'wallet_drawn')}) | pending rows ${p.length}`);
     }
     console.log(`Bookings newly flagged OVERDUE: ${flagged.rows.length}`);
-    console.log(`Review items (not written): ${report.review.length} | Errors: ${report.errors.length}`);
+    console.log(`Review items (not written): ${report.review.length} | Completed-booking days owed (not written): ${report.completed_owed.length} (Rs.${sum(report.completed_owed, 'amount')}) | Errors: ${report.errors.length}`);
 
     const file = `backfill-report-${APPLY ? 'applied' : 'dryrun'}-${Date.now()}.json`;
     fs.writeFileSync(file, JSON.stringify({ dates: DATES, report, newly_overdue: flagged.rows.map(r => r.booking_code) }, null, 2));

@@ -1083,7 +1083,6 @@ const ClientDetailPage = () => {
   const patientSummary = detail?.patient_summary || {};
   const statementSummary = detail?.statement_summary || {};
   const overdueSummary = detail?.overdue_summary || {};
-  const overdueInvoicesSummary = detail?.overdue_invoices_summary || {};
   const recentActivity = detail?.recent_activity || {};
 
   // The client's chosen "bill to" name — company name if they've opted into
@@ -1281,20 +1280,15 @@ const ClientDetailPage = () => {
   ];
 
   const overdueAmount = Number(overdueSummary.total_overdue_amount || 0);
-  const isOverdue = overdueAmount < 0;
-  const overdueDisplayValue = isOverdue ? formatMoney(Math.abs(overdueAmount)) : formatMoney(0);
+  // The server sends what is invoiced but not yet paid as a positive number (0 when settled).
+  const isOverdue = overdueAmount > 0;
+  const overdueDisplayValue = formatMoney(overdueAmount);
   const overdueTone = isOverdue ? 'rose' : 'emerald';
-
-  // Sum of unresolved rows in the system-wide overdue-invoices ledger (currently
-  // only registration fees) — distinct from "Overdue Amount" above, which is
-  // derived from the daily-attendance invoicing transaction ledger.
-  const overdueInvoicesAmount = Number(overdueInvoicesSummary.total_overdue_amount || 0);
 
   const topStats = [
     { icon: BadgeDollarSign, label: 'Payments Made By Client',         value: formatMoney(paymentSummary.total_paid),               tone: 'emerald' },
     { icon: Wallet,          label: 'Invoiced Amount', value: formatMoney(statementSummary.total_invoiced),          tone: 'blue' },
     { icon: ShieldAlert,     label: 'Overdue Amount',                   value: overdueDisplayValue,                                  tone: overdueTone },
-    { icon: AlertTriangle,   label: 'Overdue Invoices',                 value: formatMoney(overdueInvoicesAmount),                   tone: overdueInvoicesAmount > 0 ? 'rose' : 'emerald' },
     { icon: CalendarDays,    label: 'Bookings',                         value: bookingSummary.total_bookings || 0,                   tone: 'violet' },
     { icon: Wallet,          label: 'Wallet Balance',                   value: formatMoney(clientProfile.wallet_balance),            tone: 'amber' },
   ];
@@ -4406,12 +4400,11 @@ const ClientDetailPage = () => {
           {/* Financial snapshot strip */}
           {/* gap-px over a grey backdrop draws the cell separators, so they stay
               correct at every column count — divide-x only lines up for one row. */}
-          <div className="grid grid-cols-2 gap-px bg-gray-100 @xl:grid-cols-3 @4xl:grid-cols-6">
+          <div className="grid grid-cols-2 gap-px bg-gray-100 @xl:grid-cols-3 @4xl:grid-cols-5">
             {[
               { label: 'Payments Made',    value: formatMoney(paymentSummary.total_paid),        cls: 'text-gray-900' },
               { label: 'Total Invoiced',   value: formatMoney(statementSummary.total_invoiced),  cls: 'text-gray-900' },
               { label: 'Overdue Amount',   value: overdueDisplayValue,                           cls: isOverdue ? 'text-red-600' : 'text-gray-900' },
-              { label: 'Overdue Invoices', value: formatMoney(overdueInvoicesAmount),             cls: overdueInvoicesAmount > 0 ? 'text-red-600' : 'text-gray-900' },
               { label: 'Total Bookings',   value: String(bookingSummary.total_bookings || 0),    cls: 'text-gray-900' },
               { label: 'Wallet Balance',   value: formatMoney(clientProfile.wallet_balance),     cls: 'text-amber-600' },
             ].map(({ label, value, cls }) => (

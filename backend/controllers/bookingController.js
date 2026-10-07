@@ -33,7 +33,8 @@ const {
 const { creditSalespersonForRegistration } = require('../services/clientSalespersonService');
 const { maybeAutoCompleteVisitingBooking } = require('../services/visitingBookings');
 const { closeActivePatternForPause } = require('../services/shiftPatternService');
-const { drawWalletForBooking } = require('../services/walletService');
+const { drawWalletForBooking, getEarmarkedTotal } = require('../services/walletService');
+const { chargeRegistrationFeeForBooking } = require('../services/registrationFeeService');
 
 function extractActorRole(role) {
     const raw = Array.isArray(role) ? role[0] : role;
@@ -679,24 +680,6 @@ const convertToBookingInternal = async (req, res) => {
         let clientProfileId;
         if (reqData.client_id) {
             clientProfileId = reqData.client_id;
-
-            // If the quote included a registration fee, mark the client profile as fully paid
-            // and start its 365-day membership countdown.
-            if (registrationFeeAmount > 0) {
-                const clientProfile = await client.query(
-                    'SELECT is_registration_fee_paid FROM client_profiles WHERE client_profile_id = $1',
-                    [clientProfileId]
-                );
-                if (clientProfile.rows.length > 0 && !clientProfile.rows[0].is_registration_fee_paid) {
-                    await client.query(
-                        `UPDATE client_profiles
-                         SET is_registration_fee_paid = TRUE, reg_fee_status = 'PAID',
-                             reg_fee_paid_at = NOW(), reg_fee_expires_at = NOW() + INTERVAL '365 days'
-                         WHERE client_profile_id = $1`,
-                        [clientProfileId]
-                    );
-                }
-            }
         } else {
             // SMART CHECK: Create User (Payer) if they don't exist
             let userId;
@@ -721,36 +704,21 @@ const convertToBookingInternal = async (req, res) => {
             const profileCheck = await client.query('SELECT client_profile_id, is_registration_fee_paid FROM client_profiles WHERE user_id = $1', [userId]);
 
             if (profileCheck.rows.length === 0) {
-                const regFeePaid = registrationFeeAmount > 0;
+                // The registration fee is settled below (chargeRegistrationFeeForBooking) —
+                // a new profile starts unpaid and is only marked PAID once it really is.
                 const newProfile = await client.query(
                     `INSERT INTO client_profiles
-                       (user_id, full_name, primary_address, gender, client_type, company_name, honorific, is_registration_fee_paid, reg_fee_status, reg_fee_paid_at, reg_fee_expires_at)
-                     VALUES ($1, $2, $3, $4::gender_enum, $5::client_type_enum, $6, $7, $8, $9, $10, $11) RETURNING client_profile_id`,
+                       (user_id, full_name, primary_address, gender, client_type, company_name, honorific, is_registration_fee_paid, reg_fee_status)
+                     VALUES ($1, $2, $3, $4::gender_enum, $5::client_type_enum, $6, $7, FALSE, 'PENDING') RETURNING client_profile_id`,
                     [
                         userId, reqData.payer_name, reqData.location_address,
                         reqData.payer_gender || null, reqData.client_type || 'INDIVIDUAL',
                         reqData.company_name || null, reqData.honorific || null,
-                        regFeePaid, regFeePaid ? 'PAID' : 'PENDING',
-                        regFeePaid ? new Date() : null,
-                        regFeePaid ? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) : null,
                     ]
                 );
                 clientProfileId = newProfile.rows[0].client_profile_id;
             } else {
                 clientProfileId = profileCheck.rows[0].client_profile_id;
-
-                // If the quote included a registration fee, mark the client profile as fully paid
-                // and start its 365-day membership countdown.
-                const clientProfile = profileCheck.rows[0];
-                if (!clientProfile.is_registration_fee_paid && registrationFeeAmount > 0) {
-                    await client.query(
-                        `UPDATE client_profiles
-                         SET is_registration_fee_paid = TRUE, reg_fee_status = 'PAID',
-                             reg_fee_paid_at = NOW(), reg_fee_expires_at = NOW() + INTERVAL '365 days'
-                         WHERE client_profile_id = $1`,
-                        [clientProfileId]
-                    );
-                }
             }
         }
 
@@ -760,26 +728,20 @@ const convertToBookingInternal = async (req, res) => {
         if (reqData.patient_id) {
             // SCENARIO A: Existing Patient (e.g., Mr. Sunil was added manually)
             patientId = reqData.patient_id;
-
-            // Check if THIS quote charged a registration fee. If so, mark them as PAID.
-            if (Number(quoteData.registration_fee) > 0) {
-                await client.query(
-                    `UPDATE patient_profiles SET is_registration_fee_paid = TRUE WHERE patient_id = $1`,
-                    [patientId]
-                );
-            }
+            // is_registration_fee_paid is set after the fee is settled (see below).
         } else {
             // SCENARIO B: New Lead (Auto-create Patient)
             // Prefer the emergency contact(s) captured on the request itself;
             // fall back to the payer's own name/number when none were given.
             const newPatient = await client.query(
                 `INSERT INTO patient_profiles (client_id, full_name, age, gender, relationship_to_client, medical_condition, is_registration_fee_paid, special_remarks, residential_address, emergency_contact_name, emergency_contact_number)
-                 VALUES ($1, $2, $3, $4::gender_enum, $5, $6, TRUE, $7, $8, $9, $10) RETURNING patient_id`,
+                 VALUES ($1, $2, $3, $4::gender_enum, $5, $6, $11, $7, $8, $9, $10) RETURNING patient_id`,
                 [
                     clientProfileId, reqData.patient_name, reqData.patient_age, reqData.gender || null,
                     reqData.relationship_to_client, reqData.patient_condition, reqData.remarks, reqData.location_address,
                     reqData.emergency_contact_name || reqData.payer_name,
                     reqData.emergency_contact_number || reqData.payer_mobile,
+                    registrationFeeAmount <= 0, // with a fee, flipped to TRUE once it is actually settled
                 ]
             );
             patientId = newPatient.rows[0].patient_id;
@@ -801,45 +763,26 @@ const convertToBookingInternal = async (req, res) => {
         const bookingId = newBooking.rows[0].booking_id;
         const bookingCode = newBooking.rows[0].booking_code;
 
+        // The registration fee is its own obligation, separate from the service charges:
+        // book it on this booking, link what was paid toward it on the quote, cover any
+        // shortfall from the client's free wallet, and only mark the client PAID if it is
+        // genuinely covered (see services/registrationFeeService).
         if (registrationFeeAmount > 0) {
-            const regFeeCategoryResult = await client.query(
-                `SELECT EXISTS (
-                    SELECT 1
-                    FROM pg_enum e
-                    JOIN pg_type t ON t.oid = e.enumtypid
-                    WHERE t.typname = 'transaction_category'
-                      AND e.enumlabel = 'REGISTRATION_FEE'
-                 ) as exists`
-            );
-            const registrationFeeCategory = regFeeCategoryResult.rows[0]?.exists
-                ? 'REGISTRATION_FEE'
-                : 'SERVICE_INVOICE';
-
-            await client.query(
-                `INSERT INTO transactions (
-                   booking_id,
-                   quote_id,
-                   client_id,
-                   category,
-                   amount,
-                   status,
-                   notes,
-                   transaction_type,
-                   reference_number,
-                   created_at
-                 ) VALUES ($1, $2, $3, $4, $5, 'COMPLETED', $6, 'DEBIT', $7, NOW())`,
-                [
-                    bookingId,
-                    bookingQuoteId,
-                    clientProfileId,
-                    registrationFeeCategory,
-                    registrationFeeAmount,
-                    registrationFeeCategory === 'REGISTRATION_FEE'
-                        ? 'Registration fee charged during booking conversion'
-                        : 'Registration fee charged during booking conversion (stored as SERVICE_INVOICE for compatibility)',
-                    quoteData.estimate_number || bookingQuoteId
-                ]
-            );
+            const regFee = await chargeRegistrationFeeForBooking(client, {
+                client_id: clientProfileId,
+                booking_id: bookingId,
+                quote_id: bookingQuoteId,
+                amount: registrationFeeAmount,
+                reference: quoteData.estimate_number || bookingQuoteId,
+                verified_by: req.user?.user_id || null,
+            });
+            const feeCovered = regFee.settled || (!regFee.charged && regFee.paidOnQuote <= 0.005);
+            if (feeCovered) {
+                await client.query(
+                    `UPDATE patient_profiles SET is_registration_fee_paid = TRUE WHERE patient_id = $1`,
+                    [patientId]
+                );
+            }
         }
 
         // Service-charge payments already made against this quote (before this
@@ -848,19 +791,6 @@ const convertToBookingInternal = async (req, res) => {
         // unconditionally, not just once a booking is linked. Nothing to mirror
         // into this booking's ledger here; it'll draw from the wallet lazily as
         // its days/shifts are actually invoiced (see walletService.drawWalletForBooking).
-
-        // The registration-fee CREDIT recorded when the client paid (before this
-        // booking existed) was inserted with booking_id = NULL, since there was no
-        // booking to attach it to yet. The DEBIT charged just above always gets the
-        // real booking_id — without this backfill, this booking's own ledger view
-        // (getBookingFinancialTotals) would show that DEBIT with no offsetting
-        // CREDIT and report the full registration fee as "overdue".
-        await client.query(
-            `UPDATE transactions
-             SET booking_id = $1
-             WHERE quote_id = $2 AND category = 'REGISTRATION_FEE' AND transaction_type = 'CREDIT' AND booking_id IS NULL`,
-            [bookingId, bookingQuoteId]
-        );
 
         // Same story for the wallet earmark: the service-charge money paid against
         // this quote went into the wallet before there was a booking to reserve it
@@ -897,6 +827,17 @@ const convertToBookingInternal = async (req, res) => {
                     [bookingId, row.transaction_id]
                 );
             }
+        }
+
+        // Never reserve more than the wallet really holds free: the registration fee may
+        // just have been drawn from it above.
+        if (earmarkTotal > 0) {
+            const walletNow = await client.query(
+                `SELECT COALESCE(wallet_balance, 0) AS balance FROM client_profiles WHERE client_profile_id = $1`,
+                [clientProfileId]
+            );
+            const freeWallet = parseFloat(walletNow.rows[0]?.balance || 0) - await getEarmarkedTotal(client, clientProfileId);
+            earmarkTotal = Math.max(0, Math.min(earmarkTotal, freeWallet));
         }
 
         if (earmarkTotal > 0) {
@@ -1806,6 +1747,22 @@ async function applyInvoiceDecision(client, { booking_id, service_date, approve,
         throw err;
     }
 
+    // The nightly cron (and the backfill script) seed one day-level PENDING row with no
+    // assignment. Deciding that day for a specific staff assignment must settle that
+    // seed, not add a second row next to it — otherwise the seed stays PENDING forever
+    // and a later confirm of it would charge the client twice for the same day.
+    let pendingSeed = null;
+    if (assignment_id && !shift_slot_id && !reschedule_id && existing.rows.length === 0) {
+        const seedRes = await client.query(
+            `SELECT daily_invoice_id FROM booking_daily_invoices
+             WHERE booking_id = $1 AND service_date = $2 AND status = 'PENDING'
+               AND shift_slot_id IS NULL AND assignment_id IS NULL AND reschedule_id IS NULL
+             FOR UPDATE`,
+            [booking_id, service_date]
+        );
+        pendingSeed = seedRes.rows[0] || null;
+    }
+
     let transactionId = null;
     let finalAmount = null;
 
@@ -1884,6 +1841,15 @@ async function applyInvoiceDecision(client, { booking_id, service_date, approve,
                 RETURNING *`,
                 [booking_id, service_date, approve ? 'INVOICED' : 'SKIPPED', finalAmount, transactionId, deciderUserId || null, deciderName, shift_slot_id]
             )
+            : assignment_id && pendingSeed
+                ? await client.query(
+                    `UPDATE booking_daily_invoices
+                     SET assignment_id = $1, status = $2, amount = $3, transaction_id = $4,
+                         decided_by_user_id = $5, decided_by_name = $6, decided_at = NOW(), updated_at = NOW()
+                     WHERE daily_invoice_id = $7
+                     RETURNING *`,
+                    [assignment_id, approve ? 'INVOICED' : 'SKIPPED', finalAmount, transactionId, deciderUserId || null, deciderName, pendingSeed.daily_invoice_id]
+                )
             : assignment_id
                 ? await client.query(
                     `INSERT INTO booking_daily_invoices (
@@ -3443,15 +3409,11 @@ exports.forceStopBooking = async (req, res) => {
     }
 };
 
-exports.getAllBookings = async (req, res) => {
-    try {
-        const salespersonId = req.user?.salesperson_id;
-        const salesFilter = salespersonId
-            ? 'WHERE b.booking_id IN (SELECT booking_id FROM booking_salesperson_assignments WHERE salesperson_id = $1)'
-            : '';
-        const query = `
+// Shared SELECT for the admin bookings list (client/patient/staff/salesperson joins + billing balance).
+const buildBookingsListSql = (salesFilter) => `
             SELECT
                 b.booking_id,
+                b.client_id,
                 b.booking_code,
                 b.service_type,
                 b.service_model,
@@ -3522,15 +3484,149 @@ exports.getAllBookings = async (req, res) => {
                 GROUP BY booking_id
             ) bill ON bill.booking_id = b.booking_id
             ${salesFilter}
-            ORDER BY b.created_at DESC
+`;
+
+// Escape LIKE wildcards in user-supplied search text.
+const escapeLike = (v) => String(v).replace(/[\\%_]/g, (m) => `\\${m}`);
+
+exports.getAllBookings = async (req, res) => {
+    try {
+        const salespersonId = req.user?.salesperson_id;
+        const params = [];
+        let salesFilter = '';
+        if (salespersonId) {
+            params.push(salespersonId);
+            salesFilter = `WHERE b.booking_id IN (SELECT booking_id FROM booking_salesperson_assignments WHERE salesperson_id = $${params.length})`;
+        }
+        const listSql = buildBookingsListSql(salesFilter);
+
+        // Legacy behaviour (no pagination params): return everything. Still used by
+        // pages such as Statements that need the full list.
+        const paginated = req.query.page !== undefined || req.query.limit !== undefined;
+        if (!paginated) {
+            const result = await db.query(`${listSql} ORDER BY b.created_at DESC`, params);
+            return res.status(200).json({
+                status: 'success',
+                count: result.rowCount,
+                data: result.rows
+            });
+        }
+
+        const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 25, 1), 100);
+        const offset = (page - 1) * limit;
+
+        // Search also narrows the tab counts; the other filters only narrow the page.
+        const search = (req.query.search || '').trim();
+        let searchExpr = 'TRUE';
+        if (search) {
+            params.push(`%${escapeLike(search)}%`);
+            const i = params.length;
+            searchExpr = `(
+                base.booking_code ILIKE $${i}
+                OR base.booking_id::text ILIKE $${i}
+                OR base.client_name ILIKE $${i}
+                OR base.patient_name ILIKE $${i}
+                OR EXISTS (
+                    SELECT 1 FROM booking_staff_assignments bsa
+                    JOIN staff_profiles sp ON sp.staff_profile_id = bsa.staff_profile_id
+                    WHERE bsa.booking_id = base.booking_id AND bsa.status = 'ACTIVE'
+                      AND (sp.full_name ILIKE $${i} OR sp.staff_code ILIKE $${i})
+                )
+            )`;
+        }
+
+        const filterParts = [];
+        const { status, service_model, hospitalized, salesperson } = req.query;
+        if (status === 'EXPIRING_SOON') {
+            filterParts.push('base.is_expiring_soon');
+        } else if (status === 'ACTIVE') {
+            // OVERDUE bookings are still running, just behind on payment.
+            filterParts.push(`base.status IN ('ACTIVE', 'OVERDUE')`);
+        } else if (status && status !== 'ALL') {
+            params.push(status);
+            filterParts.push(`base.status = $${params.length}`);
+        }
+        if (service_model && service_model !== 'ALL') {
+            params.push(service_model);
+            filterParts.push(`base.service_model = $${params.length}`);
+        }
+        if (hospitalized === 'true') filterParts.push('base.is_hospitalized');
+        if (salesperson === 'ASSIGNED') filterParts.push('base.current_salesperson_id IS NOT NULL');
+        if (salesperson === 'UNASSIGNED') filterParts.push('base.current_salesperson_id IS NULL');
+        const filterExpr = filterParts.length ? filterParts.join(' AND ') : 'TRUE';
+
+        const filterParamCount = params.length;
+        params.push(limit, offset);
+
+        const pageSql = `
+            WITH base AS (${listSql})
+            SELECT
+                base.*,
+                (SELECT bsa.service_start_time
+                   FROM booking_staff_assignments bsa
+                   WHERE bsa.booking_id = base.booking_id
+                     AND bsa.status IN ('ACTIVE', 'SCHEDULED')
+                   ORDER BY bsa.service_start_date DESC
+                   LIMIT 1) AS service_start_time,
+                (SELECT COALESCE(json_agg(json_build_object(
+                            'staff_profile_id', bsa.staff_profile_id,
+                            'staff_code', sp.staff_code,
+                            'full_name', sp.full_name,
+                            'gender', sp.gender
+                        ) ORDER BY sp.full_name), '[]')
+                   FROM booking_staff_assignments bsa
+                   JOIN staff_profiles sp ON bsa.staff_profile_id = sp.staff_profile_id
+                   WHERE bsa.booking_id = base.booking_id
+                     AND bsa.status = 'ACTIVE') AS current_staff
+            FROM base
+            WHERE ${searchExpr} AND ${filterExpr}
+            ORDER BY base.created_at DESC, base.booking_id DESC
+            LIMIT $${filterParamCount + 1} OFFSET $${filterParamCount + 2}
         `;
 
-        const result = await db.query(query, salespersonId ? [salespersonId] : []);
+        const statsSql = `
+            WITH base AS (${listSql})
+            SELECT
+                COUNT(*) FILTER (WHERE ${filterExpr})::int AS filtered_total,
+                COUNT(*)::int AS "ALL",
+                COUNT(*) FILTER (WHERE base.status IN ('ACTIVE', 'OVERDUE'))::int AS "ACTIVE",
+                COUNT(*) FILTER (WHERE base.status = 'PENDING')::int AS "PENDING",
+                COUNT(*) FILTER (WHERE base.status = 'PENDING_TERMINATION')::int AS "PENDING_TERMINATION",
+                COUNT(*) FILTER (WHERE base.status = 'TERMINATED')::int AS "TERMINATED",
+                COUNT(*) FILTER (WHERE base.status = 'COMPLETED')::int AS "COMPLETED",
+                COUNT(*) FILTER (WHERE base.status = 'CANCELLED')::int AS "CANCELLED",
+                COUNT(*) FILTER (WHERE base.is_expiring_soon)::int AS "EXPIRING_SOON",
+                COUNT(*) FILTER (WHERE base.service_model = 'SHIFT_BASED')::int AS "SHIFT_BASED",
+                COUNT(*) FILTER (WHERE base.service_model = 'VISITING')::int AS "VISITING",
+                COUNT(*) FILTER (WHERE base.service_model = 'LIVE_IN')::int AS "LIVE_IN",
+                COUNT(*) FILTER (WHERE base.is_hospitalized)::int AS hospitalized,
+                COUNT(*) FILTER (WHERE base.current_salesperson_id IS NOT NULL)::int AS "ASSIGNED",
+                COUNT(*) FILTER (WHERE base.current_salesperson_id IS NULL)::int AS "UNASSIGNED"
+            FROM base
+            WHERE ${searchExpr}
+        `;
+
+        const [pageResult, statsResult] = await Promise.all([
+            db.query(pageSql, params),
+            db.query(statsSql, params.slice(0, filterParamCount)),
+        ]);
+
+        const { filtered_total: total, ...counts } = statsResult.rows[0];
+        const totalPages = Math.max(1, Math.ceil(total / limit));
 
         res.status(200).json({
             status: 'success',
-            count: result.rowCount,
-            data: result.rows
+            count: pageResult.rowCount,
+            data: pageResult.rows,
+            counts,
+            pagination: {
+                total,
+                page,
+                limit,
+                total_pages: totalPages,
+                has_next: page < totalPages,
+            },
         });
 
     } catch (error) {

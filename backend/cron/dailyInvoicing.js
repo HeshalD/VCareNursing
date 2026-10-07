@@ -320,7 +320,7 @@ const startDailyInvoicing = () => {
           // createServiceInvoice below isn't idempotent, only the audit insert is.
           const alreadyInvoiced = await client.query(
             `SELECT 1 FROM booking_daily_invoices
-             WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id IS NULL AND assignment_id IS NULL`,
+             WHERE booking_id = $1 AND service_date = $2 AND shift_slot_id IS NULL`,
             [bookingId, today]
           );
           if (alreadyInvoiced.rows.length > 0) {
@@ -391,8 +391,15 @@ const startDailyInvoicing = () => {
         try {
           await client.query('SAVEPOINT cron_item');
           await client.query(
+            // NOT EXISTS (any assignment) rather than relying on ON CONFLICT alone: a day an
+            // admin already decided for a specific staff assignment carries an assignment_id
+            // that the unique index doesn't cover, and must not get a second PENDING row.
             `INSERT INTO booking_daily_invoices (booking_id, service_date, entry_mode, status, amount)
-             VALUES ($1, $2, 'MANUAL', 'PENDING', $3)
+             SELECT $1::uuid, $2::date, 'MANUAL', 'PENDING', $3::numeric
+             WHERE NOT EXISTS (
+               SELECT 1 FROM booking_daily_invoices
+               WHERE booking_id = $1::uuid AND service_date = $2::date AND shift_slot_id IS NULL
+             )
              ON CONFLICT (booking_id, service_date) WHERE shift_slot_id IS NULL AND assignment_id IS NULL DO NOTHING`,
             [bookingId, today, bookingData.daily_rate]
           );

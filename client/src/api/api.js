@@ -1520,9 +1520,15 @@ class ApiClient {
     return this.request('/bookings/active-bookings');
   }
 
-  async getAllBookings() {
-    // used by admin to fetch all bookings (active, terminated, etc.)
-    return this.request('/bookings');
+  async getAllBookings(params = {}) {
+    // used by admin to fetch bookings (active, terminated, etc.). With no params the
+    // full list is returned; pass page/limit (+ search, status, service_model,
+    // hospitalized, salesperson) for a server-paginated page with tab counts.
+    const clean = Object.fromEntries(
+      Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '' && v !== false)
+    );
+    const qs = new URLSearchParams(clean).toString();
+    return this.request(qs ? `/bookings?${qs}` : '/bookings');
   }
 
   async adminDirectBooking(data) {

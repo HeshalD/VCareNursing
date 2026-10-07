@@ -784,6 +784,24 @@ const recordAllocatedPayment = async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'No unpaid products/rentals invoice found for this quote — accept the linked product quote first' });
     }
 
+    // Overflow is only for money beyond EVERYTHING this quotation still asks for. If any
+    // charge is still due after the admin's allocations, the extra must go to it — it may
+    // not be parked in the wallet while the registration fee / services are left unpaid.
+    if (overflowAmount > 0.01) {
+      const stillDue =
+        Math.max(regFeeRemaining - regFeeAlloc, 0) +
+        Math.max(careRemaining - serviceAlloc, 0) +
+        Math.max(customRemainingAll - customTotal, 0) +
+        Math.max(productsRemaining - productsAlloc, 0);
+      if (stillDue > 0.01) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          status: 'error',
+          message: `${stillDue.toFixed(2)} is still due on this quotation — allocate the payment to the registration fee / charges first. Only the amount beyond what is due can be sent to the wallet or an overdue booking.`,
+        });
+      }
+    }
+
     const verified_by = req.user?.user_id || null;
     const receiptLineItems = [];
     let payment = null;

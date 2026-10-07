@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { StaffLink } from '../components/EntityLinks';
-import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, Mars, Venus, Trash2, CheckCircle2, ChevronDown, ShieldOff, ShieldCheck, X, Landmark, Eye, EyeOff } from 'lucide-react';
+import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, Mars, Venus, Trash2, CheckCircle2, ChevronDown, ShieldOff, ShieldCheck, X, Landmark, Eye, EyeOff, ArrowDown, ArrowUpDown } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
+import FilterableTh from '../components/FilterableTh';
 import apiClient from '../../../api/api';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
 import useDebouncedValue from '../../../hooks/useDebouncedValue';
@@ -92,6 +93,7 @@ const StaffManagement = () => {
   const debouncedSearch = useDebouncedValue(search, 400);
   const [pendingMigrationOnly, setPendingMigrationOnly] = useState(false);
   const [portalFilter, setPortalFilter] = useState('all'); // 'all' | 'enabled' | 'disabled'
+  const [sortEarningsDesc, setSortEarningsDesc] = useState(false);
   const [page, setPage] = useState(1);
   const [pagination, setPagination] = useState(null);
   const [counts, setCounts] = useState({ All: 0 });
@@ -128,12 +130,12 @@ const StaffManagement = () => {
   }, [actionsOpen]);
 
   // Reset back to page 1 whenever a filter/search changes underneath the current page.
-  useEffect(() => { setPage(1); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter]);
+  useEffect(() => { setPage(1); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter, sortEarningsDesc]);
 
-  useEffect(() => { fetchWorkers(); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter, page]);
+  useEffect(() => { fetchWorkers(); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter, sortEarningsDesc, page]);
 
   // Clear selection whenever the underlying list changes to avoid acting on stale rows.
-  useEffect(() => { setSelectedIds(new Set()); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter, page]);
+  useEffect(() => { setSelectedIds(new Set()); }, [activeTab, debouncedSearch, pendingMigrationOnly, portalFilter, sortEarningsDesc, page]);
 
   const buildFilters = () => ({
     page,
@@ -142,6 +144,7 @@ const StaffManagement = () => {
     ...(debouncedSearch ? { search: debouncedSearch } : {}),
     ...(pendingMigrationOnly ? { pending_migration: 'true' } : {}),
     ...(portalFilter !== 'all' ? { portal_access: portalFilter } : {}),
+    ...(sortEarningsDesc ? { sort_earnings: 'desc' } : {}),
   });
 
   const fetchWorkers = async ({ silent = false } = {}) => {
@@ -523,9 +526,29 @@ const StaffManagement = () => {
                 <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Contact</th>
                 <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Role</th>
                 <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Location</th>
-                <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Status</th>
+                <FilterableTh
+                  label="Status"
+                  className="text-left px-4 py-2.5 text-[11px]"
+                  value={activeTab}
+                  onChange={setActiveTab}
+                  options={STATUS_TABS.map(tab => ({ key: tab, label: TAB_LABELS[tab], count: counts[tab] ?? 0 }))}
+                />
                 <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Compliance Docs</th>
-                <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Current Earnings</th>
+                <th className="text-left px-4 py-2.5 text-[11px]" aria-sort={sortEarningsDesc ? 'descending' : 'none'}>
+                  <button
+                    type="button"
+                    onClick={() => setSortEarningsDesc(v => !v)}
+                    title={sortEarningsDesc ? 'Sorted highest first — click to clear' : 'Sort by highest earnings'}
+                    className={`inline-flex items-center gap-1 uppercase tracking-wider font-semibold transition-colors ${
+                      sortEarningsDesc ? 'text-blue-600' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    Current Earnings
+                    {sortEarningsDesc
+                      ? <ArrowDown className="w-3 h-3" />
+                      : <ArrowUpDown className="w-3 h-3 opacity-50" />}
+                  </button>
+                </th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>

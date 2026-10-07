@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ClientLink } from '../components/EntityLinks';
 import { Search, UserCircle, ChevronRight, ChevronLeft, Loader2, Plus, X, Trash2 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
+import FilterableTh from '../components/FilterableTh';
 import apiClient from '../../../api/api';
 import useAutoRefresh from '../../../hooks/useAutoRefresh';
 import useDebouncedValue from '../../../hooks/useDebouncedValue';
@@ -425,7 +426,13 @@ const ClientManagement = () => {
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Client</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Contact</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Location</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Reg. Status</th>
+                <FilterableTh
+                  label="Reg. Status"
+                  className="text-left px-4 py-3 text-xs"
+                  value={activeTab}
+                  onChange={setActiveTab}
+                  options={REG_TABS.map(tab => ({ key: tab, label: tab, count: counts[tab] ?? 0 }))}
+                />
                 <th className="px-4 py-3" />
               </tr>
             </thead>
